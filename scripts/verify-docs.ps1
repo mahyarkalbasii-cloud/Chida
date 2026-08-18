@@ -50,7 +50,7 @@ $repositoryFiles = @(
     foreach ($relativePath in $repositoryFilePaths) {
         $fullPath = Join-Path $repoRoot $relativePath
         if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
-            Get-Item -LiteralPath $fullPath
+            Get-Item -LiteralPath $fullPath -Force
         }
         else {
             $failures.Add("Git listed a file that is missing from the checkout: $relativePath")
