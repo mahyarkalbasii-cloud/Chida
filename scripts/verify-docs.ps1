@@ -32,17 +32,30 @@ $requiredDocuments = @(
     '07-business-launch-and-metrics.md'
 )
 
-$repositoryFilePaths = @(
+$rawRepositoryFilePaths = @(
     & git -C $repoRoot -c core.quotepath=false ls-files --cached --others --exclude-standard
 )
 if ($LASTEXITCODE -ne 0) {
     throw 'Unable to enumerate tracked and non-ignored repository files with Git.'
 }
 
+$repositoryFilePaths = @(
+    $rawRepositoryFilePaths |
+        ForEach-Object {
+            ([string]$_).TrimEnd("`r", "`n").TrimStart([char]0xFEFF)
+        } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+)
 $repositoryFiles = @(
-    $repositoryFilePaths |
-        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        ForEach-Object { Get-Item -LiteralPath (Join-Path $repoRoot $_) }
+    foreach ($relativePath in $repositoryFilePaths) {
+        $fullPath = Join-Path $repoRoot $relativePath
+        if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+            Get-Item -LiteralPath $fullPath
+        }
+        else {
+            $failures.Add("Git listed a file that is missing from the checkout: $relativePath")
+        }
+    }
 )
 $markdownFiles = @(
     $repositoryFiles | Where-Object { $_.Extension -eq '.md' }
