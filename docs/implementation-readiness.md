@@ -17,6 +17,7 @@ This checklist translates the current product baseline into entry conditions for
 - Approval matrix, grouped approval, reversibility, and action history: `ب-۰۱۶`, `ب-۰۲۱`.
 - Memory capture, editing, deletion, and cross-context behavior: `ب-۰۱۷`.
 - Authentication, builder invitation, supplier verification, and trust marks: `ب-۰۰۹`, `ب-۰۱۰`, `ب-۰۳۷`.
+- Dual-role accounts, role switching, and separation of each role's memory, inbox, brief, subscription, and private data: `ب-۰۴۱`.
 - Data retention, export, deletion, and third-party processing consent: `ب-۰۱۴`, `ب-۰۱۹`.
 - Web-search scope, source conflict, rights, and provider availability: `ب-۰۱۵`, `ب-۰۲۰`, `ب-۰۲۳`, `ب-۰۲۴`.
 - Persian voice-note accuracy and low-confidence handling: `ب-۰۲۵`.

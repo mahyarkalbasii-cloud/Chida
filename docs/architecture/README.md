@@ -2,6 +2,8 @@
 
 Architecture Decision Records (ADRs) capture durable technical choices for CHIDA. Product authority remains in the root product documents and `DECISIONS.md`; an ADR may implement a product decision but may not silently replace one.
 
+Research proposals such as the [Technical Inception proposal](../proposals/2026-08-20-technical-inception.md) and dated work such as the [Iran service landscape](../research/2026-08-20-iran-service-landscape.md) preserve investigated options, but they are not ADRs and grant no implementation authority. Promote only the reviewed and accepted choice into a numbered ADR.
+
 ## When an ADR is required
 
 Create an ADR before committing to a choice that is costly to reverse or affects security, privacy, authorization, data ownership, provider dependency, deployment, or multiple modules.
