@@ -836,6 +836,7 @@ test("project document parser drops semantically invalid and duplicate records",
       { ...common, id: "", displayName: "", originalName: "blank.pdf" },
       { ...common, id: "invalid-date", displayName: "تاریخ خراب", originalName: "invalid-date.pdf", createdAt: "not-a-date" },
       { ...common, id: "unsupported", displayName: "فایل اجرایی", originalName: "installer.exe" },
+      { ...common, id: "invalid-source", displayName: "منشأ جعلی", originalName: "forged-source.pdf", source: "وب" },
       { ...common, id: "valid-file", displayName: " گزارش معتبر ", originalName: "report.pdf" },
       { ...common, id: "valid-file", displayName: "شناسه تکراری", originalName: "duplicate.pdf" },
     ]));
@@ -849,6 +850,7 @@ test("project document parser drops semantically invalid and duplicate records",
   await expect(page.getByTestId("project-file-row")).toHaveCount(1);
   await expect(page.getByTestId("project-file-row")).toContainText("گزارش معتبر");
   await expect(page.getByText("شناسه تکراری")).toHaveCount(0);
+  await expect(page.getByText("منشأ جعلی")).toHaveCount(0);
   await page.getByTestId("project-file-row").click();
   await expect(page.getByTestId("project-file-detail-sheet")).toContainText("اسکلت بندی");
 });
@@ -1201,6 +1203,265 @@ test("project memory keeps persisted state when edit toggle or delete storage fa
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBe(persistedMemory);
 });
 
+test("builder searches only local project memory and file metadata with transparent provenance", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.evaluate(() => {
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([{
+      id: "project-search-a",
+      name: "برج نیلوفر",
+      location: "سعادت‌آباد",
+      stage: "اسکلت بندی",
+      usage: "مسکونی",
+      landArea: "650",
+      builtArea: "4200",
+      aboveGroundFloors: "8",
+      basementFloors: "2",
+      unitCount: "16",
+      createdAt: "2026-08-27T08:00:00.000Z",
+    }]));
+    window.localStorage.setItem("chida-prototype-active-project", "project-search-a");
+    const memoryBase = {
+      projectId: "project-search-a",
+      kind: "واقعیت تأییدشده توسط سازنده",
+      source: "ثبت مستقیم شما",
+      visibility: "خصوصی پروژه",
+      useInContext: false,
+      status: "ثبت محلی",
+      version: 1,
+      createdAt: "2026-08-27T09:00:00.000Z",
+      updatedAt: "2026-08-27T10:00:00.000Z",
+    };
+    window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([
+      { ...memoryBase, id: "memory-search-a", title: "تصمیم پروژه ۱۲", content: "ردهٔ بتن پیش از سفارش با ناظر هماهنگ شود." },
+      { ...memoryBase, id: "memory-search-long", title: `عنوانمرزی${"ا".repeat(69)}`, content: "این عنوان بلند نباید اسکرول افقی بسازد." },
+    ]));
+    const fileBase = {
+      projectId: "project-search-a",
+      mimeType: "application/pdf",
+      size: 2048,
+      source: "انتخاب مستقیم از دستگاه",
+      status: "ثبت محلی",
+      version: 1,
+      projectStage: "اسکلت بندی",
+      visibility: "خصوصی پروژه",
+      storageMode: "metadata-only",
+      sourceModifiedAt: null,
+      createdAt: "2026-08-27T11:00:00.000Z",
+    };
+    window.localStorage.setItem("chida-prototype-project-files:v1", JSON.stringify([
+      { ...fileBase, id: "file-search-a", displayName: "نقشه سازه طبقه همکف", originalName: "structure-ground-floor.pdf", category: "نقشه", extractedText: "عبارت فقط داخل بدنه فایل" },
+      { ...fileBase, id: "file-search-zwnj", displayName: "پیش‌فاکتور تاسیسات", originalName: "proposal-installations.pdf", category: "پیش‌فاکتور" },
+    ]));
+  });
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("open-project-space").click();
+  await expect(page.getByTestId("project-memory-entry")).toContainText("۲ مورد ثبت‌شده");
+  await page.getByTestId("project-memory-entry").click();
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(2);
+  await page.getByTestId("project-memory-back").click();
+  await page.getByTestId("project-space-back").click();
+  await page.getByTestId("capability-cluster").click();
+  const searchTool = page.getByTestId("source-search-tool");
+  await expect(searchTool).toBeEnabled();
+  await expect(searchTool).toContainText("جست‌وجوی محلی پروژه");
+  await expect(searchTool).not.toContainText("منبع‌دار");
+  await expect(searchTool).not.toContainText("به‌زودی");
+  await searchTool.click();
+
+  const searchView = page.getByTestId("project-source-search-view");
+  await expect(searchView).toBeVisible();
+  await expect(searchView).toContainText("فقط حافظه و شناسنامهٔ فایل‌های همین پروژه");
+  await expect(searchView).toContainText("وب و محتوای فایل‌ها جست‌وجو نمی‌شوند");
+
+  const searchInput = page.getByTestId("project-source-search-input");
+  await searchInput.fill("تصميم پروژه ١٢");
+  const memoryResult = page.getByTestId("project-source-result-memory");
+  await expect(memoryResult).toHaveCount(1);
+  await expect(memoryResult).toContainText("تصمیم پروژه ۱۲");
+  await expect(memoryResult).toContainText("ثبت مستقیم شما");
+  await expect(memoryResult).toContainText("خصوصی در برج نیلوفر");
+  await expect(memoryResult).toContainText("نسخهٔ ۱");
+  await expect(memoryResult).toContainText("برای زمینه غیرفعال");
+  await expect(memoryResult).toHaveAccessibleName(/ثبت مستقیم شما.*خصوصی در برج نیلوفر/);
+  await memoryResult.click();
+  await expect(page.getByTestId("project-memory-view")).toBeVisible();
+  await expect(page.getByTestId("project-memory-detail-sheet")).toContainText("تصمیم پروژه ۱۲");
+  await expect(page.getByTestId("project-memory-back")).toHaveAttribute("aria-label", "بازگشت به جست‌وجو");
+  await page.keyboard.press("Escape");
+  await page.getByTestId("project-memory-back").click();
+  await expect(searchInput).toHaveValue("تصميم پروژه ١٢");
+
+  await searchInput.click();
+  await expect(page.getByTestId("keyboard-dock")).toHaveAttribute("data-visible", "true");
+  await page.getByTestId("project-source-search-clear").click();
+  await expect(searchInput).toHaveValue("");
+  await expect(searchInput).toBeFocused();
+  await expect(page.getByTestId("keyboard-dock")).toHaveAttribute("data-visible", "true");
+  await searchInput.fill("نقشه");
+  const fileResult = page.getByTestId("project-source-result-file");
+  await expect(fileResult).toHaveCount(1);
+  await expect(fileResult).toContainText("نقشه سازه طبقه همکف");
+  await expect(fileResult).toContainText("انتخاب مستقیم از دستگاه");
+  await expect(fileResult).toContainText("خصوصی در برج نیلوفر");
+  await expect(fileResult).toContainText("محتوای فایل جست‌وجو نشده");
+  await expect(fileResult).toHaveAccessibleName(/انتخاب مستقیم از دستگاه.*محتوای فایل جست‌وجو نشده/);
+  await fileResult.click();
+  await expect(page.getByTestId("project-files-view")).toBeVisible();
+  await expect(page.getByTestId("project-file-detail-sheet")).toContainText("نقشه سازه طبقه همکف");
+  await page.keyboard.press("Escape");
+  await page.getByTestId("project-files-back").click();
+
+  await searchInput.fill("پیشفاکتور");
+  await expect(page.getByTestId("project-source-result-file")).toHaveCount(1);
+  await expect(page.getByTestId("project-source-result-file")).toContainText("پیش‌فاکتور تاسیسات");
+
+  await searchInput.fill("۱۲رده");
+  await expect(page.getByTestId("project-source-result")).toHaveCount(0);
+  await expect(page.getByTestId("project-source-search-no-results")).toBeVisible();
+
+  await searchInput.fill("عنوانمرزی");
+  await expect(page.getByTestId("project-source-result-memory")).toHaveCount(1);
+  expect(await searchView.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  const clearBox = await page.getByTestId("project-source-search-clear").boundingBox();
+  const backBox = await page.getByTestId("project-source-search-back").boundingBox();
+  if (!clearBox || !backBox) throw new Error("Search controls are not rendered");
+  expect(clearBox.width).toBeGreaterThanOrEqual(44);
+  expect(clearBox.height).toBeGreaterThanOrEqual(44);
+  expect(backBox.width).toBeGreaterThanOrEqual(44);
+  expect(backBox.height).toBeGreaterThanOrEqual(44);
+
+  await searchInput.fill("عبارت فقط داخل بدنه فایل");
+  await expect(page.getByTestId("project-source-result")).toHaveCount(0);
+  await expect(page.getByTestId("project-source-search-no-results")).toContainText("در حافظه و شناسنامهٔ فایل‌های همین پروژه نتیجه‌ای پیدا نشد");
+  await expect(page.getByTestId("project-source-search-no-results")).toContainText("محتوای فایل‌ها، وب و پروژه‌های دیگر جست‌وجو نشدند");
+  await page.getByTestId("project-source-search-back").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+  await expect(page.getByTestId("keyboard-dock")).toBeHidden();
+});
+
+test("local project search never leaks records when the active project changes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.evaluate(() => {
+    const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T08:00:00.000Z" };
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
+      { ...projectBase, id: "project-isolation-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
+      { ...projectBase, id: "project-isolation-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
+    ]));
+    window.localStorage.setItem("chida-prototype-active-project", "project-isolation-a");
+    const memoryBase = {
+      kind: "یادداشت سازنده",
+      source: "ثبت مستقیم شما",
+      visibility: "خصوصی پروژه",
+      useInContext: true,
+      status: "ثبت محلی",
+      version: 1,
+      createdAt: "2026-08-27T09:00:00.000Z",
+      updatedAt: "2026-08-27T09:00:00.000Z",
+    };
+    window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([
+      { ...memoryBase, id: "memory-isolation-a", projectId: "project-isolation-a", title: "نشانه فقط پروژه الف", content: "این حافظه نباید در پروژه ب دیده شود." },
+      { ...memoryBase, id: "memory-isolation-b", projectId: "project-isolation-b", title: "نشانه فقط پروژه ب", content: "این حافظه فقط در پروژه ب است." },
+    ]));
+    const fileBase = { mimeType: "application/pdf", size: 512, category: "سایر", source: "انتخاب مستقیم از دستگاه", status: "ثبت محلی", version: 1, visibility: "خصوصی پروژه", storageMode: "metadata-only", sourceModifiedAt: null, createdAt: "2026-08-27T09:30:00.000Z" };
+    window.localStorage.setItem("chida-prototype-project-files:v1", JSON.stringify([
+      { ...fileBase, id: "file-isolation-a", projectId: "project-isolation-a", displayName: "سند فقط پروژه الف", originalName: "project-a.pdf", projectStage: "فونداسیون" },
+      { ...fileBase, id: "file-isolation-b", projectId: "project-isolation-b", displayName: "سند فقط پروژه ب", originalName: "project-b.pdf", projectStage: "نازک کاری و نما" },
+    ]));
+  });
+
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("capability-cluster").click();
+  await page.getByTestId("source-search-tool").click();
+  await page.getByTestId("project-source-search-input").fill("نشانه فقط پروژه الف");
+  await expect(page.getByTestId("project-source-result-memory")).toContainText("نشانه فقط پروژه الف");
+  await expect(page.getByText("نشانه فقط پروژه ب")).toHaveCount(0);
+  await page.getByTestId("project-source-search-input").fill("سند فقط پروژه الف");
+  await expect(page.getByTestId("project-source-result-file")).toContainText("سند فقط پروژه الف");
+  await expect(page.getByText("سند فقط پروژه ب")).toHaveCount(0);
+
+  await page.getByTestId("project-source-search-back").click();
+  await page.getByTestId("project-switcher").click();
+  await page.getByRole("button", { name: /پروژه ب تهران/ }).click();
+  await page.getByTestId("project-space-back").click();
+  await page.getByTestId("capability-cluster").click();
+  await page.getByTestId("source-search-tool").click();
+  const searchInput = page.getByTestId("project-source-search-input");
+  await expect(searchInput).toHaveValue("");
+  await searchInput.fill("سند فقط پروژه الف");
+  await expect(page.getByTestId("project-source-result")).toHaveCount(0);
+  await expect(page.getByText("سند فقط پروژه الف")).toHaveCount(0);
+  await searchInput.fill("سند فقط پروژه ب");
+  await expect(page.getByTestId("project-source-result-file")).toContainText("سند فقط پروژه ب");
+  await expect(page.getByText("سند فقط پروژه الف")).toHaveCount(0);
+  await searchInput.fill("نشانه فقط پروژه ب");
+  await expect(page.getByTestId("project-source-result-memory")).toContainText("نشانه فقط پروژه ب");
+  await expect(page.getByText("نشانه فقط پروژه الف")).toHaveCount(0);
+});
+
+test("local project search reports an incomplete read instead of claiming an empty source set", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage) {
+        throw new DOMException("Storage read failed", "SecurityError");
+      }
+      return nativeGetItem.call(this, key);
+    };
+  });
+
+  await enterBuilderHome(page);
+  await page.getByTestId("capability-cluster").click();
+  await page.getByTestId("source-search-tool").click();
+  await expect(page.getByTestId("project-source-search-read-error")).toContainText("بازیابی محلی کامل نشد");
+  await expect(page.getByTestId("project-source-search-empty")).toContainText("نبودن حافظه یا فایل را قطعی فرض نکن");
+  await expect(page.getByText("هنوز منبع محلی ثبت نشده")).toHaveCount(0);
+  await page.getByTestId("project-source-search-input").fill("بتن");
+  await expect(page.getByTestId("project-source-search-no-results")).toContainText("نبودن این عبارت را قطعی فرض نکن");
+});
+
+test("project files and memory stay read-only after local records fail to parse", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.evaluate(() => {
+    window.localStorage.setItem("chida-prototype-project-files:v1", "{فایل‌های قدیمی ناخوانا");
+    window.localStorage.setItem("chida-prototype-project-memories:v1", "{حافظهٔ قدیمی ناخوانا");
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("open-project-space").click();
+
+  await expect(page.getByTestId("project-files-entry")).toContainText("بازیابی محلی کامل نشد");
+  await expect(page.getByTestId("project-memory-entry")).toContainText("بازیابی محلی کامل نشد");
+
+  await page.getByTestId("project-files-entry").click();
+  await expect(page.getByTestId("project-files-read-error")).toContainText("جلوگیری از بازنویسی داده‌های قبلی");
+  await expect(page.getByTestId("project-file-add")).toBeDisabled();
+  await expect(page.getByTestId("project-file-input")).toBeDisabled();
+  await expect(page.getByText("هنوز فایلی ثبت نشده")).toHaveCount(0);
+  await page.getByTestId("project-files-back").click();
+
+  await page.getByTestId("project-gallery-entry").click();
+  await expect(page.getByTestId("project-gallery-read-error")).toContainText("جلوگیری از بازنویسی داده‌های قبلی");
+  await expect(page.getByTestId("project-gallery-add")).toBeDisabled();
+  await expect(page.getByTestId("project-camera-add")).toBeDisabled();
+  await expect(page.getByText("هنوز عکسی ثبت نشده")).toHaveCount(0);
+  await page.getByTestId("project-gallery-back").click();
+
+  await page.getByTestId("project-memory-entry").click();
+  await expect(page.getByTestId("project-memory-read-error")).toContainText("جلوگیری از بازنویسی داده‌های قبلی");
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+  await expect(page.getByText("هنوز چیزی ثبت نشده")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1"))).toBe("{فایل‌های قدیمی ناخوانا");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBe("{حافظهٔ قدیمی ناخوانا");
+});
+
 test("builder home keeps composer controls aligned and exposes the core sheets", async ({ page }) => {
   await enterBuilderHome(page);
 
@@ -1240,8 +1501,8 @@ test("builder home keeps composer controls aligned and exposes the core sheets",
   await page.getByTestId("capability-cluster").click();
   await expect(page.getByTestId("tools-sheet")).toBeVisible();
   const sourceSearchTool = page.getByTestId("source-search-tool");
-  await expect(sourceSearchTool).toBeDisabled();
-  await expect(sourceSearchTool).toContainText("به‌زودی");
+  await expect(sourceSearchTool).toBeEnabled();
+  await expect(sourceSearchTool).toContainText("جست‌وجوی محلی پروژه");
   await page.keyboard.press("Escape");
 
   await page.getByTestId("menu-button").click();
