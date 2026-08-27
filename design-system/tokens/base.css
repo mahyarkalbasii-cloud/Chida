@@ -1,0 +1,14 @@
+/* Minimal resets consumers inherit. */
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg-canvas);color:var(--text-primary);font-family:var(--font-fa);font-size:var(--size-body);line-height:var(--lh-body);font-weight:var(--weight-regular);direction:rtl;text-wrap:pretty;-webkit-font-smoothing:antialiased}
+a{color:var(--text-accent);text-decoration:none}
+a:hover{color:var(--accent-pressed);text-decoration:underline;text-underline-offset:3px}
+*:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:var(--radius-xs)}
+button,input,textarea,select{font:inherit;color:inherit}
+::selection{background:var(--accent-subtle);color:var(--text-primary)}
+/* Shared motion primitives (components reference these by name). */
+@keyframes chida-spin{to{transform:rotate(360deg)}}
+@keyframes chida-fade-in{from{opacity:0}to{opacity:1}}
+@keyframes chida-sheet-up{from{transform:translateY(16px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes chida-pop{0%{transform:scale(.94);opacity:0}100%{transform:scale(1);opacity:1}}
+@keyframes chida-shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}

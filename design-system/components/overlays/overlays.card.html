@@ -1,0 +1,32 @@
+<!-- @dsCard group="Components" viewport="700x420" name="Overlays — modal & bottom sheet" subtitle="Blocking confirmation and the default mobile sheet" -->
+<!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><title>Overlays</title>
+<script>(function(){var q=location.search||'',b='../../';window.CHIDA_ICON_BASE=b+'assets/icons';window.CHIDA_ASSET_QUERY=q;
+var list=['tokens/fonts.css','tokens/colors.css','tokens/typography.css','tokens/spacing.css','tokens/radius.css','tokens/elevation.css','tokens/motion.css','tokens/grid.css','tokens/base.css'];
+function abs(p){return new URL(p,location.href).href}
+function put(t,base){var st=document.createElement('style');st.textContent=t.replace(/url\((["']?)([^"')]+)\1\)/g,function(m,x,u){return /^(data:|https?:)/.test(u)?m:'url("'+new URL(u,base).href+q+'")'});document.head.appendChild(st)}
+(function next(i){if(i>=list.length)return;var p=b+list[i],base=abs(p);fetch(base+q).then(function(r){return r.ok?r.text():''}).then(function(t){put(t,base);next(i+1)}).catch(function(){next(i+1)})})(0);})();</script>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script>document.write('<scr'+'ipt src="../../_ds_bundle.js'+(location.search||'')+'"><\/scr'+'ipt>');</script>
+<style>body{background:var(--bg-canvas);margin:0;padding:20px;box-sizing:border-box}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.col{display:flex;flex-direction:column;gap:12px}.lbl{font-size:11px;line-height:16px;color:var(--text-tertiary);letter-spacing:.04em}</style>
+</head><body><div id="root"></div>
+<script type="text/babel">
+const { Modal, BottomSheet, Button } = window.CHIDADesignSystem_4f968e;
+const frame={position:'relative',width:300,height:360,background:'var(--bg-canvas)',border:'1px solid var(--border-subtle)',borderRadius:'var(--radius-card)',overflow:'hidden'};
+function Demo(){return (
+  <div className="row" style={{gap:24,alignItems:'flex-start'}}>
+    <div style={frame}>
+      <Modal open title="از ثبت‌نام خارج می‌شوید؟" description="اطلاعات واردشده ذخیره نمی‌شود."
+        footer={<><Button variant="danger" fullWidth>خروج</Button><Button variant="secondary" fullWidth>ادامه ثبت‌نام</Button></>} />
+    </div>
+    <div style={frame}>
+      <BottomSheet open title="کد دعوت را از کجا بیاورم؟" description="حساب سازنده فقط با دعوت ساخته می‌شود."
+        footer={<Button variant="primary" fullWidth>متوجه شدم</Button>}>
+        <div style={{fontSize:'var(--size-callout)',lineHeight:'var(--lh-callout)',color:'var(--text-secondary)'}}>اگر کد ندارید، شماره‌تان را برای ما بگذارید تا تیم چیدا با شما تماس بگیرد.</div>
+      </BottomSheet>
+    </div>
+  </div>);}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo/>);
+</script></body></html>

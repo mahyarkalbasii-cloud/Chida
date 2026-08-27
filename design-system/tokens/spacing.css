@@ -1,0 +1,7 @@
+:root{
+--space-0:0px;--space-1:2px;--space-2:4px;--space-3:8px;--space-4:12px;--space-5:16px;--space-6:20px;
+--space-7:24px;--space-8:32px;--space-9:40px;--space-10:48px;--space-11:64px;--space-12:80px;
+--touch-min:48px;--touch-comfortable:56px;
+--field-height:52px;--button-height:52px;--button-height-sm:40px;
+--header-height:56px;--tabbar-height:64px;
+}

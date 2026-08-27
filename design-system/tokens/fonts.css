@@ -1,0 +1,7 @@
+/* IRANYekanXVF — variable weight axis (100–900). Use only 400 / 500 / 600. */
+@font-face{font-family:"IRANYekanXVF";src:url("../assets/fonts/IRANYekanXVF.ttf") format("truetype");font-weight:100 900;font-style:normal;font-display:swap}
+:root{
+--font-fa:"IRANYekanXVF","Segoe UI",Tahoma,sans-serif;
+--font-num:"IRANYekanXVF","SF Mono",ui-monospace,monospace;
+--weight-regular:400;--weight-medium:500;--weight-demibold:600;
+}

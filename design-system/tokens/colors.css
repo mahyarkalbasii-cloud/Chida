@@ -1,0 +1,51 @@
+/* Primitives — warm neutrals, ink, one copper accent, one error. */
+:root{
+--warm-0:#FFFFFF;--warm-50:#FAF9F7;--warm-100:#F4F2EE;--warm-200:#E9E5DE;--warm-300:#DBD5CB;
+--warm-400:#BEB6A9;--warm-500:#968D80;--warm-600:#6D655B;--warm-700:#4A443C;--warm-800:#2C2823;--warm-900:#1B1815;
+--copper-50:#FAF3ED;--copper-100:#F1E2D5;--copper-200:#E0C3AB;--copper-300:#C89C78;--copper-400:#AE7A52;
+--copper-500:#96603D;--copper-600:#7E5033;--copper-700:#653F28;
+--rust-300:#E39A90;--rust-400:#CE6255;--rust-500:#B23A2C;--rust-600:#8F2E23;
+}
+/* Semantic — light (default) */
+:root{color-scheme:light;
+--bg-canvas:var(--warm-50);--bg-surface:var(--warm-0);--bg-subtle:var(--warm-100);--bg-inset:var(--warm-200);--bg-hover:rgba(27,24,21,.04);--bg-pressed:rgba(27,24,21,.07);
+--text-primary:var(--warm-900);--text-secondary:var(--warm-600);--text-tertiary:var(--warm-500);--text-disabled:var(--warm-400);--text-inverse:var(--warm-0);--text-accent:var(--copper-600);
+--border-subtle:var(--warm-200);--border-default:var(--warm-300);--border-strong:var(--warm-400);
+--accent:var(--copper-500);--accent-hover:var(--copper-600);--accent-pressed:var(--copper-700);--accent-subtle:var(--copper-50);--accent-border:var(--copper-200);--on-accent:#FFFFFF;
+--danger:var(--rust-500);--danger-hover:var(--rust-600);--danger-subtle:#FDF1EF;--danger-border:#F0CFC9;--on-danger:#FFFFFF;
+--focus-ring:var(--copper-400);--focus-ring-offset:var(--bg-canvas);
+--overlay:rgba(27,24,21,.42);
+--skeleton:var(--warm-200);
+}
+/* Semantic — dark, following the OS */
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;
+--bg-canvas:#121110;--bg-surface:#1A1816;--bg-subtle:#211E1B;--bg-inset:#2A2622;--bg-hover:rgba(245,241,234,.05);--bg-pressed:rgba(245,241,234,.09);
+--text-primary:#F3EFE9;--text-secondary:#ADA69D;--text-tertiary:#8A827A;--text-disabled:#5E574F;--text-inverse:#1B1815;--text-accent:#D19A72;
+--border-subtle:#2B2724;--border-default:#3A342E;--border-strong:#4E463D;
+--accent:#C08056;--accent-hover:#CF9068;--accent-pressed:#A96C48;--accent-subtle:rgba(192,128,86,.12);--accent-border:rgba(192,128,86,.34);--on-accent:#1B1310;
+--danger:#DE7A6D;--danger-hover:#E88C80;--danger-subtle:rgba(222,122,109,.12);--danger-border:rgba(222,122,109,.32);--on-danger:#22100C;
+--focus-ring:#D19A72;--focus-ring-offset:#121110;
+--overlay:rgba(0,0,0,.58);
+--skeleton:#26221F;
+}}
+/* Explicit overrides — data-theme wins over the OS preference (declared last). */
+[data-theme="light"]{color-scheme:light;
+--bg-canvas:var(--warm-50);--bg-surface:var(--warm-0);--bg-subtle:var(--warm-100);--bg-inset:var(--warm-200);--bg-hover:rgba(27,24,21,.04);--bg-pressed:rgba(27,24,21,.07);
+--text-primary:var(--warm-900);--text-secondary:var(--warm-600);--text-tertiary:var(--warm-500);--text-disabled:var(--warm-400);--text-inverse:var(--warm-0);--text-accent:var(--copper-600);
+--border-subtle:var(--warm-200);--border-default:var(--warm-300);--border-strong:var(--warm-400);
+--accent:var(--copper-500);--accent-hover:var(--copper-600);--accent-pressed:var(--copper-700);--accent-subtle:var(--copper-50);--accent-border:var(--copper-200);--on-accent:#FFFFFF;
+--danger:var(--rust-500);--danger-hover:var(--rust-600);--danger-subtle:#FDF1EF;--danger-border:#F0CFC9;--on-danger:#FFFFFF;
+--focus-ring:var(--copper-400);--focus-ring-offset:var(--bg-canvas);
+--overlay:rgba(27,24,21,.42);
+--skeleton:var(--warm-200);
+}
+[data-theme="dark"]{color-scheme:dark;
+--bg-canvas:#121110;--bg-surface:#1A1816;--bg-subtle:#211E1B;--bg-inset:#2A2622;--bg-hover:rgba(245,241,234,.05);--bg-pressed:rgba(245,241,234,.09);
+--text-primary:#F3EFE9;--text-secondary:#ADA69D;--text-tertiary:#8A827A;--text-disabled:#5E574F;--text-inverse:#1B1815;--text-accent:#D19A72;
+--border-subtle:#2B2724;--border-default:#3A342E;--border-strong:#4E463D;
+--accent:#C08056;--accent-hover:#CF9068;--accent-pressed:#A96C48;--accent-subtle:rgba(192,128,86,.12);--accent-border:rgba(192,128,86,.34);--on-accent:#1B1310;
+--danger:#DE7A6D;--danger-hover:#E88C80;--danger-subtle:rgba(222,122,109,.12);--danger-border:rgba(222,122,109,.32);--on-danger:#22100C;
+--focus-ring:#D19A72;--focus-ring-offset:#121110;
+--overlay:rgba(0,0,0,.58);
+--skeleton:#26221F;
+}

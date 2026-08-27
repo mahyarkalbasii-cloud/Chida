@@ -1,0 +1,24 @@
+/* Type scale — mobile-first at 390px. Never below 12px. */
+:root{
+--size-display:28px;--lh-display:38px;
+--size-title:22px;--lh-title:32px;
+--size-headline:18px;--lh-headline:28px;
+--size-body:16px;--lh-body:28px;
+--size-callout:15px;--lh-callout:26px;
+--size-label:14px;--lh-label:22px;
+--size-caption:13px;--lh-caption:20px;
+--size-micro:12px;--lh-micro:18px;
+--size-otp:24px;--lh-otp:32px;
+--tracking-tight:-0.01em;--tracking-normal:0;--tracking-num:.02em;
+}
+.chida-display{font-family:var(--font-fa);font-size:var(--size-display);line-height:var(--lh-display);font-weight:var(--weight-demibold);letter-spacing:var(--tracking-tight)}
+.chida-title{font-family:var(--font-fa);font-size:var(--size-title);line-height:var(--lh-title);font-weight:var(--weight-demibold)}
+.chida-headline{font-family:var(--font-fa);font-size:var(--size-headline);line-height:var(--lh-headline);font-weight:var(--weight-medium)}
+.chida-body{font-family:var(--font-fa);font-size:var(--size-body);line-height:var(--lh-body);font-weight:var(--weight-regular)}
+.chida-callout{font-family:var(--font-fa);font-size:var(--size-callout);line-height:var(--lh-callout);font-weight:var(--weight-regular)}
+.chida-label{font-family:var(--font-fa);font-size:var(--size-label);line-height:var(--lh-label);font-weight:var(--weight-medium)}
+.chida-caption{font-family:var(--font-fa);font-size:var(--size-caption);line-height:var(--lh-caption);font-weight:var(--weight-regular)}
+.chida-micro{font-family:var(--font-fa);font-size:var(--size-micro);line-height:var(--lh-micro);font-weight:var(--weight-regular)}
+/* Latin-digit fields inside an RTL page: isolate direction, keep the caret on the left. */
+.chida-ltr-field{direction:ltr;text-align:left;unicode-bidi:isolate;font-variant-numeric:tabular-nums;letter-spacing:var(--tracking-num)}
+.chida-num{font-variant-numeric:tabular-nums;unicode-bidi:isolate}

@@ -1,0 +1,6 @@
+.DS_Store
+IRANYekanX(Pro)/
+prototype/node_modules/
+prototype/dist/
+prototype/test-results/
+prototype/playwright-report/
