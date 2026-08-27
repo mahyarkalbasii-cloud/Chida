@@ -3,13 +3,17 @@
 ## CHIDA Product Decisions
 
 - CHIDA is Persian, true RTL, and mobile-first; the primary visual target is 390 x 844.
-- Use IRANYekanX, warm neutrals, a restrained copper accent, and first-class Light/Dark themes.
+- Use IRANYekanX, warm neutrals, and a restrained copper accent. The current prototype is intentionally Dark-only; do not expose a theme switch until the user asks to resume Light.
 - One account has exactly one immutable role. Do not add a second role or a role switcher.
 - Builder flow is role -> invite -> phone -> six-digit OTP -> builder chat home.
 - Supplier remains selectable but must stop at a clear coming-soon explanation in this prototype.
-- Keep builder home chat-first and quiet: collapsible right drawer, project dropdown in the top bar, profile/settings at top-left, one-row quick actions, and a compact composer.
+- Keep builder home chat-first and quiet: collapsible right drawer, centered project dropdown in the top bar, no duplicate profile control in the header, one-row quick actions, and a compact composer. Profile/settings live only at the bottom of the drawer.
 - Composer controls are plus and gauge together on the RTL right side, then microphone and send on the left. Do not print the active mode name inside the composer.
 - Attach the prominent active-project strip directly below the composer with zero gap. Capability icons open the active-tools list.
+- In the Dark-only chat home, visually interlock the composer and its narrower project strip; keep the tool cluster subtle but visibly clickable with a short «ابزارها» label.
+- The shipped route is a real full-screen responsive app. Keep the protected device runtime available for isolated runtime fixtures, but hide its picker, bezel, status bar, home indicator, camera cutout, and synthetic keyboard on CHIDA product routes.
+- Build lives under Tools and must preview its data, permissions, safe components, install location, plugin, and related skill before an in-browser simulated install. Never claim free-code execution or a real external install in this prototype.
+- Brief lives in the right drawer and supports one persisted daily or weekly schedule. Its summary is action-oriented: decisions, overdue/upcoming work, open procurement, unresolved documents, and changes since the last visit.
 - The prototype is local/synthetic only: no real OTP, AI provider, external data, or commercial side effect.
 
 ## Prototype Instructions
