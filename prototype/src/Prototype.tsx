@@ -117,9 +117,11 @@ type ProjectMemoryRecord = {
   updatedAt: string;
 };
 type ProjectMemoryDraft = Pick<ProjectMemoryRecord, "title" | "content" | "kind">;
-type HomeView = "chat" | "project" | "files" | "gallery" | "memory";
-type FilesReturnView = "chat" | "project";
+type HomeView = "chat" | "project" | "files" | "gallery" | "memory" | "search";
+type FilesReturnView = "chat" | "project" | "search";
+type MemoryReturnView = "project" | "search";
 type StoredProjectImage = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
+type LocalRecordsReadResult<RecordType> = { records: RecordType[]; readError: boolean };
 
 const defaultInvite = "CHD-4K9P";
 const defaultPhone = "09123456789";
@@ -267,14 +269,14 @@ function readStoredProjects(): BuilderProject[] {
   }
 }
 
-function readStoredProjectFiles(): ProjectFileRecord[] {
+function readStoredProjectFiles(): LocalRecordsReadResult<ProjectFileRecord> {
   try {
     const rawFiles = window.localStorage.getItem(projectFilesStorageKey);
-    if (!rawFiles) return [];
+    if (!rawFiles) return { records: [], readError: false };
     const parsed = JSON.parse(rawFiles);
-    if (!Array.isArray(parsed)) return [];
+    if (!Array.isArray(parsed)) return { records: [], readError: true };
     const seenIds = new Set<string>();
-    return parsed.flatMap((file): ProjectFileRecord[] => {
+    const records = parsed.flatMap((file): ProjectFileRecord[] => {
       const id = typeof file?.id === "string" ? file.id.trim() : "";
       const projectId = typeof file?.projectId === "string" ? file.projectId.trim() : "";
       const displayName = typeof file?.displayName === "string" ? file.displayName.trim() : "";
@@ -293,6 +295,7 @@ function readStoredProjectFiles(): ProjectFileRecord[] {
         || !Number.isFinite(file.size)
         || file.size < 0
         || !projectFileCategories.includes(file?.category as ProjectFileCategory)
+        || (file?.source !== "انتخاب مستقیم از دستگاه" && file?.source !== "دوربین دستگاه")
         || file?.version !== 1
         || !isValidProjectFileDate(createdAt)
       ) return [];
@@ -306,7 +309,7 @@ function readStoredProjectFiles(): ProjectFileRecord[] {
         mimeType,
         size: file.size,
         category: file.category as ProjectFileCategory,
-        source: file.source === "دوربین دستگاه" ? "دوربین دستگاه" : "انتخاب مستقیم از دستگاه",
+        source: file.source,
         status: "ثبت محلی",
         version: 1,
         projectStage: normalizeStoredProjectStage(file.projectStage),
@@ -316,19 +319,20 @@ function readStoredProjectFiles(): ProjectFileRecord[] {
         createdAt,
       }];
     });
+    return { records, readError: false };
   } catch {
-    return [];
+    return { records: [], readError: true };
   }
 }
 
-function readStoredProjectMemories(): ProjectMemoryRecord[] {
+function readStoredProjectMemories(): LocalRecordsReadResult<ProjectMemoryRecord> {
   try {
     const rawMemories = window.localStorage.getItem(projectMemoriesStorageKey);
-    if (!rawMemories) return [];
+    if (!rawMemories) return { records: [], readError: false };
     const parsed = JSON.parse(rawMemories);
-    if (!Array.isArray(parsed)) return [];
+    if (!Array.isArray(parsed)) return { records: [], readError: true };
     const seenIds = new Set<string>();
-    return parsed.flatMap((memory): ProjectMemoryRecord[] => {
+    const records = parsed.flatMap((memory): ProjectMemoryRecord[] => {
       const id = typeof memory?.id === "string" ? memory.id.trim() : "";
       const projectId = typeof memory?.projectId === "string" ? memory.projectId.trim() : "";
       const title = typeof memory?.title === "string" ? memory.title.trim() : "";
@@ -369,8 +373,9 @@ function readStoredProjectMemories(): ProjectMemoryRecord[] {
         updatedAt,
       }];
     });
+    return { records, readError: false };
   } catch {
-    return [];
+    return { records: [], readError: true };
   }
 }
 
@@ -494,6 +499,41 @@ function projectFileFormat(file: Pick<ProjectFileRecord, "originalName" | "mimeT
   return extension && extension !== file.originalName.toLocaleUpperCase("en-US") ? extension : file.mimeType || "نوع نامشخص";
 }
 
+function normalizeProjectSearchText(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/[يىئ]/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[أإٱآ]/g, "ا")
+    .replace(/ؤ/g, "و")
+    .replace(/[ةۀ]/g, "ه")
+    .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g, "")
+    .replace(/[۰-۹]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
+    .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[\u200c\u200d\p{P}\p{S}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("fa-IR");
+}
+
+function matchesProjectSearch(query: string, fields: string[]) {
+  const tokens = normalizeProjectSearchText(query).split(" ").filter(Boolean);
+  if (tokens.length === 0) return false;
+  const searchableFields = fields.map((field) => {
+    const normalized = normalizeProjectSearchText(field);
+    return { normalized, compact: normalized.replace(/\s/g, "") };
+  });
+  return tokens.every((token) => searchableFields.some((field) => field.normalized.includes(token) || field.compact.includes(token)));
+}
+
+function readLocalStorageValue(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
 function normalizeProjectArea(value: string) {
   const trimmed = value.trim();
   if (trimmed === "تهران") return "";
@@ -584,7 +624,7 @@ export default function Prototype() {
   const [otp, setOtp] = useState(defaultOtp);
   const [error, setError] = useState("");
   const [projects, setProjects] = useState<BuilderProject[]>(readStoredProjects);
-  const [activeProjectId, setActiveProjectId] = useState(() => window.localStorage.getItem(activeProjectStorageKey) ?? "");
+  const [activeProjectId, setActiveProjectId] = useState(() => readLocalStorageValue(activeProjectStorageKey) ?? "");
   const [modelMode, setModelMode] = useState<ModelMode>("خودکار");
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -1061,12 +1101,20 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const projectWorkspaceScrollPositions = useRef(new Map<string, number>());
   const [view, setView] = useState<HomeView>("chat");
   const [filesReturnView, setFilesReturnView] = useState<FilesReturnView>("project");
+  const [memoryReturnView, setMemoryReturnView] = useState<MemoryReturnView>("project");
+  const [focusedFileId, setFocusedFileId] = useState<string | null>(null);
+  const [focusedMemoryId, setFocusedMemoryId] = useState<string | null>(null);
+  const [projectSearchQuery, setProjectSearchQuery] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [projectFiles, setProjectFiles] = useState<ProjectFileRecord[]>(readStoredProjectFiles);
-  const [projectMemories, setProjectMemories] = useState<ProjectMemoryRecord[]>(readStoredProjectMemories);
-  const [installedTool, setInstalledTool] = useState(() => window.localStorage.getItem(installedToolStorageKey) ?? "");
+  const [initialProjectFiles] = useState<LocalRecordsReadResult<ProjectFileRecord>>(readStoredProjectFiles);
+  const [initialProjectMemories] = useState<LocalRecordsReadResult<ProjectMemoryRecord>>(readStoredProjectMemories);
+  const [projectFiles, setProjectFiles] = useState<ProjectFileRecord[]>(initialProjectFiles.records);
+  const [projectMemories, setProjectMemories] = useState<ProjectMemoryRecord[]>(initialProjectMemories.records);
+  const [projectFilesReadError] = useState(initialProjectFiles.readError);
+  const [projectMemoriesReadError] = useState(initialProjectMemories.readError);
+  const [installedTool, setInstalledTool] = useState(() => readLocalStorageValue(installedToolStorageKey) ?? "");
   const [briefSchedule, setBriefSchedule] = useState<BriefSchedule | null>(() => {
     try {
       const stored = window.localStorage.getItem(briefStorageKey);
@@ -1081,6 +1129,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, []);
+
+  useEffect(() => {
+    setProjectSearchQuery("");
+    setFocusedFileId(null);
+    setFocusedMemoryId(null);
+  }, [activeProject.id]);
 
   useEffect(() => {
     let disposed = false;
@@ -1169,7 +1223,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     if (nextProject && isProjectReady(nextProject)) setView("project");
   };
 
-  const openProjectFiles = (returnView: FilesReturnView) => {
+  const openProjectFiles = (returnView: FilesReturnView, focusedId: string | null = null) => {
     keyboard.hide();
     onOpenSheet(null);
     if (returnView === "project") {
@@ -1177,7 +1231,22 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
     }
     setFilesReturnView(returnView);
+    setFocusedFileId(focusedId);
     setView("files");
+  };
+
+  const openProjectMemory = (returnView: MemoryReturnView, focusedId: string | null = null) => {
+    keyboard.hide();
+    onOpenSheet(null);
+    setMemoryReturnView(returnView);
+    setFocusedMemoryId(focusedId);
+    setView("memory");
+  };
+
+  const openProjectSearch = () => {
+    keyboard.hide();
+    onOpenSheet(null);
+    setView("search");
   };
 
   const writeProjectFilesMetadata = (nextFiles: ProjectFileRecord[]) => {
@@ -1190,12 +1259,14 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   };
 
   const persistProjectFiles = (nextFiles: ProjectFileRecord[]) => {
+    if (projectFilesReadError) return false;
     if (!writeProjectFilesMetadata(nextFiles)) return false;
     setProjectFiles(nextFiles);
     return true;
   };
 
   const registerProjectFile = async (pendingFile: PendingProjectFile) => {
+    if (projectFilesReadError) return false;
     const createdAt = new Date().toISOString();
     const record = {
       id: `file-${window.crypto.randomUUID()}`,
@@ -1250,6 +1321,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   };
 
   const persistProjectMemories = (nextMemories: ProjectMemoryRecord[]) => {
+    if (projectMemoriesReadError) return false;
     try {
       if (nextMemories.length === 0) window.localStorage.removeItem(projectMemoriesStorageKey);
       else window.localStorage.setItem(projectMemoriesStorageKey, JSON.stringify(nextMemories));
@@ -1309,6 +1381,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         fileCount={activeProjectFiles.length}
         imageCount={activeProjectImages.length}
         memoryCount={activeProjectMemories.length}
+        filesReadError={projectFilesReadError}
+        memoriesReadError={projectMemoriesReadError}
         initialScrollTop={projectWorkspaceScrollPositions.current.get(activeProject.id) ?? 0}
         onBack={leaveProjectWorkspace}
         onContinue={leaveProjectWorkspace}
@@ -1321,7 +1395,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         onOpenMemory={() => {
           const projectScroll = document.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
           if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
-          setView("memory");
+          openProjectMemory("project");
         }}
         onUpdate={(draft) => onProjectUpdate(activeProject.id, draft)}
       />
@@ -1333,7 +1407,9 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <ProjectFilesView
         project={activeProject}
         files={activeProjectFiles}
-        onBack={() => setView(filesReturnView)}
+        storageLocked={projectFilesReadError}
+        initialSelectedId={focusedFileId}
+        onBack={() => { setFocusedFileId(null); setView(filesReturnView); }}
         onRegister={registerProjectFile}
         onRename={renameProjectFile}
       />
@@ -1345,6 +1421,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <ProjectGalleryView
         project={activeProject}
         files={activeProjectImages}
+        storageLocked={projectFilesReadError}
         onBack={() => setView("project")}
         onRegister={registerProjectFile}
       />
@@ -1356,11 +1433,30 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <ProjectMemoryView
         project={activeProject}
         memories={activeProjectMemories}
-        onBack={() => setView("project")}
+        storageLocked={projectMemoriesReadError}
+        initialSelectedId={focusedMemoryId}
+        backLabel={memoryReturnView === "search" ? "بازگشت به جست‌وجو" : "بازگشت به فضای پروژه"}
+        onBack={() => { setFocusedMemoryId(null); setView(memoryReturnView); }}
         onCreate={createProjectMemory}
         onUpdate={updateProjectMemory}
         onToggleUse={toggleProjectMemoryUse}
         onDelete={deleteProjectMemory}
+      />
+    );
+  }
+
+  if (view === "search") {
+    return (
+      <ProjectSourceSearchView
+        project={activeProject}
+        memories={activeProjectMemories}
+        files={activeProjectFiles}
+        query={projectSearchQuery}
+        readError={projectFilesReadError || projectMemoriesReadError}
+        onQueryChange={setProjectSearchQuery}
+        onBack={() => { keyboard.hide(); setView("chat"); }}
+        onOpenMemory={(memoryId) => openProjectMemory("search", memoryId)}
+        onOpenFile={(fileId) => openProjectFiles("search", fileId)}
       />
     );
   }
@@ -1450,7 +1546,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
 
       <ModelsSheet sheet={sheet} mode={modelMode} onClose={() => onOpenSheet(null)} onSelect={onModelChange} />
       <AttachSheet sheet={sheet} onClose={() => onOpenSheet(null)} />
-      <ToolsSheet sheet={sheet} installedTool={installedTool} onBuild={() => onOpenSheet("build")} onFiles={() => openProjectFiles("chat")} onClose={() => onOpenSheet(null)} />
+      <ToolsSheet sheet={sheet} installedTool={installedTool} onBuild={() => onOpenSheet("build")} onSearch={openProjectSearch} onFiles={() => openProjectFiles("chat")} onClose={() => onOpenSheet(null)} />
       <BuildSheet sheet={sheet} activeProject={activeProject.name} onClose={() => onOpenSheet(null)} onInstalled={installTool} />
       <BriefSheet sheet={sheet} schedule={briefSchedule} onClose={() => onOpenSheet(null)} onSave={saveBrief} />
       <ProjectsSheet sheet={sheet} projects={projects} activeProjectId={activeProject.id} onClose={() => onOpenSheet(null)} onSelect={openProjectSpace} />
@@ -1460,7 +1556,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   );
 }
 
-function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, initialScrollTop, onBack, onContinue, onOpenFiles, onOpenGallery, onOpenMemory, onUpdate }: { project: BuilderProject; fileCount: number; imageCount: number; memoryCount: number; initialScrollTop: number; onBack: () => void; onContinue: () => void; onOpenFiles: () => void; onOpenGallery: () => void; onOpenMemory: () => void; onUpdate: (draft: ProjectProfileDraft) => void }) {
+function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, filesReadError, memoriesReadError, initialScrollTop, onBack, onContinue, onOpenFiles, onOpenGallery, onOpenMemory, onUpdate }: { project: BuilderProject; fileCount: number; imageCount: number; memoryCount: number; filesReadError: boolean; memoriesReadError: boolean; initialScrollTop: number; onBack: () => void; onContinue: () => void; onOpenFiles: () => void; onOpenGallery: () => void; onOpenMemory: () => void; onUpdate: (draft: ProjectProfileDraft) => void }) {
   const keyboard = useKeyboard();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -1539,7 +1635,7 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, initial
             <span className="project-files-entry-icon"><ImageIcon size={22} strokeWidth={1.65} /></span>
             <span className="project-files-entry-copy">
               <strong>گالری تصاویر</strong>
-              <small>{imageCount ? `${imageCount.toLocaleString("fa-IR")} عکس ثبت‌شده` : "هنوز عکسی ثبت نشده"}</small>
+              <small>{filesReadError ? "بازیابی محلی کامل نشد" : imageCount ? `${imageCount.toLocaleString("fa-IR")} عکس ثبت‌شده` : "هنوز عکسی ثبت نشده"}</small>
             </span>
             <ArrowRight size={18} aria-hidden="true" />
           </button>
@@ -1548,7 +1644,7 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, initial
             <span className="project-files-entry-icon"><FileText size={22} strokeWidth={1.65} /></span>
             <span className="project-files-entry-copy">
               <strong>فایل‌ها و اسناد</strong>
-              <small>{fileCount ? `${fileCount.toLocaleString("fa-IR")} فایل ثبت‌شده` : "هنوز فایلی ثبت نشده"}</small>
+              <small>{filesReadError ? "بازیابی محلی کامل نشد" : fileCount ? `${fileCount.toLocaleString("fa-IR")} فایل ثبت‌شده` : "هنوز فایلی ثبت نشده"}</small>
             </span>
             <ArrowRight size={18} aria-hidden="true" />
           </button>
@@ -1557,7 +1653,7 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, initial
             <span className="project-files-entry-icon"><BrainCircuit size={22} strokeWidth={1.65} /></span>
             <span className="project-files-entry-copy">
               <strong>حافظهٔ پروژه</strong>
-              <small>{memoryCount ? `${memoryCount.toLocaleString("fa-IR")} مورد ثبت‌شده` : "هنوز موردی ثبت نشده"}</small>
+              <small>{memoriesReadError ? "بازیابی محلی کامل نشد" : memoryCount ? `${memoryCount.toLocaleString("fa-IR")} مورد ثبت‌شده` : "هنوز موردی ثبت نشده"}</small>
             </span>
             <ArrowRight size={18} aria-hidden="true" />
           </button>
@@ -1579,9 +1675,141 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, initial
   );
 }
 
-function ProjectMemoryView({ project, memories, onBack, onCreate, onUpdate, onToggleUse, onDelete }: { project: BuilderProject; memories: ProjectMemoryRecord[]; onBack: () => void; onCreate: (draft: ProjectMemoryDraft) => boolean; onUpdate: (memoryId: string, draft: ProjectMemoryDraft) => boolean; onToggleUse: (memoryId: string) => boolean; onDelete: (memoryId: string) => boolean }) {
+function ProjectSourceSearchView({ project, memories, files, query, readError, onQueryChange, onBack, onOpenMemory, onOpenFile }: { project: BuilderProject; memories: ProjectMemoryRecord[]; files: ProjectFileRecord[]; query: string; readError: boolean; onQueryChange: (query: string) => void; onBack: () => void; onOpenMemory: (memoryId: string) => void; onOpenFile: (fileId: string) => void }) {
   const keyboard = useKeyboard();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const normalizedQuery = normalizeProjectSearchText(query);
+  const matchingMemories = useMemo(() => {
+    if (!normalizedQuery) return [];
+    return memories
+      .filter((memory) => memory.projectId === project.id && matchesProjectSearch(query, [memory.title, memory.content, memory.kind, memory.source]))
+      .sort((first, second) => second.updatedAt.localeCompare(first.updatedAt));
+  }, [memories, normalizedQuery, project.id, query]);
+  const matchingFiles = useMemo(() => {
+    if (!normalizedQuery) return [];
+    return files
+      .filter((file) => file.projectId === project.id && matchesProjectSearch(query, [file.displayName, file.originalName, file.category, file.projectStage, file.source, projectFileFormat(file)]))
+      .sort((first, second) => second.createdAt.localeCompare(first.createdAt));
+  }, [files, normalizedQuery, project.id, query]);
+  const resultCount = matchingMemories.length + matchingFiles.length;
+  const corpusCount = memories.filter((memory) => memory.projectId === project.id).length + files.filter((file) => file.projectId === project.id).length;
+
+  return (
+    <div className="chida-app project-source-search-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-source-search-view">
+      <header className="project-workspace-header">
+        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label="بازگشت به گفت‌وگو" data-testid="project-source-search-back"><ArrowRight size={21} /></button>
+        <span className="project-workspace-title"><small>جست‌وجوی محلی پروژه</small><strong>{project.name}</strong></span>
+        <span className="project-workspace-header-spacer" aria-hidden="true" />
+      </header>
+
+      <MobileScroll className="project-source-search-scroll">
+        <main className="project-source-search-content">
+          <section className="project-source-search-heading">
+            <span className="project-source-search-mark"><Search size={24} strokeWidth={1.65} /></span>
+            <div><span className="eyebrow">فقط داده‌های ثبت‌شده</span><h1>جست‌وجو در پروژه</h1><p>حافظه و شناسنامهٔ فایل‌های {project.name}</p></div>
+          </section>
+
+          <div className="project-source-search-field">
+            <label htmlFor="project-source-search-input">عبارت جست‌وجو</label>
+            <div className="project-source-search-control">
+              <Search size={18} aria-hidden="true" />
+              <KeyboardInput
+                ref={searchInputRef}
+                id="project-source-search-input"
+                data-testid="project-source-search-input"
+                value={query}
+                maxLength={120}
+                placeholder="عنوان، متن حافظه یا نام فایل..."
+                onChange={(event) => onQueryChange(event.target.value)}
+                autoComplete="off"
+              />
+              {query ? <button type="button" onPointerDown={(event) => event.preventDefault()} onClick={() => { onQueryChange(""); searchInputRef.current?.focus(); }} aria-label="پاک‌کردن جست‌وجو" data-testid="project-source-search-clear"><X size={18} /></button> : null}
+            </div>
+          </div>
+
+          <aside className="project-source-search-scope" aria-label="محدودهٔ جست‌وجوی فعلی">
+            <ShieldCheck size={17} />
+            <span><strong>فقط حافظه و شناسنامهٔ فایل‌های همین پروژه جست‌وجو می‌شوند.</strong> وب و محتوای فایل‌ها جست‌وجو نمی‌شوند؛ OCR، تحلیل یا پاسخ هوش مصنوعی هم انجام نمی‌شود.</span>
+          </aside>
+
+          {readError ? (
+            <p className="project-source-search-read-error" role="alert" data-testid="project-source-search-read-error">بازیابی محلی کامل نشد. نتیجه‌ها را کامل فرض نکن؛ دسترسی ذخیره‌سازی مرورگر را بررسی و صفحه را دوباره بارگذاری کن.</p>
+          ) : null}
+
+          {!normalizedQuery ? (
+            <section className="project-source-search-empty" data-testid="project-source-search-empty">
+              <span><Search size={25} strokeWidth={1.65} /></span>
+              <h2>{readError && corpusCount === 0 ? "بازیابی محلی کامل نشد" : corpusCount === 0 ? "هنوز منبع محلی ثبت نشده" : "عبارتی برای جست‌وجو بنویس"}</h2>
+              <p>{readError && corpusCount === 0 ? "تا بازیابی دوباره، نبودن حافظه یا فایل را قطعی فرض نکن." : corpusCount === 0 ? "ابتدا یک حافظه یا شناسنامهٔ فایل در این پروژه ثبت کن." : "جست‌وجو تطبیق مستقیم و محلی است؛ رتبه‌بندی هوشمند یا جست‌وجوی معنایی انجام نمی‌شود."}</p>
+            </section>
+          ) : resultCount === 0 ? (
+            <section className="project-source-search-empty" data-testid="project-source-search-no-results" role="status" aria-live="polite">
+              <span><Search size={25} strokeWidth={1.65} /></span>
+              <h2>{readError ? "نتیجهٔ کامل در دسترس نیست" : "نتیجه‌ای پیدا نشد"}</h2>
+              <p>{readError ? "بازیابی محلی کامل نشد؛ نبودن این عبارت را قطعی فرض نکن. محتوای فایل‌ها، وب و پروژه‌های دیگر نیز جست‌وجو نشدند." : "در حافظه و شناسنامهٔ فایل‌های همین پروژه نتیجه‌ای پیدا نشد. محتوای فایل‌ها، وب و پروژه‌های دیگر جست‌وجو نشدند."}</p>
+            </section>
+          ) : (
+            <section className="project-source-search-results" aria-label="نتایج جست‌وجوی محلی">
+              <div className="project-source-search-summary" role="status" aria-live="polite"><strong>نتایج تطبیق مستقیم</strong><span>{resultCount.toLocaleString("fa-IR")}</span></div>
+
+              {matchingMemories.length > 0 ? (
+                <div className="project-source-result-group">
+                  <div className="project-source-result-group-title"><BrainCircuit size={17} /><strong>حافظهٔ پروژه</strong><span>{matchingMemories.length.toLocaleString("fa-IR")}</span></div>
+                  <ul>
+                    {matchingMemories.map((memory) => (
+                      <li key={memory.id} data-testid="project-source-result">
+                        <button className="project-source-result-card" type="button" onClick={() => onOpenMemory(memory.id)} data-testid="project-source-result-memory">
+                          <span className="project-source-result-icon"><BrainCircuit size={20} strokeWidth={1.65} /></span>
+                          <span className="project-source-result-copy">
+                            <span className="project-source-result-topline"><small>حافظه · {memory.kind}</small><small>{formatProjectFileDate(memory.updatedAt)}</small></span>
+                            <strong dir="auto">{memory.title}</strong>
+                            <span className="project-source-result-excerpt">{memory.content}</span>
+                            <span className="project-source-result-meta">{memory.source} · خصوصی در {project.name}</span>
+                            <span className="project-source-result-meta">نسخهٔ {memory.version.toLocaleString("fa-IR")} · {memory.status}</span>
+                            <small className={memory.useInContext ? "memory-context-on" : "memory-context-off"}>{memory.useInContext ? "برای زمینه فعال" : "برای زمینه غیرفعال"}</small>
+                          </span>
+                          <ArrowRight size={17} aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {matchingFiles.length > 0 ? (
+                <div className="project-source-result-group">
+                  <div className="project-source-result-group-title"><FileText size={17} /><strong>شناسنامهٔ فایل‌ها</strong><span>{matchingFiles.length.toLocaleString("fa-IR")}</span></div>
+                  <ul>
+                    {matchingFiles.map((file) => (
+                      <li key={file.id} data-testid="project-source-result">
+                        <button className="project-source-result-card" type="button" onClick={() => onOpenFile(file.id)} data-testid="project-source-result-file">
+                          <span className="project-source-result-icon">{isProjectImage(file) ? <ImageIcon size={20} /> : <FileText size={20} />}</span>
+                          <span className="project-source-result-copy">
+                            <span className="project-source-result-topline"><small>شناسنامهٔ فایل · {file.category}</small><small>{formatProjectFileDate(file.createdAt)}</small></span>
+                            <strong dir="auto">{file.displayName}</strong>
+                            <span className="project-source-result-excerpt" dir="auto">{file.originalName} · {projectFileFormat(file)} · {formatProjectFileSize(file.size)}</span>
+                            <span className="project-source-result-meta">{file.source} · خصوصی در {project.name}</span>
+                            <span className="project-source-result-meta">نسخهٔ {file.version.toLocaleString("fa-IR")} · {file.status}</span>
+                            <small className="project-source-file-boundary">محتوای فایل جست‌وجو نشده</small>
+                          </span>
+                          <ArrowRight size={17} aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </section>
+          )}
+        </main>
+      </MobileScroll>
+    </div>
+  );
+}
+
+function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId = null, backLabel = "بازگشت به فضای پروژه", onBack, onCreate, onUpdate, onToggleUse, onDelete }: { project: BuilderProject; memories: ProjectMemoryRecord[]; storageLocked: boolean; initialSelectedId?: string | null; backLabel?: string; onBack: () => void; onCreate: (draft: ProjectMemoryDraft) => boolean; onUpdate: (memoryId: string, draft: ProjectMemoryDraft) => boolean; onToggleUse: (memoryId: string) => boolean; onDelete: (memoryId: string) => boolean }) {
+  const keyboard = useKeyboard();
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [memoryDraft, setMemoryDraft] = useState<ProjectMemoryDraft>({ title: "", content: "", kind: "یادداشت سازنده" });
@@ -1684,7 +1912,7 @@ function ProjectMemoryView({ project, memories, onBack, onCreate, onUpdate, onTo
   return (
     <div className="chida-app project-memory-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-memory-view">
       <header className="project-workspace-header">
-        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label="بازگشت به فضای پروژه" data-testid="project-memory-back"><ArrowRight size={21} /></button>
+        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label={backLabel} data-testid="project-memory-back"><ArrowRight size={21} /></button>
         <span className="project-workspace-title"><small>حافظهٔ پروژه</small><strong>{project.name}</strong></span>
         <span className="project-workspace-header-spacer" aria-hidden="true" />
       </header>
@@ -1696,14 +1924,18 @@ function ProjectMemoryView({ project, memories, onBack, onCreate, onUpdate, onTo
             <div><span className="eyebrow">حافظهٔ همین پروژه</span><h1>چیدا چه می‌داند</h1><p>فقط مواردی که خودت مستقیم برای {project.name} ثبت کرده‌ای.</p></div>
           </section>
 
-          <button className="primary-button project-memory-add" type="button" onClick={openCreateEditor} data-testid="project-memory-add"><Plus size={18} /> افزودن به حافظه</button>
+          <button className="primary-button project-memory-add" type="button" onClick={openCreateEditor} disabled={storageLocked} data-testid="project-memory-add"><Plus size={18} /> افزودن به حافظه</button>
+
+          {storageLocked ? (
+            <p className="project-storage-recovery-alert" role="alert" data-testid="project-memory-read-error"><ShieldCheck size={17} /><span><strong>حافظهٔ محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، افزودن و ویرایش تا بارگذاری موفق بعدی غیرفعال است.</span></p>
+          ) : null}
 
           <aside className="project-memory-trust-note" aria-label="مرز حافظهٔ نسخهٔ فعلی">
             <ShieldCheck size={17} />
             <span><strong>تاریخچهٔ گفتگو حافظه نیست.</strong> پیام‌ها و فایل‌ها خودکار به حافظه تبدیل نمی‌شوند و این نسخه هنوز حافظه را واقعاً وارد زمینهٔ مدل نمی‌کند.</span>
           </aside>
 
-          {orderedMemories.length === 0 ? (
+          {storageLocked ? null : orderedMemories.length === 0 ? (
             <section className="project-memory-empty" data-testid="project-memory-empty">
               <span><BrainCircuit size={25} strokeWidth={1.65} /></span>
               <h2>هنوز چیزی ثبت نشده</h2>
@@ -1776,14 +2008,14 @@ function ProjectMemoryView({ project, memories, onBack, onCreate, onUpdate, onTo
 
             <div className="project-memory-context-control" data-active={selectedMemory.useInContext ? "true" : "false"}>
               <span><small>ترجیح استفاده در زمینه</small><strong>{selectedMemory.useInContext ? "برای زمینه فعال است" : "برای زمینه غیرفعال است"}</strong></span>
-              <button type="button" onClick={toggleSelectedMemoryUse} data-testid="project-memory-use-toggle">{selectedMemory.useInContext ? "غیرفعال کن" : "فعال کن"}</button>
+              <button type="button" onClick={toggleSelectedMemoryUse} disabled={storageLocked} data-testid="project-memory-use-toggle">{selectedMemory.useInContext ? "غیرفعال کن" : "فعال کن"}</button>
             </div>
             <p className="project-memory-context-note"><CircleHelp size={16} /><span>این کنترل فعلاً فقط در مرورگر ذخیره می‌شود؛ اتصال واقعی به زمینهٔ مدل در این تسک ساخته نشده است.</span></p>
             {storageError ? <p className="project-memory-storage-error" role="alert" data-testid="project-memory-storage-error">{storageError}</p> : null}
 
             <div className="project-memory-detail-actions">
-              <button type="button" onClick={() => openEditEditor(selectedMemory)} data-testid="project-memory-edit"><PencilLine size={17} /> ویرایش</button>
-              <button ref={deleteTriggerRef} className="project-memory-delete" type="button" onClick={() => setDeleteConfirmation(true)} data-testid="project-memory-delete">حذف</button>
+              <button type="button" onClick={() => openEditEditor(selectedMemory)} disabled={storageLocked} data-testid="project-memory-edit"><PencilLine size={17} /> ویرایش</button>
+              <button ref={deleteTriggerRef} className="project-memory-delete" type="button" onClick={() => setDeleteConfirmation(true)} disabled={storageLocked} data-testid="project-memory-delete">حذف</button>
             </div>
 
             {deleteConfirmation ? (
@@ -1903,7 +2135,7 @@ function useProjectImageUrls(files: ProjectFileRecord[]) {
   return imageUrls;
 }
 
-function ProjectGalleryView({ project, files, onBack, onRegister }: { project: BuilderProject; files: ProjectFileRecord[]; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean> }) {
+function ProjectGalleryView({ project, files, storageLocked, onBack, onRegister }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean> }) {
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<PendingProjectFile | null>(null);
@@ -1975,16 +2207,20 @@ function ProjectGalleryView({ project, files, onBack, onRegister }: { project: B
           </section>
 
           <div className="project-gallery-actions">
-            <button className="primary-button" type="button" onClick={() => galleryInputRef.current?.click()} data-testid="project-gallery-add"><ImageIcon size={18} /> انتخاب عکس</button>
-            <button className="project-gallery-camera-button" type="button" onClick={() => cameraInputRef.current?.click()} data-testid="project-camera-add"><Camera size={18} /> دوربین</button>
+            <button className="primary-button" type="button" onClick={() => galleryInputRef.current?.click()} disabled={storageLocked} data-testid="project-gallery-add"><ImageIcon size={18} /> انتخاب عکس</button>
+            <button className="project-gallery-camera-button" type="button" onClick={() => cameraInputRef.current?.click()} disabled={storageLocked} data-testid="project-camera-add"><Camera size={18} /> دوربین</button>
           </div>
-          <input ref={galleryInputRef} className="project-file-native-input" type="file" accept={projectImageAccept} data-testid="project-gallery-input" onChange={(event) => { chooseImage(event.currentTarget.files?.[0], "انتخاب مستقیم از دستگاه"); event.currentTarget.value = ""; }} />
-          <input ref={cameraInputRef} className="project-file-native-input" type="file" accept="image/*" capture="environment" data-testid="project-camera-input" onChange={(event) => { chooseImage(event.currentTarget.files?.[0], "دوربین دستگاه"); event.currentTarget.value = ""; }} />
+          <input ref={galleryInputRef} className="project-file-native-input" type="file" accept={projectImageAccept} disabled={storageLocked} data-testid="project-gallery-input" onChange={(event) => { chooseImage(event.currentTarget.files?.[0], "انتخاب مستقیم از دستگاه"); event.currentTarget.value = ""; }} />
+          <input ref={cameraInputRef} className="project-file-native-input" type="file" accept="image/*" capture="environment" disabled={storageLocked} data-testid="project-camera-input" onChange={(event) => { chooseImage(event.currentTarget.files?.[0], "دوربین دستگاه"); event.currentTarget.value = ""; }} />
           <div className="project-file-error-slot" aria-live="polite">{fileError ? <p className="field-error" data-testid="project-gallery-error">{fileError}</p> : null}</div>
+
+          {storageLocked ? (
+            <p className="project-storage-recovery-alert" role="alert" data-testid="project-gallery-read-error"><ShieldCheck size={17} /><span><strong>شناسنامهٔ فایل‌ها کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، افزودن تصویر تا بارگذاری موفق بعدی غیرفعال است.</span></p>
+          ) : null}
 
           <p className="project-files-storage-note"><ShieldCheck size={16} /><span>تصاویر فقط داخل همین مرورگر نگه‌داری می‌شوند و به سرور ارسال نمی‌شوند؛ تحلیل، جست‌وجو یا اشتراک‌گذاری انجام نمی‌شود.</span></p>
 
-          {orderedFiles.length === 0 ? (
+          {storageLocked ? null : orderedFiles.length === 0 ? (
             <section className="project-gallery-empty" data-testid="project-gallery-empty">
               <span><ImageIcon size={26} /></span>
               <h2>هنوز عکسی ثبت نشده</h2>
@@ -2053,10 +2289,10 @@ function ProjectGalleryDetailSheet({ file, imageUrl, project, onClose }: { file:
   );
 }
 
-function ProjectFilesView({ project, files, onBack, onRegister, onRename }: { project: BuilderProject; files: ProjectFileRecord[]; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRename: (fileId: string, displayName: string) => boolean }) {
+function ProjectFilesView({ project, files, storageLocked, initialSelectedId = null, onBack, onRegister, onRename }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; initialSelectedId?: string | null; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRename: (fileId: string, displayName: string) => boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<PendingProjectFile | null>(null);
-  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(initialSelectedId);
   const [fileError, setFileError] = useState("");
   const [registrationError, setRegistrationError] = useState("");
   const [registrationPending, setRegistrationPending] = useState(false);
@@ -2121,12 +2357,13 @@ function ProjectFilesView({ project, files, onBack, onRegister, onRename }: { pr
             <div><span className="eyebrow">کتابخانهٔ پروژه</span><h1>فایل‌ها و اسناد</h1><p>مدارک ثبت‌شده فقط به همین پروژه متصل می‌مانند.</p></div>
           </section>
 
-          <button className="primary-button project-file-add" type="button" onClick={() => inputRef.current?.click()} data-testid="project-file-add"><Plus size={18} /> افزودن فایل</button>
+          <button className="primary-button project-file-add" type="button" onClick={() => inputRef.current?.click()} disabled={storageLocked} data-testid="project-file-add"><Plus size={18} /> افزودن فایل</button>
           <input
             ref={inputRef}
             className="project-file-native-input"
             type="file"
             accept={projectFileAccept}
+            disabled={storageLocked}
             data-testid="project-file-input"
             onChange={(event) => {
               chooseFile(event.currentTarget.files?.[0]);
@@ -2137,9 +2374,13 @@ function ProjectFilesView({ project, files, onBack, onRegister, onRename }: { pr
             {fileError ? <p className="field-error" data-testid="project-file-error">{fileError}</p> : null}
           </div>
 
+          {storageLocked ? (
+            <p className="project-storage-recovery-alert" role="alert" data-testid="project-files-read-error"><ShieldCheck size={17} /><span><strong>شناسنامهٔ فایل‌ها کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، افزودن و تغییر نام تا بارگذاری موفق بعدی غیرفعال است.</span></p>
+          ) : null}
+
           <p className="project-files-storage-note"><ShieldCheck size={16} /><span>محتوای واقعی فایل روی سرور ارسال نمی‌شود؛ تصاویر گالری فقط در همین مرورگر و سایر فایل‌ها فقط به‌صورت شناسنامه نگه‌داری می‌شوند.</span></p>
 
-          {orderedFiles.length === 0 ? (
+          {storageLocked ? null : orderedFiles.length === 0 ? (
             <section className="project-files-empty" data-testid="project-files-empty">
               <span><FileText size={25} /></span>
               <h2>هنوز فایلی ثبت نشده</h2>
@@ -2169,7 +2410,7 @@ function ProjectFilesView({ project, files, onBack, onRegister, onRename }: { pr
         onCancel={() => { setRegistrationError(""); setPendingFile(null); }}
         onRegister={registerPendingFile}
       />
-      <ProjectFileDetailSheet file={selectedFile} project={project} onClose={() => setSelectedFileId(null)} onRename={onRename} />
+      <ProjectFileDetailSheet file={selectedFile} project={project} storageLocked={storageLocked} onClose={() => setSelectedFileId(null)} onRename={onRename} />
     </div>
   );
 }
@@ -2214,7 +2455,7 @@ function ProjectFileRegisterSheet({ file, project, error, busy, categoryLocked =
   );
 }
 
-function ProjectFileDetailSheet({ file, project, onClose, onRename }: { file: ProjectFileRecord | null; project: BuilderProject; onClose: () => void; onRename: (fileId: string, displayName: string) => boolean }) {
+function ProjectFileDetailSheet({ file, project, storageLocked, onClose, onRename }: { file: ProjectFileRecord | null; project: BuilderProject; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => boolean }) {
   const keyboard = useKeyboard();
   const [displayName, setDisplayName] = useState("");
   const [nameError, setNameError] = useState("");
@@ -2249,7 +2490,7 @@ function ProjectFileDetailSheet({ file, project, onClose, onRename }: { file: Pr
           <div className="project-file-preview-title"><span><FileText size={22} /></span><div><small>{file.category}</small><strong>{file.displayName}</strong></div></div>
           <label className="field-control" htmlFor="project-file-display-name">
             <span>نام نمایشی</span>
-            <KeyboardInput id="project-file-display-name" data-testid="project-file-display-name" value={displayName} onChange={(event) => { setDisplayName(event.target.value); setNameError(""); }} aria-invalid={Boolean(nameError)} aria-describedby={nameError ? "project-file-display-name-error" : undefined} />
+            <KeyboardInput id="project-file-display-name" data-testid="project-file-display-name" value={displayName} disabled={storageLocked} onChange={(event) => { setDisplayName(event.target.value); setNameError(""); }} aria-invalid={Boolean(nameError)} aria-describedby={nameError ? "project-file-display-name-error" : undefined} />
             {nameError ? <small className="field-error" id="project-file-display-name-error">{nameError}</small> : null}
           </label>
           <dl className="project-file-meta">
@@ -2262,7 +2503,7 @@ function ProjectFileDetailSheet({ file, project, onClose, onRename }: { file: Pr
             <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(file.createdAt)}</dd></div>
           </dl>
           <p className="project-file-trust-note"><ShieldCheck size={16} /><span>محتوای بیرونی این فایل داده برای بررسی است، نه دستور برای چیدا؛ هیچ تحلیل یا اقدام بیرونی انجام نشده است.</span></p>
-          <button className="primary-button" type="button" onClick={saveName} data-testid="project-file-rename-save">ذخیرهٔ نام نمایشی</button>
+          <button className="primary-button" type="button" onClick={saveName} disabled={storageLocked} data-testid="project-file-rename-save">ذخیرهٔ نام نمایشی</button>
         </section>
       ) : null}
     </BottomSheet>
@@ -2286,13 +2527,13 @@ function AttachSheet({ sheet, onClose }: { sheet: SheetName; onClose: () => void
   return <BottomSheet open={sheet === "attach"} onOpenChange={(open) => !open && onClose()} title="افزودن به گفتگو" snap={0.48}><div className="sheet-list" dir="rtl"><SheetRow icon={<Camera size={20} />} title="دوربین" description="از کارگاه یا مدرک عکس بگیر" onClick={onClose} /><SheetRow icon={<ImageIcon size={20} />} title="عکس و ویدیو" description="از گالری دستگاه انتخاب کن" onClick={onClose} /><SheetRow icon={<FileText size={20} />} title="فایل پیوست · به‌زودی" description="فعلاً برای ثبت فایل از ابزارها وارد اسناد پروژه شو" testId="composer-file-attachment" disabled onClick={() => {}} /></div></BottomSheet>;
 }
 
-function ToolsSheet({ sheet, installedTool, onBuild, onFiles, onClose }: { sheet: SheetName; installedTool: string; onBuild: () => void; onFiles: () => void; onClose: () => void }) {
+function ToolsSheet({ sheet, installedTool, onBuild, onSearch, onFiles, onClose }: { sheet: SheetName; installedTool: string; onBuild: () => void; onSearch: () => void; onFiles: () => void; onClose: () => void }) {
   return (
     <BottomSheet open={sheet === "tools"} onOpenChange={(open) => !open && onClose()} title="ابزارهای پروژه" description="ابزارهای فعال و عامل Build برای ساخت یک ابزار تازه." snap={0.64}>
       <div className="sheet-list" dir="rtl" data-testid="tools-sheet">
         <SheetRow icon={<Hammer size={20} />} title="Build" description="عامل ساخت ابزار و نصب پلاگین و اسکیل در پروژه" testId="build-tool-entry" onClick={onBuild} />
         {installedTool ? <SheetRow icon={<PackageCheck size={20} />} title={installedTool} description="پلاگین خصوصی نصب‌شده در پروژه" testId="installed-tool-row" onClick={onClose} /> : null}
-        <SheetRow icon={<Search size={20} />} title="جست‌وجوی منبع‌دار · به‌زودی" description="پس از اتصال حافظه و منابع واقعی پروژه" testId="source-search-tool" disabled onClick={() => {}} />
+        <SheetRow icon={<Search size={20} />} title="جست‌وجوی محلی پروژه" description="حافظه و شناسنامهٔ فایل‌های همین پروژه" testId="source-search-tool" onClick={onSearch} />
         <SheetRow icon={<FileText size={20} />} title="اسناد پروژه" description="فایل‌های ثبت‌شده در پروژهٔ فعال" testId="project-documents-tool" onClick={onFiles} />
         <SheetRow icon={<Wrench size={20} />} title="دستیار فنی" description="چک‌لیست و تحلیل تخصصی ساخت" onClick={onClose} />
       </div>
