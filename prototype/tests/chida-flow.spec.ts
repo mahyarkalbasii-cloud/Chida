@@ -1598,3 +1598,294 @@ test("Brief saves a weekly cadence and keeps its summary visible in the drawer",
   await expect(page.getByTestId("drawer-brief-summary")).toContainText("هفتگی");
   await expect(page.getByTestId("drawer-brief-summary")).toContainText("شنبه");
 });
+
+test("builder keeps project tasks out of chat with persistent status history", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const activeProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  await page.getByTestId("composer-input").fill("این پیش‌نویس باید بعد از رفت‌وبرگشت بماند");
+
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("drawer-task-count")).toHaveText("۰");
+  await page.getByTestId("drawer-tasks-entry").click();
+
+  const taskCenter = page.getByTestId("project-tasks-view");
+  await expect(taskCenter).toBeVisible();
+  await expect(taskCenter).toContainText("کارهای برج نیلوفر");
+  await expect(page.getByTestId("project-task-filter-active")).toContainText("در حال انجام");
+  await expect(page.getByTestId("project-task-filter-approval")).toContainText("منتظر تأیید");
+  await expect(page.getByTestId("project-task-filter-completed")).toContainText("تمام‌شده");
+  await expect(page.getByTestId("project-task-filter-failed")).toContainText("ناموفق");
+  await expect(page.getByTestId("project-task-filter-monitor")).toContainText("پایش‌ها");
+  await expect(page.getByTestId("project-task-empty")).toContainText("هنوز کار در حال انجامی ثبت نشده");
+  await expect(taskCenter).toContainText("اجرای پس‌زمینه، اعلان و ارسال بیرونی هنوز وصل نیست");
+  expect(await taskCenter.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+  const backBox = await page.getByTestId("project-tasks-back").boundingBox();
+  const addBox = await page.getByTestId("project-task-add").boundingBox();
+  if (!backBox || !addBox) throw new Error("Task center controls are not rendered");
+  expect(backBox.width).toBeGreaterThanOrEqual(44);
+  expect(backBox.height).toBeGreaterThanOrEqual(44);
+  expect(addBox.height).toBeGreaterThanOrEqual(44);
+
+  await page.getByTestId("project-task-filter-monitor").click();
+  await expect(page.getByTestId("project-task-empty")).toContainText("پایش واقعی هنوز به این مرکز وصل نیست");
+  await page.getByTestId("project-task-filter-active").click();
+
+  await page.getByTestId("project-task-add").click();
+  await expect(page.getByTestId("project-task-editor-sheet")).toBeVisible();
+  await expect(page.getByTestId("project-task-step-input")).toHaveCSS("font-size", "16px");
+  await expect(page.getByTestId("project-task-step-input")).toHaveCSS("background-color", "rgb(18, 17, 16)");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("project-task-add")).toBeFocused();
+  await page.mouse.click(backBox.x + backBox.width / 2, backBox.y + backBox.height / 2);
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await page.getByTestId("project-task-add").click();
+  await page.getByTestId("project-task-title-input").fill("\u200c\u200b");
+  await page.getByTestId("project-task-step-input").fill("\u200c\u200b");
+  await page.getByTestId("project-task-save").click();
+  await expect(page.getByTestId("project-task-title-error")).toContainText("عنوان کار");
+  await expect(page.getByTestId("project-task-step-error")).toContainText("گام بعدی");
+  await page.getByTestId("project-task-title-input").fill("پیگیری تأیید نقشه سازه");
+  await page.getByTestId("project-task-step-input").fill("هماهنگی جلسه با مهندس محاسب");
+  await page.getByTestId("project-task-save").click();
+
+  const taskCard = page.getByTestId("project-task-card");
+  await expect(taskCard).toHaveCount(1);
+  await expect(taskCard).toContainText("پیگیری تأیید نقشه سازه");
+  await expect(taskCard).toContainText("در حال انجام");
+  await expect(taskCard).toContainText("نسخهٔ ۱");
+  const createdTask = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-tasks:v1") ?? "[]")[0]);
+  expect(createdTask).toMatchObject({
+    projectId: activeProjectId,
+    title: "پیگیری تأیید نقشه سازه",
+    currentStep: "هماهنگی جلسه با مهندس محاسب",
+    status: "in-progress",
+    source: "ثبت مستقیم شما",
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    version: 1,
+    completedAt: null,
+  });
+  expect(createdTask.history).toHaveLength(1);
+
+  await taskCard.click();
+  const taskDetail = page.getByTestId("project-task-detail-view");
+  await expect(taskDetail).toBeVisible();
+  await expect(taskDetail).toContainText("ثبت مستقیم شما");
+  await expect(taskDetail).toContainText("خصوصی پروژه");
+  await expect(taskDetail).toContainText("ثبت محلی");
+  await expect(taskDetail).toContainText("نسخهٔ ۱");
+  await expect(page.getByTestId("project-task-history-event")).toHaveCount(1);
+  await page.getByTestId("project-task-status-toggle").click();
+  await expect(taskDetail).toContainText("تمام‌شده");
+  await expect(taskDetail).toContainText("آخرین گام ثبت‌شده");
+  await expect(taskDetail).toContainText("نسخهٔ ۲");
+  await expect(page.getByTestId("project-task-history-event")).toHaveCount(2);
+  const completedTask = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-tasks:v1") ?? "[]")[0]);
+  expect(completedTask.status).toBe("completed");
+  expect(completedTask.version).toBe(2);
+  expect(completedTask.completedAt).toEqual(expect.any(String));
+  expect(completedTask.history).toHaveLength(2);
+
+  await page.getByTestId("project-task-detail-back").click();
+  await page.getByTestId("project-tasks-back").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+  await expect(page.getByTestId("composer-input")).toHaveValue("این پیش‌نویس باید بعد از رفت‌وبرگشت بماند");
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("drawer-task-count")).toHaveText("۰");
+  await page.getByTestId("drawer-tasks-entry").click();
+  await page.getByTestId("project-task-filter-completed").click();
+  await expect(page.getByTestId("project-task-card")).toContainText("پیگیری تأیید نقشه سازه");
+  await page.getByTestId("project-task-card").click();
+  await page.getByTestId("project-task-status-toggle").click();
+  await expect(page.getByTestId("project-task-detail-view")).toContainText("در حال انجام");
+  await expect(page.getByTestId("project-task-detail-view")).toContainText("نسخهٔ ۳");
+  await expect(page.getByTestId("project-task-history-event")).toHaveCount(3);
+});
+
+test("task center keeps every record inside its active project", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.evaluate(() => {
+    const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T08:00:00.000Z" };
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
+      { ...projectBase, id: "project-task-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
+      { ...projectBase, id: "project-task-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
+    ]));
+    window.localStorage.setItem("chida-prototype-active-project", "project-task-a");
+    const timestamp = "2026-08-27T09:00:00.000Z";
+    const taskBase = {
+      status: "in-progress",
+      source: "ثبت مستقیم شما",
+      visibility: "خصوصی پروژه",
+      localStatus: "ثبت محلی",
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null,
+    };
+    window.localStorage.setItem("chida-prototype-project-tasks:v1", JSON.stringify([
+      { ...taskBase, id: "task-a", projectId: "project-task-a", title: "کار فقط پروژه الف", currentStep: "گام پروژه الف", history: [{ id: "event-a", type: "created", actor: "شما", at: timestamp, version: 1 }] },
+      { ...taskBase, id: "task-b", projectId: "project-task-b", title: "کار فقط پروژه ب", currentStep: "گام پروژه ب", history: [{ id: "event-b", type: "created", actor: "شما", at: timestamp, version: 1 }] },
+    ]));
+  });
+
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await expect(page.getByText("کار فقط پروژه الف")).toBeVisible();
+  await expect(page.getByText("کار فقط پروژه ب")).toHaveCount(0);
+
+  await page.getByTestId("project-tasks-back").click();
+  await page.getByTestId("project-switcher").click();
+  await page.getByRole("button", { name: /پروژه ب تهران/ }).click();
+  await page.getByTestId("project-space-back").click();
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await expect(page.getByText("کار فقط پروژه ب")).toBeVisible();
+  await expect(page.getByText("کار فقط پروژه الف")).toHaveCount(0);
+});
+
+test("task storage failures stay distinct from an empty task center and block mutations", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-tasks:v1") {
+        throw new DOMException("Task storage read failed", "SecurityError");
+      }
+      return nativeGetItem.call(this, key);
+    };
+  });
+
+  await enterBuilderHome(page);
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await expect(page.getByTestId("project-task-read-error")).toContainText("کارهای محلی کامل خوانده نشد");
+  await expect(page.getByTestId("project-task-add")).toBeDisabled();
+  await expect(page.getByTestId("project-task-filter-active")).toHaveCount(0);
+  await expect(page.getByTestId("project-task-empty")).toHaveCount(0);
+});
+
+test("task creation never reports success when local persistence fails", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await page.getByTestId("project-task-add").click();
+  await page.getByTestId("project-task-title-input").fill("کاری که نباید ثبت‌شده دیده شود");
+  await page.getByTestId("project-task-step-input").fill("ذخیرهٔ امن در مرورگر");
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-tasks:v1") {
+        throw new DOMException("Task storage write failed", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await page.getByTestId("project-task-save").click();
+  await expect(page.getByTestId("project-task-editor-sheet")).toBeVisible();
+  await expect(page.getByTestId("project-task-storage-error")).toContainText("ذخیره نشد");
+  await expect(page.getByTestId("project-task-card")).toHaveCount(0);
+});
+
+test("task parser treats duplicate local records as an incomplete read", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => {
+    const timestamp = "2026-08-27T09:00:00.000Z";
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([{
+      id: "project-task-corrupt",
+      name: "برج نیلوفر",
+      location: "سعادت‌آباد",
+      stage: "اسکلت بندی",
+      usage: "",
+      landArea: "",
+      builtArea: "",
+      aboveGroundFloors: "",
+      basementFloors: "",
+      unitCount: "",
+      createdAt: "2026-08-27T08:00:00.000Z",
+    }]));
+    window.localStorage.setItem("chida-prototype-active-project", "project-task-corrupt");
+    const task = {
+      id: "task-duplicate",
+      projectId: "project-task-corrupt",
+      title: "رکورد معتبر نخست",
+      currentStep: "بررسی رکوردهای ذخیره‌شده",
+      status: "in-progress",
+      source: "ثبت مستقیم شما",
+      visibility: "خصوصی پروژه",
+      localStatus: "ثبت محلی",
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null,
+      history: [{ id: "task-event-valid", type: "created", actor: "شما", at: timestamp, version: 1 }],
+    };
+    window.localStorage.setItem("chida-prototype-project-tasks:v1", JSON.stringify([
+      task,
+      { ...task, title: "شناسهٔ تکراری", history: [{ ...task.history[0], id: "task-event-duplicate" }] },
+    ]));
+  });
+
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("drawer-task-count")).toHaveText("!");
+  await expect(page.getByTestId("drawer-task-count")).toHaveAccessibleName("بازیابی کارها کامل نشد");
+  await page.getByTestId("drawer-tasks-entry").click();
+  await expect(page.getByTestId("project-task-read-error")).toContainText("کارهای محلی کامل خوانده نشد");
+  await expect(page.getByTestId("project-task-add")).toBeDisabled();
+  await expect(page.getByTestId("project-task-filter-active")).toHaveCount(0);
+  await expect(page.getByTestId("project-task-card")).toHaveCount(0);
+});
+
+test("a present but blank task store is a read error instead of an empty center", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => window.localStorage.setItem("chida-prototype-project-tasks:v1", ""));
+  await enterBuilderHome(page);
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("drawer-task-count")).toHaveText("!");
+  await page.getByTestId("drawer-tasks-entry").click();
+  await expect(page.getByTestId("project-task-read-error")).toContainText("کارهای محلی کامل خوانده نشد");
+  await expect(page.getByTestId("project-task-add")).toBeDisabled();
+  await expect(page.getByTestId("project-task-filter-active")).toHaveCount(0);
+  await expect(page.getByTestId("project-task-empty")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"))).toBe("");
+});
+
+test("task status stays unchanged when its new version cannot persist", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await page.getByTestId("project-task-add").click();
+  await page.getByTestId("project-task-title-input").fill("پیگیری نسخهٔ ذخیره‌نشده");
+  await page.getByTestId("project-task-step-input").fill("تغییر وضعیت فقط پس از ذخیرهٔ موفق");
+  await page.getByTestId("project-task-save").click();
+  await page.getByTestId("project-task-card").click();
+  const persistedTask = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"));
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-tasks:v1") {
+        throw new DOMException("Task status write failed", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await page.getByTestId("project-task-status-toggle").click();
+  const detail = page.getByTestId("project-task-detail-view");
+  await expect(page.getByTestId("project-task-storage-error")).toContainText("تغییر وضعیت ذخیره نشد");
+  await expect(detail).toContainText("در حال انجام · نسخهٔ ۱");
+  await expect(detail).not.toContainText("تمام‌شده · نسخهٔ ۲");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"))).toBe(persistedTask);
+});
