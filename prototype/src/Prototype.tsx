@@ -117,7 +117,33 @@ type ProjectMemoryRecord = {
   updatedAt: string;
 };
 type ProjectMemoryDraft = Pick<ProjectMemoryRecord, "title" | "content" | "kind">;
-type HomeView = "chat" | "project" | "files" | "gallery" | "memory" | "search";
+type ProjectTaskStatus = "in-progress" | "completed";
+type ProjectTaskEventType = "created" | "completed" | "reopened";
+type ProjectTaskEvent = {
+  id: string;
+  type: ProjectTaskEventType;
+  actor: "شما";
+  at: string;
+  version: number;
+};
+type ProjectTaskRecord = {
+  id: string;
+  projectId: string;
+  title: string;
+  currentStep: string;
+  status: ProjectTaskStatus;
+  source: "ثبت مستقیم شما";
+  visibility: "خصوصی پروژه";
+  localStatus: "ثبت محلی";
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  history: ProjectTaskEvent[];
+};
+type ProjectTaskDraft = Pick<ProjectTaskRecord, "title" | "currentStep">;
+type ProjectTaskFilter = "active" | "approval" | "completed" | "failed" | "monitor";
+type HomeView = "chat" | "project" | "files" | "gallery" | "memory" | "search" | "tasks";
 type FilesReturnView = "chat" | "project" | "search";
 type MemoryReturnView = "project" | "search";
 type StoredProjectImage = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
@@ -133,6 +159,7 @@ const projectsStorageKey = "chida-prototype-builder-projects:v2";
 const activeProjectStorageKey = "chida-prototype-active-project";
 const projectFilesStorageKey = "chida-prototype-project-files:v1";
 const projectMemoriesStorageKey = "chida-prototype-project-memories:v1";
+const projectTasksStorageKey = "chida-prototype-project-tasks:v1";
 const projectImagesDatabaseName = "chida-prototype-project-images:v1";
 const projectImagesStoreName = "images";
 const projectStages = [
@@ -191,6 +218,20 @@ const quickActions = [
   { label: "صورت‌جلسه", icon: CheckCircle2 },
   { label: "برنامه خرید", icon: LayoutGrid },
 ];
+const projectTaskFilters: readonly { id: ProjectTaskFilter; label: string }[] = [
+  { id: "active", label: "در حال انجام" },
+  { id: "approval", label: "منتظر تأیید" },
+  { id: "completed", label: "تمام‌شده" },
+  { id: "failed", label: "ناموفق" },
+  { id: "monitor", label: "پایش‌ها" },
+];
+const projectTaskEmptyCopy: Readonly<Record<ProjectTaskFilter, { title: string; description: string }>> = {
+  active: { title: "هنوز کار در حال انجامی ثبت نشده", description: "یک وظیفهٔ داخلی برای همین پروژه ثبت کن تا بیرون از تاریخچهٔ گفتگو قابل پیگیری بماند." },
+  approval: { title: "کاری منتظر تأیید نیست", description: "این بخش فقط پس از ساخته‌شدن یک اقدام واقعیِ نیازمند تأیید پر می‌شود؛ تأیید نمایشی ساخته نمی‌شود." },
+  completed: { title: "هنوز کاری تمام نشده", description: "کارهای تکمیل‌شده با نسخه و تاریخچهٔ واقعی در این بخش می‌مانند." },
+  failed: { title: "کار ناموفقی ثبت نشده", description: "خطا و تلاش دوباره فقط برای اجرای واقعی ثبت می‌شوند؛ شکست مصنوعی نمایش داده نمی‌شود." },
+  monitor: { title: "پایش واقعی هنوز به این مرکز وصل نیست", description: "پایش و اعلان زمان‌دار در تسک مستقل و پس از اتصال اجرای واقعی اضافه می‌شوند." },
+};
 
 function normalizeProjectNumber(value: string, integerOnly: boolean) {
   const persianDigits = "۰۱۲۳۴۵۶۷۸۹";
@@ -374,6 +415,101 @@ function readStoredProjectMemories(): LocalRecordsReadResult<ProjectMemoryRecord
       }];
     });
     return { records, readError: false };
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
+function hasVisibleProjectTaskText(value: string) {
+  return value.replace(/[\s\u200b\u200c\u200d\u2060\ufeff]/gu, "").length > 0;
+}
+
+function readStoredProjectTasks(): LocalRecordsReadResult<ProjectTaskRecord> {
+  try {
+    const rawTasks = window.localStorage.getItem(projectTasksStorageKey);
+    if (rawTasks === null) return { records: [], readError: false };
+    const parsed = JSON.parse(rawTasks);
+    if (!Array.isArray(parsed)) return { records: [], readError: true };
+
+    const seenTaskIds = new Set<string>();
+    let readError = false;
+    const records = parsed.flatMap((task): ProjectTaskRecord[] => {
+      const id = typeof task?.id === "string" ? task.id.trim() : "";
+      const projectId = typeof task?.projectId === "string" ? task.projectId.trim() : "";
+      const title = typeof task?.title === "string" ? task.title.trim() : "";
+      const currentStep = typeof task?.currentStep === "string" ? task.currentStep.trim() : "";
+      const createdAt = typeof task?.createdAt === "string" ? task.createdAt.trim() : "";
+      const updatedAt = typeof task?.updatedAt === "string" ? task.updatedAt.trim() : "";
+      const completedAt = task?.completedAt === null ? null : typeof task?.completedAt === "string" ? task.completedAt.trim() : "";
+      const version = task?.version;
+      const eventIds = new Set<string>();
+      const history: ProjectTaskEvent[] = Array.isArray(task?.history) ? task.history.flatMap((event: any): ProjectTaskEvent[] => {
+        const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+        const at = typeof event?.at === "string" ? event.at.trim() : "";
+        if (
+          !eventId
+          || eventIds.has(eventId)
+          || (event?.type !== "created" && event?.type !== "completed" && event?.type !== "reopened")
+          || event?.actor !== "شما"
+          || !Number.isInteger(event?.version)
+          || event.version < 1
+          || !isValidProjectFileDate(at)
+        ) return [];
+        eventIds.add(eventId);
+        return [{ id: eventId, type: event.type as ProjectTaskEventType, actor: "شما", at, version: event.version }];
+      }) : [];
+      const historyIsValid = Array.isArray(task?.history)
+        && history.length === task.history.length
+        && Number.isInteger(version)
+        && version >= 1
+        && history.length === version
+        && history.every((event, index) => event.version === index + 1 && (index === 0 ? event.type === "created" : event.type === (index % 2 === 1 ? "completed" : "reopened")))
+        && history.every((event, index) => index === 0 || new Date(event.at).getTime() >= new Date(history[index - 1].at).getTime())
+        && history[0]?.at === createdAt
+        && history[history.length - 1]?.at === updatedAt;
+      const completedStateIsValid = task?.status === "completed"
+        ? typeof completedAt === "string" && completedAt === updatedAt && isValidProjectFileDate(completedAt) && history[history.length - 1]?.type === "completed"
+        : task?.status === "in-progress" && completedAt === null && (history[history.length - 1]?.type === "created" || history[history.length - 1]?.type === "reopened");
+
+      if (
+        !id
+        || seenTaskIds.has(id)
+        || !projectId
+        || !hasVisibleProjectTaskText(title)
+        || title.length > 80
+        || !hasVisibleProjectTaskText(currentStep)
+        || currentStep.length > 300
+        || task?.source !== "ثبت مستقیم شما"
+        || task?.visibility !== "خصوصی پروژه"
+        || task?.localStatus !== "ثبت محلی"
+        || !isValidProjectFileDate(createdAt)
+        || !isValidProjectFileDate(updatedAt)
+        || new Date(updatedAt).getTime() < new Date(createdAt).getTime()
+        || !historyIsValid
+        || !completedStateIsValid
+      ) {
+        readError = true;
+        return [];
+      }
+
+      seenTaskIds.add(id);
+      return [{
+        id,
+        projectId,
+        title,
+        currentStep,
+        status: task.status as ProjectTaskStatus,
+        source: "ثبت مستقیم شما",
+        visibility: "خصوصی پروژه",
+        localStatus: "ثبت محلی",
+        version,
+        createdAt,
+        updatedAt,
+        completedAt,
+        history,
+      }];
+    });
+    return { records, readError };
   } catch {
     return { records: [], readError: true };
   }
@@ -1110,10 +1246,13 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [initialProjectFiles] = useState<LocalRecordsReadResult<ProjectFileRecord>>(readStoredProjectFiles);
   const [initialProjectMemories] = useState<LocalRecordsReadResult<ProjectMemoryRecord>>(readStoredProjectMemories);
+  const [initialProjectTasks] = useState<LocalRecordsReadResult<ProjectTaskRecord>>(readStoredProjectTasks);
   const [projectFiles, setProjectFiles] = useState<ProjectFileRecord[]>(initialProjectFiles.records);
   const [projectMemories, setProjectMemories] = useState<ProjectMemoryRecord[]>(initialProjectMemories.records);
+  const [projectTasks, setProjectTasks] = useState<ProjectTaskRecord[]>(initialProjectTasks.records);
   const [projectFilesReadError] = useState(initialProjectFiles.readError);
   const [projectMemoriesReadError] = useState(initialProjectMemories.readError);
+  const [projectTasksReadError] = useState(initialProjectTasks.readError);
   const [installedTool, setInstalledTool] = useState(() => readLocalStorageValue(installedToolStorageKey) ?? "");
   const [briefSchedule, setBriefSchedule] = useState<BriefSchedule | null>(() => {
     try {
@@ -1190,6 +1329,11 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     () => projectMemories.filter((memory) => memory.projectId === activeProject.id),
     [activeProject.id, projectMemories],
   );
+  const activeProjectTasks = useMemo(
+    () => projectTasks.filter((task) => task.projectId === activeProject.id),
+    [activeProject.id, projectTasks],
+  );
+  const activeProjectTaskCount = activeProjectTasks.filter((task) => task.status === "in-progress").length;
   const briefSummary = briefSchedule
     ? briefSchedule.frequency === "daily"
       ? `روزانه · ${briefSchedule.time}`
@@ -1247,6 +1391,13 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     keyboard.hide();
     onOpenSheet(null);
     setView("search");
+  };
+
+  const openProjectTasks = () => {
+    keyboard.hide();
+    onOpenSheet(null);
+    setDrawerOpen(false);
+    setView("tasks");
   };
 
   const writeProjectFilesMetadata = (nextFiles: ProjectFileRecord[]) => {
@@ -1369,6 +1520,56 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     projectMemories.filter((memory) => memory.id !== memoryId || memory.projectId !== activeProject.id),
   );
 
+  const persistProjectTasks = (nextTasks: ProjectTaskRecord[]) => {
+    if (projectTasksReadError) return false;
+    try {
+      window.localStorage.setItem(projectTasksStorageKey, JSON.stringify(nextTasks));
+    } catch {
+      return false;
+    }
+    setProjectTasks(nextTasks);
+    return true;
+  };
+
+  const createProjectTask = (taskDraft: ProjectTaskDraft) => {
+    const timestamp = new Date().toISOString();
+    const taskId = `task-${window.crypto.randomUUID()}`;
+    const record = {
+      id: taskId,
+      projectId: activeProject.id,
+      title: taskDraft.title.trim(),
+      currentStep: taskDraft.currentStep.trim(),
+      status: "in-progress",
+      source: "ثبت مستقیم شما",
+      visibility: "خصوصی پروژه",
+      localStatus: "ثبت محلی",
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null,
+      history: [{ id: `task-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+    } satisfies ProjectTaskRecord;
+    return persistProjectTasks([...projectTasks, record]);
+  };
+
+  const changeProjectTaskStatus = (taskId: string, nextStatus: ProjectTaskStatus) => {
+    const timestamp = new Date().toISOString();
+    const nextTasks = projectTasks.map((task) => {
+      if (task.id !== taskId || task.projectId !== activeProject.id || task.status === nextStatus) return task;
+      const version = task.version + 1;
+      const eventType = nextStatus === "completed" ? "completed" : "reopened";
+      return {
+        ...task,
+        status: nextStatus,
+        version,
+        updatedAt: timestamp,
+        completedAt: nextStatus === "completed" ? timestamp : null,
+        history: [...task.history, { id: `task-event-${window.crypto.randomUUID()}`, type: eventType, actor: "شما", at: timestamp, version }],
+      } satisfies ProjectTaskRecord;
+    });
+    return persistProjectTasks(nextTasks);
+  };
+
   const leaveProjectWorkspace = () => {
     projectWorkspaceScrollPositions.current.delete(activeProject.id);
     setView("chat");
@@ -1461,6 +1662,19 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     );
   }
 
+  if (view === "tasks") {
+    return (
+      <ProjectTasksView
+        project={activeProject}
+        tasks={activeProjectTasks}
+        storageLocked={projectTasksReadError}
+        onBack={() => { keyboard.hide(); setView("chat"); }}
+        onCreate={createProjectTask}
+        onStatusChange={changeProjectTaskStatus}
+      />
+    );
+  }
+
   return (
     <div ref={homeRef} className="chida-app chida-shell" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="builder-home">
       <MobileScroll className="chat-scroll">
@@ -1523,6 +1737,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
               <div className="drawer-top"><div className="brand-lockup"><span className="brand-mark"><HardHat size={19} /></span><strong>چیدا</strong></div><button className="icon-button" type="button" onClick={() => setDrawerOpen(false)} aria-label="بستن منو"><X size={20} /></button></div>
               <nav className="drawer-nav" aria-label="منوی چیدا">
                 <button type="button"><MessageSquare size={19} /><span>گفتگوی تازه</span><Plus size={17} /></button>
+                <button type="button" onClick={openProjectTasks} data-testid="drawer-tasks-entry"><CheckCircle2 size={19} /><span>کارها</span><span className="nav-count" data-testid="drawer-task-count" aria-label={projectTasksReadError ? "بازیابی کارها کامل نشد" : `${activeProjectTaskCount.toLocaleString("fa-IR")} کار در حال انجام`}>{projectTasksReadError ? "!" : activeProjectTaskCount.toLocaleString("fa-IR")}</span></button>
                 <button type="button" onClick={() => { setDrawerOpen(false); onOpenSheet("projects"); }}><Folder size={19} /><span>پروژه‌ها</span><span className="nav-count" data-testid="drawer-project-count">{projects.length.toLocaleString("fa-IR")}</span></button>
                 <button type="button"><Pin size={19} /><span>پین‌شده‌ها</span><span className="nav-count">۳</span></button>
                 <button type="button" data-testid="drawer-brief-entry" onClick={() => { setDrawerOpen(false); onOpenSheet("brief"); }}>
@@ -1671,6 +1886,239 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, filesRe
         onClose={() => setEditOpen(false)}
         onSave={saveDetails}
       />
+    </div>
+  );
+}
+
+function projectTaskStatusLabel(status: ProjectTaskStatus) {
+  return status === "completed" ? "تمام‌شده" : "در حال انجام";
+}
+
+function projectTaskEventLabel(type: ProjectTaskEventType) {
+  if (type === "completed") return "کار تمام شد";
+  if (type === "reopened") return "کار بازگشایی شد";
+  return "کار ثبت شد";
+}
+
+function ProjectTasksView({ project, tasks, storageLocked, onBack, onCreate, onStatusChange }: { project: BuilderProject; tasks: ProjectTaskRecord[]; storageLocked: boolean; onBack: () => void; onCreate: (draft: ProjectTaskDraft) => boolean; onStatusChange: (taskId: string, status: ProjectTaskStatus) => boolean }) {
+  const keyboard = useKeyboard();
+  const taskViewRef = useRef<HTMLDivElement>(null);
+  const taskAddButtonRef = useRef<HTMLButtonElement>(null);
+  const [filter, setFilter] = useState<ProjectTaskFilter>("active");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [taskDraft, setTaskDraft] = useState<ProjectTaskDraft>({ title: "", currentStep: "" });
+  const [fieldErrors, setFieldErrors] = useState({ title: "", currentStep: "" });
+  const [storageError, setStorageError] = useState("");
+  const selectedTask = selectedId ? tasks.find((task) => task.id === selectedId) ?? null : null;
+  const orderedTasks = useMemo(
+    () => [...tasks].sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
+    [tasks],
+  );
+  const activeCount = tasks.filter((task) => task.status === "in-progress").length;
+  const completedCount = tasks.filter((task) => task.status === "completed").length;
+  const filterCounts: Record<ProjectTaskFilter, number> = { active: activeCount, approval: 0, completed: completedCount, failed: 0, monitor: 0 };
+  const filteredTasks = filter === "active"
+    ? orderedTasks.filter((task) => task.status === "in-progress")
+    : filter === "completed"
+      ? orderedTasks.filter((task) => task.status === "completed")
+      : [];
+
+  useEffect(() => {
+    if (selectedId && !selectedTask) setSelectedId(null);
+  }, [selectedId, selectedTask]);
+
+  useLayoutEffect(() => {
+    if (selectedId) return;
+    const rail = taskViewRef.current?.querySelector<HTMLElement>(".project-task-filters");
+    const selectedFilter = rail?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!rail || !selectedFilter) return;
+    const alignSelectedFilter = () => {
+      const maximum = Math.max(0, rail.scrollWidth - rail.clientWidth);
+      const centered = selectedFilter.offsetLeft - (rail.clientWidth - selectedFilter.clientWidth) / 2;
+      rail.scrollLeft = Math.max(0, Math.min(maximum, centered));
+    };
+    alignSelectedFilter();
+    const observer = new ResizeObserver(alignSelectedFilter);
+    observer.observe(rail);
+    if (rail.firstElementChild) observer.observe(rail.firstElementChild);
+    return () => observer.disconnect();
+  }, [filter, selectedId]);
+
+  const openEditor = () => {
+    setTaskDraft({ title: "", currentStep: "" });
+    setFieldErrors({ title: "", currentStep: "" });
+    setStorageError("");
+    setEditorOpen(true);
+  };
+
+  const closeEditor = () => {
+    keyboard.hide();
+    setEditorOpen(false);
+    setStorageError("");
+    window.requestAnimationFrame(() => taskAddButtonRef.current?.focus());
+  };
+
+  const changeDraft = (field: keyof ProjectTaskDraft, value: string) => {
+    setTaskDraft((current) => ({ ...current, [field]: value }));
+    setFieldErrors((current) => current[field] ? { ...current, [field]: "" } : current);
+    setStorageError("");
+  };
+
+  const saveTask = () => {
+    const title = taskDraft.title.trim();
+    const currentStep = taskDraft.currentStep.trim();
+    const nextErrors = {
+      title: hasVisibleProjectTaskText(title) ? "" : "عنوان کار را وارد کن.",
+      currentStep: hasVisibleProjectTaskText(currentStep) ? "" : "گام بعدی کار را وارد کن.",
+    };
+    setFieldErrors(nextErrors);
+    if (nextErrors.title || nextErrors.currentStep) {
+      const invalidId = nextErrors.title ? "project-task-title" : "project-task-step";
+      window.requestAnimationFrame(() => document.getElementById(invalidId)?.focus());
+      return;
+    }
+    keyboard.hide();
+    if (!onCreate({ title, currentStep })) {
+      setStorageError("کار ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
+      return;
+    }
+    closeEditor();
+    setFilter("active");
+  };
+
+  const toggleTaskStatus = () => {
+    if (!selectedTask) return;
+    const nextStatus = selectedTask.status === "completed" ? "in-progress" : "completed";
+    if (!onStatusChange(selectedTask.id, nextStatus)) {
+      setStorageError("تغییر وضعیت ذخیره نشد. دوباره تلاش کن.");
+      return;
+    }
+    setStorageError("");
+  };
+
+  if (selectedTask) {
+    return (
+      <div className="chida-app project-task-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-task-detail-view">
+        <header className="project-workspace-header">
+          <button className="icon-button" type="button" onClick={() => { keyboard.hide(); setStorageError(""); setSelectedId(null); }} aria-label="بازگشت به مرکز کارها" data-testid="project-task-detail-back"><ArrowRight size={21} /></button>
+          <span className="project-workspace-title"><small>جزئیات کار</small><strong>{project.name}</strong></span>
+          <span className="project-workspace-header-spacer" aria-hidden="true" />
+        </header>
+
+        <MobileScroll className="project-task-detail-scroll">
+          <main className="project-task-detail-content">
+            <section className="project-task-detail-heading">
+              <span><CheckCircle2 size={24} strokeWidth={1.65} /></span>
+              <div><small>{projectTaskStatusLabel(selectedTask.status)}</small><h1>{selectedTask.title}</h1><p>{selectedTask.status === "completed" ? "آخرین گام ثبت‌شده" : "گام جاری"}: {selectedTask.currentStep}</p></div>
+            </section>
+
+            <dl className="project-task-meta">
+              <div><dt>پروژهٔ مالک</dt><dd>{project.name}</dd></div>
+              <div><dt>منشأ</dt><dd>{selectedTask.source}</dd></div>
+              <div><dt>دسترسی</dt><dd>{selectedTask.visibility}</dd></div>
+              <div><dt>وضعیت محلی</dt><dd>{selectedTask.localStatus}</dd></div>
+              <div><dt>وضعیت و نسخه</dt><dd>{projectTaskStatusLabel(selectedTask.status)} · نسخهٔ {selectedTask.version.toLocaleString("fa-IR")}</dd></div>
+              <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(selectedTask.createdAt)}</dd></div>
+              <div><dt>آخرین تغییر</dt><dd>{formatProjectFileDate(selectedTask.updatedAt)}</dd></div>
+              {selectedTask.completedAt ? <div><dt>زمان تکمیل</dt><dd>{formatProjectFileDate(selectedTask.completedAt)}</dd></div> : null}
+            </dl>
+
+            <section className="project-task-history" aria-label="تاریخچهٔ وضعیت کار">
+              <div className="project-task-section-title"><strong>تاریخچه</strong><span>{selectedTask.history.length.toLocaleString("fa-IR")}</span></div>
+              <ol>
+                {[...selectedTask.history].reverse().map((event) => (
+                  <li key={event.id} data-testid="project-task-history-event"><span><Check size={14} /></span><div><strong>{projectTaskEventLabel(event.type)}</strong><small>توسط {event.actor} · نسخهٔ {event.version.toLocaleString("fa-IR")} · {formatProjectFileDate(event.at)}</small></div></li>
+                ))}
+              </ol>
+            </section>
+
+            <aside className="project-task-boundary"><ShieldCheck size={17} /><span>این وظیفه فقط داخل همین مرورگر ثبت شده است؛ چیدا آن را در پس‌زمینه اجرا نمی‌کند و هیچ اعلان یا ارسال بیرونی انجام نشده است.</span></aside>
+            {storageError ? <p className="project-task-storage-error" role="alert" data-testid="project-task-storage-error">{storageError}</p> : null}
+            <button className="primary-button project-task-status-button" type="button" onClick={toggleTaskStatus} disabled={storageLocked} data-testid="project-task-status-toggle">{selectedTask.status === "completed" ? "بازگشایی کار" : "علامت‌گذاری به‌عنوان تمام‌شده"}</button>
+          </main>
+        </MobileScroll>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={taskViewRef} className="chida-app project-tasks-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-tasks-view">
+      <header className="project-workspace-header">
+        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label="بازگشت به گفت‌وگو" data-testid="project-tasks-back"><ArrowRight size={21} /></button>
+        <span className="project-workspace-title"><small>مرکز کارها</small><strong>{project.name}</strong></span>
+        <span className="project-workspace-header-spacer" aria-hidden="true" />
+      </header>
+
+      <MobileScroll className="project-tasks-scroll">
+        <main className="project-tasks-content">
+          <section className="project-tasks-heading">
+            <span className="project-tasks-mark"><CheckCircle2 size={24} strokeWidth={1.65} /></span>
+            <div><span className="eyebrow">بیرون از تاریخچهٔ گفتگو</span><h1>کارهای {project.name}</h1><p>وظیفه‌های داخلیِ ثبت‌شده برای همین پروژه</p></div>
+          </section>
+
+          <button ref={taskAddButtonRef} className="primary-button project-task-add" type="button" onClick={openEditor} disabled={storageLocked} data-testid="project-task-add"><Plus size={18} /> کار جدید</button>
+
+          {storageLocked ? (
+            <p className="project-storage-recovery-alert" role="alert" data-testid="project-task-read-error"><ShieldCheck size={17} /><span><strong>کارهای محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، ثبت و تغییر وضعیت تا بارگذاری موفق بعدی غیرفعال است.</span></p>
+          ) : null}
+
+          <aside className="project-task-boundary"><ShieldCheck size={17} /><span><strong>این مرحله فقط وظیفهٔ داخلی است.</strong> اجرای پس‌زمینه، اعلان و ارسال بیرونی هنوز وصل نیست و وضعیت‌های تأیید، شکست و پایش فقط وقتی منبع واقعی داشته باشند پر می‌شوند.</span></aside>
+
+          {storageLocked ? null : (
+            <Carousel ariaLabel="فیلتر وضعیت کارها" className="project-task-filters" contentClassName="project-task-filter-track">
+              {projectTaskFilters.map((item) => (
+                <button className="project-task-filter" type="button" key={item.id} aria-pressed={filter === item.id} onClick={() => setFilter(item.id)} data-testid={`project-task-filter-${item.id}`}><span>{item.label}</span><small>{filterCounts[item.id].toLocaleString("fa-IR")}</small></button>
+              ))}
+            </Carousel>
+          )}
+
+          {storageLocked ? null : filteredTasks.length === 0 ? (
+            <section className="project-task-empty" data-testid="project-task-empty">
+              <span><CheckCircle2 size={25} strokeWidth={1.65} /></span>
+              <h2>{projectTaskEmptyCopy[filter].title}</h2>
+              <p>{projectTaskEmptyCopy[filter].description}</p>
+            </section>
+          ) : (
+            <section className="project-task-list" aria-label={projectTaskFilters.find((item) => item.id === filter)?.label}>
+              <div className="project-task-section-title"><strong>{projectTaskFilters.find((item) => item.id === filter)?.label}</strong><span>{filteredTasks.length.toLocaleString("fa-IR")}</span></div>
+              {filteredTasks.map((task) => (
+                <button className="project-task-card" type="button" key={task.id} onClick={() => { setStorageError(""); setSelectedId(task.id); }} data-testid="project-task-card">
+                  <span className="project-task-card-icon"><CheckCircle2 size={20} strokeWidth={1.65} /></span>
+                  <span className="project-task-card-copy"><span><small>{projectTaskStatusLabel(task.status)}</small><small>{formatProjectFileDate(task.updatedAt)}</small></span><strong>{task.title}</strong><em>{task.currentStep}</em><small>نسخهٔ {task.version.toLocaleString("fa-IR")} · {task.localStatus}</small></span>
+                  <ArrowRight size={17} aria-hidden="true" />
+                </button>
+              ))}
+            </section>
+          )}
+        </main>
+      </MobileScroll>
+
+      <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }} title="کار جدید" description={`یک وظیفهٔ داخلی برای ${project.name} ثبت کن.`} snap={0.94}>
+        <form className="project-task-editor-sheet" dir="rtl" data-testid="project-task-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveTask(); }}>
+          <label className="field-control" htmlFor="project-task-title">
+            <span>عنوان کار</span>
+            <KeyboardInput id="project-task-title" data-testid="project-task-title-input" value={taskDraft.title} maxLength={80} placeholder="مثلاً پیگیری تأیید نقشه سازه" onChange={(event) => changeDraft("title", event.target.value)} aria-invalid={Boolean(fieldErrors.title)} aria-describedby={fieldErrors.title ? "project-task-title-error" : undefined} />
+            {fieldErrors.title ? <small className="field-error" id="project-task-title-error" data-testid="project-task-title-error">{fieldErrors.title}</small> : null}
+          </label>
+
+          <label className="field-control" htmlFor="project-task-step">
+            <span>گام بعدی</span>
+            <KeyboardTextarea id="project-task-step" data-testid="project-task-step-input" value={taskDraft.currentStep} maxLength={300} rows={4} placeholder="اقدام مشخص بعدی را بنویس..." onChange={(event) => changeDraft("currentStep", event.target.value)} aria-invalid={Boolean(fieldErrors.currentStep)} aria-describedby={fieldErrors.currentStep ? "project-task-step-error" : undefined} />
+            {fieldErrors.currentStep ? <small className="field-error" id="project-task-step-error" data-testid="project-task-step-error">{fieldErrors.currentStep}</small> : null}
+          </label>
+
+          <dl className="project-task-meta">
+            <div><dt>پروژهٔ مالک</dt><dd>{project.name}</dd></div>
+            <div><dt>منشأ</dt><dd>ثبت مستقیم شما</dd></div>
+            <div><dt>وضعیت نخست</dt><dd>در حال انجام · نسخهٔ ۱</dd></div>
+            <div><dt>دسترسی</dt><dd>خصوصی پروژه</dd></div>
+          </dl>
+          <p className="project-task-boundary"><CircleHelp size={16} /><span>ثبت این کار هیچ اجرا، اعلان، تأیید یا ارسال بیرونی ایجاد نمی‌کند.</span></p>
+          {storageError ? <p className="project-task-storage-error" role="alert" data-testid="project-task-storage-error">{storageError}</p> : null}
+          <button className="primary-button" type="submit" data-testid="project-task-save">ثبت در مرکز کارها</button>
+        </form>
+      </BottomSheet>
     </div>
   );
 }
