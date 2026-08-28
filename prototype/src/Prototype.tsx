@@ -1,4 +1,5 @@
 import {
+  Archive,
   ArrowUp,
   ArrowRight,
   Bell,
@@ -32,6 +33,7 @@ import {
   Pin,
   Plus,
   Puzzle,
+  RotateCcw,
   Search,
   Settings,
   ShieldCheck,
@@ -39,6 +41,8 @@ import {
   SlidersHorizontal,
   Sparkles,
   Store,
+  UserPlus,
+  Users,
   Volume2,
   Wrench,
   X,
@@ -58,7 +62,7 @@ import {
 } from "./mobile";
 
 type Screen = "role" | "invite" | "phone" | "otp" | "success" | "home";
-type SheetName = "supplier" | "models" | "attach" | "tools" | "build" | "brief" | "projects" | "settings" | null;
+type SheetName = "supplier" | "models" | "attach" | "tools" | "build" | "brief" | "projects" | "new-project" | "settings" | null;
 type ModelMode = "خودکار" | "سریع" | "عمیق";
 type ChatMessage = { id: number; role: "user" | "assistant"; text: string };
 type BuildStep = "define" | "preview" | "installed";
@@ -149,25 +153,99 @@ type PurchaseRequestStatus = "draft" | "ready-for-review";
 type PurchaseRequestEventType = "created" | "updated" | "marked-ready-for-review" | "returned-to-draft";
 type PurchaseRequestUnit = "عدد" | "کیلوگرم" | "تن" | "متر" | "مترمربع" | "مترمکعب" | "بسته" | "دستگاه";
 type PurchaseRequestAlternatives = "unknown" | "allowed" | "not-allowed" | "approval-required";
+type PurchaseRequestKind = "product" | "service";
+type PurchaseRequestDisclosureMode = "simple" | "advanced";
+type PurchaseRequestCompletionStatus = "complete" | "incomplete";
+type PurchaseRequestAnswerStatus = "answered" | "explicitly-unknown" | "needs-confirmation";
+type PurchaseRequestRecordSource = "ثبت مستقیم شما" | "مهاجرت محلی";
 type PurchaseRequestEvent = { id: string; type: PurchaseRequestEventType; actor: "شما"; at: string; version: number };
+type PurchaseRequestSubrecordEvent = { id: string; type: "created" | "updated"; actor: "شما" | "مهاجرت محلی"; at: string; version: number };
+type ProductRequestItem = {
+  id: string;
+  name: string | null;
+  quantity: string | null;
+  unit: PurchaseRequestUnit | null;
+  brandOrGrade: string | null;
+  specification: string | null;
+  alternatives: PurchaseRequestAlternatives;
+  source: PurchaseRequestRecordSource;
+  confidence: null;
+  completionStatus: PurchaseRequestCompletionStatus;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  history: PurchaseRequestSubrecordEvent[];
+};
+type ServiceRequestSpec = {
+  id: string;
+  scope: string | null;
+  location: string | null;
+  locationPrecision: "area-or-project-section";
+  sizeOrVolume: string | null;
+  qualification: string | null;
+  timing: string | null;
+  method: string | null;
+  inScope: string | null;
+  outOfScope: string | null;
+  warranty: string | null;
+  paymentTerms: string | null;
+  source: PurchaseRequestRecordSource;
+  confidence: null;
+  completionStatus: PurchaseRequestCompletionStatus;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  history: PurchaseRequestSubrecordEvent[];
+};
+type PurchaseRequestClarificationAnswer = {
+  id: string;
+  fieldPath: string;
+  question: string;
+  answer: string | null;
+  status: PurchaseRequestAnswerStatus;
+  source: PurchaseRequestRecordSource;
+  confidence: null;
+  completionStatus: PurchaseRequestCompletionStatus;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  history: PurchaseRequestSubrecordEvent[];
+};
+type PurchaseRequestApprovalShareableField = string;
+type PurchaseRequestSnapshot = {
+  requestKind: PurchaseRequestKind;
+  rawNeed: string;
+  items: ProductRequestItem[];
+  item: ProductRequestItem | null;
+  service: ServiceRequestSpec | null;
+  delivery: { city: "تهران"; area: string; exactAddressShared: false; neededBy: string | null };
+  unresolvedTerms: { transport: string; tax: string; paymentTerms: string };
+  clarificationAnswers: PurchaseRequestClarificationAnswer[];
+  sharingStatus: "ارسال نشده";
+};
+type PurchaseRequestReviewRevision = {
+  id: string;
+  requestVersion: number;
+  createdAt: string;
+  snapshot: PurchaseRequestSnapshot;
+  shareableFields: PurchaseRequestApprovalShareableField[];
+  fingerprint: string;
+};
 type ProjectPurchaseRequestRecord = {
+  schemaVersion: 2;
   id: string;
   projectId: string;
-  requestKind: "product";
+  requestKind: PurchaseRequestKind;
   rawNeed: { text: string; source: "ثبت مستقیم شما"; capturedAt: string };
-  item: {
-    id: string;
-    name: string | null;
-    quantity: string | null;
-    unit: PurchaseRequestUnit | null;
-    brandOrGrade: string | null;
-    specification: string | null;
-    alternatives: PurchaseRequestAlternatives;
-    source: "ثبت مستقیم شما";
-    confidence: null;
-  };
+  items: ProductRequestItem[];
+  /** Compatibility mirror for valid v1 local records; items[] is authoritative. */
+  item: ProductRequestItem | null;
+  service: ServiceRequestSpec | null;
   delivery: { city: "تهران"; area: string; exactAddressShared: false; neededBy: string | null };
-  unresolvedTerms: { transport: "unknown"; tax: "unknown"; paymentTerms: "unknown" };
+  unresolvedTerms: { transport: string; tax: string; paymentTerms: string };
+  clarificationAnswers: PurchaseRequestClarificationAnswer[];
+  reviewRevisions: PurchaseRequestReviewRevision[];
+  migration: { sourceSchema: 1; unverifiedReadyVersions: number[] } | null;
   visibility: "خصوصی پروژه";
   localStatus: "ثبت محلی";
   sharingStatus: "ارسال نشده";
@@ -178,34 +256,47 @@ type ProjectPurchaseRequestRecord = {
   readyAt: string | null;
   history: PurchaseRequestEvent[];
 };
-type PurchaseRequestDraft = {
-  rawNeed: string;
+type ProductRequestItemDraft = {
+  id: string;
   itemName: string;
   quantity: string;
   unit: string;
   brandOrGrade: string;
   specification: string;
   alternatives: string;
-  neededBy: string;
 };
-type PurchaseRequestFieldErrors = Pick<PurchaseRequestDraft, "rawNeed" | "itemName" | "quantity" | "brandOrGrade" | "specification" | "neededBy">;
+type PurchaseRequestDraft = {
+  requestKind: PurchaseRequestKind;
+  rawNeed: string;
+  items: ProductRequestItemDraft[];
+  serviceScope: string;
+  serviceLocation: string;
+  serviceSizeOrVolume: string;
+  serviceQualification: string;
+  serviceTiming: string;
+  serviceMethod: string;
+  serviceInScope: string;
+  serviceOutOfScope: string;
+  serviceWarranty: string;
+  servicePaymentTerms: string;
+  deliveryArea: string;
+  neededBy: string;
+  transport: string;
+  tax: string;
+  paymentTerms: string;
+};
+type PurchaseRequestFieldErrors = { rawNeed: string; quantity: string; quantityIndex: number | null; serviceScope: string; serviceLocation: string };
 type ProjectApprovalStatus = "pending" | "approved" | "changes-requested";
 type ProjectApprovalEventType = "created" | "approved" | "changes-requested";
-type PurchaseRequestApprovalShareableField = "item.name" | "item.quantity" | "item.unit" | "item.brandOrGrade" | "item.specification" | "delivery.neededBy" | "delivery.area";
 type ProjectApprovalEvent = { id: string; type: ProjectApprovalEventType; actor: "شما"; at: string; version: number };
 type ProjectApprovalRecord = {
+  schemaVersion: 2;
   id: string;
   projectId: string;
   purpose: "review-purchase-request-version";
-  target: { type: "purchase-request"; id: string; version: number; updatedAt: string };
+  target: { type: "purchase-request"; id: string; version: number; updatedAt: string; revisionId: string };
   dedupeKey: string;
-  snapshot: {
-    rawNeed: string;
-    item: ProjectPurchaseRequestRecord["item"];
-    delivery: ProjectPurchaseRequestRecord["delivery"];
-    unresolvedTerms: ProjectPurchaseRequestRecord["unresolvedTerms"];
-    sharingStatus: "ارسال نشده";
-  };
+  snapshot: PurchaseRequestSnapshot;
   privacySnapshot: {
     shareableFields: PurchaseRequestApprovalShareableField[];
     projectNameShared: false;
@@ -227,6 +318,162 @@ type ProjectApprovalRecord = {
   decidedAt: string | null;
   version: number;
   history: ProjectApprovalEvent[];
+};
+type SupplierContactResponseCapability = "product" | "service" | "both";
+type SupplierContactStatus = "active" | "archived";
+type SupplierContactEventType = "created" | "updated" | "archived" | "restored";
+type SupplierContactEvent = { id: string; type: SupplierContactEventType; actor: "شما"; at: string; version: number };
+type SupplierContactRecord = {
+  schemaVersion: 1;
+  id: string;
+  projectId: string;
+  displayName: string;
+  category: string;
+  tehranCoverage: string;
+  responseCapability: SupplierContactResponseCapability;
+  source: "ثبت مستقیم سازنده";
+  networkStatus: "خارج از شبکه چیدا";
+  status: SupplierContactStatus;
+  visibility: "خصوصی پروژه";
+  localStatus: "ثبت محلی";
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+  history: SupplierContactEvent[];
+};
+type SupplierContactDraft = Pick<SupplierContactRecord, "displayName" | "category" | "tehranCoverage" | "responseCapability">;
+type DispatchPayloadProductItem = Pick<ProductRequestItem, "name" | "quantity" | "unit" | "brandOrGrade" | "specification" | "alternatives">;
+type DispatchPayloadService = Pick<ServiceRequestSpec, "scope" | "location" | "locationPrecision" | "sizeOrVolume" | "qualification" | "timing" | "method" | "inScope" | "outOfScope" | "warranty" | "paymentTerms">;
+type DispatchPayload = {
+  requestKind: PurchaseRequestKind;
+  items: DispatchPayloadProductItem[];
+  service: DispatchPayloadService | null;
+  delivery: { area: string; neededBy: string | null } | null;
+  unresolvedTerms: { transport: string; tax: string; paymentTerms: string } | null;
+};
+type InviteDraft = {
+  schemaVersion: 1;
+  id: string;
+  projectId: string;
+  supplierContactId: string;
+  destination: {
+    displayName: string;
+    category: string;
+    tehranCoverage: string;
+    responseCapability: SupplierContactResponseCapability;
+    networkStatus: "خارج از شبکه چیدا";
+  };
+  target: { requestId: string; requestVersion: number; revisionId: string; approvalId: string };
+  source: "ثبت مستقیم سازنده";
+  continuation: "ادامهٔ احتمالی در فاز تأمین‌کننده";
+  externalEffect: "none";
+  sendAuthorized: false;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+type DispatchPrivacySnapshot = {
+  shareableFields: PurchaseRequestApprovalShareableField[];
+  excludedFields: string[];
+  projectNameShared: false;
+  exactAddressFieldIncluded: false;
+  budgetShared: false;
+  filesShared: false;
+  memoryShared: false;
+  rawNeedShared: false;
+  clarificationAnswersShared: false;
+  locationReviewRequired: true;
+};
+type DispatchDraftRevision = {
+  id: string;
+  version: number;
+  createdAt: string;
+  recipientIds: string[];
+  inviteDrafts: InviteDraft[];
+  payload: DispatchPayload;
+  privacySnapshot: DispatchPrivacySnapshot;
+  fingerprint: string;
+};
+type DispatchDraftEvent = { id: string; type: "created" | "updated"; actor: "شما"; at: string; version: number };
+type DispatchDraftRecord = {
+  schemaVersion: 1;
+  id: string;
+  projectId: string;
+  target: { requestId: string; requestVersion: number; revisionId: string; approvalId: string };
+  dedupeKey: string;
+  status: "draft";
+  currentRevisionId: string;
+  externalEffect: "none";
+  sendAuthorized: false;
+  visibility: "خصوصی پروژه";
+  localStatus: "ثبت محلی";
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  history: DispatchDraftEvent[];
+  revisions: DispatchDraftRevision[];
+};
+type DispatchPlanApprovalStatus = "pending" | "approved" | "withdrawn";
+type DispatchPlanApprovalEffectiveStatus = DispatchPlanApprovalStatus | "invalidated";
+type DispatchPlanApprovalEventType = "created" | "approved" | "withdrawn" | "reopened";
+type DispatchPlanApprovalEvent = { id: string; type: DispatchPlanApprovalEventType; actor: "شما"; at: string; version: number };
+type DispatchPlanApprovalRecord = {
+  schemaVersion: 1;
+  id: string;
+  projectId: string;
+  purpose: "approve-local-dispatch-plan-simulation";
+  target: {
+    type: "dispatch-draft-revision";
+    dispatchDraftId: string;
+    dispatchDraftVersion: number;
+    dispatchRevisionId: string;
+    dispatchRevisionFingerprint: string;
+    requestId: string;
+    requestVersion: number;
+    requestRevisionId: string;
+    contentApprovalId: string;
+  };
+  snapshot: {
+    recipients: Array<{
+      supplierContactId: string;
+      supplierContactVersion: number;
+      destination: InviteDraft["destination"];
+    }>;
+    recipientCount: number;
+    payload: DispatchPayload;
+    privacySnapshot: DispatchPrivacySnapshot;
+    reviewAcknowledgement: {
+      destinationsReviewed: true;
+      payloadReviewed: true;
+      privacyAndLocationReviewed: true;
+    };
+  };
+  planFingerprint: string;
+  dedupeKey: string;
+  idempotencyKey: string;
+  status: DispatchPlanApprovalStatus;
+  simulationOnly: true;
+  externalEffect: "none";
+  sendAuthorized: false;
+  externalActionAttempted: false;
+  actionRecord: null | {
+    kind: "record-local-dispatch-plan-approval";
+    result: "local-dispatch-plan-approved";
+    label: "تأیید محلی برنامهٔ ارسال";
+    error: null;
+    recordedAt: string;
+  };
+  visibility: "خصوصی پروژه";
+  localStatus: "ثبت محلی";
+  requestedBy: "شما";
+  decidedBy: "شما" | null;
+  requestedAt: string;
+  decidedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+  history: DispatchPlanApprovalEvent[];
 };
 type MockSourceKind = "فایل پروژهٔ ساختگی" | "وب رسمی ساختگی";
 type MockSourceRecord = {
@@ -280,6 +527,9 @@ const projectMemoriesStorageKey = "chida-prototype-project-memories:v1";
 const projectTasksStorageKey = "chida-prototype-project-tasks:v1";
 const projectPurchaseRequestsStorageKey = "chida-prototype-project-purchase-requests:v1";
 const projectApprovalsStorageKey = "chida-prototype-project-approvals:v1";
+const projectSupplierContactsStorageKey = "chida-prototype-project-supplier-contacts:v1";
+const projectDispatchDraftsStorageKey = "chida-prototype-project-dispatch-drafts:v1";
+const projectDispatchPlanApprovalsStorageKey = "chida-prototype-project-dispatch-plan-approvals:v1";
 const projectImagesDatabaseName = "chida-prototype-project-images:v1";
 const projectImagesStoreName = "images";
 const projectStages = [
@@ -310,6 +560,11 @@ const projectFileCategories: readonly ProjectFileCategory[] = ["نقشه", "پی
 const projectMemoryKinds: readonly ProjectMemoryKind[] = ["یادداشت سازنده", "واقعیت تأییدشده توسط سازنده"];
 const purchaseRequestUnits: readonly PurchaseRequestUnit[] = ["عدد", "کیلوگرم", "تن", "متر", "مترمربع", "مترمکعب", "بسته", "دستگاه"];
 const purchaseRequestAlternativeLabels = ["نامشخص", "مجاز", "غیرمجاز", "فقط با تأیید من"] as const;
+const supplierContactResponseCapabilities: readonly { id: SupplierContactResponseCapability; label: string }[] = [
+  { id: "product", label: "محصول" },
+  { id: "service", label: "خدمت" },
+  { id: "both", label: "محصول و خدمت" },
+];
 const projectFileExtensionPattern = /\.(?:pdf|png|jpe?g|webp|heic|heif|xls|xlsx|csv|doc|docx)$/i;
 const projectImageExtensionPattern = /\.(?:png|jpe?g|webp|heic|heif)$/i;
 const projectFileAccept = ".pdf,.png,.jpg,.jpeg,.webp,.heic,.heif,.xls,.xlsx,.csv,.doc,.docx";
@@ -419,23 +674,42 @@ const projectTaskEmptyCopy: Readonly<Record<ProjectTaskFilter, { title: string; 
   failed: { title: "کار ناموفقی ثبت نشده", description: "خطا و تلاش دوباره فقط برای اجرای واقعی ثبت می‌شوند؛ شکست مصنوعی نمایش داده نمی‌شود." },
   monitor: { title: "پایش واقعی هنوز به این مرکز وصل نیست", description: "پایش و اعلان زمان‌دار در تسک مستقل و پس از اتصال اجرای واقعی اضافه می‌شوند." },
 };
+function emptyProductRequestItemDraft(id = ""): ProductRequestItemDraft {
+  return { id, itemName: "", quantity: "", unit: "", brandOrGrade: "", specification: "", alternatives: "نامشخص" };
+}
+
 const emptyPurchaseRequestDraft: PurchaseRequestDraft = {
+  requestKind: "product",
   rawNeed: "",
-  itemName: "",
-  quantity: "",
-  unit: "",
-  brandOrGrade: "",
-  specification: "",
-  alternatives: "نامشخص",
+  items: [emptyProductRequestItemDraft()],
+  serviceScope: "",
+  serviceLocation: "",
+  serviceSizeOrVolume: "",
+  serviceQualification: "",
+  serviceTiming: "",
+  serviceMethod: "",
+  serviceInScope: "",
+  serviceOutOfScope: "",
+  serviceWarranty: "",
+  servicePaymentTerms: "",
+  deliveryArea: "",
   neededBy: "",
+  transport: "",
+  tax: "",
+  paymentTerms: "",
 };
 const emptyPurchaseRequestFieldErrors: PurchaseRequestFieldErrors = {
   rawNeed: "",
-  itemName: "",
   quantity: "",
-  brandOrGrade: "",
-  specification: "",
-  neededBy: "",
+  quantityIndex: null,
+  serviceScope: "",
+  serviceLocation: "",
+};
+const emptySupplierContactDraft: SupplierContactDraft = {
+  displayName: "",
+  category: "",
+  tehranCoverage: "",
+  responseCapability: "both",
 };
 
 function purchaseRequestAlternativesFromLabel(label: string): PurchaseRequestAlternatives {
@@ -454,23 +728,50 @@ function purchaseRequestAlternativesLabel(value: PurchaseRequestAlternatives) {
 
 function purchaseRequestDraftFromRecord(request: ProjectPurchaseRequestRecord): PurchaseRequestDraft {
   return {
+    requestKind: request.requestKind,
     rawNeed: request.rawNeed.text,
-    itemName: request.item.name ?? "",
-    quantity: request.item.quantity ?? "",
-    unit: request.item.unit ?? "",
-    brandOrGrade: request.item.brandOrGrade ?? "",
-    specification: request.item.specification ?? "",
-    alternatives: purchaseRequestAlternativesLabel(request.item.alternatives),
+    items: request.items.map((item) => ({
+      id: item.id,
+      itemName: item.name ?? "",
+      quantity: item.quantity ?? "",
+      unit: item.unit ?? "",
+      brandOrGrade: item.brandOrGrade ?? "",
+      specification: item.specification ?? "",
+      alternatives: purchaseRequestAlternativesLabel(item.alternatives),
+    })),
+    serviceScope: request.service?.scope ?? "",
+    serviceLocation: request.service?.location ?? "",
+    serviceSizeOrVolume: request.service?.sizeOrVolume ?? "",
+    serviceQualification: request.service?.qualification ?? "",
+    serviceTiming: request.service?.timing ?? "",
+    serviceMethod: request.service?.method ?? "",
+    serviceInScope: request.service?.inScope ?? "",
+    serviceOutOfScope: request.service?.outOfScope ?? "",
+    serviceWarranty: request.service?.warranty ?? "",
+    servicePaymentTerms: request.service?.paymentTerms ?? "",
+    deliveryArea: request.delivery.area === "نامشخص" ? "" : request.delivery.area,
     neededBy: request.delivery.neededBy ?? "",
+    transport: request.unresolvedTerms.transport === "unknown" ? "" : request.unresolvedTerms.transport,
+    tax: request.unresolvedTerms.tax === "unknown" ? "" : request.unresolvedTerms.tax,
+    paymentTerms: request.unresolvedTerms.paymentTerms === "unknown" ? "" : request.unresolvedTerms.paymentTerms,
   };
 }
 
 function purchaseRequestMissingFields(request: ProjectPurchaseRequestRecord) {
   const missingFields: string[] = [];
-  if (!request.item.name) missingFields.push("نام قلم");
-  if (!request.item.quantity) missingFields.push("مقدار");
-  if (!request.item.unit) missingFields.push("واحد");
-  if (!request.delivery.area) missingFields.push("محدودهٔ تحویل");
+  if (request.requestKind === "product") {
+    request.items.forEach((item, index) => {
+      const prefix = request.items.length > 1 ? `قلم ${index + 1}: ` : "";
+      if (!item.name) missingFields.push(`${prefix}نام قلم`);
+      if (!item.quantity) missingFields.push(`${prefix}مقدار`);
+      if (!item.unit) missingFields.push(`${prefix}واحد`);
+    });
+    if (request.items.length === 0) missingFields.push("حداقل یک قلم");
+    if (!request.delivery.area) missingFields.push("محدودهٔ تحویل");
+  } else {
+    if (!request.service?.scope) missingFields.push("دامنهٔ خدمت");
+    if (!request.service?.location) missingFields.push("موقعیت مجاز خدمت");
+  }
   return missingFields;
 }
 
@@ -486,7 +787,15 @@ function purchaseRequestEventLabel(type: PurchaseRequestEventType) {
 }
 
 function purchaseRequestDisplayTitle(request: ProjectPurchaseRequestRecord) {
-  return request.item.name ?? request.rawNeed.text;
+  if (request.requestKind === "service") return request.service?.scope ?? request.rawNeed.text;
+  const firstItemName = request.items[0]?.name;
+  return request.items.length > 1 && firstItemName ? `${firstItemName} + ${request.items.length - 1} قلم` : firstItemName ?? request.rawNeed.text;
+}
+
+function purchaseRequestSnapshotTitle(snapshot: PurchaseRequestSnapshot) {
+  if (snapshot.requestKind === "service") return snapshot.service?.scope ?? snapshot.rawNeed;
+  const firstItemName = snapshot.items[0]?.name;
+  return snapshot.items.length > 1 && firstItemName ? `${firstItemName} + ${snapshot.items.length - 1} قلم` : firstItemName ?? snapshot.rawNeed;
 }
 
 function normalizeOptionalPurchaseRequestText(value: string) {
@@ -510,33 +819,440 @@ function purchaseRequestApprovalDedupeKey(projectId: string, requestId: string, 
   return `${projectId}:${requestId}:${requestVersion}:review-purchase-request-version`;
 }
 
-function purchaseRequestApprovalShareableFields(request: ProjectPurchaseRequestRecord): PurchaseRequestApprovalShareableField[] {
-  return [
-    "item.name",
-    "item.quantity",
-    "item.unit",
-    ...(request.item.brandOrGrade ? ["item.brandOrGrade" as const] : []),
-    ...(request.item.specification ? ["item.specification" as const] : []),
-    ...(request.delivery.neededBy ? ["delivery.neededBy" as const] : []),
+function purchaseRequestApprovalShareableFields(request: Pick<ProjectPurchaseRequestRecord, "requestKind" | "items" | "service">): PurchaseRequestApprovalShareableField[] {
+  if (request.requestKind === "service") {
+    return [
+      "service.scope",
+      "service.location",
+      "service.locationPrecision",
+      "service.sizeOrVolume",
+      "service.qualification",
+      "service.timing",
+      "service.method",
+      "service.inScope",
+      "service.outOfScope",
+      "service.warranty",
+      "service.paymentTerms",
+    ];
+  }
+  return request.items.flatMap((item, index) => [
+    `items.${index}.name`,
+    `items.${index}.quantity`,
+    `items.${index}.unit`,
+    `items.${index}.brandOrGrade`,
+    `items.${index}.specification`,
+    `items.${index}.alternatives`,
+  ]).concat([
     "delivery.area",
-  ];
+    "delivery.neededBy",
+    "unresolvedTerms.transport",
+    "unresolvedTerms.tax",
+    "unresolvedTerms.paymentTerms",
+  ]);
 }
 
-function purchaseRequestApprovalSnapshot(request: ProjectPurchaseRequestRecord): ProjectApprovalRecord["snapshot"] {
+function purchaseRequestApprovalSnapshot(request: ProjectPurchaseRequestRecord): PurchaseRequestSnapshot {
   return {
+    requestKind: request.requestKind,
     rawNeed: request.rawNeed.text,
-    item: { ...request.item },
+    items: structuredClone(request.items),
+    item: request.item ? structuredClone(request.item) : null,
+    service: request.service ? structuredClone(request.service) : null,
     delivery: { ...request.delivery },
     unresolvedTerms: { ...request.unresolvedTerms },
+    clarificationAnswers: structuredClone(request.clarificationAnswers),
     sharingStatus: "ارسال نشده",
   };
 }
 
-function approvalSnapshotMatchesRequest(approval: ProjectApprovalRecord, request: ProjectPurchaseRequestRecord) {
-  return approval.target.updatedAt === request.updatedAt
-    && approval.target.version === request.version
-    && JSON.stringify(approval.snapshot) === JSON.stringify(purchaseRequestApprovalSnapshot(request))
-    && JSON.stringify(approval.privacySnapshot.shareableFields) === JSON.stringify(purchaseRequestApprovalShareableFields(request));
+function stablePurchaseRequestValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stablePurchaseRequestValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stablePurchaseRequestValue(item)]));
+  }
+  return value;
+}
+
+function purchaseRequestStableHash(serialized: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= serialized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function purchaseRequestRevisionFingerprint(snapshot: PurchaseRequestSnapshot, shareableFields: PurchaseRequestApprovalShareableField[]) {
+  const serialized = JSON.stringify(stablePurchaseRequestValue({ snapshot, shareableFields }));
+  return `fnv1a-${purchaseRequestStableHash(serialized)}`;
+}
+
+function approvalSnapshotMatchesRevision(approval: ProjectApprovalRecord, request: ProjectPurchaseRequestRecord) {
+  const revision = request.reviewRevisions.find((item) => item.id === approval.target.revisionId && item.requestVersion === approval.target.version);
+  return Boolean(revision)
+    && approval.target.updatedAt === revision!.createdAt
+    && revision!.fingerprint === purchaseRequestRevisionFingerprint(revision!.snapshot, revision!.shareableFields)
+    && JSON.stringify(stablePurchaseRequestValue(approval.snapshot)) === JSON.stringify(stablePurchaseRequestValue(revision!.snapshot))
+    && JSON.stringify(approval.privacySnapshot.shareableFields) === JSON.stringify(revision!.shareableFields);
+}
+
+function isApprovalEligibleForDispatch(approval: ProjectApprovalRecord | undefined, request: ProjectPurchaseRequestRecord, projectId: string) {
+  return Boolean(approval)
+    && approval!.status === "approved"
+    && approval!.projectId === projectId
+    && request.projectId === projectId
+    && request.status === "ready-for-review"
+    && request.version === approval!.target.version
+    && approval!.target.id === request.id
+    && approvalSnapshotMatchesRevision(approval!, request);
+}
+
+function supplierContactResponseCapabilityLabel(value: SupplierContactResponseCapability) {
+  return supplierContactResponseCapabilities.find((item) => item.id === value)?.label ?? "نامشخص";
+}
+
+function supplierContactCapabilitySupports(contact: Pick<SupplierContactRecord, "responseCapability">, requestKind: PurchaseRequestKind) {
+  return contact.responseCapability === "both" || contact.responseCapability === requestKind;
+}
+
+function supplierContactCanRespond(contact: SupplierContactRecord, requestKind: PurchaseRequestKind) {
+  return contact.status === "active" && supplierContactCapabilitySupports(contact, requestKind);
+}
+
+function supplierContactMatchReason(contact: SupplierContactRecord, requestKind: PurchaseRequestKind) {
+  if (!supplierContactCanRespond(contact, requestKind)) return "توان پاسخ ثبت‌شده با نوع این درخواست سازگار نیست؛ این رکورد قابل انتخاب نیست.";
+  return `توان پاسخ «${supplierContactResponseCapabilityLabel(contact.responseCapability)}» با نوع درخواست سازگار است؛ دستهٔ «${contact.category}» و پوشش «${contact.tehranCoverage}» را شما ثبت کرده‌اید و باید دستی بررسی شوند.`;
+}
+
+function dispatchDraftDedupeKey(projectId: string, requestId: string, requestVersion: number, revisionId: string) {
+  return `${projectId}:${requestId}:${requestVersion}:${revisionId}:dispatch-draft`;
+}
+
+function dispatchPayloadFromSnapshot(snapshot: PurchaseRequestSnapshot): DispatchPayload {
+  if (snapshot.requestKind === "service") {
+    return {
+      requestKind: "service",
+      items: [],
+      service: snapshot.service ? {
+        scope: snapshot.service.scope,
+        location: snapshot.service.location,
+        locationPrecision: snapshot.service.locationPrecision,
+        sizeOrVolume: snapshot.service.sizeOrVolume,
+        qualification: snapshot.service.qualification,
+        timing: snapshot.service.timing,
+        method: snapshot.service.method,
+        inScope: snapshot.service.inScope,
+        outOfScope: snapshot.service.outOfScope,
+        warranty: snapshot.service.warranty,
+        paymentTerms: snapshot.service.paymentTerms,
+      } : null,
+      delivery: null,
+      unresolvedTerms: null,
+    };
+  }
+  return {
+    requestKind: "product",
+    items: snapshot.items.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      unit: item.unit,
+      brandOrGrade: item.brandOrGrade,
+      specification: item.specification,
+      alternatives: item.alternatives,
+    })),
+    service: null,
+    delivery: { area: snapshot.delivery.area, neededBy: snapshot.delivery.neededBy },
+    unresolvedTerms: { ...snapshot.unresolvedTerms },
+  };
+}
+
+function dispatchPrivacySnapshot(shareableFields: PurchaseRequestApprovalShareableField[]): DispatchPrivacySnapshot {
+  return {
+    shareableFields: [...shareableFields],
+    excludedFields: ["project.name", "project.budget", "project.files", "project.memory", "request.rawNeed", "request.clarificationAnswers", "delivery.exactAddress"],
+    projectNameShared: false,
+    exactAddressFieldIncluded: false,
+    budgetShared: false,
+    filesShared: false,
+    memoryShared: false,
+    rawNeedShared: false,
+    clarificationAnswersShared: false,
+    locationReviewRequired: true,
+  };
+}
+
+function dispatchRevisionFingerprint(target: DispatchDraftRecord["target"], recipientIds: string[], inviteDrafts: InviteDraft[], payload: DispatchPayload, privacySnapshot: DispatchPrivacySnapshot) {
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ target, recipientIds, inviteDrafts, payload, privacySnapshot })))}`;
+}
+
+function dispatchPlanApprovalTarget(dispatchDraft: DispatchDraftRecord, revision: DispatchDraftRevision): DispatchPlanApprovalRecord["target"] {
+  return {
+    type: "dispatch-draft-revision",
+    dispatchDraftId: dispatchDraft.id,
+    dispatchDraftVersion: revision.version,
+    dispatchRevisionId: revision.id,
+    dispatchRevisionFingerprint: revision.fingerprint,
+    requestId: dispatchDraft.target.requestId,
+    requestVersion: dispatchDraft.target.requestVersion,
+    requestRevisionId: dispatchDraft.target.revisionId,
+    contentApprovalId: dispatchDraft.target.approvalId,
+  };
+}
+
+function dispatchPlanFingerprint(target: DispatchPlanApprovalRecord["target"], snapshot: DispatchPlanApprovalRecord["snapshot"]) {
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ target, snapshot })))}`;
+}
+
+function dispatchPlanApprovalDedupeKey(projectId: string, target: DispatchPlanApprovalRecord["target"], planFingerprint: string) {
+  return `${projectId}:${target.dispatchDraftId}:${target.dispatchRevisionId}:${planFingerprint}:local-plan-approval`;
+}
+
+function dispatchPlanApprovalEffectiveStatus(
+  record: DispatchPlanApprovalRecord,
+  dispatchDraft: DispatchDraftRecord | null,
+  request: ProjectPurchaseRequestRecord,
+  contentApproval: ProjectApprovalRecord,
+  contacts: SupplierContactRecord[],
+): DispatchPlanApprovalEffectiveStatus {
+  const revision = dispatchDraft?.revisions.find((item) => item.id === record.target.dispatchRevisionId) ?? null;
+  const dependenciesAreExactAndCurrent = Boolean(dispatchDraft)
+    && dispatchDraft!.projectId === record.projectId
+    && dispatchDraft!.id === record.target.dispatchDraftId
+    && dispatchDraft!.currentRevisionId === record.target.dispatchRevisionId
+    && dispatchDraft!.version === record.target.dispatchDraftVersion
+    && revision?.version === record.target.dispatchDraftVersion
+    && revision?.fingerprint === record.target.dispatchRevisionFingerprint
+    && request.projectId === record.projectId
+    && request.id === record.target.requestId
+    && request.version === record.target.requestVersion
+    && request.status === "ready-for-review"
+    && request.reviewRevisions.some((item) => item.id === record.target.requestRevisionId && item.requestVersion === record.target.requestVersion)
+    && contentApproval.projectId === record.projectId
+    && contentApproval.id === record.target.contentApprovalId
+    && contentApproval.status === "approved"
+    && contentApproval.target.id === record.target.requestId
+    && contentApproval.target.version === record.target.requestVersion
+    && contentApproval.target.revisionId === record.target.requestRevisionId
+    && approvalSnapshotMatchesRevision(contentApproval, request)
+    && record.snapshot.recipients.every((recipient) => {
+      const contact = contacts.find((item) => item.id === recipient.supplierContactId && item.projectId === record.projectId);
+      return Boolean(contact)
+        && contact!.version === recipient.supplierContactVersion
+        && supplierContactCanRespond(contact!, request.requestKind);
+    });
+  return dependenciesAreExactAndCurrent ? record.status : "invalidated";
+}
+
+function dispatchPayloadRows(payload: DispatchPayload) {
+  if (payload.requestKind === "service" && payload.service) {
+    return [
+      ["service.scope", payload.service.scope],
+      ["service.location", payload.service.location],
+      ["service.locationPrecision", "فقط محدوده یا بخش پروژه"],
+      ["service.sizeOrVolume", payload.service.sizeOrVolume],
+      ["service.qualification", payload.service.qualification],
+      ["service.timing", payload.service.timing],
+      ["service.method", payload.service.method],
+      ["service.inScope", payload.service.inScope],
+      ["service.outOfScope", payload.service.outOfScope],
+      ["service.warranty", payload.service.warranty],
+      ["service.paymentTerms", payload.service.paymentTerms],
+    ] as Array<[string, string | null]>;
+  }
+  return payload.items.flatMap((item, index) => [
+    [`items.${index}.name`, item.name],
+    [`items.${index}.quantity`, item.quantity],
+    [`items.${index}.unit`, item.unit],
+    [`items.${index}.brandOrGrade`, item.brandOrGrade],
+    [`items.${index}.specification`, item.specification],
+    [`items.${index}.alternatives`, purchaseRequestAlternativesLabel(item.alternatives)],
+  ] as Array<[string, string | null]>).concat([
+    ["delivery.area", payload.delivery?.area ?? null],
+    ["delivery.neededBy", payload.delivery?.neededBy ?? null],
+    ["unresolvedTerms.transport", payload.unresolvedTerms?.transport === "unknown" ? "نامشخص" : payload.unresolvedTerms?.transport ?? null],
+    ["unresolvedTerms.tax", payload.unresolvedTerms?.tax === "unknown" ? "نامشخص" : payload.unresolvedTerms?.tax ?? null],
+    ["unresolvedTerms.paymentTerms", payload.unresolvedTerms?.paymentTerms === "unknown" ? "نامشخص" : payload.unresolvedTerms?.paymentTerms ?? null],
+  ]);
+}
+
+type PurchaseRequestClarificationSpec = { fieldPath: string; question: string; answer: string | null };
+
+function purchaseRequestClarificationSpecs(request: Pick<ProjectPurchaseRequestRecord, "requestKind" | "items" | "service" | "delivery" | "unresolvedTerms">): PurchaseRequestClarificationSpec[] {
+  if (request.requestKind === "service") {
+    const service = request.service;
+    return [
+      { fieldPath: "service.scope", question: "دامنهٔ دقیق خدمت چیست؟", answer: service?.scope ?? null },
+      { fieldPath: "service.location", question: "خدمت در کدام محدودهٔ مجاز انجام می‌شود؟", answer: service?.location ?? null },
+      { fieldPath: "service.sizeOrVolume", question: "اندازه یا حجم خدمت چقدر است؟", answer: service?.sizeOrVolume ?? null },
+      { fieldPath: "service.qualification", question: "چه صلاحیت یا گواهی‌ای لازم است؟", answer: service?.qualification ?? null },
+      { fieldPath: "service.timing", question: "زمان شروع یا پایان خدمت چه موقع است؟", answer: service?.timing ?? null },
+      { fieldPath: "service.method", question: "روش اجرای مورد انتظار چیست؟", answer: service?.method ?? null },
+      { fieldPath: "service.inScope", question: "چه مواردی داخل دامنهٔ خدمت است؟", answer: service?.inScope ?? null },
+      { fieldPath: "service.outOfScope", question: "چه مواردی خارج از دامنهٔ خدمت است؟", answer: service?.outOfScope ?? null },
+      { fieldPath: "service.warranty", question: "ضمانت اعلامی خدمت چیست؟", answer: service?.warranty ?? null },
+      { fieldPath: "service.paymentTerms", question: "شرایط پرداخت خدمت چیست؟", answer: service?.paymentTerms ?? null },
+    ];
+  }
+  const itemSpecs = request.items.flatMap((item, index): PurchaseRequestClarificationSpec[] => {
+    const itemLabel = request.items.length > 1 ? `قلم ${index + 1}` : "قلم";
+    return [
+      { fieldPath: `items.${item.id}.name`, question: `نام ${itemLabel} چیست؟`, answer: item.name },
+      { fieldPath: `items.${item.id}.quantity`, question: `مقدار ${itemLabel} چقدر است؟`, answer: item.quantity },
+      { fieldPath: `items.${item.id}.unit`, question: `واحد ${itemLabel} چیست؟`, answer: item.unit },
+      { fieldPath: `items.${item.id}.brandOrGrade`, question: `برند یا گرید ${itemLabel} چیست؟`, answer: item.brandOrGrade },
+      { fieldPath: `items.${item.id}.alternatives`, question: `جایگزین برای ${itemLabel} مجاز است؟`, answer: item.alternatives === "unknown" ? null : purchaseRequestAlternativesLabel(item.alternatives) },
+    ];
+  });
+  return itemSpecs.concat([
+    { fieldPath: "delivery.area", question: "محدودهٔ تقریبی تحویل کجاست؟", answer: request.delivery.area === "نامشخص" ? null : request.delivery.area },
+    { fieldPath: "delivery.neededBy", question: "موعد موردنیاز چه زمانی است؟", answer: request.delivery.neededBy },
+    { fieldPath: "terms.transport", question: "شرایط حمل چیست؟", answer: request.unresolvedTerms.transport === "unknown" ? null : request.unresolvedTerms.transport },
+    { fieldPath: "terms.tax", question: "وضعیت مالیات چگونه است؟", answer: request.unresolvedTerms.tax === "unknown" ? null : request.unresolvedTerms.tax },
+    { fieldPath: "terms.paymentTerms", question: "شرایط پرداخت چیست؟", answer: request.unresolvedTerms.paymentTerms === "unknown" ? null : request.unresolvedTerms.paymentTerms },
+  ]);
+}
+
+function reconcilePurchaseRequestClarifications(
+  request: Pick<ProjectPurchaseRequestRecord, "requestKind" | "items" | "service" | "delivery" | "unresolvedTerms">,
+  existing: PurchaseRequestClarificationAnswer[],
+  timestamp: string,
+  source: PurchaseRequestRecordSource = "ثبت مستقیم شما",
+) {
+  const existingByPath = new Map(existing.map((answer) => [answer.fieldPath, answer]));
+  return purchaseRequestClarificationSpecs(request).flatMap((spec): PurchaseRequestClarificationAnswer[] => {
+    const previous = existingByPath.get(spec.fieldPath);
+    if (!previous && spec.answer !== null) return [];
+    const status: PurchaseRequestAnswerStatus = spec.answer === null
+      ? source === "مهاجرت محلی" ? "needs-confirmation" : "explicitly-unknown"
+      : "answered";
+    if (previous && previous.answer === spec.answer && previous.status === status && previous.question === spec.question) return [previous];
+    const version = previous ? previous.version + 1 : 1;
+    const stableMigrationSuffix = purchaseRequestStableHash(`${spec.fieldPath}:${spec.question}:${spec.answer ?? "unknown"}`);
+    const event = { id: source === "مهاجرت محلی" && !previous ? `legacy-clarification-event-${stableMigrationSuffix}` : `clarification-event-${window.crypto.randomUUID()}`, type: previous ? "updated" as const : "created" as const, actor: source === "مهاجرت محلی" ? "مهاجرت محلی" as const : "شما" as const, at: timestamp, version };
+    return [{
+      id: previous?.id ?? (source === "مهاجرت محلی" ? `legacy-clarification-${stableMigrationSuffix}` : `clarification-${window.crypto.randomUUID()}`),
+      fieldPath: spec.fieldPath,
+      question: spec.question,
+      answer: spec.answer,
+      status,
+      source,
+      confidence: null,
+      completionStatus: status === "answered" ? "complete" : "incomplete",
+      version,
+      createdAt: previous?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+      history: [...(previous?.history ?? []), event],
+    }];
+  });
+}
+
+function purchaseRequestClarificationsMatchSpecs(
+  request: Pick<ProjectPurchaseRequestRecord, "requestKind" | "items" | "service" | "delivery" | "unresolvedTerms">,
+  clarifications: PurchaseRequestClarificationAnswer[],
+) {
+  const specs = purchaseRequestClarificationSpecs(request);
+  const specsByPath = new Map(specs.map((spec) => [spec.fieldPath, spec]));
+  const clarificationsByPath = new Map(clarifications.map((answer) => [answer.fieldPath, answer]));
+  return clarifications.every((answer) => {
+    const spec = specsByPath.get(answer.fieldPath);
+    return Boolean(spec) && answer.question === spec!.question && answer.answer === spec!.answer;
+  }) && specs.every((spec) => spec.answer !== null || clarificationsByPath.has(spec.fieldPath));
+}
+
+function isValidPurchaseRequestText(value: unknown, maxLength: number, nullable = true): value is string | null {
+  if (value === null) return nullable;
+  return typeof value === "string" && hasVisibleProjectTaskText(value) && value === value.trim() && value.length <= maxLength;
+}
+
+function parsePurchaseRequestSubrecordHistory(value: unknown, createdAt: string, updatedAt: string, version: number) {
+  if (!Array.isArray(value) || value.length !== version || version < 1) return null;
+  const ids = new Set<string>();
+  const history: PurchaseRequestSubrecordEvent[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const event = value[index];
+    const id = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    if (!id || ids.has(id) || (event?.type !== "created" && event?.type !== "updated") || (event?.actor !== "شما" && event?.actor !== "مهاجرت محلی") || event?.version !== index + 1 || !isValidProjectFileDate(at) || (index === 0 ? event.type !== "created" : event.type !== "updated") || (index > 0 && new Date(at).getTime() < new Date(history[index - 1].at).getTime())) return null;
+    ids.add(id);
+    history.push({ id, type: event.type, actor: event.actor, at, version: event.version });
+  }
+  return history[0]?.at === createdAt && history[history.length - 1]?.at === updatedAt ? history : null;
+}
+
+function purchaseRequestSubrecordSourceIsReachable(source: PurchaseRequestRecordSource, history: PurchaseRequestSubrecordEvent[], version: number) {
+  if (source === "مهاجرت محلی") return version === 1 && history.length === 1 && history[0]?.actor === "مهاجرت محلی";
+  if (history[0]?.actor === "شما") return history.every((event) => event.actor === "شما");
+  return version >= 2 && history[0]?.actor === "مهاجرت محلی" && history.slice(1).every((event) => event.actor === "شما");
+}
+
+function parseProductRequestItem(value: any): ProductRequestItem | null {
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const name = value?.name === null ? null : typeof value?.name === "string" ? value.name.trim() : "";
+  const quantity = value?.quantity === null ? null : typeof value?.quantity === "string" ? value.quantity.trim() : "";
+  const unit = value?.unit === null ? null : typeof value?.unit === "string" ? value.unit.trim() : "";
+  const brandOrGrade = value?.brandOrGrade === null ? null : typeof value?.brandOrGrade === "string" ? value.brandOrGrade.trim() : "";
+  const specification = value?.specification === null ? null : typeof value?.specification === "string" ? value.specification.trim() : "";
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const version = value?.version;
+  const history = Number.isInteger(version) ? parsePurchaseRequestSubrecordHistory(value?.history, createdAt, updatedAt, version) : null;
+  const completionStatus: PurchaseRequestCompletionStatus = name && quantity && unit ? "complete" : "incomplete";
+  if (!id || !isValidPurchaseRequestText(name, 100) || quantity !== null && (quantity === "" || normalizeProjectNumber(quantity, false) !== quantity || Number(quantity) <= 0) || unit !== null && !purchaseRequestUnits.includes(unit as PurchaseRequestUnit) || !isValidPurchaseRequestText(brandOrGrade, 100) || !isValidPurchaseRequestText(specification, 500) || !["unknown", "allowed", "not-allowed", "approval-required"].includes(value?.alternatives) || (value?.source !== "ثبت مستقیم شما" && value?.source !== "مهاجرت محلی") || value?.confidence !== null || value?.completionStatus !== completionStatus || !isValidProjectFileDate(createdAt) || !isValidProjectFileDate(updatedAt) || !history || !purchaseRequestSubrecordSourceIsReachable(value.source, history, version)) return null;
+  return { id, name, quantity, unit: unit as PurchaseRequestUnit | null, brandOrGrade, specification, alternatives: value.alternatives, source: value.source, confidence: null, completionStatus, version, createdAt, updatedAt, history };
+}
+
+function parseServiceRequestSpec(value: any): ServiceRequestSpec | null {
+  if (!value) return null;
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const fields = ["scope", "location", "sizeOrVolume", "qualification", "timing", "method", "inScope", "outOfScope", "warranty", "paymentTerms"] as const;
+  const normalized = Object.fromEntries(fields.map((field) => [field, value[field] === null ? null : typeof value[field] === "string" ? value[field].trim() : ""]));
+  const createdAt = typeof value.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const version = value.version;
+  const history = Number.isInteger(version) ? parsePurchaseRequestSubrecordHistory(value.history, createdAt, updatedAt, version) : null;
+  const completionStatus: PurchaseRequestCompletionStatus = normalized.scope && normalized.location ? "complete" : "incomplete";
+  if (!id || fields.some((field) => !isValidPurchaseRequestText(normalized[field], field === "scope" || field === "inScope" || field === "outOfScope" ? 500 : 160)) || value.locationPrecision !== "area-or-project-section" || (value.source !== "ثبت مستقیم شما" && value.source !== "مهاجرت محلی") || value.confidence !== null || value.completionStatus !== completionStatus || !isValidProjectFileDate(createdAt) || !isValidProjectFileDate(updatedAt) || !history || !purchaseRequestSubrecordSourceIsReachable(value.source, history, version)) return null;
+  return { id, ...(normalized as Pick<ServiceRequestSpec, (typeof fields)[number]>), locationPrecision: "area-or-project-section", source: value.source, confidence: null, completionStatus, version, createdAt, updatedAt, history };
+}
+
+function parsePurchaseRequestClarificationAnswer(value: any): PurchaseRequestClarificationAnswer | null {
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const fieldPath = typeof value?.fieldPath === "string" ? value.fieldPath.trim() : "";
+  const question = typeof value?.question === "string" ? value.question.trim() : "";
+  const answer = value?.answer === null ? null : typeof value?.answer === "string" ? value.answer.trim() : "";
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const version = value?.version;
+  const history = Number.isInteger(version) ? parsePurchaseRequestSubrecordHistory(value?.history, createdAt, updatedAt, version) : null;
+  const status = value?.status as PurchaseRequestAnswerStatus;
+  const completionStatus: PurchaseRequestCompletionStatus = status === "answered" ? "complete" : "incomplete";
+  const sourceIsReachable = history && (value?.source === "ثبت مستقیم شما" || value?.source === "مهاجرت محلی")
+    ? purchaseRequestSubrecordSourceIsReachable(value.source, history, version)
+    : false;
+  const reachableState = status === "answered"
+    ? value?.source === "ثبت مستقیم شما" && Number.isInteger(version) && version >= 2 && sourceIsReachable
+    : status === "explicitly-unknown"
+      ? value?.source === "ثبت مستقیم شما" && sourceIsReachable
+      : value?.source === "مهاجرت محلی" && version === 1 && sourceIsReachable;
+  if (!id || !fieldPath || !hasVisibleProjectTaskText(question) || question.length > 180 || (answer !== null && (!hasVisibleProjectTaskText(answer) || answer.length > 500)) || !["answered", "explicitly-unknown", "needs-confirmation"].includes(status) || (status === "answered") !== (answer !== null) || !reachableState || value?.confidence !== null || value?.completionStatus !== completionStatus || !isValidProjectFileDate(createdAt) || !isValidProjectFileDate(updatedAt) || !history) return null;
+  return { id, fieldPath, question, answer, status, source: value.source, confidence: null, completionStatus, version, createdAt, updatedAt, history };
+}
+
+function parsePurchaseRequestSnapshot(value: any): PurchaseRequestSnapshot | null {
+  const requestKind = value?.requestKind as PurchaseRequestKind;
+  const items: Array<ProductRequestItem | null> = Array.isArray(value?.items) ? value.items.map(parseProductRequestItem) : [];
+  const service = value?.service === null ? null : parseServiceRequestSpec(value?.service);
+  const clarifications: Array<PurchaseRequestClarificationAnswer | null> = Array.isArray(value?.clarificationAnswers) ? value.clarificationAnswers.map(parsePurchaseRequestClarificationAnswer) : [];
+  const rawNeed = typeof value?.rawNeed === "string" ? value.rawNeed.trim() : "";
+  const deliveryArea = typeof value?.delivery?.area === "string" ? value.delivery.area.trim() : "";
+  const neededBy = value?.delivery?.neededBy === null ? null : typeof value?.delivery?.neededBy === "string" ? value.delivery.neededBy.trim() : "";
+  const itemMirror = value?.item === null ? null : parseProductRequestItem(value?.item);
+  const terms = [value?.unresolvedTerms?.transport, value?.unresolvedTerms?.tax, value?.unresolvedTerms?.paymentTerms];
+  if ((requestKind !== "product" && requestKind !== "service") || !hasVisibleProjectTaskText(rawNeed) || rawNeed.length > 800 || items.some((item) => item === null) || clarifications.some((answer) => answer === null) || new Set((items as ProductRequestItem[]).map((item) => item.id)).size !== items.length || new Set((clarifications as PurchaseRequestClarificationAnswer[]).map((answer) => answer.id)).size !== clarifications.length || new Set((clarifications as PurchaseRequestClarificationAnswer[]).map((answer) => answer.fieldPath)).size !== clarifications.length || value?.delivery?.city !== "تهران" || !isValidPurchaseRequestText(deliveryArea, 120, false) || value?.delivery?.exactAddressShared !== false || !isValidPurchaseRequestText(neededBy, 80) || terms.some((term) => typeof term !== "string" || !hasVisibleProjectTaskText(term) || term.length > 160) || value?.sharingStatus !== "ارسال نشده") return null;
+  if (requestKind === "product" && (items.length < 1 || items.length > 8 || service !== null || !itemMirror || JSON.stringify(stablePurchaseRequestValue(itemMirror)) !== JSON.stringify(stablePurchaseRequestValue(items[0])))) return null;
+  if (requestKind === "service" && (items.length !== 0 || itemMirror !== null || !service)) return null;
+  const snapshot = { requestKind, rawNeed, items: items as ProductRequestItem[], item: itemMirror, service, delivery: { city: "تهران" as const, area: deliveryArea as string, exactAddressShared: false as const, neededBy }, unresolvedTerms: { transport: terms[0] as string, tax: terms[1] as string, paymentTerms: terms[2] as string }, clarificationAnswers: clarifications as PurchaseRequestClarificationAnswer[], sharingStatus: "ارسال نشده" as const };
+  return purchaseRequestClarificationsMatchSpecs(snapshot, snapshot.clarificationAnswers) ? snapshot : null;
 }
 
 function normalizeProjectNumber(value: string, integerOnly: boolean) {
@@ -821,6 +1537,135 @@ function readStoredProjectTasks(): LocalRecordsReadResult<ProjectTaskRecord> {
   }
 }
 
+function parseV2ProjectPurchaseRequest(request: any): ProjectPurchaseRequestRecord | null {
+  const id = typeof request?.id === "string" ? request.id.trim() : "";
+  const projectId = typeof request?.projectId === "string" ? request.projectId.trim() : "";
+  const rawNeedText = typeof request?.rawNeed?.text === "string" ? request.rawNeed.text.trim() : "";
+  const capturedAt = typeof request?.rawNeed?.capturedAt === "string" ? request.rawNeed.capturedAt.trim() : "";
+  const createdAt = typeof request?.createdAt === "string" ? request.createdAt.trim() : "";
+  const updatedAt = typeof request?.updatedAt === "string" ? request.updatedAt.trim() : "";
+  const readyAt = request?.readyAt === null ? null : typeof request?.readyAt === "string" ? request.readyAt.trim() : "";
+  const version = request?.version;
+  const currentSnapshot = parsePurchaseRequestSnapshot({
+    requestKind: request?.requestKind,
+    rawNeed: rawNeedText,
+    items: request?.items,
+    item: request?.item,
+    service: request?.service,
+    delivery: request?.delivery,
+    unresolvedTerms: request?.unresolvedTerms,
+    clarificationAnswers: request?.clarificationAnswers,
+    sharingStatus: request?.sharingStatus,
+  });
+  if (!id || !projectId || !currentSnapshot || request?.schemaVersion !== 2 || request?.rawNeed?.source !== "ثبت مستقیم شما" || capturedAt !== createdAt || !isValidProjectFileDate(capturedAt) || !isValidProjectFileDate(updatedAt) || !Number.isInteger(version) || version < 1 || request?.visibility !== "خصوصی پروژه" || request?.localStatus !== "ثبت محلی" || request?.sharingStatus !== "ارسال نشده") return null;
+
+  const eventIds = new Set<string>();
+  const history: PurchaseRequestEvent[] = Array.isArray(request?.history) ? request.history.flatMap((event: any): PurchaseRequestEvent[] => {
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    if (!eventId || eventIds.has(eventId) || !["created", "updated", "marked-ready-for-review", "returned-to-draft"].includes(event?.type) || event?.actor !== "شما" || !Number.isInteger(event?.version) || event.version < 1 || !isValidProjectFileDate(at)) return [];
+    eventIds.add(eventId);
+    return [{ id: eventId, type: event.type, actor: "شما", at, version: event.version }];
+  }) : [];
+  let derivedStatus: PurchaseRequestStatus = "draft";
+  let validTransitions = history[0]?.type === "created";
+  for (const event of history.slice(1)) {
+    if (event.type === "updated" && derivedStatus === "draft") continue;
+    if (event.type === "marked-ready-for-review" && derivedStatus === "draft") { derivedStatus = "ready-for-review"; continue; }
+    if (event.type === "returned-to-draft" && derivedStatus === "ready-for-review") { derivedStatus = "draft"; continue; }
+    validTransitions = false;
+  }
+  const historyIsValid = history.length === request.history?.length && history.length === version && history.every((event, index) => event.version === index + 1 && (index === 0 || new Date(event.at).getTime() >= new Date(history[index - 1].at).getTime())) && history[0]?.at === createdAt && history[history.length - 1]?.at === updatedAt && validTransitions;
+  const readyStateIsValid = derivedStatus === "ready-for-review"
+    ? request?.status === "ready-for-review" && readyAt === updatedAt && history[history.length - 1]?.type === "marked-ready-for-review" && purchaseRequestMissingFields({ ...request, ...currentSnapshot, schemaVersion: 2 } as ProjectPurchaseRequestRecord).length === 0
+    : request?.status === "draft" && readyAt === null && ["created", "updated", "returned-to-draft"].includes(history[history.length - 1]?.type ?? "");
+  if (!historyIsValid || !readyStateIsValid || new Set(currentSnapshot.items.map((item) => item.id)).size !== currentSnapshot.items.length) return null;
+
+  const revisionIds = new Set<string>();
+  const revisionVersions = new Set<number>();
+  const reviewRevisions: PurchaseRequestReviewRevision[] = Array.isArray(request?.reviewRevisions) ? request.reviewRevisions.flatMap((revision: any): PurchaseRequestReviewRevision[] => {
+    const revisionId = typeof revision?.id === "string" ? revision.id.trim() : "";
+    const requestVersion = revision?.requestVersion;
+    const revisionCreatedAt = typeof revision?.createdAt === "string" ? revision.createdAt.trim() : "";
+    const snapshot = parsePurchaseRequestSnapshot(revision?.snapshot);
+    const shareableFields = Array.isArray(revision?.shareableFields) && revision.shareableFields.every((field: unknown) => typeof field === "string" && field.length > 0) ? revision.shareableFields as string[] : [];
+    const fingerprint = typeof revision?.fingerprint === "string" ? revision.fingerprint.trim() : "";
+    const readyEvent = Number.isInteger(requestVersion) ? history[requestVersion - 1] : undefined;
+    if (!revisionId || revisionIds.has(revisionId) || !Number.isInteger(requestVersion) || requestVersion < 1 || requestVersion > version || revisionVersions.has(requestVersion) || !isValidProjectFileDate(revisionCreatedAt) || readyEvent?.type !== "marked-ready-for-review" || readyEvent.at !== revisionCreatedAt || !snapshot || shareableFields.length === 0 || JSON.stringify(shareableFields) !== JSON.stringify(purchaseRequestApprovalShareableFields(snapshot)) || fingerprint !== purchaseRequestRevisionFingerprint(snapshot, shareableFields)) return [];
+    revisionIds.add(revisionId);
+    revisionVersions.add(requestVersion);
+    return [{ id: revisionId, requestVersion, createdAt: revisionCreatedAt, snapshot, shareableFields, fingerprint }];
+  }) : [];
+  const readyVersions = history.filter((event) => event.type === "marked-ready-for-review").map((event) => event.version);
+  const migration = request?.migration === null
+    ? null
+    : request?.migration?.sourceSchema === 1 && Array.isArray(request.migration.unverifiedReadyVersions) && request.migration.unverifiedReadyVersions.every((item: unknown) => Number.isInteger(item) && readyVersions.includes(item as number)) && new Set(request.migration.unverifiedReadyVersions).size === request.migration.unverifiedReadyVersions.length
+      ? { sourceSchema: 1 as const, unverifiedReadyVersions: request.migration.unverifiedReadyVersions as number[] }
+      : undefined;
+  const readyEventCount = readyVersions.length;
+  const currentRevision = reviewRevisions.find((revision) => revision.requestVersion === version);
+  const coveredReadyVersions = new Set([...reviewRevisions.map((revision) => revision.requestVersion), ...(migration?.unverifiedReadyVersions ?? [])]);
+  if (migration === undefined || reviewRevisions.length !== request.reviewRevisions?.length || coveredReadyVersions.size !== readyEventCount || readyVersions.some((readyVersion) => !coveredReadyVersions.has(readyVersion)) || reviewRevisions.some((revision) => migration?.unverifiedReadyVersions.includes(revision.requestVersion)) || (derivedStatus === "ready-for-review" && (!currentRevision || migration?.unverifiedReadyVersions.includes(version) || JSON.stringify(stablePurchaseRequestValue(currentRevision.snapshot)) !== JSON.stringify(stablePurchaseRequestValue(currentSnapshot)) || JSON.stringify(currentRevision.shareableFields) !== JSON.stringify(purchaseRequestApprovalShareableFields({ ...request, ...currentSnapshot, schemaVersion: 2, reviewRevisions, migration } as ProjectPurchaseRequestRecord))))) return null;
+
+  const record = {
+    schemaVersion: 2,
+    id,
+    projectId,
+    requestKind: currentSnapshot.requestKind,
+    rawNeed: { text: rawNeedText, source: "ثبت مستقیم شما", capturedAt },
+    items: currentSnapshot.items,
+    item: currentSnapshot.item,
+    service: currentSnapshot.service,
+    delivery: currentSnapshot.delivery,
+    unresolvedTerms: currentSnapshot.unresolvedTerms,
+    clarificationAnswers: currentSnapshot.clarificationAnswers,
+    reviewRevisions,
+    migration,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    sharingStatus: "ارسال نشده",
+    status: derivedStatus,
+    version,
+    createdAt,
+    updatedAt,
+    readyAt,
+    history,
+  } satisfies ProjectPurchaseRequestRecord;
+  if (!purchaseRequestClarificationsMatchSpecs(record, record.clarificationAnswers)) return null;
+  return record;
+}
+
+function upgradeLegacyProjectPurchaseRequest(legacy: Omit<ProjectPurchaseRequestRecord, "schemaVersion" | "items" | "service" | "clarificationAnswers" | "reviewRevisions" | "migration" | "item"> & { item: Omit<ProductRequestItem, "completionStatus" | "version" | "createdAt" | "updatedAt" | "history"> }): ProjectPurchaseRequestRecord {
+  const migrationAt = legacy.updatedAt;
+  const item: ProductRequestItem = {
+    ...legacy.item,
+    source: "مهاجرت محلی",
+    completionStatus: legacy.item.name && legacy.item.quantity && legacy.item.unit ? "complete" : "incomplete",
+    version: 1,
+    createdAt: migrationAt,
+    updatedAt: migrationAt,
+    history: [{ id: `legacy-item-event-${legacy.item.id}`, type: "created", actor: "مهاجرت محلی", at: migrationAt, version: 1 }],
+  };
+  const record: ProjectPurchaseRequestRecord = {
+    ...legacy,
+    schemaVersion: 2,
+    items: [item],
+    item,
+    service: null,
+    clarificationAnswers: [],
+    reviewRevisions: [],
+    migration: { sourceSchema: 1, unverifiedReadyVersions: legacy.history.filter((event) => event.type === "marked-ready-for-review").map((event) => event.version) },
+  };
+  record.clarificationAnswers = reconcilePurchaseRequestClarifications(record, [], migrationAt, "مهاجرت محلی");
+  if (record.status === "ready-for-review") {
+    const snapshot = purchaseRequestApprovalSnapshot(record);
+    const shareableFields = purchaseRequestApprovalShareableFields(record);
+    record.reviewRevisions = [{ id: `legacy-review-${record.id}-${record.version}`, requestVersion: record.version, createdAt: record.updatedAt, snapshot, shareableFields, fingerprint: purchaseRequestRevisionFingerprint(snapshot, shareableFields) }];
+    record.migration!.unverifiedReadyVersions = record.migration!.unverifiedReadyVersions.filter((version) => version !== record.version);
+  }
+  return record;
+}
+
 function readStoredProjectPurchaseRequests(): LocalRecordsReadResult<ProjectPurchaseRequestRecord> {
   try {
     const rawRequests = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
@@ -831,6 +1676,15 @@ function readStoredProjectPurchaseRequests(): LocalRecordsReadResult<ProjectPurc
     const seenRequestIds = new Set<string>();
     let readError = false;
     const records = parsed.flatMap((request): ProjectPurchaseRequestRecord[] => {
+      if (request?.schemaVersion === 2) {
+        const record = parseV2ProjectPurchaseRequest(request);
+        if (!record || seenRequestIds.has(record.id)) {
+          readError = true;
+          return [];
+        }
+        seenRequestIds.add(record.id);
+        return [record];
+      }
       const id = typeof request?.id === "string" ? request.id.trim() : "";
       const projectId = typeof request?.projectId === "string" ? request.projectId.trim() : "";
       const rawNeedText = typeof request?.rawNeed?.text === "string" ? request.rawNeed.text.trim() : "";
@@ -942,7 +1796,7 @@ function readStoredProjectPurchaseRequests(): LocalRecordsReadResult<ProjectPurc
       }
 
       seenRequestIds.add(id);
-      return [{
+      return [upgradeLegacyProjectPurchaseRequest({
         id,
         projectId,
         requestKind: "product",
@@ -969,12 +1823,66 @@ function readStoredProjectPurchaseRequests(): LocalRecordsReadResult<ProjectPurc
         updatedAt,
         readyAt,
         history,
-      }];
+      })];
     });
     return { records, readError };
   } catch {
     return { records: [], readError: true };
   }
+}
+
+function parseV2ProjectApproval(approval: any, purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): ProjectApprovalRecord | null {
+  const id = typeof approval?.id === "string" ? approval.id.trim() : "";
+  const projectId = typeof approval?.projectId === "string" ? approval.projectId.trim() : "";
+  const targetId = typeof approval?.target?.id === "string" ? approval.target.id.trim() : "";
+  const targetVersion = approval?.target?.version;
+  const targetUpdatedAt = typeof approval?.target?.updatedAt === "string" ? approval.target.updatedAt.trim() : "";
+  const revisionId = typeof approval?.target?.revisionId === "string" ? approval.target.revisionId.trim() : "";
+  const dedupeKey = typeof approval?.dedupeKey === "string" ? approval.dedupeKey.trim() : "";
+  const snapshot = parsePurchaseRequestSnapshot(approval?.snapshot);
+  const requestedAt = typeof approval?.requestedAt === "string" ? approval.requestedAt.trim() : "";
+  const updatedAt = typeof approval?.updatedAt === "string" ? approval.updatedAt.trim() : "";
+  const decidedAt = approval?.decidedAt === null ? null : typeof approval?.decidedAt === "string" ? approval.decidedAt.trim() : "";
+  const version = approval?.version;
+  const status = approval?.status as ProjectApprovalStatus;
+  const eventIds = new Set<string>();
+  const history: ProjectApprovalEvent[] = Array.isArray(approval?.history) ? approval.history.flatMap((event: any): ProjectApprovalEvent[] => {
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    if (!eventId || eventIds.has(eventId) || !["created", "approved", "changes-requested"].includes(event?.type) || event?.actor !== "شما" || !Number.isInteger(event?.version) || event.version < 1 || !isValidProjectFileDate(at)) return [];
+    eventIds.add(eventId);
+    return [{ id: eventId, type: event.type, actor: "شما", at, version: event.version }];
+  }) : [];
+  const shareableFields = Array.isArray(approval?.privacySnapshot?.shareableFields) && approval.privacySnapshot.shareableFields.every((field: unknown) => typeof field === "string" && field.length > 0) ? approval.privacySnapshot.shareableFields as string[] : [];
+  const pendingStateIsValid = status === "pending" && version === 1 && decidedAt === null && approval?.decidedBy === null && history.length === 1 && history[0]?.type === "created";
+  const decidedStateIsValid = (status === "approved" || status === "changes-requested") && version === 2 && decidedAt === updatedAt && approval?.decidedBy === "شما" && history.length === 2 && history[1]?.type === status;
+  const historyIsValid = history.length === approval?.history?.length && history.length === version && history[0]?.type === "created" && history.every((event, index) => event.version === index + 1 && (index === 0 || new Date(event.at).getTime() >= new Date(history[index - 1].at).getTime())) && history[0]?.at === requestedAt && history[history.length - 1]?.at === updatedAt;
+  const targetRequest = purchaseRequests.records.find((request) => request.id === targetId && request.projectId === projectId);
+  const targetRevision = targetRequest?.reviewRevisions.find((revision) => revision.id === revisionId && revision.requestVersion === targetVersion);
+  if (!id || !projectId || approval?.schemaVersion !== 2 || approval?.purpose !== "review-purchase-request-version" || approval?.target?.type !== "purchase-request" || !targetId || !Number.isInteger(targetVersion) || targetVersion < 1 || !isValidProjectFileDate(targetUpdatedAt) || !revisionId || dedupeKey !== purchaseRequestApprovalDedupeKey(projectId, targetId, targetVersion) || !snapshot || !targetRequest || !targetRevision || targetUpdatedAt !== targetRevision.createdAt || JSON.stringify(stablePurchaseRequestValue(snapshot)) !== JSON.stringify(stablePurchaseRequestValue(targetRevision.snapshot)) || JSON.stringify(shareableFields) !== JSON.stringify(targetRevision.shareableFields) || targetRevision.fingerprint !== purchaseRequestRevisionFingerprint(targetRevision.snapshot, targetRevision.shareableFields) || (status === "pending" && (targetRequest.version !== targetVersion || targetRequest.status !== "ready-for-review")) || approval?.privacySnapshot?.projectNameShared !== false || approval?.privacySnapshot?.exactAddressShared !== false || approval?.privacySnapshot?.budgetShared !== false || approval?.privacySnapshot?.filesShared !== false || approval?.privacySnapshot?.memoryShared !== false || approval?.externalEffect !== "none" || approval?.destination !== null || approval?.sendAuthorized !== false || approval?.visibility !== "خصوصی پروژه" || approval?.localStatus !== "ثبت محلی" || approval?.requestedBy !== "شما" || !isValidProjectFileDate(requestedAt) || !isValidProjectFileDate(updatedAt) || new Date(requestedAt).getTime() < new Date(targetUpdatedAt).getTime() || new Date(updatedAt).getTime() < new Date(requestedAt).getTime() || !historyIsValid || (!pendingStateIsValid && !decidedStateIsValid)) return null;
+  return {
+    schemaVersion: 2,
+    id,
+    projectId,
+    purpose: "review-purchase-request-version",
+    target: { type: "purchase-request", id: targetId, version: targetVersion, updatedAt: targetUpdatedAt, revisionId },
+    dedupeKey,
+    snapshot,
+    privacySnapshot: { shareableFields, projectNameShared: false, exactAddressShared: false, budgetShared: false, filesShared: false, memoryShared: false },
+    externalEffect: "none",
+    destination: null,
+    sendAuthorized: false,
+    status,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    requestedBy: "شما",
+    decidedBy: approval.decidedBy,
+    requestedAt,
+    updatedAt,
+    decidedAt,
+    version,
+    history,
+  };
 }
 
 function readStoredProjectApprovals(purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): LocalRecordsReadResult<ProjectApprovalRecord> {
@@ -988,6 +1896,16 @@ function readStoredProjectApprovals(purchaseRequests: LocalRecordsReadResult<Pro
     const seenDedupeKeys = new Set<string>();
     let readError = purchaseRequests.readError;
     const records = parsed.flatMap((approval): ProjectApprovalRecord[] => {
+      if (approval?.schemaVersion === 2) {
+        const record = parseV2ProjectApproval(approval, purchaseRequests);
+        if (!record || seenApprovalIds.has(record.id) || seenDedupeKeys.has(record.dedupeKey)) {
+          readError = true;
+          return [];
+        }
+        seenApprovalIds.add(record.id);
+        seenDedupeKeys.add(record.dedupeKey);
+        return [record];
+      }
       const id = typeof approval?.id === "string" ? approval.id.trim() : "";
       const projectId = typeof approval?.projectId === "string" ? approval.projectId.trim() : "";
       const targetId = typeof approval?.target?.id === "string" ? approval.target.id.trim() : "";
@@ -1062,59 +1980,71 @@ function readStoredProjectApprovals(purchaseRequests: LocalRecordsReadResult<Pro
         "delivery.area",
       ];
 
-      const record = {
-        id,
-        projectId,
-        purpose: "review-purchase-request-version",
-        target: { type: "purchase-request", id: targetId, version: targetVersion, updatedAt: targetUpdatedAt },
-        dedupeKey,
-        snapshot: {
-          rawNeed,
-          item: {
-            id: itemId,
-            name: itemName,
-            quantity,
-            unit: unit as PurchaseRequestUnit,
-            brandOrGrade,
-            specification,
-            alternatives: approval?.snapshot?.item?.alternatives as PurchaseRequestAlternatives,
-            source: "ثبت مستقیم شما",
-            confidence: null,
-          },
-          delivery: { city: "تهران", area: deliveryArea, exactAddressShared: false, neededBy },
-          unresolvedTerms: { transport: "unknown", tax: "unknown", paymentTerms: "unknown" },
-          sharingStatus: "ارسال نشده",
-        },
-        privacySnapshot: {
-          shareableFields,
-          projectNameShared: false,
-          exactAddressShared: false,
-          budgetShared: false,
-          filesShared: false,
-          memoryShared: false,
-        },
-        externalEffect: "none",
-        destination: null,
-        sendAuthorized: false,
-        status,
-        visibility: "خصوصی پروژه",
-        localStatus: "ثبت محلی",
-        requestedBy: "شما",
-        decidedBy: approval?.decidedBy as "شما" | null,
-        requestedAt,
-        updatedAt,
-        decidedAt,
-        version,
-        history,
-      } satisfies ProjectApprovalRecord;
       const targetRequest = purchaseRequests.records.find((request) => request.id === targetId && request.projectId === projectId);
       const targetReadyEvent = Number.isInteger(targetVersion) ? targetRequest?.history[targetVersion - 1] : undefined;
+      let targetRevision = targetRequest?.reviewRevisions.find((revision) => revision.requestVersion === targetVersion && revision.createdAt === targetUpdatedAt);
+      let migratedHistoricalRevision: PurchaseRequestReviewRevision | null = null;
+      if (!targetRevision && targetRequest?.migration?.unverifiedReadyVersions.includes(targetVersion) && targetReadyEvent?.type === "marked-ready-for-review" && targetReadyEvent.at === targetUpdatedAt) {
+        const migratedItem: ProductRequestItem = {
+          id: itemId,
+          name: itemName,
+          quantity,
+          unit: unit as PurchaseRequestUnit,
+          brandOrGrade,
+          specification,
+          alternatives: approval?.snapshot?.item?.alternatives as PurchaseRequestAlternatives,
+          source: "مهاجرت محلی",
+          confidence: null,
+          completionStatus: "complete",
+          version: 1,
+          createdAt: targetUpdatedAt,
+          updatedAt: targetUpdatedAt,
+          history: [{ id: `legacy-item-event-${itemId}-${targetVersion}`, type: "created", actor: "مهاجرت محلی", at: targetUpdatedAt, version: 1 }],
+        };
+        const clarificationSource = {
+          requestKind: "product" as const,
+          items: [migratedItem],
+          service: null,
+          delivery: { city: "تهران" as const, area: deliveryArea, exactAddressShared: false as const, neededBy },
+          unresolvedTerms: { transport: "unknown", tax: "unknown", paymentTerms: "unknown" },
+        };
+        const migratedSnapshot: PurchaseRequestSnapshot = {
+          ...clarificationSource,
+          rawNeed,
+          item: migratedItem,
+          clarificationAnswers: reconcilePurchaseRequestClarifications(clarificationSource, [], targetUpdatedAt, "مهاجرت محلی"),
+          sharingStatus: "ارسال نشده",
+        };
+        const migratedShareableFields = purchaseRequestApprovalShareableFields(migratedSnapshot);
+        migratedHistoricalRevision = {
+          id: `legacy-review-${targetId}-${targetVersion}`,
+          requestVersion: targetVersion,
+          createdAt: targetUpdatedAt,
+          snapshot: migratedSnapshot,
+          shareableFields: migratedShareableFields,
+          fingerprint: purchaseRequestRevisionFingerprint(migratedSnapshot, migratedShareableFields),
+        };
+        targetRevision = migratedHistoricalRevision;
+      }
+      const targetRevisionItem = targetRevision?.snapshot.item;
+      const legacySnapshotMatchesRevision = targetRevision?.snapshot.requestKind === "product"
+        && targetRevision.snapshot.items.length === 1
+        && Boolean(targetRevisionItem)
+        && targetRevisionItem?.id === itemId
+        && targetRevisionItem?.name === itemName
+        && targetRevisionItem?.quantity === quantity
+        && targetRevisionItem?.unit === unit
+        && targetRevisionItem?.brandOrGrade === brandOrGrade
+        && targetRevisionItem?.specification === specification
+        && targetRevisionItem?.alternatives === approval?.snapshot?.item?.alternatives
+        && targetRevision.snapshot.rawNeed === rawNeed
+        && JSON.stringify(targetRevision.snapshot.delivery) === JSON.stringify({ city: "تهران", area: deliveryArea, exactAddressShared: false, neededBy });
       const targetRelationIsValid = Boolean(targetRequest)
-        && targetRequest!.version >= targetVersion
         && targetReadyEvent?.type === "marked-ready-for-review"
         && targetReadyEvent.at === targetUpdatedAt
-        && (targetRequest!.version !== targetVersion || approvalSnapshotMatchesRequest(record, targetRequest!))
-        && (status !== "pending" || (targetRequest!.version === targetVersion && targetRequest!.status === "ready-for-review"));
+        && Boolean(targetRevision)
+        && legacySnapshotMatchesRevision
+        && (status !== "pending" || targetRequest!.version === targetVersion && targetRequest!.status === "ready-for-review");
 
       if (
         !id
@@ -1173,8 +2103,441 @@ function readStoredProjectApprovals(purchaseRequests: LocalRecordsReadResult<Pro
         return [];
       }
 
+      if (migratedHistoricalRevision && targetRequest?.migration) {
+        targetRequest.reviewRevisions = [...targetRequest.reviewRevisions, migratedHistoricalRevision].sort((first, second) => first.requestVersion - second.requestVersion);
+        targetRequest.migration.unverifiedReadyVersions = targetRequest.migration.unverifiedReadyVersions.filter((readyVersion) => readyVersion !== targetVersion);
+      }
+
+      const record: ProjectApprovalRecord = {
+        schemaVersion: 2,
+        id,
+        projectId,
+        purpose: "review-purchase-request-version",
+        target: { type: "purchase-request", id: targetId, version: targetVersion, updatedAt: targetUpdatedAt, revisionId: targetRevision!.id },
+        dedupeKey,
+        snapshot: structuredClone(targetRevision!.snapshot),
+        privacySnapshot: { shareableFields: [...targetRevision!.shareableFields], projectNameShared: false, exactAddressShared: false, budgetShared: false, filesShared: false, memoryShared: false },
+        externalEffect: "none",
+        destination: null,
+        sendAuthorized: false,
+        status,
+        visibility: "خصوصی پروژه",
+        localStatus: "ثبت محلی",
+        requestedBy: "شما",
+        decidedBy: approval?.decidedBy as "شما" | null,
+        requestedAt,
+        updatedAt,
+        decidedAt,
+        version,
+        history,
+      };
       seenApprovalIds.add(id);
       seenDedupeKeys.add(dedupeKey);
+      return [record];
+    });
+    return { records, readError };
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
+function hasExactObjectKeys(value: unknown, expectedKeys: readonly string[]) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return JSON.stringify(keys) === JSON.stringify([...expectedKeys].sort());
+}
+
+function parseSupplierContact(value: any): SupplierContactRecord | null {
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const displayName = typeof value?.displayName === "string" ? value.displayName.trim() : "";
+  const category = typeof value?.category === "string" ? value.category.trim() : "";
+  const tehranCoverage = typeof value?.tehranCoverage === "string" ? value.tehranCoverage.trim() : "";
+  const responseCapability = value?.responseCapability as SupplierContactResponseCapability;
+  const status = value?.status as SupplierContactStatus;
+  const version = value?.version;
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const archivedAt = value?.archivedAt === null ? null : typeof value?.archivedAt === "string" ? value.archivedAt.trim() : "";
+  const eventIds = new Set<string>();
+  let derivedStatus: SupplierContactStatus = "active";
+  let transitionIsValid = true;
+  const history: SupplierContactEvent[] = Array.isArray(value?.history) ? value.history.flatMap((event: any, index: number): SupplierContactEvent[] => {
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as SupplierContactEventType;
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || !["created", "updated", "archived", "restored"].includes(type) || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at)) return [];
+    if (index === 0) transitionIsValid = type === "created";
+    else if (type === "created" || type === "updated" && derivedStatus !== "active" || type === "archived" && derivedStatus !== "active" || type === "restored" && derivedStatus !== "archived") transitionIsValid = false;
+    if (type === "archived") derivedStatus = "archived";
+    if (type === "restored") derivedStatus = "active";
+    eventIds.add(eventId);
+    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
+  }) : [];
+  const expectedArchivedAt = status === "archived" ? history[history.length - 1]?.type === "archived" ? history[history.length - 1].at : "" : null;
+  if (!hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "displayName", "category", "tehranCoverage", "responseCapability", "source", "networkStatus", "status", "visibility", "localStatus", "version", "createdAt", "updatedAt", "archivedAt", "history"]) || value?.schemaVersion !== 1 || !id || !projectId || !hasVisibleProjectTaskText(displayName) || displayName.length > 100 || !hasVisibleProjectTaskText(category) || category.length > 100 || !hasVisibleProjectTaskText(tehranCoverage) || tehranCoverage.length > 120 || !["product", "service", "both"].includes(responseCapability) || value?.source !== "ثبت مستقیم سازنده" || value?.networkStatus !== "خارج از شبکه چیدا" || (status !== "active" && status !== "archived") || value?.visibility !== "خصوصی پروژه" || value?.localStatus !== "ثبت محلی" || !Number.isInteger(version) || version < 1 || !Array.isArray(value?.history) || history.length !== value.history.length || history.length !== version || !transitionIsValid || derivedStatus !== status || !isValidProjectFileDate(createdAt) || !isValidProjectFileDate(updatedAt) || archivedAt !== null && !isValidProjectFileDate(archivedAt) || history[0]?.at !== createdAt || history[history.length - 1]?.at !== updatedAt || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime()) || archivedAt !== expectedArchivedAt) return null;
+  return { schemaVersion: 1, id, projectId, displayName, category, tehranCoverage, responseCapability, source: "ثبت مستقیم سازنده", networkStatus: "خارج از شبکه چیدا", status, visibility: "خصوصی پروژه", localStatus: "ثبت محلی", version, createdAt, updatedAt, archivedAt, history };
+}
+
+function readStoredProjectSupplierContacts(): LocalRecordsReadResult<SupplierContactRecord> {
+  try {
+    const raw = window.localStorage.getItem(projectSupplierContactsStorageKey);
+    if (raw === null) return { records: [], readError: false };
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
+    const ids = new Set<string>();
+    const projectCounts = new Map<string, number>();
+    let readError = false;
+    const records = parsed.flatMap((value): SupplierContactRecord[] => {
+      const record = parseSupplierContact(value);
+      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
+      if (!record || ids.has(record.id) || nextProjectCount > 100) {
+        readError = true;
+        return [];
+      }
+      ids.add(record.id);
+      projectCounts.set(record.projectId, nextProjectCount);
+      return [record];
+    });
+    return { records, readError };
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
+function parseDispatchDraft(value: any, purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>, approvals: LocalRecordsReadResult<ProjectApprovalRecord>, contacts: LocalRecordsReadResult<SupplierContactRecord>): DispatchDraftRecord | null {
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const requestId = typeof value?.target?.requestId === "string" ? value.target.requestId.trim() : "";
+  const requestVersion = value?.target?.requestVersion;
+  const revisionId = typeof value?.target?.revisionId === "string" ? value.target.revisionId.trim() : "";
+  const approvalId = typeof value?.target?.approvalId === "string" ? value.target.approvalId.trim() : "";
+  const dedupeKey = typeof value?.dedupeKey === "string" ? value.dedupeKey.trim() : "";
+  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
+  const version = value?.version;
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const target = { requestId, requestVersion, revisionId, approvalId };
+  const request = purchaseRequests.records.find((item) => item.id === requestId && item.projectId === projectId);
+  const approval = approvals.records.find((item) => item.id === approvalId && item.projectId === projectId && item.status === "approved");
+  const reviewRevision = request?.reviewRevisions.find((item) => item.id === revisionId && item.requestVersion === requestVersion);
+  if (!request || !approval || approval.status !== "approved" || !reviewRevision || approval.target.id !== requestId || approval.target.version !== requestVersion || approval.target.revisionId !== revisionId || !approvalSnapshotMatchesRevision(approval, request)) return null;
+  const expectedPayload = dispatchPayloadFromSnapshot(reviewRevision.snapshot);
+  const expectedPrivacy = dispatchPrivacySnapshot(reviewRevision.shareableFields);
+  const eventIds = new Set<string>();
+  const history: DispatchDraftEvent[] = Array.isArray(value?.history) ? value.history.flatMap((event: any, index: number): DispatchDraftEvent[] => {
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as DispatchDraftEvent["type"];
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || (type !== "created" && type !== "updated") || event?.actor !== "شما" || event?.version !== index + 1 || index === 0 && type !== "created" || index > 0 && type !== "updated" || !isValidProjectFileDate(at)) return [];
+    eventIds.add(eventId);
+    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
+  }) : [];
+  const revisionIds = new Set<string>();
+  const inviteIds = new Set<string>();
+  const revisions: DispatchDraftRevision[] = Array.isArray(value?.revisions) ? value.revisions.flatMap((revision: any, index: number): DispatchDraftRevision[] => {
+    const revisionRecordId = typeof revision?.id === "string" ? revision.id.trim() : "";
+    const revisionVersion = revision?.version;
+    const revisionCreatedAt = typeof revision?.createdAt === "string" ? revision.createdAt.trim() : "";
+    const recipientIds: string[] = Array.isArray(revision?.recipientIds) ? revision.recipientIds.map((recipientId: unknown) => typeof recipientId === "string" ? recipientId.trim() : "") : [];
+    const legacyCityPayload = expectedPayload.requestKind === "product" && expectedPayload.delivery ? { ...expectedPayload, delivery: { city: "تهران", ...expectedPayload.delivery } } : null;
+    const payloadIsCanonical = JSON.stringify(stablePurchaseRequestValue(revision?.payload)) === JSON.stringify(stablePurchaseRequestValue(expectedPayload));
+    const payloadIsLegacyCityEnvelope = Boolean(legacyCityPayload) && JSON.stringify(stablePurchaseRequestValue(revision?.payload)) === JSON.stringify(stablePurchaseRequestValue(legacyCityPayload));
+    if (!hasExactObjectKeys(revision, ["id", "version", "createdAt", "recipientIds", "inviteDrafts", "payload", "privacySnapshot", "fingerprint"]) || !revisionRecordId || revisionIds.has(revisionRecordId) || revisionVersion !== index + 1 || !isValidProjectFileDate(revisionCreatedAt) || history[index]?.at !== revisionCreatedAt || recipientIds.length < 1 || recipientIds.length > 50 || recipientIds.some((recipientId) => !recipientId) || new Set(recipientIds).size !== recipientIds.length || JSON.stringify(recipientIds) !== JSON.stringify([...recipientIds].sort()) || !Array.isArray(revision?.inviteDrafts) || revision.inviteDrafts.length !== recipientIds.length || !payloadIsCanonical && !payloadIsLegacyCityEnvelope || JSON.stringify(stablePurchaseRequestValue(revision?.privacySnapshot)) !== JSON.stringify(stablePurchaseRequestValue(expectedPrivacy))) return [];
+    const inviteDrafts: InviteDraft[] = revision.inviteDrafts.flatMap((invite: any, inviteIndex: number): InviteDraft[] => {
+      const inviteId = typeof invite?.id === "string" ? invite.id.trim() : "";
+      const supplierContactId = typeof invite?.supplierContactId === "string" ? invite.supplierContactId.trim() : "";
+      const inviteCreatedAt = typeof invite?.createdAt === "string" ? invite.createdAt.trim() : "";
+      const inviteUpdatedAt = typeof invite?.updatedAt === "string" ? invite.updatedAt.trim() : "";
+      const contact = contacts.records.find((item) => item.id === supplierContactId && item.projectId === projectId);
+      const expectedDestination = contact ? { displayName: contact.displayName, category: contact.category, tehranCoverage: contact.tehranCoverage, responseCapability: contact.responseCapability, networkStatus: "خارج از شبکه چیدا" as const } : null;
+      if (!hasExactObjectKeys(invite, ["schemaVersion", "id", "projectId", "supplierContactId", "destination", "target", "source", "continuation", "externalEffect", "sendAuthorized", "version", "createdAt", "updatedAt"]) || invite?.schemaVersion !== 1 || !inviteId || inviteIds.has(inviteId) || supplierContactId !== recipientIds[inviteIndex] || !contact || !supplierContactCapabilitySupports(contact, request.requestKind) || !expectedDestination || JSON.stringify(stablePurchaseRequestValue(invite?.destination)) !== JSON.stringify(stablePurchaseRequestValue(expectedDestination)) || JSON.stringify(stablePurchaseRequestValue(invite?.target)) !== JSON.stringify(stablePurchaseRequestValue(target)) || invite?.projectId !== projectId || invite?.source !== "ثبت مستقیم سازنده" || invite?.continuation !== "ادامهٔ احتمالی در فاز تأمین‌کننده" || invite?.externalEffect !== "none" || invite?.sendAuthorized !== false || invite?.version !== 1 || inviteCreatedAt !== revisionCreatedAt || inviteUpdatedAt !== revisionCreatedAt) return [];
+      inviteIds.add(inviteId);
+      return [{ schemaVersion: 1, id: inviteId, projectId, supplierContactId, destination: expectedDestination, target, source: "ثبت مستقیم سازنده", continuation: "ادامهٔ احتمالی در فاز تأمین‌کننده", externalEffect: "none", sendAuthorized: false, version: 1, createdAt: inviteCreatedAt, updatedAt: inviteUpdatedAt }];
+    });
+    const fingerprintPayload = payloadIsLegacyCityEnvelope ? legacyCityPayload! : expectedPayload;
+    if (inviteDrafts.length !== recipientIds.length || revision?.fingerprint !== dispatchRevisionFingerprint(target, recipientIds, inviteDrafts, fingerprintPayload as DispatchPayload, expectedPrivacy)) return [];
+    revisionIds.add(revisionRecordId);
+    return [{ id: revisionRecordId, version: revisionVersion, createdAt: revisionCreatedAt, recipientIds, inviteDrafts, payload: expectedPayload, privacySnapshot: expectedPrivacy, fingerprint: dispatchRevisionFingerprint(target, recipientIds, inviteDrafts, expectedPayload, expectedPrivacy) }];
+  }) : [];
+  if (!hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "target", "dedupeKey", "status", "currentRevisionId", "externalEffect", "sendAuthorized", "visibility", "localStatus", "version", "createdAt", "updatedAt", "history", "revisions"]) || !hasExactObjectKeys(value?.target, ["requestId", "requestVersion", "revisionId", "approvalId"]) || value?.schemaVersion !== 1 || !id || !projectId || !requestId || !Number.isInteger(requestVersion) || requestVersion < 1 || !revisionId || !approvalId || dedupeKey !== dispatchDraftDedupeKey(projectId, requestId, requestVersion, revisionId) || value?.status !== "draft" || value?.externalEffect !== "none" || value?.sendAuthorized !== false || value?.visibility !== "خصوصی پروژه" || value?.localStatus !== "ثبت محلی" || !Number.isInteger(version) || version < 1 || !Array.isArray(value?.history) || !Array.isArray(value?.revisions) || history.length !== value.history.length || revisions.length !== value.revisions.length || history.length !== version || revisions.length !== version || currentRevisionId !== revisions[revisions.length - 1]?.id || createdAt !== history[0]?.at || updatedAt !== history[history.length - 1]?.at || revisions[0]?.createdAt !== createdAt || revisions[revisions.length - 1]?.createdAt !== updatedAt || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())) return null;
+  return { schemaVersion: 1, id, projectId, target, dedupeKey, status: "draft", currentRevisionId, externalEffect: "none", sendAuthorized: false, visibility: "خصوصی پروژه", localStatus: "ثبت محلی", version, createdAt, updatedAt, history, revisions };
+}
+
+function readStoredProjectDispatchDrafts(purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>, approvals: LocalRecordsReadResult<ProjectApprovalRecord>, contacts: LocalRecordsReadResult<SupplierContactRecord>): LocalRecordsReadResult<DispatchDraftRecord> {
+  if (purchaseRequests.readError || approvals.readError || contacts.readError) return { records: [], readError: true };
+  try {
+    const raw = window.localStorage.getItem(projectDispatchDraftsStorageKey);
+    if (raw === null) return { records: [], readError: false };
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
+    const ids = new Set<string>();
+    const dedupeKeys = new Set<string>();
+    const globalInviteIds = new Set<string>();
+    const projectCounts = new Map<string, number>();
+    let readError = false;
+    const records = parsed.flatMap((value): DispatchDraftRecord[] => {
+      const record = parseDispatchDraft(value, purchaseRequests, approvals, contacts);
+      const inviteIds = record?.revisions.flatMap((revision) => revision.inviteDrafts.map((invite) => invite.id)) ?? [];
+      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
+      if (!record || ids.has(record.id) || dedupeKeys.has(record.dedupeKey) || nextProjectCount > 100 || inviteIds.some((inviteId) => globalInviteIds.has(inviteId))) {
+        readError = true;
+        return [];
+      }
+      ids.add(record.id);
+      dedupeKeys.add(record.dedupeKey);
+      projectCounts.set(record.projectId, nextProjectCount);
+      inviteIds.forEach((inviteId) => globalInviteIds.add(inviteId));
+      return [record];
+    });
+    return { records, readError };
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
+function parseDispatchPlanApproval(
+  value: any,
+  dispatchDrafts: LocalRecordsReadResult<DispatchDraftRecord>,
+  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+  approvals: LocalRecordsReadResult<ProjectApprovalRecord>,
+  contacts: LocalRecordsReadResult<SupplierContactRecord>,
+): DispatchPlanApprovalRecord | null {
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const target = {
+    type: value?.target?.type,
+    dispatchDraftId: typeof value?.target?.dispatchDraftId === "string" ? value.target.dispatchDraftId.trim() : "",
+    dispatchDraftVersion: value?.target?.dispatchDraftVersion,
+    dispatchRevisionId: typeof value?.target?.dispatchRevisionId === "string" ? value.target.dispatchRevisionId.trim() : "",
+    dispatchRevisionFingerprint: typeof value?.target?.dispatchRevisionFingerprint === "string" ? value.target.dispatchRevisionFingerprint.trim() : "",
+    requestId: typeof value?.target?.requestId === "string" ? value.target.requestId.trim() : "",
+    requestVersion: value?.target?.requestVersion,
+    requestRevisionId: typeof value?.target?.requestRevisionId === "string" ? value.target.requestRevisionId.trim() : "",
+    contentApprovalId: typeof value?.target?.contentApprovalId === "string" ? value.target.contentApprovalId.trim() : "",
+  } as DispatchPlanApprovalRecord["target"];
+  const dispatchDraft = dispatchDrafts.records.find((item) => item.id === target.dispatchDraftId && item.projectId === projectId);
+  const revision = dispatchDraft?.revisions.find((item) => item.id === target.dispatchRevisionId && item.version === target.dispatchDraftVersion);
+  const request = purchaseRequests.records.find((item) => item.id === target.requestId && item.projectId === projectId);
+  const contentApproval = approvals.records.find((item) => item.id === target.contentApprovalId && item.projectId === projectId);
+  const recipientIds = new Set<string>();
+  const recipients: DispatchPlanApprovalRecord["snapshot"]["recipients"] = Array.isArray(value?.snapshot?.recipients) ? value.snapshot.recipients.flatMap((recipient: any, index: number) => {
+    const supplierContactId = typeof recipient?.supplierContactId === "string" ? recipient.supplierContactId.trim() : "";
+    const supplierContactVersion = recipient?.supplierContactVersion;
+    const contact = contacts.records.find((item) => item.id === supplierContactId && item.projectId === projectId);
+    const invite = revision?.inviteDrafts[index];
+    const destination = invite?.destination;
+    if (
+      !hasExactObjectKeys(recipient, ["supplierContactId", "supplierContactVersion", "destination"])
+      || !hasExactObjectKeys(recipient?.destination, ["displayName", "category", "tehranCoverage", "responseCapability", "networkStatus"])
+      || !supplierContactId
+      || recipientIds.has(supplierContactId)
+      || !Number.isInteger(supplierContactVersion)
+      || supplierContactVersion < 1
+      || !contact
+      || supplierContactVersion > contact.version
+      || !contact.history.some((event) => event.version === supplierContactVersion)
+      || !request
+      || !supplierContactCapabilitySupports(contact, request.requestKind)
+      || invite?.supplierContactId !== supplierContactId
+      || !destination
+      || JSON.stringify(stablePurchaseRequestValue(recipient?.destination)) !== JSON.stringify(stablePurchaseRequestValue(destination))
+    ) return [];
+    recipientIds.add(supplierContactId);
+    return [{ supplierContactId, supplierContactVersion, destination: structuredClone(destination) }];
+  }) : [];
+  const snapshot = revision ? {
+    recipients,
+    recipientCount: value?.snapshot?.recipientCount,
+    payload: structuredClone(revision.payload),
+    privacySnapshot: structuredClone(revision.privacySnapshot),
+    reviewAcknowledgement: {
+      destinationsReviewed: true as const,
+      payloadReviewed: true as const,
+      privacyAndLocationReviewed: true as const,
+    },
+  } : null;
+  let derivedStatus: DispatchPlanApprovalStatus = "pending";
+  let transitionIsValid = true;
+  const eventIds = new Set<string>();
+  const history: DispatchPlanApprovalEvent[] = Array.isArray(value?.history) ? value.history.flatMap((event: any, index: number): DispatchPlanApprovalEvent[] => {
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as DispatchPlanApprovalEventType;
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || !["created", "approved", "withdrawn", "reopened"].includes(type) || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at)) return [];
+    if (index === 0) transitionIsValid = type === "created";
+    else if (derivedStatus === "pending" && type === "approved") derivedStatus = "approved";
+    else if (derivedStatus === "pending" && type === "withdrawn") derivedStatus = "withdrawn";
+    else if (derivedStatus === "withdrawn" && type === "reopened") derivedStatus = "pending";
+    else transitionIsValid = false;
+    eventIds.add(eventId);
+    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
+  }) : [];
+  const requestedAt = typeof value?.requestedAt === "string" ? value.requestedAt.trim() : "";
+  const decidedAt = value?.decidedAt === null ? null : typeof value?.decidedAt === "string" ? value.decidedAt.trim() : "";
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const planFingerprint = typeof value?.planFingerprint === "string" ? value.planFingerprint.trim() : "";
+  const dedupeKey = typeof value?.dedupeKey === "string" ? value.dedupeKey.trim() : "";
+  const idempotencyKey = typeof value?.idempotencyKey === "string" ? value.idempotencyKey.trim() : "";
+  const expectedFingerprint = snapshot ? dispatchPlanFingerprint(target, snapshot) : "";
+  const expectedDedupeKey = dispatchPlanApprovalDedupeKey(projectId, target, expectedFingerprint);
+  const status = value?.status as DispatchPlanApprovalStatus;
+  const version = value?.version;
+  const approvedEvent = history.find((event) => event.type === "approved") ?? null;
+  const actionRecordIsValid = status === "approved"
+    ? hasExactObjectKeys(value?.actionRecord, ["kind", "result", "label", "error", "recordedAt"])
+      && value.actionRecord.kind === "record-local-dispatch-plan-approval"
+      && value.actionRecord.result === "local-dispatch-plan-approved"
+      && value.actionRecord.label === "تأیید محلی برنامهٔ ارسال"
+      && value.actionRecord.error === null
+      && value.actionRecord.recordedAt === decidedAt
+      && decidedAt === approvedEvent?.at
+      && value?.decidedBy === "شما"
+    : value?.actionRecord === null && decidedAt === null && value?.decidedBy === null;
+  const targetRelationIsValid = Boolean(dispatchDraft && revision && request && contentApproval)
+    && dispatchDraft!.target.requestId === target.requestId
+    && dispatchDraft!.target.requestVersion === target.requestVersion
+    && dispatchDraft!.target.revisionId === target.requestRevisionId
+    && dispatchDraft!.target.approvalId === target.contentApprovalId
+    && revision!.fingerprint === target.dispatchRevisionFingerprint
+    && contentApproval!.status === "approved"
+    && contentApproval!.target.id === target.requestId
+    && contentApproval!.target.version === target.requestVersion
+    && contentApproval!.target.revisionId === target.requestRevisionId
+    && approvalSnapshotMatchesRevision(contentApproval!, request!);
+  const requestedAtTime = new Date(requestedAt).getTime();
+  const requestRevision = request?.reviewRevisions.find((item) => item.id === target.requestRevisionId && item.requestVersion === target.requestVersion);
+  const dependencyChronologyIsValid = Number.isFinite(requestedAtTime)
+    && Boolean(revision && requestRevision && contentApproval)
+    && new Date(revision!.createdAt).getTime() <= requestedAtTime
+    && new Date(requestRevision!.createdAt).getTime() <= requestedAtTime
+    && new Date(contentApproval!.updatedAt).getTime() <= requestedAtTime
+    && recipients.every((recipient) => {
+      const contact = contacts.records.find((item) => item.id === recipient.supplierContactId && item.projectId === projectId);
+      const latestEventAtRequest = contact?.history.filter((event) => new Date(event.at).getTime() <= requestedAtTime).at(-1);
+      return latestEventAtRequest?.version === recipient.supplierContactVersion;
+    });
+
+  if (
+    !hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "purpose", "target", "snapshot", "planFingerprint", "dedupeKey", "idempotencyKey", "status", "simulationOnly", "externalEffect", "sendAuthorized", "externalActionAttempted", "actionRecord", "visibility", "localStatus", "requestedBy", "decidedBy", "requestedAt", "decidedAt", "createdAt", "updatedAt", "version", "history"])
+    || !hasExactObjectKeys(value?.target, ["type", "dispatchDraftId", "dispatchDraftVersion", "dispatchRevisionId", "dispatchRevisionFingerprint", "requestId", "requestVersion", "requestRevisionId", "contentApprovalId"])
+    || !hasExactObjectKeys(value?.snapshot, ["recipients", "recipientCount", "payload", "privacySnapshot", "reviewAcknowledgement"])
+    || !hasExactObjectKeys(value?.snapshot?.reviewAcknowledgement, ["destinationsReviewed", "payloadReviewed", "privacyAndLocationReviewed"])
+    || value?.schemaVersion !== 1
+    || !id
+    || !projectId
+    || value?.purpose !== "approve-local-dispatch-plan-simulation"
+    || target.type !== "dispatch-draft-revision"
+    || !target.dispatchDraftId
+    || !Number.isInteger(target.dispatchDraftVersion)
+    || target.dispatchDraftVersion < 1
+    || !target.dispatchRevisionId
+    || !target.dispatchRevisionFingerprint
+    || !target.requestId
+    || !Number.isInteger(target.requestVersion)
+    || target.requestVersion < 1
+    || !target.requestRevisionId
+    || !target.contentApprovalId
+    || !snapshot
+    || recipients.length < 1
+    || recipients.length !== value?.snapshot?.recipients?.length
+    || recipients.length !== revision?.recipientIds.length
+    || JSON.stringify(recipients.map((recipient) => recipient.supplierContactId)) !== JSON.stringify(revision?.recipientIds)
+    || snapshot.recipientCount !== recipients.length
+    || value?.snapshot?.reviewAcknowledgement?.destinationsReviewed !== true
+    || value?.snapshot?.reviewAcknowledgement?.payloadReviewed !== true
+    || value?.snapshot?.reviewAcknowledgement?.privacyAndLocationReviewed !== true
+    || JSON.stringify(stablePurchaseRequestValue(value?.snapshot?.payload)) !== JSON.stringify(stablePurchaseRequestValue(revision?.payload))
+    || JSON.stringify(stablePurchaseRequestValue(value?.snapshot?.privacySnapshot)) !== JSON.stringify(stablePurchaseRequestValue(revision?.privacySnapshot))
+    || planFingerprint !== expectedFingerprint
+    || dedupeKey !== expectedDedupeKey
+    || idempotencyKey !== `${expectedDedupeKey}:simulation-v1`
+    || (status !== "pending" && status !== "approved" && status !== "withdrawn")
+    || derivedStatus !== status
+    || value?.simulationOnly !== true
+    || value?.externalEffect !== "none"
+    || value?.sendAuthorized !== false
+    || value?.externalActionAttempted !== false
+    || !actionRecordIsValid
+    || value?.visibility !== "خصوصی پروژه"
+    || value?.localStatus !== "ثبت محلی"
+    || value?.requestedBy !== "شما"
+    || !isValidProjectFileDate(requestedAt)
+    || requestedAt !== createdAt
+    || !isValidProjectFileDate(createdAt)
+    || !isValidProjectFileDate(updatedAt)
+    || !Number.isInteger(version)
+    || version < 1
+    || !Array.isArray(value?.history)
+    || history.length !== value.history.length
+    || history.length !== version
+    || !transitionIsValid
+    || history[0]?.type !== "created"
+    || history[0]?.at !== createdAt
+    || history[history.length - 1]?.at !== updatedAt
+    || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())
+    || !targetRelationIsValid
+    || !dependencyChronologyIsValid
+  ) return null;
+
+  return {
+    schemaVersion: 1,
+    id,
+    projectId,
+    purpose: "approve-local-dispatch-plan-simulation",
+    target,
+    snapshot,
+    planFingerprint,
+    dedupeKey,
+    idempotencyKey,
+    status,
+    simulationOnly: true,
+    externalEffect: "none",
+    sendAuthorized: false,
+    externalActionAttempted: false,
+    actionRecord: approvedEvent ? { kind: "record-local-dispatch-plan-approval", result: "local-dispatch-plan-approved", label: "تأیید محلی برنامهٔ ارسال", error: null, recordedAt: decidedAt! } : null,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    requestedBy: "شما",
+    decidedBy: approvedEvent ? "شما" : null,
+    requestedAt,
+    decidedAt,
+    createdAt,
+    updatedAt,
+    version,
+    history,
+  };
+}
+
+function readStoredProjectDispatchPlanApprovals(
+  dispatchDrafts: LocalRecordsReadResult<DispatchDraftRecord>,
+  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+  approvals: LocalRecordsReadResult<ProjectApprovalRecord>,
+  contacts: LocalRecordsReadResult<SupplierContactRecord>,
+): LocalRecordsReadResult<DispatchPlanApprovalRecord> {
+  if (dispatchDrafts.readError || purchaseRequests.readError || approvals.readError || contacts.readError) return { records: [], readError: true };
+  try {
+    const raw = window.localStorage.getItem(projectDispatchPlanApprovalsStorageKey);
+    if (raw === null) return { records: [], readError: false };
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
+    const ids = new Set<string>();
+    const dedupeKeys = new Set<string>();
+    const idempotencyKeys = new Set<string>();
+    const projectCounts = new Map<string, number>();
+    let readError = false;
+    const records = parsed.flatMap((value): DispatchPlanApprovalRecord[] => {
+      const record = parseDispatchPlanApproval(value, dispatchDrafts, purchaseRequests, approvals, contacts);
+      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
+      if (!record || ids.has(record.id) || dedupeKeys.has(record.dedupeKey) || idempotencyKeys.has(record.idempotencyKey) || nextProjectCount > 100) {
+        readError = true;
+        return [];
+      }
+      ids.add(record.id);
+      dedupeKeys.add(record.dedupeKey);
+      idempotencyKeys.add(record.idempotencyKey);
+      projectCounts.set(record.projectId, nextProjectCount);
       return [record];
     });
     return { records, readError };
@@ -1506,6 +2869,48 @@ export default function Prototype() {
     goTo("home");
   };
 
+  const createAdditionalProject = (draft: ProjectSetupDraft) => {
+    const normalizedDraft = {
+      name: draft.name.trim(),
+      location: normalizeProjectArea(draft.location),
+      stage: draft.stage,
+    };
+    const projectId = `project-${window.crypto.randomUUID()}`;
+    const nextProjects = [...projects, { ...emptyProjectProfile, ...normalizedDraft, id: projectId, createdAt: new Date().toISOString() }];
+    let previousProjects: string | null = null;
+    let previousActiveProject: string | null = null;
+
+    try {
+      previousProjects = window.localStorage.getItem(projectsStorageKey);
+      previousActiveProject = window.localStorage.getItem(activeProjectStorageKey);
+      // The project list is the source of truth and is committed last. If that
+      // write fails, at worst a dangling active pointer remains and self-heals
+      // from the unchanged list on the next read; no phantom project is stored.
+      window.localStorage.setItem(activeProjectStorageKey, projectId);
+      window.localStorage.setItem(projectsStorageKey, JSON.stringify(nextProjects));
+    } catch {
+      try {
+        if (previousProjects === null) window.localStorage.removeItem(projectsStorageKey);
+        else window.localStorage.setItem(projectsStorageKey, previousProjects);
+      } catch {
+        // Continue with the independent active-pointer rollback below.
+      }
+      try {
+        if (previousActiveProject === null) window.localStorage.removeItem(activeProjectStorageKey);
+        else window.localStorage.setItem(activeProjectStorageKey, previousActiveProject);
+      } catch {
+        // The unchanged project list remains authoritative and repairs a
+        // dangling pointer on reload; no in-memory project is activated.
+      }
+      return false;
+    }
+
+    setProjects(nextProjects);
+    setActiveProjectId(projectId);
+    setScreen("home");
+    return true;
+  };
+
   const updateProject = (projectId: string, draft: ProjectProfileDraft) => {
     const normalizedDraft = normalizeProjectProfile(draft);
     setProjects((current) => current.map((project) => project.id === projectId ? { ...project, ...normalizedDraft } : project));
@@ -1518,6 +2923,7 @@ export default function Prototype() {
         projects={projects}
         modelMode={modelMode}
         onProjectChange={selectProject}
+        onProjectCreate={createAdditionalProject}
         onProjectUpdate={updateProject}
         onModelChange={setModelMode}
         onOpenSheet={setSheet}
@@ -1898,7 +3304,7 @@ function SuccessScreen({ project, onContinue, onSave }: { project: BuilderProjec
   );
 }
 
-function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onProjectUpdate, onModelChange, onOpenSheet, sheet }: { activeProject: BuilderProject; projects: BuilderProject[]; modelMode: ModelMode; onProjectChange: (projectId: string) => void; onProjectUpdate: (projectId: string, draft: ProjectProfileDraft) => void; onModelChange: (mode: ModelMode) => void; onOpenSheet: (sheet: SheetName) => void; sheet: SheetName }) {
+function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onProjectCreate, onProjectUpdate, onModelChange, onOpenSheet, sheet }: { activeProject: BuilderProject; projects: BuilderProject[]; modelMode: ModelMode; onProjectChange: (projectId: string) => void; onProjectCreate: (draft: ProjectSetupDraft) => boolean; onProjectUpdate: (projectId: string, draft: ProjectProfileDraft) => void; onModelChange: (mode: ModelMode) => void; onOpenSheet: (sheet: SheetName) => void; sheet: SheetName }) {
   const keyboard = useKeyboard();
   const { bottomInset } = useKeyboardInsets();
   const homeRef = useRef<HTMLDivElement>(null);
@@ -1915,23 +3321,32 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [focusedMemoryId, setFocusedMemoryId] = useState<string | null>(null);
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [draftsByProject, setDraftsByProject] = useState<Record<string, string>>({});
+  const [messagesByProject, setMessagesByProject] = useState<Record<string, ChatMessage[]>>({});
   const [initialProjectFiles] = useState<LocalRecordsReadResult<ProjectFileRecord>>(readStoredProjectFiles);
   const [initialProjectMemories] = useState<LocalRecordsReadResult<ProjectMemoryRecord>>(readStoredProjectMemories);
   const [initialProjectTasks] = useState<LocalRecordsReadResult<ProjectTaskRecord>>(readStoredProjectTasks);
   const [initialProjectPurchaseRequests] = useState<LocalRecordsReadResult<ProjectPurchaseRequestRecord>>(readStoredProjectPurchaseRequests);
   const [initialProjectApprovals] = useState<LocalRecordsReadResult<ProjectApprovalRecord>>(() => readStoredProjectApprovals(initialProjectPurchaseRequests));
+  const [initialProjectSupplierContacts] = useState<LocalRecordsReadResult<SupplierContactRecord>>(readStoredProjectSupplierContacts);
+  const [initialProjectDispatchDrafts] = useState<LocalRecordsReadResult<DispatchDraftRecord>>(() => readStoredProjectDispatchDrafts(initialProjectPurchaseRequests, initialProjectApprovals, initialProjectSupplierContacts));
+  const [initialProjectDispatchPlanApprovals] = useState<LocalRecordsReadResult<DispatchPlanApprovalRecord>>(() => readStoredProjectDispatchPlanApprovals(initialProjectDispatchDrafts, initialProjectPurchaseRequests, initialProjectApprovals, initialProjectSupplierContacts));
   const [projectFiles, setProjectFiles] = useState<ProjectFileRecord[]>(initialProjectFiles.records);
   const [projectMemories, setProjectMemories] = useState<ProjectMemoryRecord[]>(initialProjectMemories.records);
   const [projectTasks, setProjectTasks] = useState<ProjectTaskRecord[]>(initialProjectTasks.records);
   const [projectPurchaseRequests, setProjectPurchaseRequests] = useState<ProjectPurchaseRequestRecord[]>(initialProjectPurchaseRequests.records);
   const [projectApprovals, setProjectApprovals] = useState<ProjectApprovalRecord[]>(initialProjectApprovals.records);
+  const [projectSupplierContacts, setProjectSupplierContacts] = useState<SupplierContactRecord[]>(initialProjectSupplierContacts.records);
+  const [projectDispatchDrafts, setProjectDispatchDrafts] = useState<DispatchDraftRecord[]>(initialProjectDispatchDrafts.records);
+  const [projectDispatchPlanApprovals, setProjectDispatchPlanApprovals] = useState<DispatchPlanApprovalRecord[]>(initialProjectDispatchPlanApprovals.records);
   const [projectFilesReadError] = useState(initialProjectFiles.readError);
   const [projectMemoriesReadError] = useState(initialProjectMemories.readError);
   const [projectTasksReadError] = useState(initialProjectTasks.readError);
   const [projectPurchaseRequestsReadError] = useState(initialProjectPurchaseRequests.readError);
   const [projectApprovalsReadError] = useState(initialProjectApprovals.readError);
+  const [projectSupplierContactsReadError] = useState(initialProjectSupplierContacts.readError);
+  const [projectDispatchDraftsReadError] = useState(initialProjectDispatchDrafts.readError);
+  const [projectDispatchPlanApprovalsReadError] = useState(initialProjectDispatchPlanApprovals.readError);
   const [installedTool, setInstalledTool] = useState(() => readLocalStorageValue(installedToolStorageKey) ?? "");
   const [briefSchedule, setBriefSchedule] = useState<BriefSchedule | null>(() => {
     try {
@@ -1941,6 +3356,20 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       return null;
     }
   });
+  const draft = draftsByProject[activeProject.id] ?? "";
+  const messages = messagesByProject[activeProject.id] ?? [];
+  const setDraft = (nextDraft: string) => {
+    setDraftsByProject((current) => ({ ...current, [activeProject.id]: nextDraft }));
+  };
+  const updateMessages = (updater: (current: ChatMessage[]) => ChatMessage[]) => {
+    setMessagesByProject((current) => ({ ...current, [activeProject.id]: updater(current[activeProject.id] ?? []) }));
+  };
+
+  const openNewProject = () => {
+    keyboard.hide();
+    setDrawerOpen(false);
+    onOpenSheet("new-project");
+  };
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setDrawerOpen(false); };
@@ -2028,6 +3457,18 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     () => projectApprovals.filter((approval) => approval.projectId === activeProject.id),
     [activeProject.id, projectApprovals],
   );
+  const activeProjectSupplierContacts = useMemo(
+    () => projectSupplierContacts.filter((contact) => contact.projectId === activeProject.id),
+    [activeProject.id, projectSupplierContacts],
+  );
+  const activeProjectDispatchDrafts = useMemo(
+    () => projectDispatchDrafts.filter((dispatchDraft) => dispatchDraft.projectId === activeProject.id),
+    [activeProject.id, projectDispatchDrafts],
+  );
+  const activeProjectDispatchPlanApprovals = useMemo(
+    () => projectDispatchPlanApprovals.filter((approval) => approval.projectId === activeProject.id),
+    [activeProject.id, projectDispatchPlanApprovals],
+  );
   const activeProjectTaskCount = activeProjectTasks.filter((task) => task.status === "in-progress").length;
   const briefSummary = briefSchedule
     ? briefSchedule.frequency === "daily"
@@ -2049,7 +3490,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     const text = draft.trim();
     if (!text) return;
     const nextId = Date.now();
-    setMessages((current) => [...current, { id: nextId, role: "user", text }, { id: nextId + 1, role: "assistant", text: `برای «${activeProject.name}» گرفتم. در نسخهٔ بعد این درخواست به منابع پروژه و ابزارهای تخصصی چیدا متصل می‌شود.` }]);
+    updateMessages((current) => [...current, { id: nextId, role: "user", text }, { id: nextId + 1, role: "assistant", text: `برای «${activeProject.name}» گرفتم. در نسخهٔ بعد این درخواست به منابع پروژه و ابزارهای تخصصی چیدا متصل می‌شود.` }]);
     setDraft("");
     keyboard.hide();
   };
@@ -2315,33 +3756,81 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const createProjectPurchaseRequest = (requestDraft: PurchaseRequestDraft) => {
     const rawNeed = requestDraft.rawNeed.trim();
     if (!hasVisibleProjectTaskText(rawNeed)) return null;
-    const normalizedQuantity = requestDraft.quantity ? normalizeProjectNumber(requestDraft.quantity, false) : "";
-    if (normalizedQuantity === null || (normalizedQuantity && Number(normalizedQuantity) <= 0)) return null;
+    if (requestDraft.requestKind === "product" && (requestDraft.items.length < 1 || requestDraft.items.length > 8)) return null;
+    const normalizedProductQuantities = requestDraft.requestKind === "product"
+      ? requestDraft.items.map((draft) => draft.quantity ? normalizeProjectNumber(draft.quantity, false) : "")
+      : [];
+    if (normalizedProductQuantities.some((quantity) => quantity === null || Boolean(quantity && Number(quantity) <= 0))) return null;
     const timestamp = new Date().toISOString();
     const requestId = `purchase-request-${window.crypto.randomUUID()}`;
-    const record = {
-      id: requestId,
-      projectId: activeProject.id,
-      requestKind: "product",
-      rawNeed: { text: rawNeed, source: "ثبت مستقیم شما", capturedAt: timestamp },
-      item: {
-        id: `purchase-item-${window.crypto.randomUUID()}`,
-        name: normalizeOptionalPurchaseRequestText(requestDraft.itemName),
+    const items: ProductRequestItem[] = requestDraft.requestKind === "product" ? requestDraft.items.map((draft, index) => {
+      const normalizedQuantity = normalizedProductQuantities[index] ?? "";
+      const name = normalizeOptionalPurchaseRequestText(draft.itemName);
+      const unit = purchaseRequestUnits.includes(draft.unit as PurchaseRequestUnit) ? draft.unit as PurchaseRequestUnit : null;
+      return {
+        id: draft.id.startsWith("purchase-item-") ? draft.id : `purchase-item-${window.crypto.randomUUID()}`,
+        name,
         quantity: normalizedQuantity || null,
-        unit: purchaseRequestUnits.includes(requestDraft.unit as PurchaseRequestUnit) ? requestDraft.unit as PurchaseRequestUnit : null,
-        brandOrGrade: normalizeOptionalPurchaseRequestText(requestDraft.brandOrGrade),
-        specification: normalizeOptionalPurchaseRequestText(requestDraft.specification),
-        alternatives: purchaseRequestAlternativesFromLabel(requestDraft.alternatives),
+        unit,
+        brandOrGrade: normalizeOptionalPurchaseRequestText(draft.brandOrGrade),
+        specification: normalizeOptionalPurchaseRequestText(draft.specification),
+        alternatives: purchaseRequestAlternativesFromLabel(draft.alternatives),
         source: "ثبت مستقیم شما",
         confidence: null,
-      },
+        completionStatus: name && normalizedQuantity && unit ? "complete" : "incomplete",
+        version: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        history: [{ id: `purchase-item-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+      };
+    }) : [];
+    const serviceFields = {
+      scope: normalizeOptionalPurchaseRequestText(requestDraft.serviceScope),
+      location: normalizeOptionalPurchaseRequestText(requestDraft.serviceLocation),
+      sizeOrVolume: normalizeOptionalPurchaseRequestText(requestDraft.serviceSizeOrVolume),
+      qualification: normalizeOptionalPurchaseRequestText(requestDraft.serviceQualification),
+      timing: normalizeOptionalPurchaseRequestText(requestDraft.serviceTiming),
+      method: normalizeOptionalPurchaseRequestText(requestDraft.serviceMethod),
+      inScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceInScope),
+      outOfScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceOutOfScope),
+      warranty: normalizeOptionalPurchaseRequestText(requestDraft.serviceWarranty),
+      paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.servicePaymentTerms),
+    };
+    const service: ServiceRequestSpec | null = requestDraft.requestKind === "service" ? {
+      id: `purchase-service-${window.crypto.randomUUID()}`,
+      ...serviceFields,
+      locationPrecision: "area-or-project-section",
+      source: "ثبت مستقیم شما",
+      confidence: null,
+      completionStatus: serviceFields.scope && serviceFields.location ? "complete" : "incomplete",
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      history: [{ id: `purchase-service-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+    } : null;
+    const record: ProjectPurchaseRequestRecord = {
+      schemaVersion: 2,
+      id: requestId,
+      projectId: activeProject.id,
+      requestKind: requestDraft.requestKind,
+      rawNeed: { text: rawNeed, source: "ثبت مستقیم شما", capturedAt: timestamp },
+      items,
+      item: items[0] ?? null,
+      service,
       delivery: {
         city: "تهران",
-        area: normalizeProjectArea(activeProject.location),
+        area: normalizeOptionalPurchaseRequestText(requestDraft.deliveryArea) ?? "نامشخص",
         exactAddressShared: false,
         neededBy: normalizeOptionalPurchaseRequestText(requestDraft.neededBy),
       },
-      unresolvedTerms: { transport: "unknown", tax: "unknown", paymentTerms: "unknown" },
+      unresolvedTerms: {
+        transport: normalizeOptionalPurchaseRequestText(requestDraft.transport) ?? "unknown",
+        tax: normalizeOptionalPurchaseRequestText(requestDraft.tax) ?? "unknown",
+        paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.paymentTerms) ?? "unknown",
+      },
+      clarificationAnswers: [],
+      reviewRevisions: [],
+      migration: null,
       visibility: "خصوصی پروژه",
       localStatus: "ثبت محلی",
       sharingStatus: "ارسال نشده",
@@ -2351,38 +3840,74 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       updatedAt: timestamp,
       readyAt: null,
       history: [{ id: `purchase-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-    } satisfies ProjectPurchaseRequestRecord;
+    };
+    record.clarificationAnswers = reconcilePurchaseRequestClarifications(record, [], timestamp);
     return persistProjectPurchaseRequests([...projectPurchaseRequests, record]) ? requestId : null;
   };
 
   const updateProjectPurchaseRequest = (requestId: string, requestDraft: PurchaseRequestDraft) => {
     const rawNeed = requestDraft.rawNeed.trim();
     if (!hasVisibleProjectTaskText(rawNeed)) return false;
-    const normalizedQuantity = requestDraft.quantity ? normalizeProjectNumber(requestDraft.quantity, false) : "";
-    if (normalizedQuantity === null || (normalizedQuantity && Number(normalizedQuantity) <= 0)) return false;
     const timestamp = new Date().toISOString();
     let updated = false;
     const nextRequests = projectPurchaseRequests.map((request) => {
-      if (request.id !== requestId || request.projectId !== activeProject.id || request.status !== "draft") return request;
-      updated = true;
+      if (request.id !== requestId || request.projectId !== activeProject.id || request.status !== "draft" || request.requestKind !== requestDraft.requestKind) return request;
       const version = request.version + 1;
-      return {
+      const items: ProductRequestItem[] = request.requestKind === "product" ? requestDraft.items.map((draft) => {
+        const normalizedQuantity = draft.quantity ? normalizeProjectNumber(draft.quantity, false) : "";
+        if (normalizedQuantity === null || (normalizedQuantity && Number(normalizedQuantity) <= 0)) return null;
+        const existing = request.items.find((item) => item.id === draft.id);
+        const name = normalizeOptionalPurchaseRequestText(draft.itemName);
+        const unit = purchaseRequestUnits.includes(draft.unit as PurchaseRequestUnit) ? draft.unit as PurchaseRequestUnit : null;
+        const nextValues = { name, quantity: normalizedQuantity || null, unit, brandOrGrade: normalizeOptionalPurchaseRequestText(draft.brandOrGrade), specification: normalizeOptionalPurchaseRequestText(draft.specification), alternatives: purchaseRequestAlternativesFromLabel(draft.alternatives) };
+        if (!existing) return { id: `purchase-item-${window.crypto.randomUUID()}`, ...nextValues, source: "ثبت مستقیم شما", confidence: null, completionStatus: name && normalizedQuantity && unit ? "complete" : "incomplete", version: 1, createdAt: timestamp, updatedAt: timestamp, history: [{ id: `purchase-item-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }] } satisfies ProductRequestItem;
+        const changed = JSON.stringify(nextValues) !== JSON.stringify({ name: existing.name, quantity: existing.quantity, unit: existing.unit, brandOrGrade: existing.brandOrGrade, specification: existing.specification, alternatives: existing.alternatives });
+        if (!changed) return existing;
+        const itemVersion = existing.version + 1;
+        return { ...existing, ...nextValues, source: "ثبت مستقیم شما", completionStatus: name && normalizedQuantity && unit ? "complete" : "incomplete", version: itemVersion, updatedAt: timestamp, history: [...existing.history, { id: `purchase-item-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version: itemVersion }] } satisfies ProductRequestItem;
+      }).filter((item): item is ProductRequestItem => item !== null) : [];
+      if (request.requestKind === "product" && items.length !== requestDraft.items.length) return request;
+      const nextServiceValues = {
+        scope: normalizeOptionalPurchaseRequestText(requestDraft.serviceScope),
+        location: normalizeOptionalPurchaseRequestText(requestDraft.serviceLocation),
+        sizeOrVolume: normalizeOptionalPurchaseRequestText(requestDraft.serviceSizeOrVolume),
+        qualification: normalizeOptionalPurchaseRequestText(requestDraft.serviceQualification),
+        timing: normalizeOptionalPurchaseRequestText(requestDraft.serviceTiming),
+        method: normalizeOptionalPurchaseRequestText(requestDraft.serviceMethod),
+        inScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceInScope),
+        outOfScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceOutOfScope),
+        warranty: normalizeOptionalPurchaseRequestText(requestDraft.serviceWarranty),
+        paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.servicePaymentTerms),
+      };
+      let service = request.service;
+      if (request.requestKind === "service" && service) {
+        const changed = JSON.stringify(nextServiceValues) !== JSON.stringify({ scope: service.scope, location: service.location, sizeOrVolume: service.sizeOrVolume, qualification: service.qualification, timing: service.timing, method: service.method, inScope: service.inScope, outOfScope: service.outOfScope, warranty: service.warranty, paymentTerms: service.paymentTerms });
+        if (changed) {
+          const serviceVersion = service.version + 1;
+          service = { ...service, ...nextServiceValues, source: "ثبت مستقیم شما", completionStatus: nextServiceValues.scope && nextServiceValues.location ? "complete" : "incomplete", version: serviceVersion, updatedAt: timestamp, history: [...service.history, { id: `purchase-service-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version: serviceVersion }] };
+        }
+      }
+      const candidate: ProjectPurchaseRequestRecord = {
         ...request,
         rawNeed: { ...request.rawNeed, text: rawNeed },
-        item: {
-          ...request.item,
-          name: normalizeOptionalPurchaseRequestText(requestDraft.itemName),
-          quantity: normalizedQuantity || null,
-          unit: purchaseRequestUnits.includes(requestDraft.unit as PurchaseRequestUnit) ? requestDraft.unit as PurchaseRequestUnit : null,
-          brandOrGrade: normalizeOptionalPurchaseRequestText(requestDraft.brandOrGrade),
-          specification: normalizeOptionalPurchaseRequestText(requestDraft.specification),
-          alternatives: purchaseRequestAlternativesFromLabel(requestDraft.alternatives),
-        },
-        delivery: { ...request.delivery, area: normalizeProjectArea(activeProject.location), neededBy: normalizeOptionalPurchaseRequestText(requestDraft.neededBy) },
+        items,
+        item: items[0] ?? null,
+        service,
+        delivery: { ...request.delivery, area: normalizeOptionalPurchaseRequestText(requestDraft.deliveryArea) ?? "نامشخص", neededBy: normalizeOptionalPurchaseRequestText(requestDraft.neededBy) },
+        unresolvedTerms: { transport: normalizeOptionalPurchaseRequestText(requestDraft.transport) ?? "unknown", tax: normalizeOptionalPurchaseRequestText(requestDraft.tax) ?? "unknown", paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.paymentTerms) ?? "unknown" },
         version,
         updatedAt: timestamp,
         history: [...request.history, { id: `purchase-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }],
-      } satisfies ProjectPurchaseRequestRecord;
+      };
+      candidate.clarificationAnswers = reconcilePurchaseRequestClarifications(candidate, request.clarificationAnswers, timestamp);
+      const comparableBefore = { rawNeed: request.rawNeed.text, items: request.items, service: request.service, delivery: request.delivery, unresolvedTerms: request.unresolvedTerms };
+      const comparableAfter = { rawNeed, items: candidate.items, service: candidate.service, delivery: candidate.delivery, unresolvedTerms: candidate.unresolvedTerms };
+      if (JSON.stringify(stablePurchaseRequestValue(comparableBefore)) === JSON.stringify(stablePurchaseRequestValue(comparableAfter))) {
+        updated = true;
+        return request;
+      }
+      updated = true;
+      return candidate;
     });
     return updated && persistProjectPurchaseRequests(nextRequests);
   };
@@ -2394,14 +3919,18 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       if (request.id !== requestId || request.projectId !== activeProject.id || request.status !== "draft" || purchaseRequestMissingFields(request).length > 0) return request;
       updated = true;
       const version = request.version + 1;
-      return {
+      const candidate: ProjectPurchaseRequestRecord = {
         ...request,
         status: "ready-for-review",
         version,
         updatedAt: timestamp,
         readyAt: timestamp,
         history: [...request.history, { id: `purchase-event-${window.crypto.randomUUID()}`, type: "marked-ready-for-review", actor: "شما", at: timestamp, version }],
-      } satisfies ProjectPurchaseRequestRecord;
+      };
+      const snapshot = purchaseRequestApprovalSnapshot(candidate);
+      const shareableFields = purchaseRequestApprovalShareableFields(candidate);
+      candidate.reviewRevisions = [...request.reviewRevisions, { id: `purchase-review-${window.crypto.randomUUID()}`, requestVersion: version, createdAt: timestamp, snapshot, shareableFields, fingerprint: purchaseRequestRevisionFingerprint(snapshot, shareableFields) }];
+      return candidate;
     });
     return updated && persistProjectPurchaseRequests(nextRequests);
   };
@@ -2425,17 +3954,20 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     const dedupeKey = purchaseRequestApprovalDedupeKey(activeProject.id, request.id, request.version);
     const existingApproval = projectApprovals.find((approval) => approval.dedupeKey === dedupeKey);
     if (existingApproval) return existingApproval.id;
+    const revision = request.reviewRevisions.find((item) => item.requestVersion === request.version && item.createdAt === request.updatedAt);
+    if (!revision) return null;
     const timestamp = new Date().toISOString();
     const approvalId = `approval-${window.crypto.randomUUID()}`;
     const record = {
+      schemaVersion: 2,
       id: approvalId,
       projectId: activeProject.id,
       purpose: "review-purchase-request-version",
-      target: { type: "purchase-request", id: request.id, version: request.version, updatedAt: request.updatedAt },
+      target: { type: "purchase-request", id: request.id, version: request.version, updatedAt: request.updatedAt, revisionId: revision.id },
       dedupeKey,
-      snapshot: purchaseRequestApprovalSnapshot(request),
+      snapshot: structuredClone(revision.snapshot),
       privacySnapshot: {
-        shareableFields: purchaseRequestApprovalShareableFields(request),
+        shareableFields: [...revision.shareableFields],
         projectNameShared: false,
         exactAddressShared: false,
         budgetShared: false,
@@ -2466,7 +3998,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     const nextApprovals = projectApprovals.map((approval) => {
       if (approval.id !== approvalId || approval.projectId !== activeProject.id || approval.status !== "pending") return approval;
       const targetRequest = projectPurchaseRequests.find((request) => request.id === approval.target.id && request.projectId === activeProject.id);
-      if (!targetRequest || targetRequest.status !== "ready-for-review" || !approvalSnapshotMatchesRequest(approval, targetRequest)) return approval;
+      if (!targetRequest || targetRequest.status !== "ready-for-review" || targetRequest.version !== approval.target.version || !approvalSnapshotMatchesRevision(approval, targetRequest)) return approval;
       updated = true;
       const version = approval.version + 1;
       return {
@@ -2500,6 +4032,244 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       } satisfies ProjectPurchaseRequestRecord;
     });
     return updated && persistProjectPurchaseRequests(nextRequests);
+  };
+
+  const persistProjectSupplierContacts = (nextContacts: SupplierContactRecord[]) => {
+    if (projectSupplierContactsReadError) return false;
+    try {
+      if (nextContacts.length === 0) window.localStorage.removeItem(projectSupplierContactsStorageKey);
+      else window.localStorage.setItem(projectSupplierContactsStorageKey, JSON.stringify(nextContacts));
+    } catch {
+      return false;
+    }
+    setProjectSupplierContacts(nextContacts);
+    return true;
+  };
+
+  const createProjectSupplierContact = (draft: SupplierContactDraft) => {
+    if (projectSupplierContactsReadError || projectSupplierContacts.filter((contact) => contact.projectId === activeProject.id).length >= 100) return null;
+    const displayName = draft.displayName.trim();
+    const category = draft.category.trim();
+    const tehranCoverage = draft.tehranCoverage.trim();
+    if (!hasVisibleProjectTaskText(displayName) || displayName.length > 100 || !hasVisibleProjectTaskText(category) || category.length > 100 || !hasVisibleProjectTaskText(tehranCoverage) || tehranCoverage.length > 120 || !["product", "service", "both"].includes(draft.responseCapability)) return null;
+    const timestamp = new Date().toISOString();
+    const contactId = `supplier-contact-${window.crypto.randomUUID()}`;
+    const record = {
+      schemaVersion: 1,
+      id: contactId,
+      projectId: activeProject.id,
+      displayName,
+      category,
+      tehranCoverage,
+      responseCapability: draft.responseCapability,
+      source: "ثبت مستقیم سازنده",
+      networkStatus: "خارج از شبکه چیدا",
+      status: "active",
+      visibility: "خصوصی پروژه",
+      localStatus: "ثبت محلی",
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      archivedAt: null,
+      history: [{ id: `supplier-contact-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+    } satisfies SupplierContactRecord;
+    return persistProjectSupplierContacts([...projectSupplierContacts, record]) ? contactId : null;
+  };
+
+  const changeProjectSupplierContactStatus = (contactId: string, nextStatus: SupplierContactStatus) => {
+    if (projectSupplierContactsReadError) return false;
+    const timestamp = new Date().toISOString();
+    let updated = false;
+    const nextContacts = projectSupplierContacts.map((contact) => {
+      if (contact.id !== contactId || contact.projectId !== activeProject.id || contact.status === nextStatus) return contact;
+      updated = true;
+      const version = contact.version + 1;
+      const eventType = nextStatus === "archived" ? "archived" : "restored";
+      return { ...contact, status: nextStatus, version, updatedAt: timestamp, archivedAt: nextStatus === "archived" ? timestamp : null, history: [...contact.history, { id: `supplier-contact-event-${window.crypto.randomUUID()}`, type: eventType, actor: "شما", at: timestamp, version }] } satisfies SupplierContactRecord;
+    });
+    return updated && persistProjectSupplierContacts(nextContacts);
+  };
+
+  const persistProjectDispatchDrafts = (nextDrafts: DispatchDraftRecord[]) => {
+    if (projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError) return false;
+    try {
+      if (nextDrafts.length === 0) window.localStorage.removeItem(projectDispatchDraftsStorageKey);
+      else window.localStorage.setItem(projectDispatchDraftsStorageKey, JSON.stringify(nextDrafts));
+    } catch {
+      return false;
+    }
+    setProjectDispatchDrafts(nextDrafts);
+    return true;
+  };
+
+  const upsertProjectDispatchDraft = (requestId: string, approvalId: string, requestedRecipientIds: string[]) => {
+    if (projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError) return null;
+    const request = projectPurchaseRequests.find((item) => item.id === requestId && item.projectId === activeProject.id);
+    const approval = projectApprovals.find((item) => item.id === approvalId && item.projectId === activeProject.id);
+    if (!request || !isApprovalEligibleForDispatch(approval, request, activeProject.id)) return null;
+    const reviewRevision = request.reviewRevisions.find((item) => item.id === approval!.target.revisionId && item.requestVersion === approval!.target.version);
+    if (!reviewRevision) return null;
+    const recipientIds = [...new Set(requestedRecipientIds)].sort();
+    if (recipientIds.length < 1 || recipientIds.length > 50) return null;
+    const selectedContacts = recipientIds.map((recipientId) => projectSupplierContacts.find((contact) => contact.id === recipientId && contact.projectId === activeProject.id));
+    if (selectedContacts.some((contact) => !contact || !supplierContactCanRespond(contact, request.requestKind))) return null;
+    const target = { requestId: request.id, requestVersion: request.version, revisionId: reviewRevision.id, approvalId: approval!.id };
+    const dedupeKey = dispatchDraftDedupeKey(activeProject.id, request.id, request.version, reviewRevision.id);
+    const existing = projectDispatchDrafts.find((item) => item.dedupeKey === dedupeKey);
+    if (!existing && projectDispatchDrafts.filter((item) => item.projectId === activeProject.id).length >= 100) return null;
+    const currentRevision = existing?.revisions.find((revision) => revision.id === existing.currentRevisionId);
+    if (currentRevision && JSON.stringify(currentRevision.recipientIds) === JSON.stringify(recipientIds)) return existing!.id;
+    const timestamp = new Date().toISOString();
+    const dispatchId = existing?.id ?? `dispatch-draft-${window.crypto.randomUUID()}`;
+    const nextVersion = existing ? existing.version + 1 : 1;
+    const inviteDrafts: InviteDraft[] = selectedContacts.map((contact) => ({
+      schemaVersion: 1,
+      id: `invite-draft-${window.crypto.randomUUID()}`,
+      projectId: activeProject.id,
+      supplierContactId: contact!.id,
+      destination: { displayName: contact!.displayName, category: contact!.category, tehranCoverage: contact!.tehranCoverage, responseCapability: contact!.responseCapability, networkStatus: "خارج از شبکه چیدا" },
+      target,
+      source: "ثبت مستقیم سازنده",
+      continuation: "ادامهٔ احتمالی در فاز تأمین‌کننده",
+      externalEffect: "none",
+      sendAuthorized: false,
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }));
+    const payload = dispatchPayloadFromSnapshot(reviewRevision.snapshot);
+    const privacySnapshot = dispatchPrivacySnapshot(reviewRevision.shareableFields);
+    const revisionId = `dispatch-revision-${window.crypto.randomUUID()}`;
+    const revision = { id: revisionId, version: nextVersion, createdAt: timestamp, recipientIds, inviteDrafts, payload, privacySnapshot, fingerprint: dispatchRevisionFingerprint(target, recipientIds, inviteDrafts, payload, privacySnapshot) } satisfies DispatchDraftRevision;
+    const record = existing ? {
+      ...existing,
+      currentRevisionId: revisionId,
+      version: nextVersion,
+      updatedAt: timestamp,
+      history: [...existing.history, { id: `dispatch-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version: nextVersion }],
+      revisions: [...existing.revisions, revision],
+    } satisfies DispatchDraftRecord : {
+      schemaVersion: 1,
+      id: dispatchId,
+      projectId: activeProject.id,
+      target,
+      dedupeKey,
+      status: "draft",
+      currentRevisionId: revisionId,
+      externalEffect: "none",
+      sendAuthorized: false,
+      visibility: "خصوصی پروژه",
+      localStatus: "ثبت محلی",
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      history: [{ id: `dispatch-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+      revisions: [revision],
+    } satisfies DispatchDraftRecord;
+    const nextDrafts = existing ? projectDispatchDrafts.map((item) => item.id === existing.id ? record : item) : [...projectDispatchDrafts, record];
+    return persistProjectDispatchDrafts(nextDrafts) ? dispatchId : null;
+  };
+
+  const persistProjectDispatchPlanApprovals = (nextApprovals: DispatchPlanApprovalRecord[]) => {
+    if (projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError) return false;
+    try {
+      if (nextApprovals.length === 0) window.localStorage.removeItem(projectDispatchPlanApprovalsStorageKey);
+      else window.localStorage.setItem(projectDispatchPlanApprovalsStorageKey, JSON.stringify(nextApprovals));
+    } catch {
+      return false;
+    }
+    setProjectDispatchPlanApprovals(nextApprovals);
+    return true;
+  };
+
+  const createProjectDispatchPlanApproval = (dispatchDraftId: string) => {
+    if (projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError) return null;
+    const dispatchDraft = projectDispatchDrafts.find((item) => item.id === dispatchDraftId && item.projectId === activeProject.id);
+    const revision = dispatchDraft?.revisions.find((item) => item.id === dispatchDraft.currentRevisionId);
+    const request = dispatchDraft ? projectPurchaseRequests.find((item) => item.id === dispatchDraft.target.requestId && item.projectId === activeProject.id) : null;
+    const contentApproval = dispatchDraft ? projectApprovals.find((item) => item.id === dispatchDraft.target.approvalId && item.projectId === activeProject.id) : null;
+    if (!dispatchDraft || !revision || !request || !isApprovalEligibleForDispatch(contentApproval ?? undefined, request, activeProject.id) || dispatchDraft.version !== revision.version) return null;
+    const recipients = revision.inviteDrafts.map((invite) => {
+      const contact = projectSupplierContacts.find((item) => item.id === invite.supplierContactId && item.projectId === activeProject.id);
+      return contact && supplierContactCanRespond(contact, request.requestKind)
+        ? { supplierContactId: contact.id, supplierContactVersion: contact.version, destination: structuredClone(invite.destination) }
+        : null;
+    });
+    if (recipients.some((recipient) => !recipient)) return null;
+    const target = dispatchPlanApprovalTarget(dispatchDraft, revision);
+    const snapshot = {
+      recipients: recipients as DispatchPlanApprovalRecord["snapshot"]["recipients"],
+      recipientCount: recipients.length,
+      payload: structuredClone(revision.payload),
+      privacySnapshot: structuredClone(revision.privacySnapshot),
+      reviewAcknowledgement: { destinationsReviewed: true, payloadReviewed: true, privacyAndLocationReviewed: true },
+    } satisfies DispatchPlanApprovalRecord["snapshot"];
+    const planFingerprint = dispatchPlanFingerprint(target, snapshot);
+    const dedupeKey = dispatchPlanApprovalDedupeKey(activeProject.id, target, planFingerprint);
+    const existing = projectDispatchPlanApprovals.find((item) => item.dedupeKey === dedupeKey);
+    if (existing) return existing.id;
+    if (projectDispatchPlanApprovals.filter((item) => item.projectId === activeProject.id).length >= 100) return null;
+    const timestamp = new Date().toISOString();
+    const approvalId = `dispatch-plan-approval-${window.crypto.randomUUID()}`;
+    const record = {
+      schemaVersion: 1,
+      id: approvalId,
+      projectId: activeProject.id,
+      purpose: "approve-local-dispatch-plan-simulation",
+      target,
+      snapshot,
+      planFingerprint,
+      dedupeKey,
+      idempotencyKey: `${dedupeKey}:simulation-v1`,
+      status: "pending",
+      simulationOnly: true,
+      externalEffect: "none",
+      sendAuthorized: false,
+      externalActionAttempted: false,
+      actionRecord: null,
+      visibility: "خصوصی پروژه",
+      localStatus: "ثبت محلی",
+      requestedBy: "شما",
+      decidedBy: null,
+      requestedAt: timestamp,
+      decidedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      version: 1,
+      history: [{ id: `dispatch-plan-approval-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+    } satisfies DispatchPlanApprovalRecord;
+    return persistProjectDispatchPlanApprovals([...projectDispatchPlanApprovals, record]) ? approvalId : null;
+  };
+
+  const changeProjectDispatchPlanApproval = (approvalId: string, action: "approve" | "withdraw" | "reopen") => {
+    if (projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError) return false;
+    const current = projectDispatchPlanApprovals.find((item) => item.id === approvalId && item.projectId === activeProject.id);
+    if (!current) return false;
+    const dispatchDraft = projectDispatchDrafts.find((item) => item.id === current.target.dispatchDraftId && item.projectId === activeProject.id) ?? null;
+    const request = projectPurchaseRequests.find((item) => item.id === current.target.requestId && item.projectId === activeProject.id);
+    const contentApproval = projectApprovals.find((item) => item.id === current.target.contentApprovalId && item.projectId === activeProject.id);
+    if (!request || !contentApproval || dispatchPlanApprovalEffectiveStatus(current, dispatchDraft, request, contentApproval, projectSupplierContacts) === "invalidated") return false;
+    if (action === "approve" && current.status === "approved") return true;
+    const transitionIsValid = action === "approve" && current.status === "pending"
+      || action === "withdraw" && current.status === "pending"
+      || action === "reopen" && current.status === "withdrawn";
+    if (!transitionIsValid) return false;
+    const timestamp = new Date().toISOString();
+    const version = current.version + 1;
+    const status: DispatchPlanApprovalStatus = action === "approve" ? "approved" : action === "withdraw" ? "withdrawn" : "pending";
+    const eventType: DispatchPlanApprovalEventType = action === "approve" ? "approved" : action === "withdraw" ? "withdrawn" : "reopened";
+    const updated = {
+      ...current,
+      status,
+      actionRecord: action === "approve" ? { kind: "record-local-dispatch-plan-approval", result: "local-dispatch-plan-approved", label: "تأیید محلی برنامهٔ ارسال", error: null, recordedAt: timestamp } : null,
+      decidedBy: action === "approve" ? "شما" : null,
+      decidedAt: action === "approve" ? timestamp : null,
+      updatedAt: timestamp,
+      version,
+      history: [...current.history, { id: `dispatch-plan-approval-event-${window.crypto.randomUUID()}`, type: eventType, actor: "شما", at: timestamp, version }],
+    } satisfies DispatchPlanApprovalRecord;
+    const nextApprovals = projectDispatchPlanApprovals.map((item) => item.id === current.id ? updated : item);
+    return persistProjectDispatchPlanApprovals(nextApprovals);
   };
 
   const leaveProjectWorkspace = () => {
@@ -2623,8 +4393,14 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         project={activeProject}
         requests={activeProjectPurchaseRequests}
         approvals={activeProjectApprovals}
+        contacts={activeProjectSupplierContacts}
+        dispatchDrafts={activeProjectDispatchDrafts}
+        dispatchPlanApprovals={activeProjectDispatchPlanApprovals}
         storageLocked={projectPurchaseRequestsReadError}
         approvalsStorageLocked={projectApprovalsReadError || projectPurchaseRequestsReadError}
+        contactsStorageLocked={projectSupplierContactsReadError}
+        dispatchStorageLocked={projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError}
+        dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError}
         initialSelectedId={initialPurchaseRequestId}
         startWithEditor={startPurchaseRequestEditor}
         backLabel={purchaseRequestsReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
@@ -2635,6 +4411,11 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         onReturnToDraft={returnProjectPurchaseRequestToDraft}
         onCreateApproval={createProjectApproval}
         onOpenApproval={openProjectApproval}
+        onCreateContact={createProjectSupplierContact}
+        onContactStatusChange={changeProjectSupplierContactStatus}
+        onUpsertDispatchDraft={upsertProjectDispatchDraft}
+        onCreateDispatchPlanApproval={createProjectDispatchPlanApproval}
+        onChangeDispatchPlanApproval={changeProjectDispatchPlanApproval}
       />
     );
   }
@@ -2669,6 +4450,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <header className="app-header">
         <button className="icon-button header-button" type="button" onClick={() => { keyboard.hide(); setDrawerOpen(true); }} aria-label="بازکردن منو" data-testid="menu-button"><Menu size={22} /></button>
         <button className="project-switcher" type="button" onClick={() => onOpenSheet("projects")} data-testid="project-switcher"><span><strong>{activeProject.name}</strong><small>پروژه فعال</small></span><ChevronDown size={16} /></button>
+        <button className="icon-button header-button header-add-project" type="button" onClick={openNewProject} aria-label="افزودن پروژهٔ جدید" data-testid="header-add-project"><Plus size={22} /></button>
       </header>
 
       <section className="composer-dock" style={{ bottom: bottomInset + 8 }} data-testid="composer-dock">
@@ -2697,6 +4479,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
             <button className="active-project" type="button" onClick={() => openProjectSpace(activeProject.id)} data-testid="open-project-space" aria-label={`باز کردن فضای پروژهٔ ${activeProject.name}`}>
               <Folder size={17} /><span><small>فضای پروژه</small><strong>{activeProject.name}</strong></span><ArrowRight size={15} />
             </button>
+            <button className="bottom-add-project" type="button" onClick={openNewProject} aria-label="افزودن پروژهٔ جدید" data-testid="bottom-add-project"><Plus size={18} /><span>پروژه</span></button>
             <button className="tool-cluster" type="button" onClick={() => onOpenSheet("tools")} aria-label="نمایش ابزارهای فعال" data-testid="capability-cluster">
               <span className="tool-cluster-label">ابزارها</span>
               <span className="tool-icons" aria-hidden="true"><span><Search size={13} /></span><span><FileText size={13} /></span><span><Wrench size={13} /></span>{installedTool ? <span><Hammer size={13} /></span> : null}</span>
@@ -2716,6 +4499,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
                 <button type="button"><MessageSquare size={19} /><span>گفتگوی تازه</span><Plus size={17} /></button>
                 <button type="button" onClick={openProjectTasks} data-testid="drawer-tasks-entry"><CheckCircle2 size={19} /><span>کارها</span><span className="nav-count" data-testid="drawer-task-count" aria-label={projectTasksReadError ? "بازیابی کارها کامل نشد" : `${activeProjectTaskCount.toLocaleString("fa-IR")} کار در حال انجام`}>{projectTasksReadError ? "!" : activeProjectTaskCount.toLocaleString("fa-IR")}</span></button>
                 <button type="button" onClick={() => { setDrawerOpen(false); onOpenSheet("projects"); }}><Folder size={19} /><span>پروژه‌ها</span><span className="nav-count" data-testid="drawer-project-count">{projects.length.toLocaleString("fa-IR")}</span></button>
+                <button type="button" onClick={openNewProject} data-testid="drawer-add-project"><Plus size={19} /><span>افزودن پروژهٔ جدید</span><ChevronDown size={17} /></button>
                 <button type="button"><Pin size={19} /><span>پین‌شده‌ها</span><span className="nav-count">۳</span></button>
                 <button type="button" data-testid="drawer-brief-entry" onClick={() => { setDrawerOpen(false); onOpenSheet("brief"); }}>
                   <CalendarDays size={19} />
@@ -2741,7 +4525,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <ToolsSheet sheet={sheet} installedTool={installedTool} onBuild={() => onOpenSheet("build")} onSearch={openProjectSearch} onSourceDemo={openSourceAnswerDemo} onFiles={() => openProjectFiles("chat")} onClose={() => onOpenSheet(null)} />
       <BuildSheet sheet={sheet} activeProject={activeProject.name} onClose={() => onOpenSheet(null)} onInstalled={installTool} />
       <BriefSheet sheet={sheet} schedule={briefSchedule} onClose={() => onOpenSheet(null)} onSave={saveBrief} />
-      <ProjectsSheet sheet={sheet} projects={projects} activeProjectId={activeProject.id} onClose={() => onOpenSheet(null)} onSelect={openProjectSpace} />
+      <ProjectsSheet sheet={sheet} projects={projects} activeProjectId={activeProject.id} onClose={() => onOpenSheet(null)} onSelect={openProjectSpace} onCreate={openNewProject} />
+      <ProjectCreateSheet sheet={sheet} onClose={() => onOpenSheet(null)} onSave={onProjectCreate} />
       <SettingsSheet sheet={sheet} onClose={() => onOpenSheet(null)} />
       <span className="sr-only" aria-live="polite">{activeProjectMeta}</span>
     </div>
@@ -2876,7 +4661,16 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, purchas
   );
 }
 
-function ProjectPurchaseRequestsView({ project, requests, approvals, storageLocked, approvalsStorageLocked, initialSelectedId, startWithEditor, backLabel, onBack, onCreate, onUpdate, onMarkReady, onReturnToDraft, onCreateApproval, onOpenApproval }: { project: BuilderProject; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; storageLocked: boolean; approvalsStorageLocked: boolean; initialSelectedId: string | null; startWithEditor: boolean; backLabel: string; onBack: () => void; onCreate: (draft: PurchaseRequestDraft) => string | null; onUpdate: (requestId: string, draft: PurchaseRequestDraft) => boolean; onMarkReady: (requestId: string) => boolean; onReturnToDraft: (requestId: string) => boolean; onCreateApproval: (requestId: string) => string | null; onOpenApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void }) {
+function PurchaseRequestModeSwitch({ mode, onChange, testIdPrefix, label }: { mode: PurchaseRequestDisclosureMode; onChange: (mode: PurchaseRequestDisclosureMode) => void; testIdPrefix: string; label: string }) {
+  return (
+    <div className="purchase-request-mode-switch" role="group" aria-label={label} data-testid={`${testIdPrefix}-group`}>
+      <button type="button" aria-pressed={mode === "simple"} onClick={() => onChange("simple")} data-testid={`${testIdPrefix}-simple`}><span>ساده</span><small>موارد اصلی</small></button>
+      <button type="button" aria-pressed={mode === "advanced"} onClick={() => onChange("advanced")} data-testid={`${testIdPrefix}-advanced`}><span>پیشرفته</span><small>جزئیات کامل</small></button>
+    </div>
+  );
+}
+
+function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, dispatchDrafts, dispatchPlanApprovals, storageLocked, approvalsStorageLocked, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, initialSelectedId, startWithEditor, backLabel, onBack, onCreate, onUpdate, onMarkReady, onReturnToDraft, onCreateApproval, onOpenApproval, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval }: { project: BuilderProject; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; dispatchDrafts: DispatchDraftRecord[]; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; storageLocked: boolean; approvalsStorageLocked: boolean; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; initialSelectedId: string | null; startWithEditor: boolean; backLabel: string; onBack: () => void; onCreate: (draft: PurchaseRequestDraft) => string | null; onUpdate: (requestId: string, draft: PurchaseRequestDraft) => boolean; onMarkReady: (requestId: string) => boolean; onReturnToDraft: (requestId: string) => boolean; onCreateApproval: (requestId: string) => string | null; onOpenApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void; onCreateContact: (draft: SupplierContactDraft) => string | null; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null; onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean }) {
   const keyboard = useKeyboard();
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
@@ -2885,9 +4679,12 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [editorOpen, setEditorOpen] = useState(() => startWithEditor && !storageLocked);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [requestDraft, setRequestDraft] = useState<PurchaseRequestDraft>(emptyPurchaseRequestDraft);
+  const [editorMode, setEditorMode] = useState<PurchaseRequestDisclosureMode>("simple");
+  const [detailMode, setDetailMode] = useState<PurchaseRequestDisclosureMode>("simple");
+  const [requestDraft, setRequestDraft] = useState<PurchaseRequestDraft>(() => ({ ...emptyPurchaseRequestDraft, items: [emptyProductRequestItemDraft()] }));
   const [fieldErrors, setFieldErrors] = useState<PurchaseRequestFieldErrors>(emptyPurchaseRequestFieldErrors);
   const [storageError, setStorageError] = useState("");
+  const [dispatchPlannerRequestId, setDispatchPlannerRequestId] = useState<string | null>(null);
   const selectedRequest = selectedId ? requests.find((request) => request.id === selectedId) ?? null : null;
   const selectedRequestApproval = selectedRequest
     ? approvals.find((approval) => approval.target.id === selectedRequest.id && approval.target.version === selectedRequest.version) ?? null
@@ -2898,9 +4695,21 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
   );
   const missingFields = selectedRequest ? purchaseRequestMissingFields(selectedRequest) : [];
 
+  const dispatchPlannerRequest = dispatchPlannerRequestId ? requests.find((request) => request.id === dispatchPlannerRequestId) ?? null : null;
+  const dispatchPlannerApproval = dispatchPlannerRequest
+    ? approvals.find((approval) => approval.target.id === dispatchPlannerRequest.id && approval.target.version === dispatchPlannerRequest.version && isApprovalEligibleForDispatch(approval, dispatchPlannerRequest, project.id)) ?? null
+    : null;
+  const dispatchPlannerDraft = dispatchPlannerApproval
+    ? dispatchDrafts.find((item) => item.dedupeKey === dispatchDraftDedupeKey(project.id, dispatchPlannerRequest!.id, dispatchPlannerRequest!.version, dispatchPlannerApproval.target.revisionId)) ?? null
+    : null;
+
   useEffect(() => {
     if (selectedId && !selectedRequest) setSelectedId(null);
   }, [selectedId, selectedRequest]);
+
+  useEffect(() => {
+    if (dispatchPlannerRequestId && (!dispatchPlannerRequest || !dispatchPlannerApproval)) setDispatchPlannerRequestId(null);
+  }, [dispatchPlannerApproval, dispatchPlannerRequest, dispatchPlannerRequestId]);
 
   useLayoutEffect(() => {
     if (!initialSelectedId || selectedRequest?.id !== initialSelectedId) return;
@@ -2909,9 +4718,10 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
 
   const openCreateEditor = () => {
     setEditingId(null);
-    setRequestDraft(emptyPurchaseRequestDraft);
+    setRequestDraft({ ...emptyPurchaseRequestDraft, items: [emptyProductRequestItemDraft()] });
     setFieldErrors(emptyPurchaseRequestFieldErrors);
     setStorageError("");
+    setEditorMode("simple");
     setEditorOpen(true);
   };
 
@@ -2921,6 +4731,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
     setRequestDraft(purchaseRequestDraftFromRecord(request));
     setFieldErrors(emptyPurchaseRequestFieldErrors);
     setStorageError("");
+    setEditorMode("simple");
     setEditorOpen(true);
   };
 
@@ -2934,7 +4745,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
     window.requestAnimationFrame(() => focusTarget?.focus());
   };
 
-  const changeDraft = (field: keyof PurchaseRequestDraft, value: string) => {
+  const changeDraft = (field: Exclude<keyof PurchaseRequestDraft, "items" | "requestKind">, value: string) => {
     setRequestDraft((current) => ({ ...current, [field]: value }));
     if (field in fieldErrors) {
       const errorField = field as keyof PurchaseRequestFieldErrors;
@@ -2943,22 +4754,46 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
     setStorageError("");
   };
 
+  const changeRequestKind = (requestKind: PurchaseRequestKind) => {
+    if (editingId) return;
+    setRequestDraft((current) => ({ ...current, requestKind }));
+    setStorageError("");
+  };
+
+  const changeProductItemDraft = (index: number, field: Exclude<keyof ProductRequestItemDraft, "id">, value: string) => {
+    setRequestDraft((current) => ({ ...current, items: current.items.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item) }));
+    if (field === "quantity") setFieldErrors((current) => current.quantity ? { ...current, quantity: "", quantityIndex: null } : current);
+    setStorageError("");
+  };
+
+  const addProductItemDraft = () => {
+    setRequestDraft((current) => current.items.length >= 8 ? current : { ...current, items: [...current.items, emptyProductRequestItemDraft(`draft-${window.crypto.randomUUID()}`)] });
+    setStorageError("");
+  };
+
+  const removeProductItemDraft = (index: number) => {
+    setRequestDraft((current) => current.items.length <= 1 ? current : { ...current, items: current.items.filter((_, itemIndex) => itemIndex !== index) });
+    setStorageError("");
+  };
+
   const saveRequest = () => {
     const rawNeed = requestDraft.rawNeed.trim();
-    const normalizedQuantity = requestDraft.quantity.trim() ? normalizeProjectNumber(requestDraft.quantity, false) : "";
+    const normalizedQuantities = requestDraft.items.map((item) => item.quantity.trim() ? normalizeProjectNumber(item.quantity, false) : "");
+    const invalidQuantityIndex = requestDraft.requestKind === "product" ? normalizedQuantities.findIndex((quantity) => quantity === null || Boolean(quantity && Number(quantity) <= 0)) : -1;
     const nextErrors = {
       ...emptyPurchaseRequestFieldErrors,
       rawNeed: hasVisibleProjectTaskText(rawNeed) ? "" : "نیازت را بنویس تا یک پیش‌نویس محلی ساخته شود.",
-      quantity: normalizedQuantity === null || (normalizedQuantity && Number(normalizedQuantity) <= 0) ? "مقدار باید یک عدد بیشتر از صفر باشد." : "",
+      quantity: invalidQuantityIndex >= 0 ? "مقدار باید یک عدد بیشتر از صفر باشد." : "",
+      quantityIndex: invalidQuantityIndex >= 0 ? invalidQuantityIndex : null,
     } satisfies PurchaseRequestFieldErrors;
     setFieldErrors(nextErrors);
     if (nextErrors.rawNeed || nextErrors.quantity) {
-      const invalidId = nextErrors.rawNeed ? "purchase-request-raw" : "purchase-request-quantity";
+      const invalidId = nextErrors.rawNeed ? "purchase-request-raw" : invalidQuantityIndex <= 0 ? "purchase-request-quantity" : `purchase-request-quantity-${invalidQuantityIndex}`;
       window.requestAnimationFrame(() => document.getElementById(invalidId)?.focus());
       return;
     }
 
-    const normalizedDraft = { ...requestDraft, rawNeed, quantity: normalizedQuantity ?? "" };
+    const normalizedDraft = { ...requestDraft, rawNeed, items: requestDraft.items.map((item, index) => ({ ...item, quantity: normalizedQuantities[index] ?? "" })) };
     keyboard.hide();
     if (editingId) {
       if (!onUpdate(editingId, normalizedDraft)) {
@@ -2967,6 +4802,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
       }
       setEditorOpen(false);
       setEditingId(null);
+      setDetailMode("simple");
       window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
       return;
     }
@@ -2977,6 +4813,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
       return;
     }
     setSelectedId(requestId);
+    setDetailMode("simple");
     setEditorOpen(false);
     window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
   };
@@ -3021,6 +4858,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
     keyboard.hide();
     setStorageError("");
     setSelectedId(null);
+    setDetailMode("simple");
     window.requestAnimationFrame(() => {
       if (!requestId) return;
       document.querySelector<HTMLElement>(`[data-request-id="${requestId}"]`)?.focus();
@@ -3028,71 +4866,120 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
   };
 
   const editorSheet = (
-    <BottomSheet key={editingId ? `purchase-editor-${editingId}` : "purchase-editor-create"} open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }} title={editingId ? "ویرایش پیش‌نویس" : "پیش‌نویس درخواست خرید"} description={`یک نیاز تک‌قلمی برای ${project.name} ثبت کن؛ هیچ ارسالی انجام نمی‌شود.`} snap={0.94}>
+    <BottomSheet key={editingId ? `purchase-editor-${editingId}` : "purchase-editor-create"} open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }} title={editingId ? "ویرایش پیش‌نویس" : "پیش‌نویس درخواست پروژه"} description={`محصول چندقلمی یا خدمت مستقل برای ${project.name}؛ بدون ارسال بیرونی.`} snap={0.94}>
       <form className="purchase-request-editor-sheet" dir="rtl" data-testid="purchase-request-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveRequest(); }}>
+        <fieldset className="purchase-request-kind-picker" disabled={Boolean(editingId)}>
+          <legend>نوع درخواست</legend>
+          <button type="button" aria-pressed={requestDraft.requestKind === "product"} onClick={() => changeRequestKind("product")} data-testid="purchase-request-kind-product">محصول</button>
+          <button type="button" aria-pressed={requestDraft.requestKind === "service"} onClick={() => changeRequestKind("service")} data-testid="purchase-request-kind-service">خدمت</button>
+          {editingId ? <small>نوع درخواست بعد از ثبت ثابت می‌ماند.</small> : null}
+        </fieldset>
+        <PurchaseRequestModeSwitch mode={editorMode} onChange={setEditorMode} testIdPrefix="purchase-request-mode" label="سطح جزئیات فرم درخواست" />
+        <p className="purchase-request-mode-note">در حالت ساده فقط موارد اصلی را می‌بینی؛ رفت‌وبرگشت بین دو حالت چیزی از پیش‌نویس پاک نمی‌کند.</p>
         <label className="field-control" htmlFor="purchase-request-raw">
           <span>نیاز اولیه</span>
           <KeyboardTextarea id="purchase-request-raw" data-testid="purchase-request-raw-input" value={requestDraft.rawNeed} maxLength={800} rows={4} placeholder="مثلاً ۲۰ تن سیمان تیپ ۲ برای هفتهٔ آینده لازم داریم" onChange={(event) => changeDraft("rawNeed", event.target.value)} aria-invalid={Boolean(fieldErrors.rawNeed)} aria-describedby={fieldErrors.rawNeed ? "purchase-request-raw-error" : "purchase-request-raw-note"} />
           {fieldErrors.rawNeed ? <small className="field-error" id="purchase-request-raw-error" data-testid="purchase-request-raw-error">{fieldErrors.rawNeed}</small> : <small id="purchase-request-raw-note">متن دقیق خودت ثبت می‌شود؛ این نسخه استخراج هوشمند ندارد.</small>}
         </label>
 
-        <div className="purchase-request-form-section"><strong>شناسنامهٔ قلم</strong><small>اختیاری در پیش‌نویس</small></div>
-        <label className="field-control" htmlFor="purchase-request-item">
-          <span>نام قلم</span>
-          <KeyboardInput id="purchase-request-item" data-testid="purchase-request-item-input" value={requestDraft.itemName} maxLength={100} placeholder="مثلاً سیمان تیپ ۲" onChange={(event) => changeDraft("itemName", event.target.value)} />
-        </label>
-
-        <div className="purchase-request-field-grid">
-          <label className="field-control" htmlFor="purchase-request-quantity">
-            <span>مقدار</span>
-            <KeyboardInput id="purchase-request-quantity" data-testid="purchase-request-quantity-input" value={requestDraft.quantity} inputMode="decimal" dir="ltr" placeholder="مثلاً ۲۰٫۵" onChange={(event) => changeDraft("quantity", event.target.value)} aria-invalid={Boolean(fieldErrors.quantity)} aria-describedby={fieldErrors.quantity ? "purchase-request-quantity-error" : undefined} />
-            {fieldErrors.quantity ? <small className="field-error" id="purchase-request-quantity-error">{fieldErrors.quantity}</small> : null}
-          </label>
-          <div className="field-control">
-            <span>واحد</span>
-            <ProjectChoiceMenu id="purchase-request-unit" testId="purchase-request-unit-select" value={requestDraft.unit} placeholder="انتخاب واحد" options={purchaseRequestUnits} ariaLabel="واحد قلم" onChange={(value) => changeDraft("unit", value)} />
-          </div>
-        </div>
-
-        <label className="field-control" htmlFor="purchase-request-brand">
-          <span>برند یا گرید</span>
-          <KeyboardInput id="purchase-request-brand" data-testid="purchase-request-brand-input" value={requestDraft.brandOrGrade} maxLength={100} placeholder="اختیاری" onChange={(event) => changeDraft("brandOrGrade", event.target.value)} />
-        </label>
-
-        <label className="field-control" htmlFor="purchase-request-specification">
-          <span>مشخصات تکمیلی</span>
-          <KeyboardTextarea id="purchase-request-specification" data-testid="purchase-request-specification-input" value={requestDraft.specification} maxLength={500} rows={3} placeholder="کیفیت، بسته‌بندی یا الزام فنی موردنظر" onChange={(event) => changeDraft("specification", event.target.value)} />
-        </label>
-
-        <div className="field-control">
-          <span>پذیرش جایگزین</span>
-          <ProjectChoiceMenu id="purchase-request-alternatives" testId="purchase-request-alternatives-select" value={requestDraft.alternatives} placeholder="وضعیت جایگزین" options={purchaseRequestAlternativeLabels} ariaLabel="پذیرش کالای جایگزین" onChange={(value) => changeDraft("alternatives", value)} />
-        </div>
-
-        <label className="field-control" htmlFor="purchase-request-needed-by">
-          <span>زمان موردنیاز</span>
-          <KeyboardInput id="purchase-request-needed-by" data-testid="purchase-request-needed-by-input" value={requestDraft.neededBy} maxLength={80} placeholder="مثلاً تا ۱۰ شهریور" onChange={(event) => changeDraft("neededBy", event.target.value)} />
-        </label>
+        {requestDraft.requestKind === "product" ? (
+          <>
+            <div className="purchase-request-form-section"><strong>اقلام محصول</strong><small>{requestDraft.items.length.toLocaleString("fa-IR")} قلم · حداکثر ۸</small></div>
+            {requestDraft.items.map((item, index) => {
+              const suffix = index === 0 ? "" : `-${index}`;
+              return (
+                <section className="purchase-request-item-editor" key={item.id || `new-item-${index}`} data-testid="purchase-request-item-editor">
+                  <div className="purchase-request-item-editor-title"><strong>قلم {index + 1}</strong>{requestDraft.items.length > 1 ? <button type="button" onClick={() => removeProductItemDraft(index)} aria-label={`حذف قلم ${index + 1}`}>حذف</button> : null}</div>
+                  <label className="field-control" htmlFor={`purchase-request-item${suffix}`}><span>نام قلم</span><KeyboardInput id={`purchase-request-item${suffix}`} data-testid={index === 0 ? "purchase-request-item-input" : `purchase-request-item-input-${index}`} value={item.itemName} maxLength={100} placeholder="مثلاً سیمان تیپ ۲" onChange={(event) => changeProductItemDraft(index, "itemName", event.target.value)} /></label>
+                  <div className="purchase-request-field-grid">
+                    <label className="field-control" htmlFor={`purchase-request-quantity${suffix}`}><span>مقدار</span><KeyboardInput id={`purchase-request-quantity${suffix}`} data-testid={index === 0 ? "purchase-request-quantity-input" : `purchase-request-quantity-input-${index}`} value={item.quantity} inputMode="decimal" dir="ltr" placeholder="مثلاً ۲۰٫۵" onChange={(event) => changeProductItemDraft(index, "quantity", event.target.value)} aria-invalid={Boolean(fieldErrors.quantity) && fieldErrors.quantityIndex === index} aria-describedby={fieldErrors.quantity && fieldErrors.quantityIndex === index ? `purchase-request-quantity-error${suffix}` : undefined} />{fieldErrors.quantity && fieldErrors.quantityIndex === index ? <small className="field-error" id={`purchase-request-quantity-error${suffix}`}>{fieldErrors.quantity}</small> : null}</label>
+                    <div className="field-control"><span>واحد</span><ProjectChoiceMenu id={`purchase-request-unit${suffix}`} testId={index === 0 ? "purchase-request-unit-select" : `purchase-request-unit-select-${index}`} value={item.unit} placeholder="انتخاب واحد" options={purchaseRequestUnits} ariaLabel={`واحد قلم ${index + 1}`} onChange={(value) => changeProductItemDraft(index, "unit", value)} /></div>
+                  </div>
+                  {editorMode === "advanced" ? (
+                    <>
+                      <label className="field-control" htmlFor={`purchase-request-brand${suffix}`}><span>برند یا گرید</span><KeyboardInput id={`purchase-request-brand${suffix}`} data-testid={index === 0 ? "purchase-request-brand-input" : `purchase-request-brand-input-${index}`} value={item.brandOrGrade} maxLength={100} placeholder="خالی بماند: نامشخص صریح" onChange={(event) => changeProductItemDraft(index, "brandOrGrade", event.target.value)} /></label>
+                      <label className="field-control" htmlFor={`purchase-request-specification${suffix}`}><span>مشخصات تکمیلی</span><KeyboardTextarea id={`purchase-request-specification${suffix}`} data-testid={index === 0 ? "purchase-request-specification-input" : `purchase-request-specification-input-${index}`} value={item.specification} maxLength={500} rows={3} placeholder="کیفیت، بسته‌بندی یا الزام فنی موردنظر" onChange={(event) => changeProductItemDraft(index, "specification", event.target.value)} /></label>
+                      <div className="field-control"><span>پذیرش جایگزین</span><ProjectChoiceMenu id={`purchase-request-alternatives${suffix}`} testId={index === 0 ? "purchase-request-alternatives-select" : `purchase-request-alternatives-select-${index}`} value={item.alternatives} placeholder="وضعیت جایگزین" options={purchaseRequestAlternativeLabels} ariaLabel={`پذیرش جایگزین قلم ${index + 1}`} onChange={(value) => changeProductItemDraft(index, "alternatives", value)} /></div>
+                    </>
+                  ) : null}
+                </section>
+              );
+            })}
+            <button className="purchase-request-add-item" type="button" onClick={addProductItemDraft} disabled={requestDraft.items.length >= 8} data-testid="purchase-request-add-item"><Plus size={17} /> افزودن قلم</button>
+            <div className="purchase-request-form-section"><strong>تحویل</strong><small>{editorMode === "advanced" ? "و شرایط تجاری" : "موارد اصلی"}</small></div>
+            <label className="field-control" htmlFor="purchase-request-delivery-area"><span>محدودهٔ تحویل</span><KeyboardInput id="purchase-request-delivery-area" data-testid="purchase-request-delivery-area-input" value={requestDraft.deliveryArea} maxLength={120} placeholder="مثلاً سعادت‌آباد؛ خالی یعنی نامشخص" onChange={(event) => changeDraft("deliveryArea", event.target.value)} /></label>
+            <label className="field-control" htmlFor="purchase-request-needed-by"><span>موعد موردنیاز</span><KeyboardInput id="purchase-request-needed-by" data-testid="purchase-request-needed-by-input" value={requestDraft.neededBy} maxLength={80} placeholder="مثلاً تا ۱۰ شهریور" onChange={(event) => changeDraft("neededBy", event.target.value)} /></label>
+            {editorMode === "advanced" ? (
+              <>
+                <div className="purchase-request-form-section"><strong>شرایط تجاری</strong><small>خالی بماند: نامشخص صریح</small></div>
+                <label className="field-control" htmlFor="purchase-request-transport"><span>حمل</span><KeyboardInput id="purchase-request-transport" data-testid="purchase-request-transport-input" value={requestDraft.transport} maxLength={160} placeholder="نامشخص" onChange={(event) => changeDraft("transport", event.target.value)} /></label>
+                <label className="field-control" htmlFor="purchase-request-tax"><span>مالیات</span><KeyboardInput id="purchase-request-tax" data-testid="purchase-request-tax-input" value={requestDraft.tax} maxLength={160} placeholder="نامشخص" onChange={(event) => changeDraft("tax", event.target.value)} /></label>
+                <label className="field-control" htmlFor="purchase-request-payment"><span>شرایط پرداخت</span><KeyboardInput id="purchase-request-payment" data-testid="purchase-request-payment-input" value={requestDraft.paymentTerms} maxLength={160} placeholder="نامشخص" onChange={(event) => changeDraft("paymentTerms", event.target.value)} /></label>
+              </>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <div className="purchase-request-form-section"><strong>شناسنامهٔ خدمت</strong><small>شِمای مستقل از محصول</small></div>
+            <label className="field-control" htmlFor="purchase-request-service-scope"><span>دامنهٔ خدمت</span><KeyboardTextarea id="purchase-request-service-scope" data-testid="purchase-request-service-scope-input" value={requestDraft.serviceScope} maxLength={500} rows={3} placeholder="مثلاً اجرای عایق رطوبتی بام" onChange={(event) => changeDraft("serviceScope", event.target.value)} /></label>
+            <label className="field-control" htmlFor="purchase-request-service-location"><span>موقعیت مجاز</span><KeyboardInput id="purchase-request-service-location" data-testid="purchase-request-service-location-input" value={requestDraft.serviceLocation} maxLength={160} placeholder="فقط محدوده/بخش پروژه؛ بدون نشانی دقیق" onChange={(event) => changeDraft("serviceLocation", event.target.value)} /><small>فقط محله، محدوده یا بخش پروژه را ثبت کن؛ پلاک و نشانی دقیق در این فیلد مجاز نیست.</small></label>
+            <label className="field-control" htmlFor="purchase-request-service-size"><span>اندازه یا حجم</span><KeyboardInput id="purchase-request-service-size" data-testid="purchase-request-service-size-input" value={requestDraft.serviceSizeOrVolume} maxLength={160} placeholder="نامشخص" onChange={(event) => changeDraft("serviceSizeOrVolume", event.target.value)} /></label>
+            <label className="field-control" htmlFor="purchase-request-service-timing"><span>زمان</span><KeyboardInput id="purchase-request-service-timing" data-testid="purchase-request-service-timing-input" value={requestDraft.serviceTiming} maxLength={160} placeholder="نامشخص" onChange={(event) => changeDraft("serviceTiming", event.target.value)} /></label>
+            {editorMode === "advanced" ? (
+              <>
+                <div className="purchase-request-form-section"><strong>جزئیات تکمیلی خدمت</strong><small>اختیاری و قابل بازگشت</small></div>
+                <label className="field-control" htmlFor="purchase-request-service-qualification"><span>صلاحیت لازم</span><KeyboardInput id="purchase-request-service-qualification" data-testid="purchase-request-service-qualification-input" value={requestDraft.serviceQualification} maxLength={160} placeholder="نامشخص" onChange={(event) => changeDraft("serviceQualification", event.target.value)} /></label>
+                <label className="field-control" htmlFor="purchase-request-service-method"><span>روش اجرا</span><KeyboardInput id="purchase-request-service-method" data-testid="purchase-request-service-method-input" value={requestDraft.serviceMethod} maxLength={160} placeholder="نامشخص" onChange={(event) => changeDraft("serviceMethod", event.target.value)} /></label>
+                <label className="field-control" htmlFor="purchase-request-service-in-scope"><span>داخل دامنه</span><KeyboardTextarea id="purchase-request-service-in-scope" data-testid="purchase-request-service-in-scope-input" value={requestDraft.serviceInScope} maxLength={500} rows={2} placeholder="موارد داخل دامنه یا نامشخص" onChange={(event) => changeDraft("serviceInScope", event.target.value)} /></label>
+                <label className="field-control" htmlFor="purchase-request-service-out-scope"><span>خارج از دامنه</span><KeyboardTextarea id="purchase-request-service-out-scope" data-testid="purchase-request-service-out-scope-input" value={requestDraft.serviceOutOfScope} maxLength={500} rows={2} placeholder="موارد خارج از دامنه یا نامشخص" onChange={(event) => changeDraft("serviceOutOfScope", event.target.value)} /></label>
+                <label className="field-control" htmlFor="purchase-request-service-warranty"><span>ضمانت اعلامی</span><KeyboardInput id="purchase-request-service-warranty" data-testid="purchase-request-service-warranty-input" value={requestDraft.serviceWarranty} maxLength={160} placeholder="نامشخص" onChange={(event) => changeDraft("serviceWarranty", event.target.value)} /></label>
+                <label className="field-control" htmlFor="purchase-request-service-payment"><span>شرایط پرداخت</span><KeyboardInput id="purchase-request-service-payment" data-testid="purchase-request-service-payment-input" value={requestDraft.servicePaymentTerms} maxLength={160} placeholder="نامشخص" onChange={(event) => changeDraft("servicePaymentTerms", event.target.value)} /></label>
+              </>
+            ) : null}
+          </>
+        )}
 
         <dl className="purchase-request-meta">
           <div><dt>پروژهٔ مالک</dt><dd>{project.name}</dd></div>
-          <div><dt>محدودهٔ تحویل</dt><dd>تهران · {normalizeProjectArea(project.location)}</dd></div>
+          <div><dt>نوع درخواست</dt><dd>{requestDraft.requestKind === "product" ? "محصول" : "خدمت"}</dd></div>
           <div><dt>دسترسی</dt><dd>خصوصی پروژه</dd></div>
           <div><dt>وضعیت نخست</dt><dd>پیش‌نویس · نسخهٔ ۱</dd></div>
         </dl>
-        <p className="purchase-request-boundary"><ShieldCheck size={16} /><span>ثبت این فرم فقط یک پیش‌نویس محلی می‌سازد؛ هیچ تأیید، انتخاب تأمین‌کننده، قیمت یا ارسال بیرونی ایجاد نمی‌شود.</span></p>
+        <p className="purchase-request-boundary"><ShieldCheck size={16} /><span>ثبت این فرم فقط یک پیش‌نویس محلی می‌سازد؛ فایل و استخراج خودکار در این مسیر فعال نیست و هیچ تأیید، قیمت یا ارسال بیرونی ایجاد نمی‌شود.</span></p>
         {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-storage-error">{storageError}</p> : null}
         <button className="primary-button" type="submit" data-testid="purchase-request-save">{editingId ? "ذخیرهٔ نسخهٔ جدید" : "ثبت پیش‌نویس محلی"}</button>
       </form>
     </BottomSheet>
   );
 
+  if (dispatchPlannerRequest && dispatchPlannerApproval) {
+    return (
+      <ProjectDispatchPlannerView
+        project={project}
+        request={dispatchPlannerRequest}
+        approval={dispatchPlannerApproval}
+        contacts={contacts}
+        dispatchDraft={dispatchPlannerDraft}
+        dispatchPlanApprovals={dispatchPlanApprovals}
+        contactsStorageLocked={contactsStorageLocked}
+        dispatchStorageLocked={dispatchStorageLocked}
+        dispatchPlanApprovalsStorageLocked={dispatchPlanApprovalsStorageLocked}
+        onBack={() => setDispatchPlannerRequestId(null)}
+        onCreateContact={onCreateContact}
+        onContactStatusChange={onContactStatusChange}
+        onUpsertDispatchDraft={onUpsertDispatchDraft}
+        onCreateDispatchPlanApproval={onCreateDispatchPlanApproval}
+        onChangeDispatchPlanApproval={onChangeDispatchPlanApproval}
+      />
+    );
+  }
+
   if (selectedRequest) {
     return (
       <div className="chida-app project-purchase-request-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-purchase-request-detail-view">
         <header className="project-workspace-header">
           <button className="icon-button" type="button" onClick={returnToList} aria-label="بازگشت به درخواست‌های خرید" data-testid="purchase-request-detail-back"><ArrowRight size={21} /></button>
-          <span className="project-workspace-title"><small>جزئیات درخواست خرید</small><strong>{project.name}</strong></span>
+          <span className="project-workspace-title"><small>جزئیات درخواست پروژه</small><strong>{project.name}</strong></span>
           <span className="project-workspace-header-spacer" aria-hidden="true" />
         </header>
 
@@ -3103,16 +4990,33 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
               <div><small>{purchaseRequestStatusLabel(selectedRequest.status)} · نسخهٔ {selectedRequest.version.toLocaleString("fa-IR")}</small><h1>{purchaseRequestDisplayTitle(selectedRequest)}</h1><p>{selectedRequest.rawNeed.text}</p></div>
             </section>
 
-            <dl className="purchase-request-meta">
-              <div><dt>نام قلم</dt><dd>{selectedRequest.item.name ?? "ثبت نشده"}</dd></div>
-              <div><dt>مقدار و واحد</dt><dd>{selectedRequest.item.quantity && selectedRequest.item.unit ? `${Number(selectedRequest.item.quantity).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} ${selectedRequest.item.unit}` : "ثبت نشده"}</dd></div>
-              <div><dt>برند یا گرید</dt><dd>{selectedRequest.item.brandOrGrade ?? "نامشخص"}</dd></div>
-              <div><dt>مشخصات</dt><dd>{selectedRequest.item.specification ?? "نامشخص"}</dd></div>
-              <div><dt>جایگزین</dt><dd>{purchaseRequestAlternativesLabel(selectedRequest.item.alternatives)}</dd></div>
-              <div><dt>زمان موردنیاز</dt><dd>{selectedRequest.delivery.neededBy ?? "نامشخص"}</dd></div>
-              <div><dt>تحویل</dt><dd>تهران · {selectedRequest.delivery.area}</dd></div>
-              <div><dt>ثبت و اشتراک</dt><dd>{selectedRequest.localStatus} · {selectedRequest.sharingStatus}</dd></div>
-            </dl>
+            <PurchaseRequestModeSwitch mode={detailMode} onChange={setDetailMode} testIdPrefix="purchase-request-detail-mode" label="سطح جزئیات درخواست" />
+            {detailMode === "simple" ? <p className="purchase-request-mode-note">خلاصهٔ تصمیم‌گیری را می‌بینی؛ شناسنامه، شرایط، روشن‌سازی‌ها و تاریخچه در نمای پیشرفته باقی مانده‌اند.</p> : null}
+            <p className="purchase-request-share-status"><ShieldCheck size={15} /><span>وضعیت اقدام بیرونی: <strong>{selectedRequest.sharingStatus}</strong></span></p>
+
+            {selectedRequest.requestKind === "product" ? (
+              <section className="purchase-request-records" aria-label="اقلام نسخهٔ درخواست" data-testid="purchase-request-product-items">
+                <div className="purchase-request-section-title"><strong>اقلام محصول</strong><span>{selectedRequest.items.length.toLocaleString("fa-IR")}</span></div>
+                {selectedRequest.items.map((item, index) => (
+                  <article className="purchase-request-record-card" key={item.id} data-testid="purchase-request-product-item">
+                    <div><strong>{item.name ?? `قلم ${index + 1}`}</strong><span className={item.completionStatus === "complete" ? "is-complete" : "is-incomplete"}>{item.completionStatus === "complete" ? "کامل" : "ناقص"}</span></div>
+                    <dl>
+                      <div><dt>مقدار و واحد</dt><dd>{item.quantity && item.unit ? `${Number(item.quantity).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} ${item.unit}` : "ثبت نشده"}</dd></div>
+                      {detailMode === "advanced" ? <><div><dt>برند یا گرید</dt><dd>{item.brandOrGrade ?? "نامشخص"}</dd></div><div><dt>مشخصات</dt><dd>{item.specification ?? "نامشخص"}</dd></div><div><dt>جایگزین</dt><dd>{purchaseRequestAlternativesLabel(item.alternatives)}</dd></div><div><dt>منشأ</dt><dd>{item.source}</dd></div><div><dt>نسخه و تاریخچه</dt><dd>نسخهٔ {item.version.toLocaleString("fa-IR")} · {item.history.length.toLocaleString("fa-IR")} رویداد</dd></div></> : null}
+                    </dl>
+                  </article>
+                ))}
+                <dl className="purchase-request-meta"><div><dt>موعد موردنیاز</dt><dd>{selectedRequest.delivery.neededBy ?? "نامشخص"}</dd></div><div><dt>تحویل</dt><dd>تهران · {selectedRequest.delivery.area}</dd></div>{detailMode === "advanced" ? <div><dt>ثبت و اشتراک</dt><dd>{selectedRequest.localStatus} · {selectedRequest.sharingStatus}</dd></div> : null}</dl>
+              </section>
+            ) : selectedRequest.service ? (
+              <section className="purchase-request-records" aria-label="شناسنامهٔ خدمت" data-testid="purchase-request-service-record">
+                <div className="purchase-request-section-title"><strong>خدمت مستقل</strong><span className={selectedRequest.service.completionStatus === "complete" ? "is-complete" : "is-incomplete"}>{selectedRequest.service.completionStatus === "complete" ? "کامل" : "ناقص"}</span></div>
+                <dl className="purchase-request-meta">
+                  <div><dt>دامنه</dt><dd>{selectedRequest.service.scope ?? "نامشخص"}</dd></div><div><dt>موقعیت مجاز</dt><dd>{selectedRequest.service.location ?? "نامشخص"}</dd></div><div><dt>اندازه یا حجم</dt><dd>{selectedRequest.service.sizeOrVolume ?? "نامشخص"}</dd></div><div><dt>زمان</dt><dd>{selectedRequest.service.timing ?? "نامشخص"}</dd></div>
+                  {detailMode === "advanced" ? <><div><dt>سطح مکان</dt><dd>فقط محدوده یا بخش پروژه · بدون آدرس دقیق</dd></div><div><dt>صلاحیت</dt><dd>{selectedRequest.service.qualification ?? "نامشخص"}</dd></div><div><dt>روش</dt><dd>{selectedRequest.service.method ?? "نامشخص"}</dd></div><div><dt>داخل دامنه</dt><dd>{selectedRequest.service.inScope ?? "نامشخص"}</dd></div><div><dt>خارج از دامنه</dt><dd>{selectedRequest.service.outOfScope ?? "نامشخص"}</dd></div><div><dt>ضمانت اعلامی</dt><dd>{selectedRequest.service.warranty ?? "نامشخص"}</dd></div><div><dt>پرداخت</dt><dd>{selectedRequest.service.paymentTerms ?? "نامشخص"}</dd></div><div><dt>منشأ</dt><dd>{selectedRequest.service.source}</dd></div><div><dt>نسخه و تاریخچه</dt><dd>نسخهٔ {selectedRequest.service.version.toLocaleString("fa-IR")} · {selectedRequest.service.history.length.toLocaleString("fa-IR")} رویداد</dd></div></> : null}
+                </dl>
+              </section>
+            ) : null}
 
             {missingFields.length > 0 ? (
               <section className="purchase-request-missing" id="purchase-request-missing-fields" data-testid="purchase-request-missing-fields">
@@ -3121,15 +5025,18 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
               </section>
             ) : null}
 
-            <section className="purchase-request-terms" aria-labelledby="purchase-request-terms-title">
-              <div className="purchase-request-section-title"><strong id="purchase-request-terms-title">شرایط هنوز نامشخص</strong><span>۳</span></div>
-              <dl><div><dt>حمل</dt><dd>نامشخص</dd></div><div><dt>مالیات</dt><dd>نامشخص</dd></div><div><dt>شرایط پرداخت</dt><dd>نامشخص</dd></div></dl>
-            </section>
+            {detailMode === "advanced" && selectedRequest.requestKind === "product" ? <section className="purchase-request-terms" aria-labelledby="purchase-request-terms-title" data-testid="purchase-request-terms"><div className="purchase-request-section-title"><strong id="purchase-request-terms-title">شرایط تجاری</strong><span>۳</span></div><dl><div><dt>حمل</dt><dd>{selectedRequest.unresolvedTerms.transport === "unknown" ? "نامشخص" : selectedRequest.unresolvedTerms.transport}</dd></div><div><dt>مالیات</dt><dd>{selectedRequest.unresolvedTerms.tax === "unknown" ? "نامشخص" : selectedRequest.unresolvedTerms.tax}</dd></div><div><dt>شرایط پرداخت</dt><dd>{selectedRequest.unresolvedTerms.paymentTerms === "unknown" ? "نامشخص" : selectedRequest.unresolvedTerms.paymentTerms}</dd></div></dl></section> : null}
 
-            <aside className="purchase-request-privacy">
+            {detailMode === "advanced" ? <section className="purchase-request-clarifications" aria-label="روشن‌سازی‌های قطعی درخواست" data-testid="purchase-request-clarifications">
+              <div className="purchase-request-section-title"><strong>روشن‌سازی‌های قطعی</strong><span>{selectedRequest.clarificationAnswers.length.toLocaleString("fa-IR")}</span></div>
+              <p>هر سؤال وقتی ساخته شده که فیلد اثرگذار نامشخص بوده؛ پاسخ‌های بعدی برای تاریخچه نگه داشته می‌شوند و confidence برای این قواعد کاربرد ندارد.</p>
+              <ol>{selectedRequest.clarificationAnswers.map((answer) => <li key={answer.id} data-testid="purchase-request-clarification"><div><strong>{answer.question}</strong><span className={answer.status === "answered" ? "is-complete" : "is-incomplete"}>{answer.status === "answered" ? "پاسخ ثبت‌شده" : answer.status === "needs-confirmation" ? "نیازمند تأیید پس از مهاجرت" : "نامشخص صریح"}</span></div><p>{answer.answer ?? "نامشخص"}</p><small>منشأ: {answer.source} · confidence: کاربرد ندارد · نسخهٔ {answer.version.toLocaleString("fa-IR")} · {answer.history.length.toLocaleString("fa-IR")} رویداد</small></li>)}</ol>
+            </section> : null}
+
+            {detailMode === "advanced" ? <aside className="purchase-request-privacy">
               <div><ShieldCheck size={18} /><span><strong>پیش‌نمایش حریم داده</strong><small>هیچ داده‌ای در این تسک ارسال نمی‌شود.</small></span></div>
-              <dl><div><dt>قابل‌اشتراک در آینده</dt><dd>قلم، مقدار، مشخصات ثبت‌شده و محدودهٔ تقریبی تهران</dd></div><div><dt>خصوصی می‌ماند</dt><dd>نام پروژه، حافظه، فایل‌ها، بودجه و آدرس دقیق</dd></div></dl>
-            </aside>
+              <dl><div><dt>قابل‌اشتراک در آینده</dt><dd>{selectedRequest.requestKind === "product" ? "همهٔ اقلام و شرایط ثبت‌شدهٔ همین نسخه" : "دامنه و شرایط ثبت‌شدهٔ همین خدمت"}</dd></div><div><dt>خصوصی می‌ماند</dt><dd>نام پروژه، حافظه، فایل‌ها، بودجه و آدرس دقیق</dd></div></dl>
+            </aside> : null}
 
             <section className="purchase-request-approval-status" id="purchase-request-approval-status" data-testid="purchase-request-approval-status" aria-live="polite">
               <div className="purchase-request-section-title"><strong>وضعیت بازبینی نسخه</strong><span>{selectedRequest.version.toLocaleString("fa-IR")}</span></div>
@@ -3148,10 +5055,19 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
               )}
             </section>
 
-            <section className="purchase-request-history" aria-label="تاریخچهٔ نسخه‌های درخواست">
+            {selectedRequestApproval?.status === "approved" && isApprovalEligibleForDispatch(selectedRequestApproval, selectedRequest, project.id) ? (
+              <section className="purchase-request-dispatch-entry" data-testid="purchase-request-dispatch-entry">
+                <div><Users size={18} /><span><strong>نسخهٔ جاری آمادهٔ انتخاب گیرنده است</strong><small>فقط گیرنده‌های محلی ثبت‌شده توسط شما؛ پیش‌نمایش و Draft بدون ارسال بیرونی.</small></span></div>
+                <button className="primary-button" type="button" onClick={() => { setStorageError(""); setDispatchPlannerRequestId(selectedRequest.id); }} data-testid="purchase-request-open-dispatch"><Users size={17} /> انتخاب گیرنده و پیش‌نمایش اشتراک</button>
+              </section>
+            ) : selectedRequest.status === "ready-for-review" ? (
+              <p className="purchase-request-dispatch-locked" data-testid="purchase-request-dispatch-locked"><ShieldCheck size={16} /><span><strong>انتخاب گیرنده هنوز قفل است.</strong> فقط بعد از تأیید صریح همین نسخهٔ جاری فعال می‌شود.</span></p>
+            ) : null}
+
+            {detailMode === "advanced" ? <section className="purchase-request-history" aria-label="تاریخچهٔ نسخه‌های درخواست" data-testid="purchase-request-history">
               <div className="purchase-request-section-title"><strong>تاریخچه</strong><span>{selectedRequest.history.length.toLocaleString("fa-IR")}</span></div>
               <ol>{[...selectedRequest.history].reverse().map((event) => <li key={event.id} data-testid="purchase-request-history-event"><span><Check size={14} /></span><div><strong>{purchaseRequestEventLabel(event.type)}</strong><small>توسط {event.actor} · نسخهٔ {event.version.toLocaleString("fa-IR")} · {formatProjectFileDate(event.at)}</small></div></li>)}</ol>
-            </section>
+            </section> : null}
 
             <p className="purchase-request-boundary"><ShieldCheck size={17} /><span><strong>{selectedRequest.status === "ready-for-review" ? "این وضعیت تأیید یا مجوز ارسال نیست." : "فقط پیش‌نویس خصوصی و محلی است."}</strong> درخواست به هیچ تأمین‌کننده‌ای نرفته و قیمت، سفارش یا تعهد خریدی ایجاد نشده است.</span></p>
             {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-storage-error">{storageError}</p> : null}
@@ -3178,7 +5094,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
     <div className="chida-app project-purchase-requests-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-purchase-requests-view">
       <header className="project-workspace-header">
           <button className="icon-button" type="button" onClick={onBack} aria-label={backLabel} data-testid="purchase-requests-back"><ArrowRight size={21} /></button>
-        <span className="project-workspace-title"><small>خرید پروژه</small><strong>{project.name}</strong></span>
+        <span className="project-workspace-title"><small>درخواست‌های پروژه</small><strong>{project.name}</strong></span>
         <span className="project-workspace-header-spacer" aria-hidden="true" />
       </header>
 
@@ -3186,7 +5102,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
         <main className="project-purchase-requests-content">
           <section className="project-purchase-requests-heading">
             <span className="project-purchase-requests-mark"><ShoppingCart size={24} strokeWidth={1.65} /></span>
-            <div><span className="eyebrow">نیاز تک‌قلمی پروژه</span><h1>درخواست‌های خرید {project.name}</h1><p>از نیاز خام تا نسخه و بازبینی داخلی؛ پیش از انتخاب مقصد یا هر ارسال</p></div>
+            <div><span className="eyebrow">محصول چندقلمی یا خدمت مستقل</span><h1>درخواست‌های خرید {project.name}</h1><p>از نیاز خام تا نسخه و بازبینی داخلی؛ پیش از انتخاب مقصد یا هر ارسال</p></div>
           </section>
 
           <button ref={addButtonRef} className="primary-button purchase-request-add" type="button" onClick={openCreateEditor} disabled={storageLocked} data-testid="purchase-request-add"><Plus size={18} /> پیش‌نویس جدید</button>
@@ -3196,16 +5112,294 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, storageLock
           <aside className="purchase-request-boundary"><ShieldCheck size={17} /><span><strong>رکورد خصوصی و محلی</strong> تأیید داخلی هر نسخه ممکن است، اما AI، تأمین‌کننده، قیمت، مجوز ارسال و ارسال بیرونی هنوز وصل نیست. شرایط حمل، مالیات و پرداخت نیز تا ثبت واقعی نامشخص می‌مانند.</span></aside>
 
           {storageLocked ? null : orderedRequests.length === 0 ? (
-            <section className="purchase-request-empty" data-testid="purchase-request-empty"><span><ShoppingCart size={25} strokeWidth={1.65} /></span><h2>هنوز درخواست خریدی ثبت نشده</h2><p>نیازت را دستی ثبت کن تا یک پیش‌نویس تک‌قلمی برای همین پروژه بسازی.</p></section>
+            <section className="purchase-request-empty" data-testid="purchase-request-empty"><span><ShoppingCart size={25} strokeWidth={1.65} /></span><h2>هنوز درخواست خریدی ثبت نشده</h2><p>یک محصول چندقلمی یا خدمت مستقل را دستی و فقط برای همین پروژه ثبت کن.</p></section>
           ) : (
             <section className="purchase-request-list" aria-label="درخواست‌های ثبت‌شدهٔ پروژه">
               <div className="purchase-request-section-title"><strong>درخواست‌های ثبت‌شده</strong><span>{orderedRequests.length.toLocaleString("fa-IR")}</span></div>
-              {orderedRequests.map((request) => <button className="purchase-request-card" type="button" key={request.id} data-request-id={request.id} onClick={() => { setStorageError(""); setSelectedId(request.id); }} data-testid="purchase-request-card"><span className="purchase-request-card-icon"><ShoppingCart size={20} strokeWidth={1.65} /></span><span className="purchase-request-card-copy"><span><small>{purchaseRequestStatusLabel(request.status)}</small><small>{formatProjectFileDate(request.updatedAt)}</small></span><strong>{purchaseRequestDisplayTitle(request)}</strong><em>{request.item.quantity && request.item.unit ? `${Number(request.item.quantity).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} ${request.item.unit}` : "مشخصات قلم هنوز کامل نشده"}</em><small>نسخهٔ {request.version.toLocaleString("fa-IR")} · {request.sharingStatus}</small></span><ArrowRight size={17} aria-hidden="true" /></button>)}
+              {orderedRequests.map((request) => <button className="purchase-request-card" type="button" key={request.id} data-request-id={request.id} onClick={() => { setStorageError(""); setDetailMode("simple"); setSelectedId(request.id); }} data-testid="purchase-request-card"><span className="purchase-request-card-icon"><ShoppingCart size={20} strokeWidth={1.65} /></span><span className="purchase-request-card-copy"><span><small>{purchaseRequestStatusLabel(request.status)}</small><small>{formatProjectFileDate(request.updatedAt)}</small></span><strong>{purchaseRequestDisplayTitle(request)}</strong><em>{request.requestKind === "service" ? `خدمت · ${request.service?.completionStatus === "complete" ? "شناسنامه کامل" : "نیازمند تکمیل"}` : `${request.items.length.toLocaleString("fa-IR")} قلم · ${request.items.filter((item) => item.completionStatus === "complete").length.toLocaleString("fa-IR")} کامل`}</em><small>نسخهٔ {request.version.toLocaleString("fa-IR")} · {request.sharingStatus}</small></span><ArrowRight size={17} aria-hidden="true" /></button>)}
             </section>
           )}
         </main>
       </MobileScroll>
       {editorSheet}
+    </div>
+  );
+}
+
+function ProjectDispatchPlannerView({ project, request, approval, contacts, dispatchDraft, dispatchPlanApprovals, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval }: { project: BuilderProject; request: ProjectPurchaseRequestRecord; approval: ProjectApprovalRecord; contacts: SupplierContactRecord[]; dispatchDraft: DispatchDraftRecord | null; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; onBack: () => void; onCreateContact: (draft: SupplierContactDraft) => string | null; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null; onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean }) {
+  const keyboard = useKeyboard();
+  const addContactButtonRef = useRef<HTMLButtonElement>(null);
+  const dispatchPlanStatusRef = useRef<HTMLElement>(null);
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
+  const [contactDraft, setContactDraft] = useState<SupplierContactDraft>({ ...emptySupplierContactDraft });
+  const [contactErrors, setContactErrors] = useState({ displayName: "", category: "", tehranCoverage: "" });
+  const [storageError, setStorageError] = useState("");
+  const [saveAnnouncement, setSaveAnnouncement] = useState("");
+  const [dispatchPlanReviewOpen, setDispatchPlanReviewOpen] = useState(false);
+  const [dispatchPlanAcknowledged, setDispatchPlanAcknowledged] = useState(false);
+  const [dispatchPlanStorageError, setDispatchPlanStorageError] = useState("");
+  const currentRevision = dispatchDraft?.revisions.find((revision) => revision.id === dispatchDraft.currentRevisionId) ?? null;
+  const [previewRevisionId, setPreviewRevisionId] = useState<string | null>(currentRevision?.id ?? null);
+  const previewRevision = dispatchDraft?.revisions.find((revision) => revision.id === previewRevisionId) ?? currentRevision;
+  const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>(() => currentRevision?.recipientIds.filter((recipientId) => {
+    const contact = contacts.find((item) => item.id === recipientId);
+    return Boolean(contact && supplierContactCanRespond(contact, request.requestKind));
+  }) ?? []);
+  const orderedContacts = useMemo(
+    () => [...contacts].sort((first, second) => {
+      if (first.status !== second.status) return first.status === "active" ? -1 : 1;
+      return first.displayName.localeCompare(second.displayName, "fa");
+    }),
+    [contacts],
+  );
+  const orderedDispatchPlanApprovals = useMemo(
+    () => [...dispatchPlanApprovals].filter((item) => item.target.dispatchDraftId === dispatchDraft?.id).sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
+    [dispatchDraft?.id, dispatchPlanApprovals],
+  );
+  const exactDispatchPlanApproval = currentRevision ? orderedDispatchPlanApprovals.find((item) => item.target.dispatchRevisionId === currentRevision.id && item.target.dispatchRevisionFingerprint === currentRevision.fingerprint) ?? null : null;
+  const displayedDispatchPlanApproval = exactDispatchPlanApproval ?? orderedDispatchPlanApprovals[0] ?? null;
+  const displayedDispatchPlanStatus = displayedDispatchPlanApproval
+    ? dispatchPlanApprovalEffectiveStatus(displayedDispatchPlanApproval, dispatchDraft, request, approval, contacts)
+    : null;
+  const selectionMatchesCurrentRevision = Boolean(currentRevision) && JSON.stringify([...selectedRecipientIds].sort()) === JSON.stringify(currentRevision!.recipientIds);
+
+  useEffect(() => {
+    setPreviewRevisionId(currentRevision?.id ?? null);
+    setSelectedRecipientIds(currentRevision?.recipientIds.filter((recipientId) => {
+      const contact = contacts.find((item) => item.id === recipientId);
+      return Boolean(contact && supplierContactCanRespond(contact, request.requestKind));
+    }) ?? []);
+    setDispatchPlanReviewOpen(false);
+    setDispatchPlanAcknowledged(false);
+    setDispatchPlanStorageError("");
+  }, [currentRevision?.id, request.id]);
+
+  const closeContactSheet = () => {
+    keyboard.hide();
+    setContactSheetOpen(false);
+    setContactDraft({ ...emptySupplierContactDraft });
+    setContactErrors({ displayName: "", category: "", tehranCoverage: "" });
+    window.requestAnimationFrame(() => addContactButtonRef.current?.focus());
+  };
+
+  const changeContactDraft = (field: keyof SupplierContactDraft, value: string) => {
+    setContactDraft((current) => ({ ...current, [field]: value }));
+    if (field !== "responseCapability") setContactErrors((current) => current[field] ? { ...current, [field]: "" } : current);
+    setStorageError("");
+  };
+
+  const saveContact = () => {
+    const normalizedDraft = {
+      ...contactDraft,
+      displayName: contactDraft.displayName.trim(),
+      category: contactDraft.category.trim(),
+      tehranCoverage: contactDraft.tehranCoverage.trim(),
+    };
+    const nextErrors = {
+      displayName: hasVisibleProjectTaskText(normalizedDraft.displayName) ? "" : "نام یا عنوان گیرنده را وارد کن.",
+      category: hasVisibleProjectTaskText(normalizedDraft.category) ? "" : "دستهٔ اعلامی را وارد کن.",
+      tehranCoverage: hasVisibleProjectTaskText(normalizedDraft.tehranCoverage) ? "" : "محدودهٔ پوشش تهران را وارد کن.",
+    };
+    setContactErrors(nextErrors);
+    const firstInvalidField = (Object.keys(nextErrors) as Array<keyof typeof nextErrors>).find((field) => nextErrors[field]);
+    if (firstInvalidField) {
+      window.requestAnimationFrame(() => document.getElementById(`supplier-contact-${firstInvalidField}`)?.focus());
+      return;
+    }
+    const contactId = onCreateContact(normalizedDraft);
+    if (!contactId) {
+      setStorageError("رکورد گیرنده ذخیره نشد. دادهٔ قبلی دست‌نخورده باقی ماند.");
+      return;
+    }
+    if (normalizedDraft.responseCapability === "both" || normalizedDraft.responseCapability === request.requestKind) {
+      setSelectedRecipientIds((current) => [...new Set([...current, contactId])].sort());
+    }
+    setSaveAnnouncement("گیرنده به‌صورت محلی ثبت و برای این پیش‌نویس انتخاب شد.");
+    closeContactSheet();
+  };
+
+  const toggleRecipient = (contact: SupplierContactRecord) => {
+    if (!supplierContactCanRespond(contact, request.requestKind)) return;
+    setStorageError("");
+    setSaveAnnouncement("");
+    setSelectedRecipientIds((current) => current.includes(contact.id) ? current.filter((id) => id !== contact.id) : [...current, contact.id].sort());
+  };
+
+  const changeContactStatus = (contact: SupplierContactRecord) => {
+    const nextStatus: SupplierContactStatus = contact.status === "active" ? "archived" : "active";
+    if (!onContactStatusChange(contact.id, nextStatus)) {
+      setStorageError("تغییر وضعیت گیرنده ذخیره نشد. دوباره تلاش کن.");
+      return;
+    }
+    if (nextStatus === "archived") setSelectedRecipientIds((current) => current.filter((id) => id !== contact.id));
+    setStorageError("");
+    setSaveAnnouncement(nextStatus === "archived" ? "گیرنده آرشیو شد؛ نسخه‌های قبلی Draft برای سابقه باقی ماندند." : "گیرنده به فهرست فعال بازگشت.");
+  };
+
+  const saveDispatchDraft = () => {
+    if (dispatchStorageLocked || selectedRecipientIds.length === 0) return;
+    const selectionMatchesCurrent = Boolean(currentRevision) && JSON.stringify(currentRevision!.recipientIds) === JSON.stringify([...selectedRecipientIds].sort());
+    const dispatchId = onUpsertDispatchDraft(request.id, approval.id, selectedRecipientIds);
+    if (!dispatchId) {
+      setStorageError("Draft اشتراک ذخیره نشد. هیچ مجوز یا اثر بیرونی ایجاد نشد.");
+      return;
+    }
+    setStorageError("");
+    setSaveAnnouncement(selectionMatchesCurrent ? "همین انتخاب از قبل در Draft جاری ثبت بود؛ نسخهٔ اضافه‌ای ساخته نشد." : "نسخهٔ جدید Draft محلی ذخیره شد؛ هیچ اثر بیرونی ندارد.");
+  };
+
+  const createDispatchPlanApproval = () => {
+    if (!dispatchDraft || !currentRevision || !selectionMatchesCurrentRevision || !dispatchPlanAcknowledged || dispatchPlanApprovalsStorageLocked) return;
+    const approvalId = onCreateDispatchPlanApproval(dispatchDraft.id);
+    if (!approvalId) {
+      setDispatchPlanStorageError("درخواست تأیید محلی ذخیره نشد. هیچ وضعیت، مجوز یا اثر بیرونی تغییر نکرد.");
+      return;
+    }
+    setDispatchPlanStorageError("");
+    setDispatchPlanAcknowledged(false);
+    window.requestAnimationFrame(() => dispatchPlanStatusRef.current?.focus());
+  };
+
+  const changeDispatchPlanApproval = (action: "approve" | "withdraw" | "reopen") => {
+    if (!displayedDispatchPlanApproval || displayedDispatchPlanStatus === "invalidated") return;
+    if (!onChangeDispatchPlanApproval(displayedDispatchPlanApproval.id, action)) {
+      setDispatchPlanStorageError("تغییر وضعیت تأیید محلی ذخیره نشد. رکورد قبلی دست‌نخورده باقی ماند.");
+      return;
+    }
+    setDispatchPlanStorageError("");
+    window.requestAnimationFrame(() => dispatchPlanStatusRef.current?.focus());
+  };
+
+  const contactSheet = (
+    <BottomSheet open={contactSheetOpen} onOpenChange={(open) => { if (!open) closeContactSheet(); }} title="ثبت گیرندهٔ محلی" description={`رکورد خصوصی ${project.name}؛ نه حساب شبکه و نه تأمین‌کنندهٔ تأییدشده.`} snap={0.92}>
+      <form className="supplier-contact-editor-sheet" dir="rtl" data-testid="supplier-contact-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveContact(); }}>
+        <label className="field-control" htmlFor="supplier-contact-displayName"><span>نام یا عنوان گیرنده</span><KeyboardInput id="supplier-contact-displayName" data-testid="supplier-contact-name-input" value={contactDraft.displayName} maxLength={100} placeholder="مثلاً مصالح نمونهٔ تهران" onChange={(event) => changeContactDraft("displayName", event.target.value)} aria-invalid={Boolean(contactErrors.displayName)} aria-describedby={contactErrors.displayName ? "supplier-contact-displayName-error" : undefined} />{contactErrors.displayName ? <small className="field-error" id="supplier-contact-displayName-error">{contactErrors.displayName}</small> : null}</label>
+        <label className="field-control" htmlFor="supplier-contact-category"><span>دستهٔ اعلامی</span><KeyboardInput id="supplier-contact-category" data-testid="supplier-contact-category-input" value={contactDraft.category} maxLength={100} placeholder="مثلاً سیمان و مصالح پایه" onChange={(event) => changeContactDraft("category", event.target.value)} aria-invalid={Boolean(contactErrors.category)} aria-describedby={contactErrors.category ? "supplier-contact-category-error" : "supplier-contact-category-note"} />{contactErrors.category ? <small className="field-error" id="supplier-contact-category-error">{contactErrors.category}</small> : <small id="supplier-contact-category-note">این دسته را شما ثبت می‌کنید؛ تطبیق یا رتبه‌بندی هوشمند نیست.</small>}</label>
+        <label className="field-control" htmlFor="supplier-contact-tehranCoverage"><span>پوشش تهران</span><KeyboardInput id="supplier-contact-tehranCoverage" data-testid="supplier-contact-coverage-input" value={contactDraft.tehranCoverage} maxLength={120} placeholder="مثلاً مناطق ۱ تا ۵ و شمیرانات" onChange={(event) => changeContactDraft("tehranCoverage", event.target.value)} aria-invalid={Boolean(contactErrors.tehranCoverage)} aria-describedby={contactErrors.tehranCoverage ? "supplier-contact-tehranCoverage-error" : undefined} />{contactErrors.tehranCoverage ? <small className="field-error" id="supplier-contact-tehranCoverage-error">{contactErrors.tehranCoverage}</small> : null}</label>
+        <fieldset className="supplier-contact-capability-picker">
+          <legend>توان پاسخ اعلامی</legend>
+          {supplierContactResponseCapabilities.map((capability) => <button type="button" key={capability.id} aria-pressed={contactDraft.responseCapability === capability.id} onClick={() => changeContactDraft("responseCapability", capability.id)} data-testid={`supplier-contact-capability-${capability.id}`}>{capability.label}</button>)}
+        </fieldset>
+        <aside className="supplier-contact-boundary"><ShieldCheck size={17} /><span><strong>ثبت مستقیم سازنده</strong><small>این رکورد حساب شبکه، عضویت، احراز هویت، تضمین کیفیت یا پیشنهاد «بهترین» نیست و هیچ پیام یا دعوتی نمی‌فرستد.</small></span></aside>
+        {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="supplier-contact-storage-error">{storageError}</p> : null}
+        <button className="primary-button" type="submit" disabled={contactsStorageLocked} data-testid="supplier-contact-save"><UserPlus size={18} /> ثبت رکورد محلی</button>
+      </form>
+    </BottomSheet>
+  );
+
+  return (
+    <div className="chida-app project-dispatch-planner-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-dispatch-planner-view">
+      <header className="project-workspace-header">
+        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label="بازگشت به جزئیات درخواست" data-testid="dispatch-planner-back"><ArrowRight size={21} /></button>
+        <span className="project-workspace-title"><small>انتخاب گیرنده و پیش‌نمایش</small><strong>{project.name}</strong></span>
+        <span className="project-workspace-header-spacer" aria-hidden="true" />
+      </header>
+
+      <MobileScroll className="project-dispatch-planner-scroll">
+        <main className="project-dispatch-planner-content">
+          <aside className="dispatch-preview-banner" data-testid="dispatch-preview-banner"><ShieldCheck size={19} /><span><strong>پیش‌نمایش محلی — هیچ دعوت یا درخواستی ارسال نشده است.</strong><small>نسخهٔ {request.version.toLocaleString("fa-IR")} با تأیید صریح همین revision؛ مجوز ارسال وجود ندارد.</small></span></aside>
+
+          <section className="dispatch-request-summary">
+            <span><ClipboardCheck size={22} /></span>
+            <div><small>{request.requestKind === "product" ? "درخواست محصول" : "درخواست خدمت"} · تأیید شده</small><h1>{purchaseRequestDisplayTitle(request)}</h1><p>نسخهٔ درخواست {request.version.toLocaleString("fa-IR")} · نسخهٔ تأیید {approval.version.toLocaleString("fa-IR")} · مقصد بیرونی: ندارد</p></div>
+          </section>
+
+          {contactsStorageLocked ? <p className="project-storage-recovery-alert" role="alert" data-testid="supplier-contact-read-error"><ShieldCheck size={17} /><span><strong>گیرنده‌های محلی کامل خوانده نشدند.</strong> انتخاب، ثبت و تغییر وضعیت تا بازیابی موفق غیرفعال است.</span></p> : null}
+          {dispatchStorageLocked ? <p className="project-storage-recovery-alert" role="alert" data-testid="dispatch-draft-read-error"><ShieldCheck size={17} /><span><strong>وابستگی‌های Draft کامل خوانده نشدند.</strong> برای جلوگیری از بازنویسی ناقص، ذخیرهٔ Draft قفل است.</span></p> : null}
+
+          <section className="supplier-contact-section" aria-labelledby="supplier-contact-title">
+            <div className="dispatch-section-heading"><span><strong id="supplier-contact-title">گیرنده‌های ثبت‌شده توسط شما</strong><small>انتخاب دستی؛ بدون شبکه، match یا رتبه‌بندی</small></span><em>{orderedContacts.filter((contact) => contact.status === "active").length.toLocaleString("fa-IR")} فعال</em></div>
+            <button ref={addContactButtonRef} className="supplier-contact-add" type="button" onClick={() => { setStorageError(""); setContactSheetOpen(true); }} disabled={contactsStorageLocked} data-testid="supplier-contact-add"><UserPlus size={18} /> ثبت گیرندهٔ محلی</button>
+            {!contactsStorageLocked && orderedContacts.length === 0 ? <div className="supplier-contact-empty" data-testid="supplier-contact-empty"><Store size={23} /><strong>هنوز گیرنده‌ای ثبت نشده</strong><p>برای همین پروژه یک رکورد محلی بساز؛ اطلاعات تماس بیرونی در این نسخه نگه‌داری نمی‌شود.</p></div> : null}
+            <div className="supplier-contact-list">
+              {orderedContacts.map((contact) => {
+                const selectable = supplierContactCanRespond(contact, request.requestKind);
+                const selected = selectedRecipientIds.includes(contact.id);
+                return (
+                  <article className={`supplier-contact-card ${contact.status === "archived" ? "is-archived" : ""} ${selected ? "is-selected" : ""}`} key={contact.id} data-testid="supplier-contact-card">
+                    <button className="supplier-contact-select" type="button" aria-pressed={selected} aria-label={`${selected ? "حذف" : "انتخاب"} گیرنده ${contact.displayName}`} onClick={() => toggleRecipient(contact)} disabled={!selectable || contactsStorageLocked} data-testid="supplier-contact-select"><span className="supplier-contact-check"><Check size={15} /></span><span><strong>{contact.displayName}</strong><small>{contact.category} · {contact.tehranCoverage}</small></span></button>
+                    <dl><div><dt>توان پاسخ</dt><dd>{supplierContactResponseCapabilityLabel(contact.responseCapability)}</dd></div><div><dt>منشأ و وضعیت</dt><dd>{contact.source} · {contact.localStatus}</dd></div><div><dt>شبکه</dt><dd>{contact.networkStatus}</dd></div><div><dt>نسخه</dt><dd>{contact.version.toLocaleString("fa-IR")} · {formatProjectFileDate(contact.updatedAt)}</dd></div></dl>
+                    <p className={selectable ? "is-compatible" : "is-incompatible"}>{contact.status === "archived" ? "این رکورد آرشیو است و برای انتخاب جدید فعال نیست؛ سابقهٔ Draftهای قبلی حفظ می‌شود." : supplierContactMatchReason(contact, request.requestKind)}</p>
+                    <button className="supplier-contact-status" type="button" onClick={() => changeContactStatus(contact)} disabled={contactsStorageLocked} aria-label={`${contact.status === "active" ? "آرشیو رکورد" : "بازگرداندن به فعال"} ${contact.displayName}`} data-testid="supplier-contact-status">{contact.status === "active" ? <Archive size={16} /> : <RotateCcw size={16} />}{contact.status === "active" ? "آرشیو رکورد" : "بازگرداندن به فعال"}</button>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="dispatch-selection-summary" aria-live="polite" data-testid="dispatch-selected-count"><span><Users size={18} /><strong>{selectedRecipientIds.length.toLocaleString("fa-IR")} گیرنده انتخاب شده</strong></span><small>فقط شناسه و snapshot رکوردهای محلیِ انتخاب‌شده وارد Draft می‌شود.</small></section>
+
+          <section className="dispatch-exact-preview" aria-labelledby="dispatch-exact-preview-title">
+            <div className="dispatch-section-heading"><span><strong id="dispatch-exact-preview-title">دادهٔ دقیق قابل‌اشتراک</strong><small>مستقل از متن خام و فقط از revision تأییدشده</small></span><em>{dispatchPayloadRows(dispatchPayloadFromSnapshot(approval.snapshot)).length.toLocaleString("fa-IR")} فیلد</em></div>
+            <dl className="dispatch-payload-rows" data-testid="dispatch-payload-preview">{dispatchPayloadRows(dispatchPayloadFromSnapshot(approval.snapshot)).map(([field, value]) => <div key={field} data-testid="dispatch-payload-row"><dt dir="ltr">{field}</dt><dd>{value ?? "نامشخص"}</dd></div>)}</dl>
+            <aside className="dispatch-privacy-preview" data-testid="dispatch-privacy-preview"><ShieldCheck size={18} /><span><strong>خصوصی و حذف‌شده از این payload</strong><small>نام پروژه، بودجه، فایل‌ها، حافظه، متن خام نیاز، روشن‌سازی‌ها و فیلد ساختاریافتهٔ آدرس دقیق</small>{request.requestKind === "service" ? <em>هشدار: مقدار آزادِ service.location را خودت بازبینی کن؛ ساختار فعلی فیلد جداگانهٔ آدرس دقیق ندارد و پاک‌سازی معنایی ادعا نمی‌شود.</em> : <em>هشدار: مقدار آزادِ delivery.area را خودت بازبینی کن؛ ساختار فعلی فیلد جداگانهٔ آدرس دقیق ندارد و پاک‌سازی معنایی ادعا نمی‌شود.</em>}</span></aside>
+          </section>
+
+          {currentRevision && previewRevision ? (
+            <section className="dispatch-draft-preview" data-testid="dispatch-draft-preview" aria-labelledby="dispatch-draft-preview-title">
+              <div className="dispatch-section-heading"><span><strong id="dispatch-draft-preview-title">Draft اشتراک ثبت‌شده</strong><small>نسخهٔ {previewRevision.version.toLocaleString("fa-IR")} از {dispatchDraft!.version.toLocaleString("fa-IR")} · {formatProjectFileDate(previewRevision.createdAt)}</small></span><em>{previewRevision.id === currentRevision.id ? "نسخهٔ جاری" : "تاریخی · فقط‌خواندنی"}</em></div>
+              {dispatchDraft!.revisions.length > 1 ? <nav className="dispatch-revision-picker" aria-label="نسخه‌های Draft اشتراک" data-testid="dispatch-revision-picker">{[...dispatchDraft!.revisions].reverse().map((revision) => <button type="button" key={revision.id} aria-pressed={previewRevision.id === revision.id} onClick={() => setPreviewRevisionId(revision.id)} data-testid="dispatch-revision-option">نسخهٔ {revision.version.toLocaleString("fa-IR")}<small>{revision.recipientIds.length.toLocaleString("fa-IR")} گیرنده</small></button>)}</nav> : null}
+              <dl className="dispatch-draft-contract"><div><dt>وضعیت</dt><dd>پیش‌نویس</dd></div><div><dt>اثر بیرونی</dt><dd><code>none</code></dd></div><div><dt>مجوز ارسال</dt><dd><code>false</code></dd></div><div><dt>تعداد مقصد</dt><dd>{previewRevision.inviteDrafts.length.toLocaleString("fa-IR")}</dd></div></dl>
+              <div className="invite-draft-list">{previewRevision.inviteDrafts.map((invite) => {
+                const currentContact = contacts.find((contact) => contact.id === invite.supplierContactId);
+                return <article className="invite-draft-card" key={invite.id} data-testid="invite-draft-card"><div><Store size={17} /><span><strong>{invite.destination.displayName}</strong><small>{invite.destination.category} · {invite.destination.tehranCoverage}</small></span>{currentContact?.status === "archived" ? <em>اکنون آرشیو</em> : null}</div><dl><div><dt>توان پاسخ</dt><dd>{supplierContactResponseCapabilityLabel(invite.destination.responseCapability)}</dd></div><div><dt>مقصد</dt><dd>{invite.destination.networkStatus}</dd></div><div><dt>ادامه</dt><dd>{invite.continuation}</dd></div><div><dt>اثر / مجوز</dt><dd><code>{invite.externalEffect}</code> / <code>{String(invite.sendAuthorized)}</code></dd></div></dl></article>;
+              })}</div>
+            </section>
+          ) : <p className="dispatch-draft-empty" data-testid="dispatch-draft-empty"><FileText size={17} /><span><strong>هنوز Draft اشتراکی ثبت نشده.</strong> انتخاب‌ها را بازبینی و فقط پیش‌نویس محلی را ذخیره کن.</span></p>}
+
+          {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="dispatch-storage-error">{storageError}</p> : null}
+          {saveAnnouncement ? <p className="dispatch-save-announcement" role="status" data-testid="dispatch-save-announcement"><CheckCircle2 size={17} />{saveAnnouncement}</p> : null}
+          <button className="primary-button dispatch-draft-save" type="button" onClick={saveDispatchDraft} disabled={dispatchStorageLocked || selectedRecipientIds.length === 0} data-testid="dispatch-draft-save"><FileText size={18} /> ذخیرهٔ Draft اشتراک محلی</button>
+
+          {dispatchPlanApprovalsStorageLocked ? <p className="project-storage-recovery-alert" role="alert" data-testid="dispatch-plan-approval-read-error"><ShieldCheck size={17} /><span><strong>تأییدهای برنامهٔ ارسال کامل خوانده نشدند.</strong> فقط mutation همین تأیید قفل است؛ Draft و پیش‌نمایش سالم همچنان قابل مشاهده‌اند.</span></p> : null}
+          {currentRevision ? (
+            <section className="dispatch-plan-approval-entry" aria-labelledby="dispatch-plan-approval-entry-title">
+              <div className="dispatch-section-heading"><span><strong id="dispatch-plan-approval-entry-title">تأیید مستقل برنامهٔ ارسال</strong><small>جدا از تأیید محتوای درخواست؛ فقط برای revision جاری Draft</small></span><em>{exactDispatchPlanApproval ? "رکورد دارد" : "ثبت نشده"}</em></div>
+              {!selectionMatchesCurrentRevision ? <p className="dispatch-plan-save-first"><CircleHelp size={16} /><span>انتخاب‌های روی صفحه با Draft ذخیره‌شده یکی نیست؛ اول نسخهٔ تازهٔ Draft را ذخیره کن.</span></p> : null}
+              <button className="dispatch-plan-review-button" type="button" onClick={() => { setDispatchPlanReviewOpen(true); setDispatchPlanStorageError(""); }} disabled={!selectionMatchesCurrentRevision} data-testid="dispatch-plan-review"><ClipboardCheck size={18} /> بررسی نهایی برنامهٔ ارسال</button>
+              {displayedDispatchPlanApproval && displayedDispatchPlanStatus === "invalidated" && !dispatchPlanReviewOpen ? <p className="dispatch-plan-invalidated" role="status" data-testid="dispatch-plan-approval-invalidated"><CircleHelp size={17} /><span><strong>تأیید نسخهٔ قبلی دیگر معتبر نیست.</strong><small>رکورد قبلی بدون تغییر و فقط برای تاریخچه باقی مانده است.</small></span></p> : null}
+
+              {dispatchPlanReviewOpen ? (
+                <div className="dispatch-plan-approval-detail" data-testid="dispatch-plan-approval-detail">
+                  <div className="dispatch-plan-review-heading"><span><small>شبیه‌سازی محلی</small><strong>تأیید محلی برنامهٔ ارسال</strong></span><button type="button" onClick={() => setDispatchPlanReviewOpen(false)} data-testid="dispatch-plan-approval-back">بستن</button></div>
+                  <aside className="dispatch-plan-simulation-banner"><ShieldCheck size={18} /><span><strong>هیچ استعلامی ارسال نمی‌شود.</strong><small><code>simulationOnly=true</code> · <code>externalEffect=none</code> · <code>sendAuthorized=false</code></small></span></aside>
+                  <dl className="dispatch-plan-summary"><div><dt>نسخهٔ درخواست</dt><dd>{request.version.toLocaleString("fa-IR")}</dd></div><div><dt>نسخهٔ Draft</dt><dd>{currentRevision.version.toLocaleString("fa-IR")}</dd></div><div><dt>گیرندگان</dt><dd>{currentRevision.recipientIds.length.toLocaleString("fa-IR")}</dd></div><div><dt>فیلدهای payload</dt><dd>{dispatchPayloadRows(currentRevision.payload).length.toLocaleString("fa-IR")}</dd></div></dl>
+                  <section className="dispatch-plan-target" data-testid="dispatch-plan-approval-target"><strong>هدف دقیق و نسخه‌دار · نسخهٔ {currentRevision.version.toLocaleString("fa-IR")}</strong><p>{currentRevision.inviteDrafts.map((invite) => invite.destination.displayName).join("، ")}</p><dl><div><dt>Dispatch revision</dt><dd dir="ltr">{currentRevision.id}</dd></div><div><dt>Request revision</dt><dd dir="ltr">{dispatchDraft!.target.revisionId}</dd></div><div><dt>Content approval</dt><dd dir="ltr">{dispatchDraft!.target.approvalId}</dd></div></dl></section>
+                  <details className="dispatch-plan-exact-details"><summary>نمایش مقصد، payload و حریم دقیق</summary><div className="dispatch-plan-recipient-list">{currentRevision.inviteDrafts.map((invite) => <article key={invite.id}><Store size={16} /><span><strong>{invite.destination.displayName}</strong><small>{invite.destination.category} · {invite.destination.tehranCoverage}</small></span></article>)}</div><dl className="dispatch-payload-rows">{dispatchPayloadRows(currentRevision.payload).map(([field, value]) => <div key={field}><dt dir="ltr">{field}</dt><dd>{value ?? "نامشخص"}</dd></div>)}</dl><p className="dispatch-plan-privacy-note"><ShieldCheck size={16} /> مقدار آزاد مکان بازبینی انسانی می‌خواهد؛ نام پروژه، بودجه، فایل، حافظه، متن خام و روشن‌سازی‌ها در payload نیستند.</p></details>
+
+                  {displayedDispatchPlanApproval && displayedDispatchPlanStatus === "invalidated" ? <p className="dispatch-plan-invalidated" role="status" data-testid="dispatch-plan-approval-invalidated"><CircleHelp size={17} /><span><strong>این تأیید متعلق به نسخهٔ قدیمی است.</strong><small>رکورد تاریخی فقط‌خواندنی می‌ماند؛ برای Draft جاری یک تأیید تازه بساز.</small></span></p> : null}
+                  {displayedDispatchPlanApproval ? (
+                    <section ref={dispatchPlanStatusRef} className={`dispatch-plan-lifecycle is-${displayedDispatchPlanStatus}`} tabIndex={-1} aria-live="polite" data-testid="dispatch-plan-approval-status">
+                      <div><span><small>وضعیت رکورد</small><strong>{displayedDispatchPlanStatus === "pending" ? "در انتظار تأیید" : displayedDispatchPlanStatus === "withdrawn" ? "پس‌گرفته‌شده" : displayedDispatchPlanStatus === "approved" ? "تأییدشدهٔ محلی" : "نسخهٔ قدیمی"}</strong></span><em>نسخهٔ {displayedDispatchPlanApproval.version.toLocaleString("fa-IR")}</em></div>
+                      <dl className="dispatch-plan-contract"><div><dt>اثر بیرونی</dt><dd><code>{displayedDispatchPlanApproval.externalEffect}</code></dd></div><div><dt>مجوز ارسال</dt><dd><code>{String(displayedDispatchPlanApproval.sendAuthorized)}</code></dd></div><div><dt>تلاش بیرونی</dt><dd><code>{String(displayedDispatchPlanApproval.externalActionAttempted)}</code></dd></div><div><dt>idempotency</dt><dd dir="ltr">{displayedDispatchPlanApproval.idempotencyKey}</dd></div></dl>
+                      {displayedDispatchPlanApproval.actionRecord ? <p className="dispatch-plan-action-record" data-testid="dispatch-plan-approval-action-record"><CheckCircle2 size={18} /><span><strong>{displayedDispatchPlanApproval.actionRecord.label}</strong><small>فقط نتیجهٔ ثبت محلی · بدون ارسال، رسید یا تحویل</small></span></p> : null}
+                      <ol className="dispatch-plan-history" data-testid="dispatch-plan-approval-events">{displayedDispatchPlanApproval.history.map((event) => <li key={event.id}><span><Check size={13} /></span><div><strong>{event.type === "created" ? "درخواست تأیید ساخته شد" : event.type === "withdrawn" ? "درخواست پس گرفته شد" : event.type === "reopened" ? "درخواست دوباره باز شد" : "برنامه محلی تأیید شد"}</strong><small>نسخهٔ {event.version.toLocaleString("fa-IR")} · {formatProjectFileDate(event.at)}</small></div></li>)}</ol>
+                      {displayedDispatchPlanStatus === "pending" ? <div className="dispatch-plan-actions"><button type="button" onClick={() => changeDispatchPlanApproval("withdraw")} disabled={dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-withdraw">پس‌گرفتن درخواست تأیید</button><button className="primary-button" type="button" onClick={() => changeDispatchPlanApproval("approve")} disabled={dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-approve">تأیید محلی برنامهٔ ارسال</button></div> : null}
+                      {displayedDispatchPlanStatus === "withdrawn" ? <button className="primary-button" type="button" onClick={() => changeDispatchPlanApproval("reopen")} disabled={dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-reopen">درخواست دوبارهٔ تأیید</button> : null}
+                      {displayedDispatchPlanStatus === "approved" ? <p className="dispatch-plan-read-only" data-testid="dispatch-plan-approval-readonly"><ShieldCheck size={16} /> تصمیم نهایی و فقط‌خواندنی است؛ دکمهٔ ارسال وجود ندارد.</p> : null}
+                    </section>
+                  ) : null}
+
+                  {orderedDispatchPlanApprovals.length > 0 ? <section className="dispatch-plan-record-history" data-testid="dispatch-plan-approval-history"><strong>سابقهٔ تأییدهای این Draft</strong>{orderedDispatchPlanApprovals.map((record) => {
+                    const recordStatus = dispatchPlanApprovalEffectiveStatus(record, dispatchDraft, request, approval, contacts);
+                    return <article key={record.id}><div><span><strong>نسخهٔ {record.target.dispatchDraftVersion.toLocaleString("fa-IR")}</strong><small>{recordStatus === "invalidated" ? "نامعتبر · نسخهٔ قدیمی" : recordStatus === "approved" ? "تأییدشده" : recordStatus === "withdrawn" ? "پس‌گرفته‌شده" : "در انتظار تأیید"}</small></span><em>{record.snapshot.recipientCount.toLocaleString("fa-IR")} گیرنده</em></div>{recordStatus === "invalidated" ? <p data-testid="dispatch-plan-approval-readonly"><ShieldCheck size={15} /> فقط‌خواندنی؛ مقصد یا نسخهٔ وابسته تغییر کرده است.</p> : null}</article>;
+                  })}</section> : null}
+
+                  {!exactDispatchPlanApproval || displayedDispatchPlanStatus === "invalidated" ? (
+                    <div className="dispatch-plan-create-block">
+                      <label><input type="checkbox" checked={dispatchPlanAcknowledged} onChange={(event) => setDispatchPlanAcknowledged(event.target.checked)} data-testid="dispatch-plan-acknowledgement" /><span>گیرنده‌ها، محتوای دقیق و مقدار آزاد مکان را بازبینی کردم.</span></label>
+                      <button className="primary-button" type="button" onClick={createDispatchPlanApproval} disabled={!dispatchPlanAcknowledged || dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-create">ساخت درخواست تأیید محلی</button>
+                    </div>
+                  ) : null}
+                  {dispatchPlanStorageError ? <p className="purchase-request-storage-error" role="alert" data-testid="dispatch-plan-approval-storage-error">{dispatchPlanStorageError}</p> : null}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+          <p className="dispatch-final-boundary"><ShieldCheck size={17} /><span><strong>این دکمه ارسال، درخواست قیمت یا مجوز اقدام نیست.</strong> هیچ حساب تأمین‌کننده، مقصد شبکه، پیام، قیمت یا تعهدی ساخته نمی‌شود.</span></p>
+        </main>
+      </MobileScroll>
+      {contactSheet}
     </div>
   );
 }
@@ -3399,7 +5593,7 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
           <main className="project-approval-detail-content">
             <section ref={approvalHeadingRef} className="project-approval-detail-heading" tabIndex={-1} aria-live="polite" data-testid="project-approval-detail-heading">
               <span><ClipboardCheck size={24} strokeWidth={1.65} /></span>
-              <div><small>{projectApprovalStatusLabel(selectedApproval.status)} · نسخهٔ درخواست {selectedApproval.target.version.toLocaleString("fa-IR")}</small><h1>{selectedApproval.snapshot.item.name}</h1><p>{selectedApproval.snapshot.rawNeed}</p></div>
+              <div><small>{projectApprovalStatusLabel(selectedApproval.status)} · نسخهٔ درخواست {selectedApproval.target.version.toLocaleString("fa-IR")}</small><h1>{purchaseRequestSnapshotTitle(selectedApproval.snapshot)}</h1><p>{selectedApproval.snapshot.rawNeed}</p></div>
             </section>
 
             <aside className="project-approval-boundary" id="project-approval-boundary" data-testid="project-approval-status">
@@ -3407,26 +5601,23 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
               <span><strong>{selectedApproval.status === "pending" ? "منتظر تصمیم صریح شما" : selectedApproval.status === "approved" ? "نسخهٔ درخواست تأیید شد" : "نیاز به اصلاح ثبت شد"}</strong>{selectedApproval.status === "pending" ? " این تأیید فقط محتوای همین نسخه را برای ادامهٔ مسیر می‌پذیرد؛ هیچ مقصد بیرونی انتخاب نشده و مجوز ارسال نیست." : selectedApproval.status === "approved" ? ` نسخهٔ ${selectedApproval.target.version.toLocaleString("fa-IR")} فقط برای ادامهٔ فرایند پذیرفته شد؛ درخواست هنوز ارسال نشده است.` : ` نسخهٔ ${selectedApproval.target.version.toLocaleString("fa-IR")} برای اصلاح علامت خورد؛ درخواست هنوز ارسال نشده است.`}</span>
             </aside>
 
-            <dl className="project-approval-meta">
-              <div><dt>قلم</dt><dd>{selectedApproval.snapshot.item.name}</dd></div>
-              <div><dt>مقدار و واحد</dt><dd>{Number(selectedApproval.snapshot.item.quantity).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} {selectedApproval.snapshot.item.unit}</dd></div>
-              <div><dt>برند یا گرید</dt><dd>{selectedApproval.snapshot.item.brandOrGrade ?? "نامشخص"}</dd></div>
-              <div><dt>مشخصات</dt><dd>{selectedApproval.snapshot.item.specification ?? "نامشخص"}</dd></div>
-              <div><dt>جایگزین</dt><dd>{purchaseRequestAlternativesLabel(selectedApproval.snapshot.item.alternatives)}</dd></div>
-              <div><dt>زمان موردنیاز</dt><dd>{selectedApproval.snapshot.delivery.neededBy ?? "نامشخص"}</dd></div>
-              <div><dt>تحویل</dt><dd>تهران · {selectedApproval.snapshot.delivery.area}</dd></div>
-              <div><dt>نسخهٔ درخواست</dt><dd>{selectedApproval.target.version.toLocaleString("fa-IR")} · {formatProjectFileDate(selectedApproval.target.updatedAt)}</dd></div>
-              <div><dt>ثبت و اشتراک</dt><dd>{selectedApproval.localStatus} · {selectedApproval.snapshot.sharingStatus}</dd></div>
-            </dl>
+            {selectedApproval.snapshot.requestKind === "product" ? (
+              <section className="project-approval-records" aria-label="همهٔ اقلام snapshot تأیید" data-testid="project-approval-product-items">
+                <div className="project-task-section-title"><strong>اقلام همین revision</strong><span>{selectedApproval.snapshot.items.length.toLocaleString("fa-IR")}</span></div>
+                {selectedApproval.snapshot.items.map((item) => <article className="purchase-request-record-card" key={item.id}><div><strong>{item.name}</strong><span>{item.completionStatus === "complete" ? "کامل" : "ناقص"}</span></div><dl><div><dt>مقدار و واحد</dt><dd>{Number(item.quantity).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} {item.unit}</dd></div><div><dt>برند یا گرید</dt><dd>{item.brandOrGrade ?? "نامشخص"}</dd></div><div><dt>مشخصات</dt><dd>{item.specification ?? "نامشخص"}</dd></div><div><dt>جایگزین</dt><dd>{purchaseRequestAlternativesLabel(item.alternatives)}</dd></div><div><dt>نسخهٔ قلم</dt><dd>{item.version.toLocaleString("fa-IR")}</dd></div></dl></article>)}
+                <dl className="project-approval-meta"><div><dt>زمان موردنیاز</dt><dd>{selectedApproval.snapshot.delivery.neededBy ?? "نامشخص"}</dd></div><div><dt>تحویل</dt><dd>تهران · {selectedApproval.snapshot.delivery.area}</dd></div><div><dt>نسخهٔ درخواست</dt><dd>{selectedApproval.target.version.toLocaleString("fa-IR")} · {formatProjectFileDate(selectedApproval.target.updatedAt)}</dd></div><div><dt>شناسهٔ revision</dt><dd>{selectedApproval.target.revisionId}</dd></div><div><dt>ثبت و اشتراک</dt><dd>{selectedApproval.localStatus} · {selectedApproval.snapshot.sharingStatus}</dd></div></dl>
+              </section>
+            ) : selectedApproval.snapshot.service ? (
+              <section className="project-approval-records" data-testid="project-approval-service"><div className="project-task-section-title"><strong>خدمت همین revision</strong><span>نسخهٔ {selectedApproval.snapshot.service.version.toLocaleString("fa-IR")}</span></div><dl className="project-approval-meta"><div><dt>دامنه</dt><dd>{selectedApproval.snapshot.service.scope}</dd></div><div><dt>موقعیت مجاز</dt><dd>{selectedApproval.snapshot.service.location}</dd></div><div><dt>سطح مکان</dt><dd>فقط محدوده یا بخش پروژه · بدون آدرس دقیق</dd></div><div><dt>اندازه یا حجم</dt><dd>{selectedApproval.snapshot.service.sizeOrVolume ?? "نامشخص"}</dd></div><div><dt>صلاحیت</dt><dd>{selectedApproval.snapshot.service.qualification ?? "نامشخص"}</dd></div><div><dt>زمان</dt><dd>{selectedApproval.snapshot.service.timing ?? "نامشخص"}</dd></div><div><dt>روش</dt><dd>{selectedApproval.snapshot.service.method ?? "نامشخص"}</dd></div><div><dt>داخل دامنه</dt><dd>{selectedApproval.snapshot.service.inScope ?? "نامشخص"}</dd></div><div><dt>خارج از دامنه</dt><dd>{selectedApproval.snapshot.service.outOfScope ?? "نامشخص"}</dd></div><div><dt>ضمانت اعلامی</dt><dd>{selectedApproval.snapshot.service.warranty ?? "نامشخص"}</dd></div><div><dt>پرداخت</dt><dd>{selectedApproval.snapshot.service.paymentTerms ?? "نامشخص"}</dd></div><div><dt>شناسهٔ revision</dt><dd>{selectedApproval.target.revisionId}</dd></div></dl></section>
+            ) : null}
 
-            <section className="project-approval-terms" aria-label="شرایط نامشخص نسخهٔ درخواست">
-              <div className="project-task-section-title"><strong>شرایط هنوز نامشخص</strong><span>۳</span></div>
-              <dl><div><dt>حمل</dt><dd>نامشخص</dd></div><div><dt>مالیات</dt><dd>نامشخص</dd></div><div><dt>شرایط پرداخت</dt><dd>نامشخص</dd></div></dl>
-            </section>
+            {selectedApproval.snapshot.requestKind === "product" ? <section className="project-approval-terms" aria-label="شرایط نسخهٔ درخواست"><div className="project-task-section-title"><strong>شرایط تجاری</strong><span>۳</span></div><dl><div><dt>حمل</dt><dd>{selectedApproval.snapshot.unresolvedTerms.transport === "unknown" ? "نامشخص" : selectedApproval.snapshot.unresolvedTerms.transport}</dd></div><div><dt>مالیات</dt><dd>{selectedApproval.snapshot.unresolvedTerms.tax === "unknown" ? "نامشخص" : selectedApproval.snapshot.unresolvedTerms.tax}</dd></div><div><dt>شرایط پرداخت</dt><dd>{selectedApproval.snapshot.unresolvedTerms.paymentTerms === "unknown" ? "نامشخص" : selectedApproval.snapshot.unresolvedTerms.paymentTerms}</dd></div></dl></section> : null}
+
+            <section className="project-approval-clarifications" aria-label="پاسخ‌های روشن‌سازی snapshot"><div className="project-task-section-title"><strong>روشن‌سازی‌های همین revision</strong><span>{selectedApproval.snapshot.clarificationAnswers.length.toLocaleString("fa-IR")}</span></div><ol>{selectedApproval.snapshot.clarificationAnswers.map((answer) => <li key={answer.id}><strong>{answer.question}</strong><span>{answer.answer ?? "نامشخص صریح"}</span><small>{answer.source} · confidence: کاربرد ندارد · نسخهٔ {answer.version.toLocaleString("fa-IR")}</small></li>)}</ol></section>
 
             <aside className="project-approval-privacy">
               <div><ShieldCheck size={18} /><span><strong>پیش‌نمایش حریم همین نسخه</strong><small>در این مرحله هیچ داده‌ای مشترک یا ارسال نمی‌شود.</small></span></div>
-              <dl><div><dt>قابل‌اشتراک در مرحلهٔ آینده</dt><dd>قلم، مقدار، مشخصات ثبت‌شده و محدودهٔ تقریبی تهران</dd></div><div><dt>خصوصی می‌ماند</dt><dd>نام پروژه، حافظه، فایل‌ها، بودجه و آدرس دقیق</dd></div></dl>
+              <dl><div><dt>قابل‌اشتراک در مرحلهٔ آینده</dt><dd>{selectedApproval.privacySnapshot.shareableFields.length.toLocaleString("fa-IR")} فیلد ثبت‌شدهٔ همین snapshot</dd></div><div><dt>خصوصی می‌ماند</dt><dd>نام پروژه، حافظه، فایل‌ها، بودجه و آدرس دقیق</dd></div></dl>
             </aside>
 
             <section className="project-approval-history" aria-label="تاریخچهٔ تأیید نسخه">
@@ -3541,9 +5732,9 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
             <section className="project-task-list" aria-label={projectTaskFilters.find((item) => item.id === filter)?.label}>
               <div className="project-task-section-title"><strong>{projectTaskFilters.find((item) => item.id === filter)?.label}</strong><span>{resultCount.toLocaleString("fa-IR")}</span></div>
               {filteredApprovals.map((approval) => (
-                <button className="project-task-card project-approval-card" type="button" key={approval.id} data-approval-id={approval.id} onClick={() => { setStorageError(""); setSelectedApprovalId(approval.id); }} aria-label={`${approval.snapshot.item.name}، نسخهٔ درخواست ${approval.target.version.toLocaleString("fa-IR")}، پروژهٔ ${project.name}، ${projectApprovalStatusLabel(approval.status)}، فقط تأیید داخلی و ارسال نشده`} data-testid="project-approval-card">
+                <button className="project-task-card project-approval-card" type="button" key={approval.id} data-approval-id={approval.id} onClick={() => { setStorageError(""); setSelectedApprovalId(approval.id); }} aria-label={`${purchaseRequestSnapshotTitle(approval.snapshot)}، نسخهٔ درخواست ${approval.target.version.toLocaleString("fa-IR")}، پروژهٔ ${project.name}، ${projectApprovalStatusLabel(approval.status)}، فقط تأیید داخلی و ارسال نشده`} data-testid="project-approval-card">
                   <span className="project-task-card-icon"><ClipboardCheck size={20} strokeWidth={1.65} /></span>
-                  <span className="project-task-card-copy"><span><small>{projectApprovalStatusLabel(approval.status)}</small><small>{formatProjectFileDate(approval.updatedAt)}</small></span><strong>{approval.snapshot.item.name}</strong><em>{approval.status === "pending" ? "منتظر تصمیم شما" : approval.status === "approved" ? "فقط این نسخه پذیرفته شد؛ ارسال نشده" : "برای اصلاح علامت خورد؛ ارسال نشده"}</em><small>نسخهٔ درخواست {approval.target.version.toLocaleString("fa-IR")} · {approval.localStatus}</small></span>
+                  <span className="project-task-card-copy"><span><small>{projectApprovalStatusLabel(approval.status)}</small><small>{formatProjectFileDate(approval.updatedAt)}</small></span><strong>{purchaseRequestSnapshotTitle(approval.snapshot)}</strong><em>{approval.status === "pending" ? "منتظر تصمیم شما" : approval.status === "approved" ? "فقط این نسخه پذیرفته شد؛ ارسال نشده" : "برای اصلاح علامت خورد؛ ارسال نشده"}</em><small>نسخهٔ درخواست {approval.target.version.toLocaleString("fa-IR")} · {approval.localStatus}</small></span>
                   <ArrowRight size={17} aria-hidden="true" />
                 </button>
               ))}
@@ -4688,7 +6879,7 @@ function activeBriefLabel(frequency: BriefFrequency) {
   return frequency === "daily" ? "روزانه" : "هفتگی";
 }
 
-function ProjectsSheet({ sheet, projects, activeProjectId, onClose, onSelect }: { sheet: SheetName; projects: BuilderProject[]; activeProjectId: string; onClose: () => void; onSelect: (projectId: string) => void }) {
+function ProjectsSheet({ sheet, projects, activeProjectId, onClose, onSelect, onCreate }: { sheet: SheetName; projects: BuilderProject[]; activeProjectId: string; onClose: () => void; onSelect: (projectId: string) => void; onCreate: () => void }) {
   return (
     <BottomSheet open={sheet === "projects"} onOpenChange={(open) => !open && onClose()} title="پروژه‌های من" description="زمینهٔ فعال تعیین می‌کند گفتگو و ابزارها به کدام پروژه متصل باشند." snap={0.46}>
       <div className="sheet-list" dir="rtl" data-testid="projects-sheet">
@@ -4702,8 +6893,85 @@ function ProjectsSheet({ sheet, projects, activeProjectId, onClose, onSelect }: 
             onClick={() => { onSelect(project.id); onClose(); }}
           />
         ))}
+        <button className="projects-sheet-add" type="button" onClick={onCreate} data-testid="projects-sheet-add"><Plus size={19} /><span><strong>افزودن پروژهٔ جدید</strong><small>نام، محدودهٔ تهران و مرحلهٔ ساخت</small></span></button>
         <p className="projects-sheet-note"><ShieldCheck size={15} /> اطلاعات این فهرست فعلاً فقط در همین مرورگر نگه‌داری می‌شود.</p>
       </div>
+    </BottomSheet>
+  );
+}
+
+function ProjectCreateSheet({ sheet, onClose, onSave }: { sheet: SheetName; onClose: () => void; onSave: (draft: ProjectSetupDraft) => boolean }) {
+  const keyboard = useKeyboard();
+  const [name, setName] = useState("");
+  const [location, setLocation] = useState("");
+  const [stage, setStage] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<ProjectFieldErrors>({ name: "", location: "", stage: "" });
+  const [storageError, setStorageError] = useState("");
+
+  useEffect(() => {
+    if (sheet !== "new-project") return;
+    setName("");
+    setLocation("");
+    setStage("");
+    setFieldErrors({ name: "", location: "", stage: "" });
+    setStorageError("");
+  }, [sheet]);
+
+  const clearFieldError = (field: keyof ProjectSetupDraft) => {
+    setFieldErrors((current) => current[field] ? { ...current, [field]: "" } : current);
+    setStorageError("");
+  };
+
+  const submit = () => {
+    const nextErrors = validateProjectDraft({ name, location, stage });
+    setFieldErrors(nextErrors);
+    const firstInvalidId = nextErrors.name
+      ? "new-project-name"
+      : nextErrors.location
+        ? "new-project-location"
+        : nextErrors.stage
+          ? "new-project-stage"
+          : "";
+    if (firstInvalidId) {
+      window.requestAnimationFrame(() => document.getElementById(firstInvalidId)?.focus());
+      return;
+    }
+
+    keyboard.hide();
+    if (!onSave({ name: name.trim(), location: normalizeProjectArea(location), stage })) {
+      setStorageError("پروژه ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن؛ پروژهٔ فعلی تغییر نکرده است.");
+      return;
+    }
+    onClose();
+  };
+
+  return (
+    <BottomSheet open={sheet === "new-project"} onOpenChange={(open) => !open && onClose()} title="پروژهٔ جدید" description="فقط سه دادهٔ ضروری؛ جزئیات دیگر را بعداً در فضای پروژه کامل می‌کنی." snap={0.82}>
+      <form className="new-project-sheet" dir="rtl" data-testid="new-project-sheet" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+        <label className="field-control" htmlFor="new-project-name">
+          <span>نام پروژه</span>
+          <KeyboardInput id="new-project-name" data-testid="new-project-name-input" value={name} maxLength={100} placeholder="مثلاً پروژه آفتاب" onChange={(event) => { setName(event.target.value); clearFieldError("name"); }} aria-invalid={Boolean(fieldErrors.name)} aria-describedby={fieldErrors.name ? "new-project-name-error" : undefined} />
+          {fieldErrors.name ? <small className="field-error" id="new-project-name-error" data-testid="new-project-name-error">{fieldErrors.name}</small> : null}
+        </label>
+
+        <div className="project-city-lock" aria-label="شهر فعال: تهران"><span><small>شهر فعال</small><strong>تهران</strong></span><ShieldCheck size={18} aria-hidden="true" /></div>
+
+        <label className="field-control" htmlFor="new-project-location">
+          <span>محدودهٔ پروژه</span>
+          <KeyboardInput id="new-project-location" data-testid="new-project-location-input" value={location} maxLength={120} placeholder="مثلاً منطقهٔ ۵ یا پونک" onChange={(event) => { setLocation(event.target.value); clearFieldError("location"); }} aria-invalid={Boolean(fieldErrors.location)} aria-describedby={fieldErrors.location ? "new-project-location-error" : "new-project-location-note"} />
+          {fieldErrors.location ? <small className="field-error" id="new-project-location-error" data-testid="new-project-location-error">{fieldErrors.location}</small> : <small id="new-project-location-note">نشانی دقیق لازم نیست؛ فعلاً فقط تهران فعال است.</small>}
+        </label>
+
+        <div className="field-control">
+          <span>مرحلهٔ ساخت</span>
+          <ProjectChoiceMenu id="new-project-stage" testId="new-project-stage-select" value={stage} placeholder="مرحلهٔ ساخت را انتخاب کن" options={projectStages} ariaLabel="مرحلهٔ ساخت" invalid={Boolean(fieldErrors.stage)} describedBy={fieldErrors.stage ? "new-project-stage-error" : undefined} onChange={(nextStage) => { setStage(nextStage); clearFieldError("stage"); }} />
+          {fieldErrors.stage ? <small className="field-error" id="new-project-stage-error" data-testid="new-project-stage-error">{fieldErrors.stage}</small> : null}
+        </div>
+
+        <p className="project-storage-note"><ShieldCheck size={15} /> پروژه پس از ذخیره، پروژهٔ فعال همین مرورگر می‌شود.</p>
+        {storageError ? <p className="new-project-storage-error" role="alert" data-testid="new-project-storage-error">{storageError}</p> : null}
+        <button className="primary-button" type="submit" data-testid="new-project-save">ساخت و ورود به پروژه</button>
+      </form>
     </BottomSheet>
   );
 }
