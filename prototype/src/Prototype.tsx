@@ -26,7 +26,6 @@ import {
   Menu,
   MessageSquare,
   Mic,
-  MoreHorizontal,
   PackageCheck,
   Palette,
   PencilLine,
@@ -43,7 +42,6 @@ import {
   Store,
   UserPlus,
   Users,
-  Volume2,
   Wrench,
   X,
   Zap,
@@ -124,7 +122,7 @@ type ProjectMemoryRecord = {
 };
 type ProjectMemoryDraft = Pick<ProjectMemoryRecord, "title" | "content" | "kind">;
 type ProjectTaskStatus = "in-progress" | "completed";
-type ProjectTaskEventType = "created" | "completed" | "reopened";
+type ProjectTaskEventType = "created" | "updated" | "completed" | "reopened";
 type ProjectTaskEvent = {
   id: string;
   type: ProjectTaskEventType;
@@ -137,6 +135,7 @@ type ProjectTaskRecord = {
   projectId: string;
   title: string;
   currentStep: string;
+  dueDate: string | null;
   status: ProjectTaskStatus;
   source: "ثبت مستقیم شما";
   visibility: "خصوصی پروژه";
@@ -147,7 +146,7 @@ type ProjectTaskRecord = {
   completedAt: string | null;
   history: ProjectTaskEvent[];
 };
-type ProjectTaskDraft = Pick<ProjectTaskRecord, "title" | "currentStep">;
+type ProjectTaskDraft = Pick<ProjectTaskRecord, "title" | "currentStep"> & { dueDate: string };
 type ProjectTaskFilter = "active" | "approval" | "completed" | "failed" | "monitor";
 type PurchaseRequestStatus = "draft" | "ready-for-review";
 type PurchaseRequestEventType = "created" | "updated" | "marked-ready-for-review" | "returned-to-draft";
@@ -1802,6 +1801,27 @@ function hasVisibleProjectTaskText(value: string) {
   return value.replace(/[\s\u200b\u200c\u200d\u2060\ufeff]/gu, "").length > 0;
 }
 
+function projectTaskHistoryReachesStatus(history: ProjectTaskEvent[], status: ProjectTaskStatus) {
+  let reachableStatus: ProjectTaskStatus = "in-progress";
+  for (const [index, event] of history.entries()) {
+    if (index === 0) {
+      if (event.type !== "created") return false;
+      continue;
+    }
+    if (event.type === "updated") continue;
+    if (event.type === "completed" && reachableStatus === "in-progress") {
+      reachableStatus = "completed";
+      continue;
+    }
+    if (event.type === "reopened" && reachableStatus === "completed") {
+      reachableStatus = "in-progress";
+      continue;
+    }
+    return false;
+  }
+  return reachableStatus === status;
+}
+
 function readStoredProjectTasks(): LocalRecordsReadResult<ProjectTaskRecord> {
   try {
     const rawTasks = window.localStorage.getItem(projectTasksStorageKey);
@@ -1816,6 +1836,11 @@ function readStoredProjectTasks(): LocalRecordsReadResult<ProjectTaskRecord> {
       const projectId = typeof task?.projectId === "string" ? task.projectId.trim() : "";
       const title = typeof task?.title === "string" ? task.title.trim() : "";
       const currentStep = typeof task?.currentStep === "string" ? task.currentStep.trim() : "";
+      const dueDate = task?.dueDate === undefined || task?.dueDate === null
+        ? null
+        : typeof task.dueDate === "string"
+          ? task.dueDate.trim()
+          : "";
       const createdAt = typeof task?.createdAt === "string" ? task.createdAt.trim() : "";
       const updatedAt = typeof task?.updatedAt === "string" ? task.updatedAt.trim() : "";
       const completedAt = task?.completedAt === null ? null : typeof task?.completedAt === "string" ? task.completedAt.trim() : "";
@@ -1827,7 +1852,7 @@ function readStoredProjectTasks(): LocalRecordsReadResult<ProjectTaskRecord> {
         if (
           !eventId
           || eventIds.has(eventId)
-          || (event?.type !== "created" && event?.type !== "completed" && event?.type !== "reopened")
+          || (event?.type !== "created" && event?.type !== "updated" && event?.type !== "completed" && event?.type !== "reopened")
           || event?.actor !== "شما"
           || !Number.isInteger(event?.version)
           || event.version < 1
@@ -1841,13 +1866,15 @@ function readStoredProjectTasks(): LocalRecordsReadResult<ProjectTaskRecord> {
         && Number.isInteger(version)
         && version >= 1
         && history.length === version
-        && history.every((event, index) => event.version === index + 1 && (index === 0 ? event.type === "created" : event.type === (index % 2 === 1 ? "completed" : "reopened")))
+        && history.every((event, index) => event.version === index + 1)
         && history.every((event, index) => index === 0 || new Date(event.at).getTime() >= new Date(history[index - 1].at).getTime())
         && history[0]?.at === createdAt
-        && history[history.length - 1]?.at === updatedAt;
+        && history[history.length - 1]?.at === updatedAt
+        && projectTaskHistoryReachesStatus(history, task?.status);
+      const lastCompletedEvent = [...history].reverse().find((event) => event.type === "completed") ?? null;
       const completedStateIsValid = task?.status === "completed"
-        ? typeof completedAt === "string" && completedAt === updatedAt && isValidProjectFileDate(completedAt) && history[history.length - 1]?.type === "completed"
-        : task?.status === "in-progress" && completedAt === null && (history[history.length - 1]?.type === "created" || history[history.length - 1]?.type === "reopened");
+        ? typeof completedAt === "string" && completedAt === lastCompletedEvent?.at && isValidProjectFileDate(completedAt)
+        : task?.status === "in-progress" && completedAt === null;
 
       if (
         !id
@@ -1857,6 +1884,7 @@ function readStoredProjectTasks(): LocalRecordsReadResult<ProjectTaskRecord> {
         || title.length > 80
         || !hasVisibleProjectTaskText(currentStep)
         || currentStep.length > 300
+        || dueDate !== null && (!hasVisibleProjectTaskText(dueDate) || dueDate.length > 40)
         || task?.source !== "ثبت مستقیم شما"
         || task?.visibility !== "خصوصی پروژه"
         || task?.localStatus !== "ثبت محلی"
@@ -1876,6 +1904,7 @@ function readStoredProjectTasks(): LocalRecordsReadResult<ProjectTaskRecord> {
         projectId,
         title,
         currentStep,
+        dueDate,
         status: task.status as ProjectTaskStatus,
         source: "ثبت مستقیم شما",
         visibility: "خصوصی پروژه",
@@ -3908,7 +3937,6 @@ function SuccessScreen({ project, onContinue, onSave }: { project: BuilderProjec
 function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onProjectCreate, onProjectUpdate, onModelChange, onOpenSheet, sheet }: { activeProject: BuilderProject; projects: BuilderProject[]; modelMode: ModelMode; onProjectChange: (projectId: string) => void; onProjectCreate: (draft: ProjectSetupDraft) => boolean; onProjectUpdate: (projectId: string, draft: ProjectProfileDraft) => void; onModelChange: (mode: ModelMode) => void; onOpenSheet: (sheet: SheetName) => void; sheet: SheetName }) {
   const keyboard = useKeyboard();
   const { bottomInset } = useKeyboardInsets();
-  const homeRef = useRef<HTMLDivElement>(null);
   const projectWorkspaceScrollPositions = useRef(new Map<string, number>());
   const pendingPurchaseRequestsReturnFocus = useRef<PurchaseRequestsReturnView | null>(null);
   const pendingProposalsReturnFocus = useRef<ProposalsReturnView | null>(null);
@@ -4017,20 +4045,6 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   }, [projectFiles]);
 
   useLayoutEffect(() => {
-    const rail = homeRef.current?.querySelector<HTMLElement>(".quick-actions");
-    if (!rail) return;
-    const content = rail.firstElementChild;
-    const alignToRtlStart = () => {
-      rail.scrollLeft = Math.max(0, rail.scrollWidth - rail.clientWidth);
-    };
-    alignToRtlStart();
-    const observer = new ResizeObserver(alignToRtlStart);
-    observer.observe(rail);
-    if (content) observer.observe(content);
-    return () => observer.disconnect();
-  }, [view]);
-
-  useLayoutEffect(() => {
     const returnView = pendingProposalsReturnFocus.current;
     if (!returnView || view !== returnView) return;
     pendingProposalsReturnFocus.current = null;
@@ -4100,8 +4114,13 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   };
 
   const saveBrief = (schedule: BriefSchedule) => {
+    try {
+      window.localStorage.setItem(briefStorageKey, JSON.stringify(schedule));
+    } catch {
+      return false;
+    }
     setBriefSchedule(schedule);
-    window.localStorage.setItem(briefStorageKey, JSON.stringify(schedule));
+    return true;
   };
 
   const sendMessage = () => {
@@ -4339,6 +4358,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       projectId: activeProject.id,
       title: taskDraft.title.trim(),
       currentStep: taskDraft.currentStep.trim(),
+      dueDate: taskDraft.dueDate.trim() || null,
       status: "in-progress",
       source: "ثبت مستقیم شما",
       visibility: "خصوصی پروژه",
@@ -4350,6 +4370,30 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       history: [{ id: `task-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
     } satisfies ProjectTaskRecord;
     return persistProjectTasks([...projectTasks, record]);
+  };
+
+  const updateProjectTask = (taskId: string, taskDraft: ProjectTaskDraft) => {
+    const title = taskDraft.title.trim();
+    const currentStep = taskDraft.currentStep.trim();
+    const dueDate = taskDraft.dueDate.trim() || null;
+    const timestamp = new Date().toISOString();
+    let changed = false;
+    const nextTasks = projectTasks.map((task) => {
+      if (task.id !== taskId || task.projectId !== activeProject.id) return task;
+      if (task.title === title && task.currentStep === currentStep && task.dueDate === dueDate) return task;
+      changed = true;
+      const version = task.version + 1;
+      return {
+        ...task,
+        title,
+        currentStep,
+        dueDate,
+        version,
+        updatedAt: timestamp,
+        history: [...task.history, { id: `task-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }],
+      } satisfies ProjectTaskRecord;
+    });
+    return changed ? persistProjectTasks(nextTasks) : true;
   };
 
   const changeProjectTaskStatus = (taskId: string, nextStatus: ProjectTaskStatus) => {
@@ -5147,6 +5191,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         onBack={() => { keyboard.hide(); setView("chat"); }}
         onReturnToPurchaseRequest={returnToProjectPurchaseRequest}
         onCreate={createProjectTask}
+        onUpdate={updateProjectTask}
         onStatusChange={changeProjectTaskStatus}
         onApprovalDecision={decideProjectApproval}
       />
@@ -5214,7 +5259,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   }
 
   return (
-    <div ref={homeRef} className="chida-app chida-shell" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="builder-home">
+    <div className="chida-app chida-shell" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="builder-home">
       <MobileScroll className="chat-scroll">
         <main className="chat-canvas">
           {messages.length === 0 ? (
@@ -5234,7 +5279,6 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <header className="app-header">
         <button className="icon-button header-button" type="button" onClick={() => { keyboard.hide(); setDrawerOpen(true); }} aria-label="بازکردن منو" data-testid="menu-button"><Menu size={22} /></button>
         <button className="project-switcher" type="button" onClick={() => onOpenSheet("projects")} data-testid="project-switcher"><span><strong>{activeProject.name}</strong><small>پروژه فعال</small></span><ChevronDown size={16} /></button>
-        <button className="icon-button header-button header-add-project" type="button" onClick={openNewProject} aria-label="افزودن پروژهٔ جدید" data-testid="header-add-project"><Plus size={22} /></button>
       </header>
 
       <section className="composer-dock" style={{ bottom: bottomInset + 8 }} data-testid="composer-dock">
@@ -5263,7 +5307,6 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
             <button className="active-project" type="button" onClick={() => openProjectSpace(activeProject.id)} data-testid="open-project-space" aria-label={`باز کردن فضای پروژهٔ ${activeProject.name}`}>
               <Folder size={17} /><span><small>فضای پروژه</small><strong>{activeProject.name}</strong></span><ArrowRight size={15} />
             </button>
-            <button className="bottom-add-project" type="button" onClick={openNewProject} aria-label="افزودن پروژهٔ جدید" data-testid="bottom-add-project"><Plus size={18} /><span>پروژه</span></button>
             <button className="tool-cluster" type="button" onClick={() => onOpenSheet("tools")} aria-label="نمایش ابزارهای فعال" data-testid="capability-cluster">
               <span className="tool-cluster-label">ابزارها</span>
               <span className="tool-icons" aria-hidden="true"><span><Search size={13} /></span><span><FileText size={13} /></span><span><Wrench size={13} /></span>{installedTool ? <span><Hammer size={13} /></span> : null}</span>
@@ -5282,8 +5325,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
               <nav className="drawer-nav" aria-label="منوی چیدا">
                 <button type="button"><MessageSquare size={19} /><span>گفتگوی تازه</span><Plus size={17} /></button>
                 <button type="button" onClick={openProjectTasks} data-testid="drawer-tasks-entry"><CheckCircle2 size={19} /><span>کارها</span><span className="nav-count" data-testid="drawer-task-count" aria-label={projectTasksReadError ? "بازیابی کارها کامل نشد" : `${activeProjectTaskCount.toLocaleString("fa-IR")} کار در حال انجام`}>{projectTasksReadError ? "!" : activeProjectTaskCount.toLocaleString("fa-IR")}</span></button>
-                <button type="button" onClick={() => { setDrawerOpen(false); onOpenSheet("projects"); }}><Folder size={19} /><span>پروژه‌ها</span><span className="nav-count" data-testid="drawer-project-count">{projects.length.toLocaleString("fa-IR")}</span></button>
-                <button type="button" onClick={openNewProject} data-testid="drawer-add-project"><Plus size={19} /><span>افزودن پروژهٔ جدید</span><ChevronDown size={17} /></button>
+                <button type="button" onClick={() => { setDrawerOpen(false); onOpenSheet("projects"); }} data-testid="drawer-projects-entry"><Folder size={19} /><span>پروژه‌ها</span><span className="nav-count" data-testid="drawer-project-count">{projects.length.toLocaleString("fa-IR")}</span></button>
                 <button type="button"><Pin size={19} /><span>پین‌شده‌ها</span><span className="nav-count">۳</span></button>
                 <button type="button" data-testid="drawer-brief-entry" onClick={() => { setDrawerOpen(false); onOpenSheet("brief"); }}>
                   <CalendarDays size={19} />
@@ -5297,7 +5339,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
                 <p className="recent-chat-empty">هنوز گفتگویی برای {activeProject.name} ثبت نشده است.</p>
               </div>
               <button className="drawer-profile" type="button" data-testid="drawer-profile" onClick={() => { setDrawerOpen(false); onOpenSheet("settings"); }}>
-                <span className="drawer-avatar" aria-hidden="true">م</span><span className="drawer-profile-copy"><strong>مهیار کلباسی</strong><small>حساب سازنده</small></span><Settings size={18} />
+                <span className="drawer-avatar" aria-hidden="true"><img src="/chida/profile-builder-fictional.jpg" alt="" /></span><span className="drawer-profile-copy"><strong>مهیار کلباسی</strong><small>حساب سازنده</small></span><Settings size={18} />
               </button>
             </motion.aside>
           </>
@@ -5311,7 +5353,25 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <BriefSheet sheet={sheet} schedule={briefSchedule} onClose={() => onOpenSheet(null)} onSave={saveBrief} />
       <ProjectsSheet sheet={sheet} projects={projects} activeProjectId={activeProject.id} onClose={() => onOpenSheet(null)} onSelect={openProjectSpace} onCreate={openNewProject} />
       <ProjectCreateSheet sheet={sheet} onClose={() => onOpenSheet(null)} onSave={onProjectCreate} />
-      <SettingsSheet sheet={sheet} onClose={() => onOpenSheet(null)} />
+      <SettingsSheet
+        sheet={sheet}
+        projectName={activeProject.name}
+        projectCount={projects.length}
+        localRecordCount={projectFilesReadError || projectMemoriesReadError || projectTasksReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError
+          ? null
+          : activeProjectFiles.length
+            + activeProjectMemories.length
+            + activeProjectTasks.length
+            + activeProjectPurchaseRequests.length
+            + activeProjectApprovals.length
+            + activeProjectSupplierContacts.length
+            + activeProjectDispatchDrafts.length
+            + activeProjectDispatchPlanApprovals.length
+            + activeBuilderRecordedProposals.length}
+        briefSummary={briefSummary}
+        modelMode={modelMode}
+        onClose={() => onOpenSheet(null)}
+      />
       <span className="sr-only" aria-live="polite">{activeProjectMeta}</span>
     </div>
   );
@@ -6480,22 +6540,24 @@ function projectTaskStatusLabel(status: ProjectTaskStatus) {
 }
 
 function projectTaskEventLabel(type: ProjectTaskEventType) {
+  if (type === "updated") return "کار ویرایش شد";
   if (type === "completed") return "کار تمام شد";
   if (type === "reopened") return "کار بازگشایی شد";
   return "کار ثبت شد";
 }
 
-function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApprovalId, returnToPurchaseRequestId, tasksStorageLocked, approvalsStorageLocked, onBack, onReturnToPurchaseRequest, onCreate, onStatusChange, onApprovalDecision }: { project: BuilderProject; tasks: ProjectTaskRecord[]; approvals: ProjectApprovalRecord[]; initialFilter: ProjectTaskFilter; initialApprovalId: string | null; returnToPurchaseRequestId: string | null; tasksStorageLocked: boolean; approvalsStorageLocked: boolean; onBack: () => void; onReturnToPurchaseRequest: (requestId: string) => void; onCreate: (draft: ProjectTaskDraft) => boolean; onStatusChange: (taskId: string, status: ProjectTaskStatus) => boolean; onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => boolean }) {
+function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApprovalId, returnToPurchaseRequestId, tasksStorageLocked, approvalsStorageLocked, onBack, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onApprovalDecision }: { project: BuilderProject; tasks: ProjectTaskRecord[]; approvals: ProjectApprovalRecord[]; initialFilter: ProjectTaskFilter; initialApprovalId: string | null; returnToPurchaseRequestId: string | null; tasksStorageLocked: boolean; approvalsStorageLocked: boolean; onBack: () => void; onReturnToPurchaseRequest: (requestId: string) => void; onCreate: (draft: ProjectTaskDraft) => boolean; onUpdate: (taskId: string, draft: ProjectTaskDraft) => boolean; onStatusChange: (taskId: string, status: ProjectTaskStatus) => boolean; onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => boolean }) {
   const keyboard = useKeyboard();
-  const taskViewRef = useRef<HTMLDivElement>(null);
   const taskAddButtonRef = useRef<HTMLButtonElement>(null);
+  const taskEditButtonRef = useRef<HTMLButtonElement>(null);
   const approvalHeadingRef = useRef<HTMLElement>(null);
   const pendingApprovalCardFocus = useRef<string | null>(null);
   const [filter, setFilter] = useState<ProjectTaskFilter>(initialFilter);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(initialApprovalId);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [taskDraft, setTaskDraft] = useState<ProjectTaskDraft>({ title: "", currentStep: "" });
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [taskDraft, setTaskDraft] = useState<ProjectTaskDraft>({ title: "", currentStep: "", dueDate: "" });
   const [fieldErrors, setFieldErrors] = useState({ title: "", currentStep: "" });
   const [storageError, setStorageError] = useState("");
   const selectedTask = selectedId ? tasks.find((task) => task.id === selectedId) ?? null : null;
@@ -6556,40 +6618,35 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
     window.requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-approval-id="${approvalId}"]`)?.focus());
   }, [filter, selectedApprovalId]);
 
-  useLayoutEffect(() => {
-    if (selectedId || selectedApprovalId) return;
-    const rail = taskViewRef.current?.querySelector<HTMLElement>(".project-task-filters");
-    const selectedFilter = rail?.querySelector<HTMLElement>('[aria-pressed="true"]');
-    if (!rail || !selectedFilter) return;
-    const alignSelectedFilter = () => {
-      const maximum = Math.max(0, rail.scrollWidth - rail.clientWidth);
-      const centered = selectedFilter.offsetLeft - (rail.clientWidth - selectedFilter.clientWidth) / 2;
-      rail.scrollLeft = Math.max(0, Math.min(maximum, centered));
-    };
-    alignSelectedFilter();
-    const observer = new ResizeObserver(alignSelectedFilter);
-    observer.observe(rail);
-    if (rail.firstElementChild) observer.observe(rail.firstElementChild);
-    return () => observer.disconnect();
-  }, [filter, selectedApprovalId, selectedId]);
-
   const openEditor = () => {
-    setTaskDraft({ title: "", currentStep: "" });
+    setEditingTaskId(null);
+    setTaskDraft({ title: "", currentStep: "", dueDate: "" });
+    setFieldErrors({ title: "", currentStep: "" });
+    setStorageError("");
+    setEditorOpen(true);
+  };
+
+  const openTaskEditor = () => {
+    if (!selectedTask) return;
+    setEditingTaskId(selectedTask.id);
+    setTaskDraft({ title: selectedTask.title, currentStep: selectedTask.currentStep, dueDate: selectedTask.dueDate ?? "" });
     setFieldErrors({ title: "", currentStep: "" });
     setStorageError("");
     setEditorOpen(true);
   };
 
   const closeEditor = () => {
+    const shouldReturnToEdit = editingTaskId !== null;
     keyboard.hide();
     setEditorOpen(false);
+    setEditingTaskId(null);
     setStorageError("");
-    window.requestAnimationFrame(() => taskAddButtonRef.current?.focus());
+    window.requestAnimationFrame(() => (shouldReturnToEdit ? taskEditButtonRef.current : taskAddButtonRef.current)?.focus());
   };
 
   const changeDraft = (field: keyof ProjectTaskDraft, value: string) => {
     setTaskDraft((current) => ({ ...current, [field]: value }));
-    setFieldErrors((current) => current[field] ? { ...current, [field]: "" } : current);
+    if (field !== "dueDate") setFieldErrors((current) => current[field] ? { ...current, [field]: "" } : current);
     setStorageError("");
   };
 
@@ -6607,12 +6664,15 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
       return;
     }
     keyboard.hide();
-    if (!onCreate({ title, currentStep })) {
-      setStorageError("کار ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
+    const saved = editingTaskId
+      ? onUpdate(editingTaskId, { title, currentStep, dueDate: taskDraft.dueDate.trim() })
+      : onCreate({ title, currentStep, dueDate: taskDraft.dueDate.trim() });
+    if (!saved) {
+      setStorageError(editingTaskId ? "ویرایش ذخیره نشد. نسخهٔ قبلی دست‌نخورده ماند؛ دوباره تلاش کن." : "کار ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
       return;
     }
     closeEditor();
-    setFilter("active");
+    if (!editingTaskId) setFilter("active");
   };
 
   const toggleTaskStatus = () => {
@@ -6650,6 +6710,40 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
     setFilter(nextFilter);
     setSelectedApprovalId(null);
   };
+
+  const taskEditorSheet = (
+    <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }} title={editingTaskId ? "ویرایش کار" : "کار جدید"} description={editingTaskId ? `عنوان، گام و موعد این کار را برای ${project.name} اصلاح کن.` : `یک وظیفهٔ داخلی برای ${project.name} ثبت کن.`} snap={0.94}>
+      <form className="project-task-editor-sheet" dir="rtl" data-testid="project-task-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveTask(); }}>
+        <label className="field-control" htmlFor="project-task-title">
+          <span>عنوان کار</span>
+          <KeyboardInput id="project-task-title" data-testid="project-task-title-input" value={taskDraft.title} maxLength={80} placeholder="مثلاً پیگیری تأیید نقشه سازه" onChange={(event) => changeDraft("title", event.target.value)} aria-invalid={Boolean(fieldErrors.title)} aria-describedby={fieldErrors.title ? "project-task-title-error" : undefined} />
+          {fieldErrors.title ? <small className="field-error" id="project-task-title-error" data-testid="project-task-title-error">{fieldErrors.title}</small> : null}
+        </label>
+
+        <label className="field-control" htmlFor="project-task-step">
+          <span>گام بعدی</span>
+          <KeyboardTextarea id="project-task-step" data-testid="project-task-step-input" value={taskDraft.currentStep} maxLength={300} rows={4} placeholder="اقدام مشخص بعدی را بنویس..." onChange={(event) => changeDraft("currentStep", event.target.value)} aria-invalid={Boolean(fieldErrors.currentStep)} aria-describedby={fieldErrors.currentStep ? "project-task-step-error" : undefined} />
+          {fieldErrors.currentStep ? <small className="field-error" id="project-task-step-error" data-testid="project-task-step-error">{fieldErrors.currentStep}</small> : null}
+        </label>
+
+        <label className="field-control" htmlFor="project-task-due">
+          <span>موعد اتمام <small>(اختیاری)</small></span>
+          <KeyboardInput id="project-task-due" data-testid="project-task-due-input" value={taskDraft.dueDate} maxLength={40} inputMode="numeric" dir="ltr" placeholder="مثلاً ۱۴۰۵/۰۶/۱۵" onChange={(event) => changeDraft("dueDate", event.target.value)} />
+          <small>این موعد فقط ثبت محلی است و هنوز یادآوری یا اعلان ایجاد نمی‌کند.</small>
+        </label>
+
+        <dl className="project-task-meta">
+          <div><dt>پروژهٔ مالک</dt><dd>{project.name}</dd></div>
+          <div><dt>منشأ</dt><dd>ثبت مستقیم شما</dd></div>
+          <div><dt>{editingTaskId ? "اثر ویرایش" : "وضعیت نخست"}</dt><dd>{editingTaskId ? `نسخهٔ تازه · وضعیت ${selectedTask ? projectTaskStatusLabel(selectedTask.status) : "فعلی"}` : "در حال انجام · نسخهٔ ۱"}</dd></div>
+          <div><dt>دسترسی</dt><dd>خصوصی پروژه</dd></div>
+        </dl>
+        <p className="project-task-boundary"><CircleHelp size={16} /><span>{editingTaskId ? "ویرایش موفق در تاریخچهٔ نسخه‌دار ثبت می‌شود و وضعیت کار را تغییر نمی‌دهد." : "ثبت این کار هیچ اجرا، اعلان، تأیید یا ارسال بیرونی ایجاد نمی‌کند."}</span></p>
+        {storageError ? <p className="project-task-storage-error" role="alert" data-testid="project-task-storage-error">{storageError}</p> : null}
+        <button className="primary-button" type="submit" data-testid="project-task-save">{editingTaskId ? "ذخیرهٔ ویرایش" : "ثبت در مرکز کارها"}</button>
+      </form>
+    </BottomSheet>
+  );
 
   if (selectedApproval) {
     return (
@@ -6731,6 +6825,7 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
               <div><dt>دسترسی</dt><dd>{selectedTask.visibility}</dd></div>
               <div><dt>وضعیت محلی</dt><dd>{selectedTask.localStatus}</dd></div>
               <div><dt>وضعیت و نسخه</dt><dd>{projectTaskStatusLabel(selectedTask.status)} · نسخهٔ {selectedTask.version.toLocaleString("fa-IR")}</dd></div>
+              <div><dt>موعد اتمام</dt><dd>{selectedTask.dueDate ?? "تعیین نشده"}</dd></div>
               <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(selectedTask.createdAt)}</dd></div>
               <div><dt>آخرین تغییر</dt><dd>{formatProjectFileDate(selectedTask.updatedAt)}</dd></div>
               {selectedTask.completedAt ? <div><dt>زمان تکمیل</dt><dd>{formatProjectFileDate(selectedTask.completedAt)}</dd></div> : null}
@@ -6746,16 +6841,20 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
             </section>
 
             <aside className="project-task-boundary"><ShieldCheck size={17} /><span>این وظیفه فقط داخل همین مرورگر ثبت شده است؛ چیدا آن را در پس‌زمینه اجرا نمی‌کند و هیچ اعلان یا ارسال بیرونی انجام نشده است.</span></aside>
-            {storageError ? <p className="project-task-storage-error" role="alert" data-testid="project-task-storage-error">{storageError}</p> : null}
-            <button className="primary-button project-task-status-button" type="button" onClick={toggleTaskStatus} disabled={tasksStorageLocked} data-testid="project-task-status-toggle">{selectedTask.status === "completed" ? "بازگشایی کار" : "علامت‌گذاری به‌عنوان تمام‌شده"}</button>
+            {storageError && !editorOpen ? <p className="project-task-storage-error" role="alert" data-testid="project-task-storage-error">{storageError}</p> : null}
+            <div className="project-task-actions">
+              <button ref={taskEditButtonRef} className="project-task-edit-button" type="button" onClick={openTaskEditor} disabled={tasksStorageLocked} data-testid="project-task-edit"><PencilLine size={17} /> ویرایش کار</button>
+              <button className="primary-button project-task-status-button" type="button" onClick={toggleTaskStatus} disabled={tasksStorageLocked} data-testid="project-task-status-toggle">{selectedTask.status === "completed" ? "بازگشایی کار" : "علامت‌گذاری به‌عنوان تمام‌شده"}</button>
+            </div>
           </main>
         </MobileScroll>
+        {taskEditorSheet}
       </div>
     );
   }
 
   return (
-    <div ref={taskViewRef} className="chida-app project-tasks-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-tasks-view">
+    <div className="chida-app project-tasks-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-tasks-view">
       <header className="project-workspace-header">
         <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label="بازگشت به گفت‌وگو" data-testid="project-tasks-back"><ArrowRight size={21} /></button>
         <span className="project-workspace-title"><small>مرکز کارها</small><strong>{project.name}</strong></span>
@@ -6812,7 +6911,7 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
               {filteredTasks.map((task) => (
                 <button className="project-task-card" type="button" key={task.id} onClick={() => { setStorageError(""); setSelectedId(task.id); }} data-testid="project-task-card">
                   <span className="project-task-card-icon"><CheckCircle2 size={20} strokeWidth={1.65} /></span>
-                  <span className="project-task-card-copy"><span><small>{projectTaskStatusLabel(task.status)}</small><small>{formatProjectFileDate(task.updatedAt)}</small></span><strong>{task.title}</strong><em>{task.currentStep}</em><small>نسخهٔ {task.version.toLocaleString("fa-IR")} · {task.localStatus}</small></span>
+                  <span className="project-task-card-copy"><span><small>{projectTaskStatusLabel(task.status)}</small><small>{formatProjectFileDate(task.updatedAt)}</small></span><strong>{task.title}</strong><em>{task.currentStep}</em><small className="project-task-card-date">{task.completedAt ? `تکمیل: ${formatProjectFileDate(task.completedAt)}${task.dueDate ? ` · موعد: ${task.dueDate}` : ""}` : `موعد اتمام: ${task.dueDate ?? "تعیین نشده"}`}</small><small>نسخهٔ {task.version.toLocaleString("fa-IR")} · {task.localStatus}</small></span>
                   <ArrowRight size={17} aria-hidden="true" />
                 </button>
               ))}
@@ -6821,31 +6920,7 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
         </main>
       </MobileScroll>
 
-      <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }} title="کار جدید" description={`یک وظیفهٔ داخلی برای ${project.name} ثبت کن.`} snap={0.94}>
-        <form className="project-task-editor-sheet" dir="rtl" data-testid="project-task-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveTask(); }}>
-          <label className="field-control" htmlFor="project-task-title">
-            <span>عنوان کار</span>
-            <KeyboardInput id="project-task-title" data-testid="project-task-title-input" value={taskDraft.title} maxLength={80} placeholder="مثلاً پیگیری تأیید نقشه سازه" onChange={(event) => changeDraft("title", event.target.value)} aria-invalid={Boolean(fieldErrors.title)} aria-describedby={fieldErrors.title ? "project-task-title-error" : undefined} />
-            {fieldErrors.title ? <small className="field-error" id="project-task-title-error" data-testid="project-task-title-error">{fieldErrors.title}</small> : null}
-          </label>
-
-          <label className="field-control" htmlFor="project-task-step">
-            <span>گام بعدی</span>
-            <KeyboardTextarea id="project-task-step" data-testid="project-task-step-input" value={taskDraft.currentStep} maxLength={300} rows={4} placeholder="اقدام مشخص بعدی را بنویس..." onChange={(event) => changeDraft("currentStep", event.target.value)} aria-invalid={Boolean(fieldErrors.currentStep)} aria-describedby={fieldErrors.currentStep ? "project-task-step-error" : undefined} />
-            {fieldErrors.currentStep ? <small className="field-error" id="project-task-step-error" data-testid="project-task-step-error">{fieldErrors.currentStep}</small> : null}
-          </label>
-
-          <dl className="project-task-meta">
-            <div><dt>پروژهٔ مالک</dt><dd>{project.name}</dd></div>
-            <div><dt>منشأ</dt><dd>ثبت مستقیم شما</dd></div>
-            <div><dt>وضعیت نخست</dt><dd>در حال انجام · نسخهٔ ۱</dd></div>
-            <div><dt>دسترسی</dt><dd>خصوصی پروژه</dd></div>
-          </dl>
-          <p className="project-task-boundary"><CircleHelp size={16} /><span>ثبت این کار هیچ اجرا، اعلان، تأیید یا ارسال بیرونی ایجاد نمی‌کند.</span></p>
-          {storageError ? <p className="project-task-storage-error" role="alert" data-testid="project-task-storage-error">{storageError}</p> : null}
-          <button className="primary-button" type="submit" data-testid="project-task-save">ثبت در مرکز کارها</button>
-        </form>
-      </BottomSheet>
+      {taskEditorSheet}
     </div>
   );
 }
@@ -7909,15 +7984,32 @@ function BuildSheet({ sheet, activeProject, onClose, onInstalled }: { sheet: She
   );
 }
 
-function BriefSheet({ sheet, schedule, onClose, onSave }: { sheet: SheetName; schedule: BriefSchedule | null; onClose: () => void; onSave: (schedule: BriefSchedule) => void }) {
+function BriefSheet({ sheet, schedule, onClose, onSave }: { sheet: SheetName; schedule: BriefSchedule | null; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean }) {
+  const keyboard = useKeyboard();
   const [frequency, setFrequency] = useState<BriefFrequency>(schedule?.frequency ?? "daily");
   const [weekday, setWeekday] = useState(schedule?.weekday ?? "شنبه");
   const [time, setTime] = useState(schedule?.time ?? "09:00");
-  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  useEffect(() => {
+    if (sheet !== "brief") return;
+    setFrequency(schedule?.frequency ?? "daily");
+    setWeekday(schedule?.weekday ?? "شنبه");
+    setTime(schedule?.time ?? "09:00");
+    setSaveError("");
+  }, [schedule, sheet]);
 
   const save = () => {
-    onSave({ frequency, weekday, time });
-    setSaved(true);
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(time)) {
+      setSaveError("ساعت را به‌شکل معتبر ۰۰:۰۰ تا ۲۳:۵۹ وارد کن.");
+      return;
+    }
+    if (!onSave({ frequency, weekday, time })) {
+      setSaveError("برنامهٔ بریف ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
+      return;
+    }
+    keyboard.hide();
+    onClose();
   };
 
   return (
@@ -7929,17 +8021,17 @@ function BriefSheet({ sheet, schedule, onClose, onSave }: { sheet: SheetName; sc
         </div>
 
         <div className="brief-frequency" role="radiogroup" aria-label="بازهٔ بریف" data-testid="brief-frequency-group">
-          <button type="button" role="radio" aria-checked={frequency === "daily"} data-testid="brief-frequency-daily" onClick={() => { setFrequency("daily"); setSaved(false); }}>روزانه</button>
-          <button type="button" role="radio" aria-checked={frequency === "weekly"} data-testid="brief-frequency-weekly" onClick={() => { setFrequency("weekly"); setSaved(false); }}>هفتگی</button>
+          <button type="button" role="radio" aria-checked={frequency === "daily"} data-testid="brief-frequency-daily" onClick={() => { setFrequency("daily"); setSaveError(""); }}>روزانه</button>
+          <button type="button" role="radio" aria-checked={frequency === "weekly"} data-testid="brief-frequency-weekly" onClick={() => { setFrequency("weekly"); setSaveError(""); }}>هفتگی</button>
         </div>
 
         <div className="brief-fields">
-          {frequency === "weekly" ? <label><span>روز دریافت</span><select value={weekday} onChange={(event) => { setWeekday(event.target.value); setSaved(false); }} data-testid="brief-weekday-select"><option>شنبه</option><option>یکشنبه</option><option>دوشنبه</option><option>سه‌شنبه</option><option>چهارشنبه</option><option>پنجشنبه</option></select></label> : null}
-          <label><span>ساعت دریافت</span><span className="time-field"><Clock3 size={17} /><KeyboardInput type="text" dir="ltr" inputMode="numeric" maxLength={5} value={time} onChange={(event) => { setTime(event.target.value); setSaved(false); }} data-testid="brief-time-input" /></span></label>
+          {frequency === "weekly" ? <label><span>روز دریافت</span><select value={weekday} onChange={(event) => { setWeekday(event.target.value); setSaveError(""); }} data-testid="brief-weekday-select"><option>شنبه</option><option>یکشنبه</option><option>دوشنبه</option><option>سه‌شنبه</option><option>چهارشنبه</option><option>پنجشنبه</option></select></label> : null}
+          <label><span>ساعت دریافت</span><span className="time-field"><Clock3 size={17} /><KeyboardInput type="text" dir="ltr" inputMode="numeric" maxLength={5} value={time} onChange={(event) => { setTime(event.target.value); setSaveError(""); }} data-testid="brief-time-input" /></span></label>
         </div>
 
         <button className="primary-button" type="button" data-testid="brief-save-button" onClick={save}>ذخیرهٔ برنامهٔ بریف</button>
-        {saved ? <p className="brief-saved" data-testid="brief-save-success"><CheckCircle2 size={17} /> بریف {frequency === "daily" ? `روزانه ساعت ${time}` : `هفتگی، ${weekday} ساعت ${time}`} ذخیره شد.</p> : null}
+        {saveError ? <p className="brief-save-error" role="alert" data-testid="brief-save-error">{saveError}</p> : null}
         <button className="text-button" type="button" data-testid="brief-back-button" onClick={onClose}>بازگشت به چت</button>
       </div>
     </BottomSheet>
@@ -8047,15 +8139,46 @@ function ProjectCreateSheet({ sheet, onClose, onSave }: { sheet: SheetName; onCl
   );
 }
 
-function SettingsSheet({ sheet, onClose }: { sheet: SheetName; onClose: () => void }) {
+function SettingsSheet({ sheet, projectName, projectCount, localRecordCount, briefSummary, modelMode, onClose }: { sheet: SheetName; projectName: string; projectCount: number; localRecordCount: number | null; briefSummary: string; modelMode: ModelMode; onClose: () => void }) {
   return (
-    <BottomSheet open={sheet === "settings"} onOpenChange={(open) => !open && onClose()} title="پروفایل و تنظیمات" description="مهیار کلباسی · حساب سازنده" snap={0.68}>
+    <BottomSheet open={sheet === "settings"} onOpenChange={(open) => !open && onClose()} title="پروفایل و تنظیمات" description="حساب، مصرف، حریم و ترجیحات واقعی این نمونه" snap={0.94}>
       <div className="settings-sheet" dir="rtl">
-        <button className="setting-row" type="button"><SlidersHorizontal size={20} /><span><strong>تنظیمات چیدا</strong><small>ترجیحات پاسخ و اعلان‌ها</small></span><MoreHorizontal size={18} /></button>
-        <button className="setting-row" type="button"><Bell size={20} /><span><strong>اعلان‌ها</strong><small>پیگیری پروژه و پیشنهادها</small></span><MoreHorizontal size={18} /></button>
-        <button className="setting-row" type="button"><Palette size={20} /><span><strong>دسترسی‌پذیری</strong><small>اندازه متن و کنتراست</small></span><MoreHorizontal size={18} /></button>
-        <button className="setting-row" type="button"><Volume2 size={20} /><span><strong>صدا و گفتار</strong><small>ورودی و خواندن پاسخ</small></span><MoreHorizontal size={18} /></button>
-        <button className="setting-row" type="button"><CircleHelp size={20} /><span><strong>راهنما</strong><small>آشنایی با امکانات چیدا</small></span><MoreHorizontal size={18} /></button>
+        <section className="settings-profile-card" data-testid="settings-profile-section">
+          <img src="/chida/profile-builder-fictional.jpg" alt="تصویر نمایشی پروفایل سازنده" data-testid="settings-profile-image" />
+          <span><small>حساب سازنده</small><strong>مهیار کلباسی</strong><em>تصویر نمایشی · پروفایل محلی</em></span>
+          <HardHat size={20} aria-hidden="true" />
+        </section>
+
+        <section className="settings-section" data-testid="settings-usage-section">
+          <div className="settings-section-heading"><Archive size={19} /><span><strong>مصرف و داده‌های محلی</strong><small>شمارش شفاف، بدون ساختن عدد مصرف مدل</small></span></div>
+          <div className="settings-metrics"><span><strong>{projectCount.toLocaleString("fa-IR")} پروژه</strong><small>فضای ثبت‌شده</small></span><span data-testid="settings-local-record-count"><strong>{localRecordCount === null ? "—" : `${localRecordCount.toLocaleString("fa-IR")} رکورد`}</strong><small>{localRecordCount === null ? "شمارش کامل نشد" : `در ${projectName}`}</small></span></div>
+          <p>توکن، هزینه و سهمیهٔ حساب هنوز به این نمونه متصل نیست؛ بنابراین مصرف واقعی نمایش داده نمی‌شود.</p>
+        </section>
+
+        <section className="settings-section" data-testid="settings-privacy-section">
+          <div className="settings-section-heading"><ShieldCheck size={19} /><span><strong>حریم و نگه‌داری داده</strong><small>خصوصی و پروژه‌محور</small></span></div>
+          <p>پروژه، کارها، حافظه و شناسنامهٔ فایل‌ها فعلاً فقط همین مرورگر را منبع می‌گیرند؛ sync و پشتیبان ابری ادعا نمی‌شود.</p>
+        </section>
+
+        <section className="settings-section" data-testid="settings-model-section">
+          <div className="settings-section-heading"><Gauge size={19} /><span><strong>حالت پاسخ</strong><small>انتخاب فعلی: {modelMode}</small></span></div>
+          <p>تغییر حالت از دکمهٔ Gauge کنار Composer انجام می‌شود؛ مدل پایه همچنان قابل‌تعویض می‌ماند.</p>
+        </section>
+
+        <section className="settings-section" data-testid="settings-brief-section">
+          <div className="settings-section-heading"><Bell size={19} /><span><strong>اعلان و بریف</strong><small>{briefSummary}</small></span></div>
+          <p>زمان‌بندی بریف فعلاً شبیه‌سازی مرورگر است؛ push، ایمیل یا اجرای پس‌زمینه متصل نیست.</p>
+        </section>
+
+        <section className="settings-section" data-testid="settings-appearance-section">
+          <div className="settings-section-heading"><Palette size={19} /><span><strong>نمایش و دسترس‌پذیری</strong><small>Dark ثابت · فارسی و RTL</small></span></div>
+          <p>نسخهٔ فعلی فقط Dark است؛ کلید نمایشیِ بی‌اثر برای تغییر تم ساخته نشده است.</p>
+        </section>
+
+        <section className="settings-section" data-testid="settings-version-section">
+          <div className="settings-section-heading"><CircleHelp size={19} /><span><strong>راهنما و وضعیت نسخه</strong><small>نمونهٔ سازنده ۰.۱.۰</small></span></div>
+          <p>داده‌ها محلی‌اند و قابلیت‌های backend، شبکهٔ واقعی، پرداخت، قرارداد و ارسال بیرونی هنوز جزو این build نیستند.</p>
+        </section>
         <div className="role-lock-note"><ShieldCheck size={18} /><span>نقش این حساب «سازنده» است و قابل تغییر نیست.</span></div>
       </div>
     </BottomSheet>

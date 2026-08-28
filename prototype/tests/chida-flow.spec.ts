@@ -340,7 +340,7 @@ test("builder creates the first project and keeps it as the active context", asy
   await expect(page.getByTestId("project-switcher")).toContainText("برج نیلوفر");
 });
 
-test("builder can open one new-project flow from the home header, bottom strip, and drawer", async ({ page }) => {
+test("builder starts one new-project flow only from the Projects collection", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
 
@@ -349,21 +349,13 @@ test("builder can open one new-project flow from the home header, bottom strip, 
   await expect(page.getByText("پیام پروژهٔ نخست", { exact: true })).toBeVisible();
   await page.getByTestId("composer-input").fill("پیش‌نویس پروژهٔ نخست");
 
-  await expect(page.getByTestId("header-add-project")).toBeVisible();
-  await expect(page.getByTestId("bottom-add-project")).toBeVisible();
-  await page.getByTestId("header-add-project").click();
-  await expect(page.getByTestId("new-project-sheet")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("new-project-sheet")).toBeHidden();
-
-  await page.getByTestId("bottom-add-project").click();
-  await expect(page.getByTestId("new-project-sheet")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByTestId("new-project-sheet")).toBeHidden();
-
+  await expect(page.getByTestId("header-add-project")).toHaveCount(0);
+  await expect(page.getByTestId("bottom-add-project")).toHaveCount(0);
   await page.getByTestId("menu-button").click();
-  await expect(page.getByTestId("drawer-add-project")).toBeVisible();
-  await page.getByTestId("drawer-add-project").click();
+  await expect(page.getByTestId("drawer-add-project")).toHaveCount(0);
+  await page.getByTestId("drawer-projects-entry").click();
+  await expect(page.getByTestId("projects-sheet")).toBeVisible();
+  await page.getByTestId("projects-sheet-add").click();
   await expect(page.getByTestId("new-project-sheet")).toBeVisible();
   await page.getByTestId("new-project-name-input").fill("پروژه آفتاب");
   await page.getByTestId("new-project-location-input").fill("منطقهٔ ۵");
@@ -393,7 +385,8 @@ test("the bottom project dock contains a 100-character unbroken project name at 
   await enterBuilderHome(page);
   const longProjectName = "پ".repeat(100);
 
-  await page.getByTestId("bottom-add-project").click();
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet-add").click();
   await page.getByTestId("new-project-name-input").fill(longProjectName);
   await page.getByTestId("new-project-location-input").fill("منطقهٔ ۳");
   await chooseProjectOption(page, "new-project-stage-select", "دیوارچینی و سفت کاری");
@@ -419,7 +412,8 @@ test("new-project creation stays on the current project when local persistence f
     };
   });
 
-  await page.getByTestId("header-add-project").click();
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet-add").click();
   await page.getByTestId("new-project-name-input").fill("پروژه ذخیره‌نشده");
   await page.getByTestId("new-project-location-input").fill("منطقهٔ ۷");
   await chooseProjectOption(page, "new-project-stage-select", "طراحی و اخذ مجوز");
@@ -584,28 +578,16 @@ test("selecting an incomplete saved project opens its completion form", async ({
   await expect(page.getByTestId("project-switcher")).toContainText("برج قدیمی");
 });
 
-test("quick action chips drag horizontally in the RTL mobile home", async ({ page }) => {
+test("quick action chips fit without a horizontal drag trap in the RTL mobile home", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
 
   const rail = page.getByRole("region", { name: "اقدام‌های سریع" });
   const overflow = await rail.evaluate((element) => element.scrollWidth - element.clientWidth);
-  expect(overflow).toBeGreaterThan(20);
-  await expect(rail).toHaveCSS("direction", "ltr");
-  const initialOffset = await rail.evaluate((element) => element.scrollLeft);
-  expect(Math.abs(initialOffset - overflow)).toBeLessThanOrEqual(2);
-
-  const chip = rail.locator(".quick-chip").nth(1);
-  const box = await chip.boundingBox();
-  if (!box) throw new Error("Quick action chip geometry is unavailable");
-  const startX = box.x + box.width / 2;
-  const startY = box.y + box.height / 2;
-  await page.mouse.move(startX, startY);
-  await page.mouse.down();
-  await page.mouse.move(startX + 76, startY, { steps: 8 });
-  await page.mouse.up();
-
-  await expect.poll(() => rail.evaluate((element) => element.scrollLeft)).toBeLessThan(initialOffset - 8);
+  expect(overflow).toBeLessThanOrEqual(0);
+  await expect(rail).toHaveCSS("direction", "rtl");
+  await expect(rail.locator(".quick-chip")).toHaveCount(4);
+  for (const chip of await rail.locator(".quick-chip").all()) await expect(chip).toBeVisible();
   await expect(page.getByTestId("composer-input")).toHaveValue("");
   await page.getByRole("button", { name: "برنامه خرید" }).click();
   await expect(page.getByTestId("composer-input")).toHaveValue("برنامه خرید");
@@ -1134,24 +1116,19 @@ test("returning from project files restores the workspace scroll position", asyn
   await expect.poll(() => workspaceScroll.evaluate((element) => element.scrollTop)).toBeCloseTo(savedScrollTop, 0);
 });
 
-test("returning to chat realigns quick actions to the RTL start", async ({ page }) => {
+test("quick actions remain visible without horizontal scrolling after returning to chat", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   const quickActions = page.locator(".quick-actions");
-  await expect.poll(() => quickActions.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0);
+  await expect.poll(() => quickActions.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  await expect(page.locator(".quick-chip")).toHaveCount(4);
+  for (const chip of await page.locator(".quick-chip").all()) await expect(chip).toBeVisible();
 
   await page.getByTestId("open-project-space").click();
   await page.getByTestId("project-space-back").click();
 
-  await expect.poll(() => quickActions.evaluate((element) => ({
-    actual: element.scrollLeft,
-    expected: Math.max(0, element.scrollWidth - element.clientWidth),
-  }))).toEqual(expect.objectContaining({ actual: expect.any(Number), expected: expect.any(Number) }));
-  const position = await quickActions.evaluate((element) => ({
-    actual: element.scrollLeft,
-    expected: Math.max(0, element.scrollWidth - element.clientWidth),
-  }));
-  expect(position.actual).toBeCloseTo(position.expected, 0);
+  await expect.poll(() => quickActions.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });
 
 test("project documents never appear in another project", async ({ page }) => {
@@ -1877,7 +1854,17 @@ test("project context, dark-only settings, keyboard attachment, and local send a
   await page.getByTestId("menu-button").click();
   await page.getByTestId("drawer-profile").click();
   await expect(page.getByRole("heading", { name: "پروفایل و تنظیمات" })).toBeVisible();
+  await expect(page.getByTestId("settings-profile-image")).toBeVisible();
+  await expect(page.getByTestId("settings-profile-image")).toHaveAttribute("src", /profile-builder-fictional\.jpg$/);
+  await expect(page.getByTestId("settings-usage-section")).toContainText("مصرف و داده‌های محلی");
+  await expect(page.getByTestId("settings-usage-section")).toContainText("۱ پروژه");
+  await expect(page.getByTestId("settings-local-record-count")).toContainText("۰ رکورد");
+  await expect(page.getByTestId("settings-privacy-section")).toContainText("فقط همین مرورگر");
+  await expect(page.getByTestId("settings-brief-section")).toContainText("تنظیم نشده");
+  await expect(page.getByTestId("settings-model-section")).toContainText("خودکار");
+  await expect(page.getByTestId("settings-version-section")).toContainText("۰.۱.۰");
   await expect(page.getByTestId("settings-theme-toggle")).toHaveCount(0);
+  await expect(page.getByTestId("settings-appearance-section")).toContainText("Dark");
   await expect(page.locator("html")).toHaveAttribute("data-chida-theme", "dark");
   await page.keyboard.press("Escape");
 
@@ -1918,7 +1905,7 @@ test("Build creates a safe project plugin and installs its skill in the prototyp
   await expect(page.getByTestId("installed-tool-row")).toContainText("رهگیر جریان نقدی");
 });
 
-test("Brief saves a weekly cadence and keeps its summary visible in the drawer", async ({ page }) => {
+test("Brief saves a weekly cadence, closes, and keeps its summary visible in the drawer", async ({ page }) => {
   await enterBuilderHome(page);
 
   await page.getByTestId("menu-button").click();
@@ -1930,12 +1917,36 @@ test("Brief saves a weekly cadence and keeps its summary visible in the drawer",
   await page.getByTestId("brief-weekday-select").selectOption("شنبه");
   await page.getByTestId("brief-time-input").fill("09:00");
   await page.getByTestId("brief-save-button").click();
-  await expect(page.getByTestId("brief-save-success")).toContainText("هفتگی");
-  await page.getByTestId("brief-back-button").click();
+  await expect(page.getByTestId("brief-panel")).toBeHidden();
 
   await page.getByTestId("menu-button").click();
   await expect(page.getByTestId("drawer-brief-summary")).toContainText("هفتگی");
   await expect(page.getByTestId("drawer-brief-summary")).toContainText("شنبه");
+});
+
+test("Brief stays open and preserves the previous schedule when local persistence fails", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-brief-entry").click();
+  await page.getByTestId("brief-frequency-daily").click();
+  await page.getByTestId("brief-time-input").fill("08:30");
+  await page.getByTestId("brief-save-button").click();
+  const savedSchedule = await page.evaluate(() => window.localStorage.getItem("chida-prototype-brief"));
+
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-brief-entry").click();
+  await page.getByTestId("brief-frequency-weekly").click();
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-brief") throw new DOMException("Brief write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await page.getByTestId("brief-save-button").click();
+  await expect(page.getByTestId("brief-panel")).toBeVisible();
+  await expect(page.getByTestId("brief-save-error")).toContainText("ذخیره نشد");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-brief"))).toBe(savedSchedule);
 });
 
 test("builder keeps project tasks out of chat with persistent status history", async ({ page }) => {
@@ -1956,6 +1967,7 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await expect(page.getByTestId("project-task-filter-completed")).toContainText("تمام‌شده");
   await expect(page.getByTestId("project-task-filter-failed")).toContainText("ناموفق");
   await expect(page.getByTestId("project-task-filter-monitor")).toContainText("پایش‌ها");
+  expect(await page.locator(".project-task-filters").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   await expect(page.getByTestId("project-task-empty")).toContainText("هنوز کار در حال انجامی ثبت نشده");
   await expect(taskCenter).toContainText("اجرا، اعلان و انتخاب تأمین‌کننده هنوز وصل نیست");
   expect(await taskCenter.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
@@ -1990,18 +2002,22 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await expect(page.getByTestId("project-task-step-error")).toContainText("گام بعدی");
   await page.getByTestId("project-task-title-input").fill("پیگیری تأیید نقشه سازه");
   await page.getByTestId("project-task-step-input").fill("هماهنگی جلسه با مهندس محاسب");
+  await page.getByTestId("project-task-due-input").fill("۱۴۰۵/۰۶/۱۵");
   await page.getByTestId("project-task-save").click();
 
   const taskCard = page.getByTestId("project-task-card");
   await expect(taskCard).toHaveCount(1);
   await expect(taskCard).toContainText("پیگیری تأیید نقشه سازه");
   await expect(taskCard).toContainText("در حال انجام");
+  await expect(taskCard).toContainText("موعد اتمام");
+  await expect(taskCard).toContainText("۱۴۰۵/۰۶/۱۵");
   await expect(taskCard).toContainText("نسخهٔ ۱");
   const createdTask = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-tasks:v1") ?? "[]")[0]);
   expect(createdTask).toMatchObject({
     projectId: activeProjectId,
     title: "پیگیری تأیید نقشه سازه",
     currentStep: "هماهنگی جلسه با مهندس محاسب",
+    dueDate: "۱۴۰۵/۰۶/۱۵",
     status: "in-progress",
     source: "ثبت مستقیم شما",
     visibility: "خصوصی پروژه",
@@ -2017,18 +2033,42 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await expect(taskDetail).toContainText("ثبت مستقیم شما");
   await expect(taskDetail).toContainText("خصوصی پروژه");
   await expect(taskDetail).toContainText("ثبت محلی");
+  await expect(taskDetail).toContainText("۱۴۰۵/۰۶/۱۵");
   await expect(taskDetail).toContainText("نسخهٔ ۱");
   await expect(page.getByTestId("project-task-history-event")).toHaveCount(1);
+  await page.getByTestId("project-task-edit").click();
+  await expect(page.getByTestId("project-task-editor-sheet")).toBeVisible();
+  await expect(page.getByTestId("project-task-title-input")).toHaveValue("پیگیری تأیید نقشه سازه");
+  await page.getByTestId("project-task-title-input").fill("پیگیری نقشه سازه و معماری");
+  await page.getByTestId("project-task-step-input").fill("دریافت امضای مهندس محاسب");
+  await page.getByTestId("project-task-due-input").fill("۱۴۰۵/۰۶/۲۰");
+  await page.getByTestId("project-task-save").click();
+  await expect(page.getByTestId("project-task-editor-sheet")).toBeHidden();
+  await expect(taskDetail).toContainText("پیگیری نقشه سازه و معماری");
+  await expect(taskDetail).toContainText("دریافت امضای مهندس محاسب");
+  await expect(taskDetail).toContainText("۱۴۰۵/۰۶/۲۰");
+  await expect(taskDetail).toContainText("نسخهٔ ۲");
+  await expect(page.getByTestId("project-task-history-event")).toHaveCount(2);
+  await expect(page.getByTestId("project-task-history-event").first()).toContainText("کار ویرایش شد");
+  const editedTaskSnapshot = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"));
+  await page.getByTestId("project-task-edit").click();
+  await page.getByTestId("project-task-save").click();
+  await expect(page.getByTestId("project-task-editor-sheet")).toBeHidden();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"))).toBe(editedTaskSnapshot);
+  await expect(taskDetail).toContainText("نسخهٔ ۲");
+  await expect(page.getByTestId("project-task-history-event")).toHaveCount(2);
   await page.getByTestId("project-task-status-toggle").click();
   await expect(taskDetail).toContainText("تمام‌شده");
   await expect(taskDetail).toContainText("آخرین گام ثبت‌شده");
-  await expect(taskDetail).toContainText("نسخهٔ ۲");
-  await expect(page.getByTestId("project-task-history-event")).toHaveCount(2);
+  await expect(taskDetail).toContainText("نسخهٔ ۳");
+  await expect(page.getByTestId("project-task-history-event")).toHaveCount(3);
   const completedTask = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-tasks:v1") ?? "[]")[0]);
   expect(completedTask.status).toBe("completed");
-  expect(completedTask.version).toBe(2);
+  expect(completedTask.version).toBe(3);
+  expect(completedTask.title).toBe("پیگیری نقشه سازه و معماری");
+  expect(completedTask.dueDate).toBe("۱۴۰۵/۰۶/۲۰");
   expect(completedTask.completedAt).toEqual(expect.any(String));
-  expect(completedTask.history).toHaveLength(2);
+  expect(completedTask.history).toHaveLength(3);
 
   await page.getByTestId("project-task-detail-back").click();
   await page.getByTestId("project-tasks-back").click();
@@ -2042,12 +2082,13 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await expect(page.getByTestId("drawer-task-count")).toHaveText("۰");
   await page.getByTestId("drawer-tasks-entry").click();
   await page.getByTestId("project-task-filter-completed").click();
-  await expect(page.getByTestId("project-task-card")).toContainText("پیگیری تأیید نقشه سازه");
+  await expect(page.getByTestId("project-task-card")).toContainText("پیگیری نقشه سازه و معماری");
+  await expect(page.getByTestId("project-task-card")).toContainText("تکمیل");
   await page.getByTestId("project-task-card").click();
   await page.getByTestId("project-task-status-toggle").click();
   await expect(page.getByTestId("project-task-detail-view")).toContainText("در حال انجام");
-  await expect(page.getByTestId("project-task-detail-view")).toContainText("نسخهٔ ۳");
-  await expect(page.getByTestId("project-task-history-event")).toHaveCount(3);
+  await expect(page.getByTestId("project-task-detail-view")).toContainText("نسخهٔ ۴");
+  await expect(page.getByTestId("project-task-history-event")).toHaveCount(4);
 });
 
 test("task center keeps every record inside its active project", async ({ page }) => {
@@ -2082,6 +2123,7 @@ test("task center keeps every record inside its active project", async ({ page }
   await page.getByTestId("menu-button").click();
   await page.getByTestId("drawer-tasks-entry").click();
   await expect(page.getByText("کار فقط پروژه الف")).toBeVisible();
+  await expect(page.getByTestId("project-task-card")).toContainText("موعد اتمام: تعیین نشده");
   await expect(page.getByText("کار فقط پروژه ب")).toHaveCount(0);
 
   await page.getByTestId("project-tasks-back").click();
@@ -2136,6 +2178,34 @@ test("task creation never reports success when local persistence fails", async (
   await expect(page.getByTestId("project-task-editor-sheet")).toBeVisible();
   await expect(page.getByTestId("project-task-storage-error")).toContainText("ذخیره نشد");
   await expect(page.getByTestId("project-task-card")).toHaveCount(0);
+});
+
+test("task editing keeps the previous version when local persistence fails", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await page.getByTestId("project-task-add").click();
+  await page.getByTestId("project-task-title-input").fill("نسخهٔ قابل اتکا");
+  await page.getByTestId("project-task-step-input").fill("گام قبلی باید حفظ شود");
+  await page.getByTestId("project-task-due-input").fill("۱۴۰۵/۰۶/۲۵");
+  await page.getByTestId("project-task-save").click();
+  await page.getByTestId("project-task-card").click();
+  const persistedTask = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"));
+
+  await page.getByTestId("project-task-edit").click();
+  await page.getByTestId("project-task-title-input").fill("نسخه‌ای که نباید ثبت شود");
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-tasks:v1") throw new DOMException("Task edit write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await page.getByTestId("project-task-save").click();
+
+  await expect(page.getByTestId("project-task-editor-sheet")).toBeVisible();
+  await expect(page.getByTestId("project-task-storage-error")).toContainText("نسخهٔ قبلی دست‌نخورده ماند");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"))).toBe(persistedTask);
 });
 
 test("task parser treats duplicate local records as an incomplete read", async ({ page }) => {
@@ -4316,7 +4386,8 @@ test("T7-A records a two-item product proposal with exact lineage, separated pro
 
   await page.getByTestId("proposal-detail-back").click();
   await page.getByTestId("proposals-back").click();
-  await page.getByTestId("header-add-project").click();
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet-add").click();
   await page.getByTestId("new-project-name-input").fill("پروژه جداگانه");
   await page.getByTestId("new-project-location-input").fill("منطقهٔ ۵");
   await chooseProjectOption(page, "new-project-stage-select", "فونداسیون");
