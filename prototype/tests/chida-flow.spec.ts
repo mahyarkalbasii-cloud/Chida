@@ -18,6 +18,51 @@ const sampleProjectImage = {
   buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=", "base64"),
 };
 
+function stableTestValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableTestValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .sort(([first], [second]) => first.localeCompare(second))
+      .map(([key, item]) => [key, stableTestValue(item)]));
+  }
+  return value;
+}
+
+function stableTestHash(serialized: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= serialized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function refreshProposalRevisionFingerprint(proposal: Record<string, any>, revisionIndex = 0) {
+  const revision = proposal.revisions[revisionIndex];
+  const { fingerprint: _fingerprint, ...revisionWithoutFingerprint } = revision;
+  revision.fingerprint = `fnv1a-${stableTestHash(JSON.stringify(stableTestValue({
+    target: proposal.target,
+    requestSnapshot: proposal.requestSnapshot,
+    supplierSnapshot: proposal.supplierSnapshot,
+    reference: proposal.reference,
+    revision: revisionWithoutFingerprint,
+  })))}`;
+}
+
+async function installBackwardBrowserClock(page: Page) {
+  await page.evaluate(() => {
+    const NativeDate = window.Date;
+    const fixedTime = NativeDate.parse("2000-01-01T00:00:00.000Z");
+    const BackwardDate = new Proxy(NativeDate, {
+      construct(target, args) {
+        return Reflect.construct(target, args.length ? args : [fixedTime]);
+      },
+    });
+    Object.defineProperty(BackwardDate, "now", { value: () => fixedTime, configurable: true });
+    Object.defineProperty(window, "Date", { value: BackwardDate, configurable: true });
+  });
+}
+
 async function reachBuilderWelcome(page: Page) {
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("data-chida-theme", "dark");
@@ -121,6 +166,59 @@ async function createCurrentProductDispatchDraft(page: Page, contactNames: strin
   }
   await page.getByTestId("dispatch-draft-save").click();
   await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
+}
+
+async function approveCurrentRequestAndOpenDispatch(page: Page) {
+  await page.getByTestId("purchase-request-request-approval").click();
+  await page.getByTestId("project-approval-approve").click();
+  await page.getByTestId("project-approval-detail-back").click();
+  await page.getByTestId("project-tasks-back").click();
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("purchase-request-card").first().click();
+  await page.getByTestId("purchase-request-open-dispatch").click();
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+}
+
+async function returnFromDispatchToHome(page: Page) {
+  await page.getByTestId("dispatch-planner-back").click();
+  await page.getByTestId("purchase-request-detail-back").click();
+  await page.getByTestId("purchase-requests-back").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+}
+
+async function createTwoItemProductProposalPrerequisites(page: Page, contactName = "فولاد پیشنهاد دستی") {
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.getByTestId("purchase-request-raw-input").fill("برای ادامهٔ کار، سیمان و بلوک سبک قیمت‌گیری شده است");
+  await page.getByTestId("purchase-request-item-input").fill("سیمان تیپ ۲");
+  await page.getByTestId("purchase-request-quantity-input").fill("۵");
+  await chooseProjectOption(page, "purchase-request-unit-select", "تن");
+  await page.getByTestId("purchase-request-add-item").click();
+  await page.getByTestId("purchase-request-item-input-1").fill("بلوک سبک");
+  await page.getByTestId("purchase-request-quantity-input-1").fill("۱۲۰۰");
+  await chooseProjectOption(page, "purchase-request-unit-select-1", "عدد");
+  await page.getByTestId("purchase-request-delivery-area-input").fill("سعادت‌آباد");
+  await page.getByTestId("purchase-request-save").click();
+  await page.getByTestId("purchase-request-ready").click();
+  await approveCurrentRequestAndOpenDispatch(page);
+  await addLocalSupplierContact(page, { name: contactName, category: "مصالح سفت‌کاری", coverage: "غرب تهران", capability: "product" });
+  await returnFromDispatchToHome(page);
+}
+
+async function createServiceProposalPrerequisites(page: Page, contactName = "مجری پیشنهاد دستی") {
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.getByTestId("purchase-request-kind-service").click();
+  await page.getByTestId("purchase-request-raw-input").fill("برای اجرای عایق بام شرایط یک مجری ثبت شده است");
+  await page.getByTestId("purchase-request-service-scope-input").fill("آماده‌سازی و اجرای عایق دولایهٔ بام");
+  await page.getByTestId("purchase-request-service-location-input").fill("بام پروژه");
+  await page.getByTestId("purchase-request-service-size-input").fill("۸۵۰ مترمربع");
+  await page.getByTestId("purchase-request-save").click();
+  await page.getByTestId("purchase-request-ready").click();
+  await approveCurrentRequestAndOpenDispatch(page);
+  await addLocalSupplierContact(page, { name: contactName, category: "عایق‌کاری", coverage: "تمام تهران", capability: "service" });
+  await returnFromDispatchToHome(page);
 }
 
 async function openSavedProjectMemory(page: Page) {
@@ -4106,4 +4204,469 @@ test("T6-D rejects a temporally impossible approval before its exact dependencie
   await page.getByTestId("dispatch-plan-review").click();
   await page.getByTestId("dispatch-plan-acknowledgement").check();
   await expect(page.getByTestId("dispatch-plan-approval-create")).toBeDisabled();
+});
+
+test("T7-A records a two-item product proposal with exact lineage, separated provenance, unknowns, and project isolation", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-files-entry").click();
+  await page.getByTestId("project-file-input").setInputFiles({
+    name: "پیش‌فاکتور دستی.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\n% synthetic T7-A reference"),
+  });
+  await page.getByTestId("project-file-register").click();
+  await page.getByTestId("project-files-back").click();
+  await page.getByTestId("project-space-back").click();
+
+  await createTwoItemProductProposalPrerequisites(page);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"))).toBeNull();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1"))).toBeNull();
+  const overlongFileName = `${"ف".repeat(141)}.pdf`;
+  await page.evaluate((displayName) => {
+    const key = "chida-prototype-project-files:v1";
+    const files = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    files.push({ ...files[0], id: `${files[0].id}-overlong`, displayName });
+    window.localStorage.setItem(key, JSON.stringify(files));
+  }, overlongFileName);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+
+  const appOrigin = new URL(page.url()).origin;
+  const externalRequests: string[] = [];
+  const requestListener = (request: Request) => {
+    const url = new URL(request.url());
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
+  };
+  page.on("request", requestListener);
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("project-proposals-view")).toBeVisible();
+  await expect(page.getByTestId("proposal-inbox-honesty")).toContainText("صندوق دستی");
+  await page.getByTestId("proposal-add").click();
+  await expect(page.getByTestId("proposal-editor-title")).toBeFocused();
+  await expect(page.getByTestId("proposal-request-select")).not.toHaveValue("");
+  await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد پیشنهاد دستی · محصول" });
+  await expect(page.getByTestId("proposal-file-select").locator("option")).toHaveCount(2);
+  await expect(page.getByTestId("proposal-file-select")).not.toContainText(overlongFileName);
+  await page.getByTestId("proposal-file-select").selectOption({ label: "پیش‌فاکتور دستی.pdf · پیش‌فاکتور" });
+  await page.getByTestId("proposal-declared-at").fill("۱۴۰۵/۰۶/۰۶");
+  await page.getByTestId("proposal-transcript").fill("قیمت سیمان اعلام شد و بلوک فعلاً موجود نیست.");
+  await page.getByTestId("proposal-line-quantity-0").fill("۵");
+  await page.getByTestId("proposal-line-unit-0").fill("تن");
+  await page.getByTestId("proposal-line-unit-price-0").fill("4300000");
+  await page.getByTestId("proposal-line-total-price-0").fill("21500000");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-form-error")).toContainText("وضعیت اعلامی");
+  await expect(page.getByTestId("proposal-line-status-0")).toBeFocused();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBeNull();
+  await page.getByTestId("proposal-line-status-0").selectOption("quoted");
+  await page.getByTestId("proposal-line-status-1").selectOption("unavailable");
+  await page.getByTestId("proposal-save").click();
+
+  await expect(page.getByTestId("proposal-detail")).toBeVisible();
+  await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
+  await expect(page.getByTestId("proposal-effective-status")).toContainText("نسخهٔ جاری");
+  await expect(page.getByTestId("proposal-reference")).toContainText("فقط شناسنامهٔ محلی");
+  await expect(page.getByTestId("proposal-line-card")).toHaveCount(2);
+  await expect(page.getByTestId("proposal-line-card").nth(1)).toContainText("نامشخص");
+  expect(await page.getByTestId("proposal-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+  const stored = await page.evaluate(() => {
+    const proposals = JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]");
+    const requests = JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]");
+    const approvals = JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]");
+    const contacts = JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]");
+    return { proposal: proposals[0], request: requests[0], approval: approvals[0], contact: contacts[0] };
+  });
+  const exactReview = stored.request.reviewRevisions.find((revision: { id: string }) => revision.id === stored.approval.target.revisionId);
+  expect(stored.proposal).toMatchObject({
+    schemaVersion: 1,
+    projectId: stored.request.projectId,
+    source: "ثبت دستی سازنده",
+    networkStatus: "خارج از شبکه چیدا",
+    supplierAuthenticated: false,
+    receivedThroughChida: false,
+    externalEffect: "none",
+    target: {
+      requestId: stored.request.id,
+      requestVersion: stored.request.version,
+      reviewRevisionId: exactReview.id,
+      reviewRevisionFingerprint: exactReview.fingerprint,
+      contentApprovalId: stored.approval.id,
+      requestKind: "product",
+    },
+    supplierSnapshot: { supplierContactId: stored.contact.id, supplierContactVersion: 1, displayName: "فولاد پیشنهاد دستی" },
+    reference: { kind: "project-file-metadata", contentPersisted: false, extractionPerformed: false, fileSnapshot: { displayName: "پیش‌فاکتور دستی.pdf", storageMode: "metadata-only" } },
+    version: 1,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+  });
+  expect(stored.proposal.revisions).toHaveLength(1);
+  expect(stored.proposal.history).toHaveLength(1);
+  expect(stored.proposal.revisions[0].lines.map((line: { requestItemId: string }) => line.requestItemId)).toEqual(exactReview.snapshot.items.map((item: { id: string }) => item.id));
+  expect(stored.proposal.revisions[0].lines[0]).toMatchObject({ status: "quoted", quantity: "5", unit: "تن", unitPrice: "4300000", totalPrice: "21500000", tax: null, transport: null, minimumOrder: null, leadTime: null, validity: null, paymentTerms: null });
+  expect(stored.proposal.revisions[0].lines[1]).toMatchObject({ status: "unavailable", quantity: null, unit: null, unitPrice: null, totalPrice: null });
+  expect(stored.proposal).not.toHaveProperty("sendAuthorized");
+  expect(stored.proposal).not.toHaveProperty("orderId");
+  expect(externalRequests).toEqual([]);
+  page.off("request", requestListener);
+
+  await page.getByTestId("proposal-detail-back").click();
+  await page.getByTestId("proposals-back").click();
+  await page.getByTestId("header-add-project").click();
+  await page.getByTestId("new-project-name-input").fill("پروژه جداگانه");
+  await page.getByTestId("new-project-location-input").fill("منطقهٔ ۵");
+  await chooseProjectOption(page, "new-project-stage-select", "فونداسیون");
+  await page.getByTestId("new-project-save").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-empty-state")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  const pageErrors: string[] = [];
+  const pageErrorListener = (error: Error) => pageErrors.push(error.message);
+  page.on("pageerror", pageErrorListener);
+  await page.evaluate(() => {
+    const key = "chida-prototype-builder-recorded-proposals:v1";
+    const proposals = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    proposals[0].id = "proposal:id\"]\\unusual";
+    window.localStorage.setItem(key, JSON.stringify(proposals));
+  });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("project-switcher").click();
+  await page.getByRole("button", { name: /برج نیلوفر تهران/ }).click();
+  await page.getByTestId("project-space-back").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(1);
+  await expect(page.getByTestId("proposal-card")).toContainText("فولاد پیشنهاد دستی");
+  await page.getByTestId("proposal-card").click();
+  await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
+  await page.getByTestId("proposal-detail-back").click();
+  await expect(page.getByTestId("proposal-card")).toBeFocused();
+  expect(pageErrors).toEqual([]);
+  page.off("pageerror", pageErrorListener);
+});
+
+test("T7-A keeps service proposals independent from product items and preserves explicit unknown values", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createServiceProposalPrerequisites(page);
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-add").click();
+  await page.getByTestId("proposal-supplier-select").selectOption({ label: "مجری پیشنهاد دستی · خدمت" });
+  await page.getByTestId("proposal-transcript").fill("مجری روش جایگزین و موعد ده روزه را اعلام کرد.");
+  await page.getByTestId("proposal-line-status-0").selectOption("alternative");
+  await page.getByTestId("proposal-line-editor").locator("summary").click();
+  await page.getByTestId("proposal-line-leadTime-0").fill("۱۰ روز کاری");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail")).toContainText("خدمت");
+
+  const stored = await page.evaluate(() => {
+    const proposal = JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]")[0];
+    const request = JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]")[0];
+    return { proposal, request };
+  });
+  const review = stored.request.reviewRevisions.at(-1);
+  expect(stored.proposal.target.requestKind).toBe("service");
+  expect(stored.proposal.requestSnapshot.items).toEqual([]);
+  expect(stored.proposal.requestSnapshot.service.id).toBe(review.snapshot.service.id);
+  expect(stored.proposal.revisions[0].lines).toHaveLength(1);
+  expect(stored.proposal.revisions[0].lines[0]).toMatchObject({ requestItemId: null, serviceSpecId: review.snapshot.service.id, status: "alternative", quantity: null, unit: null, unitPrice: null, totalPrice: null, leadTime: "۱۰ روز کاری" });
+});
+
+test("T7-A treats unchanged edits as a no-op, versions real edits, and keeps an archived-contact proposal historical", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createTwoItemProductProposalPrerequisites(page, "فولاد تاریخچه پیشنهاد");
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-add").click();
+  await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد تاریخچه پیشنهاد · محصول" });
+  await page.getByTestId("proposal-transcript").fill("رونویسی نسخهٔ نخست");
+  await page.getByTestId("proposal-line-status-0").selectOption("quoted");
+  await page.getByTestId("proposal-line-unit-price-0").fill("4100000");
+  await page.getByTestId("proposal-save").click();
+
+  const firstStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  await page.getByTestId("proposal-edit").click();
+  await expect(page.getByTestId("proposal-editor-title")).toBeFocused();
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(firstStore);
+
+  await page.getByTestId("proposal-edit").click();
+  await expect(page.getByTestId("proposal-editor-title")).toBeFocused();
+  await page.getByTestId("proposal-notes").fill("برای بازبینی شرایط پرداخت");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
+  const versioned = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]")[0]);
+  expect(versioned.version).toBe(2);
+  expect(versioned.revisions).toHaveLength(2);
+  expect(versioned.history.map((event: { type: string }) => event.type)).toEqual(["created", "updated"]);
+  await expect(page.getByTestId("proposal-revision-select")).toBeVisible();
+  await page.getByTestId("proposal-revision-select").selectOption({ index: 1 });
+  await expect(page.getByTestId("proposal-detail")).toContainText("نسخهٔ رونویسی");
+
+  await page.getByTestId("proposal-detail-back").click();
+  await page.getByTestId("proposals-back").click();
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("purchase-request-card").click();
+  await page.getByTestId("purchase-request-open-dispatch").click();
+  await page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد تاریخچه پیشنهاد" }).getByTestId("supplier-contact-status").click();
+  await returnFromDispatchToHome(page);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-card")).toContainText("تاریخی · بازبینی");
+  await page.getByTestId("proposal-card").click();
+  await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
+  await expect(page.getByTestId("proposal-effective-status")).toContainText("نیازمند بازبینی");
+  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]")[0])).toEqual(versioned);
+});
+
+test("T7-A rejects a coordinated proposal claimed to be created after its supplier contact was archived", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createTwoItemProductProposalPrerequisites(page, "فولاد ترتیب تماس");
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-add").click();
+  await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد ترتیب تماس · محصول" });
+  await page.getByTestId("proposal-transcript").fill("رونویسی معتبر پیش از آرشیو تماس");
+  await page.getByTestId("proposal-save").click();
+  await page.getByTestId("proposal-detail-back").click();
+  await page.getByTestId("proposals-back").click();
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("purchase-request-card").click();
+  await page.getByTestId("purchase-request-open-dispatch").click();
+  await page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد ترتیب تماس" }).getByTestId("supplier-contact-status").click();
+
+  const records = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
+  const contacts = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]"));
+  const archivedContact = contacts.find((contact: { displayName: string }) => contact.displayName === "فولاد ترتیب تماس");
+  const claimedCreatedAt = new Date(new Date(archivedContact.history.at(-1).at).getTime() + 1).toISOString();
+  records[0].createdAt = claimedCreatedAt;
+  records[0].updatedAt = claimedCreatedAt;
+  records[0].history[0].at = claimedCreatedAt;
+  records[0].revisions[0].createdAt = claimedCreatedAt;
+  refreshProposalRevisionFingerprint(records[0]);
+  await page.evaluate((nextRecords) => window.localStorage.setItem("chida-prototype-builder-recorded-proposals:v1", JSON.stringify(nextRecords)), records);
+  const tamperedStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(tamperedStore);
+});
+
+test("T7-A rejects a coordinated proposal claimed to be created after its request returned to draft", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createTwoItemProductProposalPrerequisites(page, "فولاد ترتیب درخواست");
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-add").click();
+  await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد ترتیب درخواست · محصول" });
+  await page.getByTestId("proposal-transcript").fill("رونویسی معتبر پیش از بازگشت درخواست");
+  await page.getByTestId("proposal-save").click();
+  await page.getByTestId("proposal-detail-back").click();
+  await page.getByTestId("proposals-back").click();
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("purchase-request-card").click();
+  await page.getByTestId("purchase-request-return-draft").click();
+
+  const records = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
+  const requests = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]"));
+  const claimedCreatedAt = new Date(new Date(requests[0].history.at(-1).at).getTime() + 1).toISOString();
+  records[0].createdAt = claimedCreatedAt;
+  records[0].updatedAt = claimedCreatedAt;
+  records[0].history[0].at = claimedCreatedAt;
+  records[0].revisions[0].createdAt = claimedCreatedAt;
+  refreshProposalRevisionFingerprint(records[0]);
+  await page.evaluate((nextRecords) => window.localStorage.setItem("chida-prototype-builder-recorded-proposals:v1", JSON.stringify(nextRecords)), records);
+  const tamperedStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(tamperedStore);
+});
+
+test("T7-A preserves exact decimal strings and rejects a coordinated repeated semantic revision", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createTwoItemProductProposalPrerequisites(page, "فولاد اعداد دقیق");
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-add").click();
+  await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد اعداد دقیق · محصول" });
+  await page.getByTestId("proposal-line-status-0").selectOption("quoted");
+  await page.getByTestId("proposal-line-unit-price-0").fill("9007199254740993");
+  await page.getByTestId("proposal-line-total-price-0").fill(".0000001");
+  await installBackwardBrowserClock(page);
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail")).toBeVisible();
+
+  let records = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
+  expect(records[0].revisions[0].lines[0].unitPrice).toBe("9007199254740993");
+  expect(records[0].revisions[0].lines[0].totalPrice).toBe("0.0000001");
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-card")).toHaveCount(1);
+
+  records = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
+  const proposal = records[0];
+  const repeatedAt = new Date(new Date(proposal.updatedAt).getTime() + 1).toISOString();
+  const repeatedRevision = JSON.parse(JSON.stringify(proposal.revisions[0]));
+  repeatedRevision.id = "builder-recorded-proposal-revision-coordinated-no-op";
+  repeatedRevision.version = 2;
+  repeatedRevision.createdAt = repeatedAt;
+  proposal.version = 2;
+  proposal.updatedAt = repeatedAt;
+  proposal.currentRevisionId = repeatedRevision.id;
+  proposal.history.push({ id: "builder-recorded-proposal-event-coordinated-no-op", type: "updated", actor: "شما", at: repeatedAt, version: 2 });
+  proposal.revisions.push(repeatedRevision);
+  refreshProposalRevisionFingerprint(proposal, 1);
+  await page.evaluate((nextRecords) => window.localStorage.setItem("chida-prototype-builder-recorded-proposals:v1", JSON.stringify(nextRecords)), records);
+  const tamperedStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(tamperedStore);
+});
+
+test("T7-A fail-closes an otherwise well-formed unsupported supplier-contact update", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createTwoItemProductProposalPrerequisites(page, "فولاد تماس بدون revision");
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-add").click();
+  await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد تماس بدون revision · محصول" });
+  await page.getByTestId("proposal-transcript").fill("رونویسی پیش از تغییر پشتیبانی‌نشدهٔ تماس");
+  await page.getByTestId("proposal-save").click();
+  const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+
+  await page.evaluate(() => {
+    const key = "chida-prototype-project-supplier-contacts:v1";
+    const contacts = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    const contact = contacts.find((item: { displayName: string }) => item.displayName === "فولاد تماس بدون revision");
+    const updatedAt = new Date(new Date(contact.updatedAt).getTime() + 1).toISOString();
+    contact.version = 2;
+    contact.updatedAt = updatedAt;
+    contact.status = "active";
+    contact.archivedAt = null;
+    contact.history.push({ id: "supplier-contact-event-unsupported-update", type: "updated", actor: "شما", at: updatedAt, version: 2 });
+    window.localStorage.setItem(key, JSON.stringify(contacts));
+  });
+  const contactStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1"));
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1"))).toBe(contactStore);
+});
+
+test("T7-A rolls back failed writes and fails closed on a tampered proposal record", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createTwoItemProductProposalPrerequisites(page, "فولاد خطای ذخیره");
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-add").click();
+  await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد خطای ذخیره · محصول" });
+  await page.getByTestId("proposal-transcript").fill("رونویسی برای آزمون شکست ذخیره");
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__proposalNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-builder-recorded-proposals:v1") throw new DOMException("Proposal write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-form-error")).toContainText("ثبت پیشنهاد انجام نشد");
+  await expect(page.getByTestId("proposal-editor")).toBeVisible();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBeNull();
+
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __proposalNativeSetItem: typeof Storage.prototype.setItem }).__proposalNativeSetItem;
+  });
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail")).toBeVisible();
+  const versionOneStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  await page.getByTestId("proposal-edit").click();
+  await page.getByTestId("proposal-notes").fill("ویرایش معنادار با شکست نوشتن");
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-builder-recorded-proposals:v1") throw new DOMException("Proposal update failed", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-form-error")).toContainText("ثبت ویرایش انجام نشد");
+  await expect(page.getByTestId("proposal-editor")).toBeVisible();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(versionOneStore);
+
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __proposalNativeSetItem: typeof Storage.prototype.setItem }).__proposalNativeSetItem;
+  });
+  await page.getByTestId("proposal-editor-back").click();
+  await expect(page.getByTestId("proposal-detail")).toContainText("نسخهٔ رونویسی");
+  await expect(page.getByTestId("proposal-detail")).toContainText("۱ از ۱");
+  await page.getByTestId("proposal-edit").click();
+  await page.getByTestId("proposal-notes").fill("ویرایش معنادار پس از بازیابی");
+  await installBackwardBrowserClock(page);
+  await page.getByTestId("proposal-save").click();
+  const records = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
+  expect(records[0].version).toBe(2);
+  expect(records[0].revisions).toHaveLength(2);
+  expect(records[0].history).toHaveLength(2);
+  const validVersionTwoRecords = JSON.parse(JSON.stringify(records));
+  records[0].revisions[1].lines[0].requestItemId = "foreign-request-item";
+  refreshProposalRevisionFingerprint(records[0], 1);
+  await page.evaluate((nextRecords) => {
+    window.localStorage.setItem("chida-prototype-builder-recorded-proposals:v1", JSON.stringify(nextRecords));
+  }, records);
+  const tamperedStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(tamperedStore);
+
+  validVersionTwoRecords[0].supplierSnapshot.displayName = "نام دستکاری‌شدهٔ هماهنگ";
+  validVersionTwoRecords[0].revisions.forEach((_revision: unknown, index: number) => refreshProposalRevisionFingerprint(validVersionTwoRecords[0], index));
+  await page.evaluate((nextRecords) => window.localStorage.setItem("chida-prototype-builder-recorded-proposals:v1", JSON.stringify(nextRecords)), validVersionTwoRecords);
+  const supplierTamperedStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(supplierTamperedStore);
 });

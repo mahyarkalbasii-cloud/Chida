@@ -321,7 +321,7 @@ type ProjectApprovalRecord = {
 };
 type SupplierContactResponseCapability = "product" | "service" | "both";
 type SupplierContactStatus = "active" | "archived";
-type SupplierContactEventType = "created" | "updated" | "archived" | "restored";
+type SupplierContactEventType = "created" | "archived" | "restored";
 type SupplierContactEvent = { id: string; type: SupplierContactEventType; actor: "شما"; at: string; version: number };
 type SupplierContactRecord = {
   schemaVersion: 1;
@@ -475,6 +475,124 @@ type DispatchPlanApprovalRecord = {
   version: number;
   history: DispatchPlanApprovalEvent[];
 };
+type BuilderRecordedProposalLineStatus = "quoted" | "unavailable" | "alternative" | "not-mentioned";
+type BuilderRecordedProposalEvent = { id: string; type: "created" | "updated"; actor: "شما"; at: string; version: number };
+type BuilderRecordedProposalRequestSnapshot = {
+  requestKind: PurchaseRequestKind;
+  title: string;
+  items: Array<{ id: string; name: string | null; quantity: string | null; unit: PurchaseRequestUnit | null }>;
+  service: null | { id: string; scope: string | null; location: string | null };
+};
+type BuilderRecordedProposalSupplierSnapshot = {
+  supplierContactId: string;
+  supplierContactVersion: number;
+  displayName: string;
+  category: string;
+  tehranCoverage: string;
+  responseCapability: SupplierContactResponseCapability;
+  networkStatus: "خارج از شبکه چیدا";
+};
+type BuilderRecordedProposalReference = {
+  kind: "unattached" | "project-file-metadata";
+  projectFileId: string | null;
+  fileSnapshot: null | {
+    id: string;
+    displayName: string;
+    originalName: string;
+    mimeType: string;
+    size: number;
+    category: ProjectFileCategory;
+    createdAt: string;
+    storageMode: "metadata-only";
+  };
+  contentPersisted: false;
+  extractionPerformed: false;
+};
+type BuilderRecordedProposalLine = {
+  id: string;
+  requestItemId: string | null;
+  serviceSpecId: string | null;
+  requestLabel: string;
+  status: BuilderRecordedProposalLineStatus;
+  quantity: string | null;
+  unit: string | null;
+  unitPrice: string | null;
+  totalPrice: string | null;
+  currency: "تومان";
+  tax: string | null;
+  transport: string | null;
+  minimumOrder: string | null;
+  leadTime: string | null;
+  validity: string | null;
+  paymentTerms: string | null;
+  notes: string | null;
+};
+type BuilderRecordedProposalRevision = {
+  id: string;
+  version: number;
+  createdAt: string;
+  declaredAt: string | null;
+  transcript: string | null;
+  notes: string | null;
+  lines: BuilderRecordedProposalLine[];
+  fingerprint: string;
+};
+type BuilderRecordedProposalRecord = {
+  schemaVersion: 1;
+  id: string;
+  projectId: string;
+  source: "ثبت دستی سازنده";
+  networkStatus: "خارج از شبکه چیدا";
+  supplierAuthenticated: false;
+  receivedThroughChida: false;
+  externalEffect: "none";
+  target: {
+    requestId: string;
+    requestVersion: number;
+    reviewRevisionId: string;
+    reviewRevisionFingerprint: string;
+    contentApprovalId: string;
+    requestKind: PurchaseRequestKind;
+  };
+  requestSnapshot: BuilderRecordedProposalRequestSnapshot;
+  supplierSnapshot: BuilderRecordedProposalSupplierSnapshot;
+  reference: BuilderRecordedProposalReference;
+  currentRevisionId: string;
+  visibility: "خصوصی پروژه";
+  localStatus: "ثبت محلی";
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  history: BuilderRecordedProposalEvent[];
+  revisions: BuilderRecordedProposalRevision[];
+};
+type BuilderRecordedProposalLineDraft = {
+  id: string;
+  requestItemId: string | null;
+  serviceSpecId: string | null;
+  requestLabel: string;
+  status: BuilderRecordedProposalLineStatus;
+  quantity: string;
+  unit: string;
+  unitPrice: string;
+  totalPrice: string;
+  tax: string;
+  transport: string;
+  minimumOrder: string;
+  leadTime: string;
+  validity: string;
+  paymentTerms: string;
+  notes: string;
+};
+type BuilderRecordedProposalDraft = {
+  requestId: string;
+  supplierContactId: string;
+  projectFileId: string;
+  declaredAt: string;
+  transcript: string;
+  notes: string;
+  lines: BuilderRecordedProposalLineDraft[];
+};
 type MockSourceKind = "فایل پروژهٔ ساختگی" | "وب رسمی ساختگی";
 type MockSourceRecord = {
   id: string;
@@ -506,10 +624,11 @@ type MockSourceAnswerDemo = {
   claims: readonly MockSourceClaim[];
   sources: readonly MockSourceRecord[];
 };
-type HomeView = "chat" | "project" | "files" | "gallery" | "memory" | "search" | "tasks" | "source-demo" | "purchase-requests";
+type HomeView = "chat" | "project" | "files" | "gallery" | "memory" | "search" | "tasks" | "source-demo" | "purchase-requests" | "proposals";
 type FilesReturnView = "chat" | "project" | "search";
 type MemoryReturnView = "project" | "search";
 type PurchaseRequestsReturnView = "chat" | "project";
+type ProposalsReturnView = "chat" | "project";
 type ProjectTasksLaunch = { filter: ProjectTaskFilter; approvalId: string | null; returnToPurchaseRequestId: string | null };
 type StoredProjectImage = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
 type LocalRecordsReadResult<RecordType> = { records: RecordType[]; readError: boolean };
@@ -530,6 +649,7 @@ const projectApprovalsStorageKey = "chida-prototype-project-approvals:v1";
 const projectSupplierContactsStorageKey = "chida-prototype-project-supplier-contacts:v1";
 const projectDispatchDraftsStorageKey = "chida-prototype-project-dispatch-drafts:v1";
 const projectDispatchPlanApprovalsStorageKey = "chida-prototype-project-dispatch-plan-approvals:v1";
+const projectBuilderRecordedProposalsStorageKey = "chida-prototype-builder-recorded-proposals:v1";
 const projectImagesDatabaseName = "chida-prototype-project-images:v1";
 const projectImagesStoreName = "images";
 const projectStages = [
@@ -564,6 +684,12 @@ const supplierContactResponseCapabilities: readonly { id: SupplierContactRespons
   { id: "product", label: "محصول" },
   { id: "service", label: "خدمت" },
   { id: "both", label: "محصول و خدمت" },
+];
+const builderRecordedProposalLineStatuses: readonly { id: BuilderRecordedProposalLineStatus; label: string }[] = [
+  { id: "quoted", label: "قیمت داده شده" },
+  { id: "alternative", label: "جایگزین پیشنهاد شده" },
+  { id: "unavailable", label: "ناموجود اعلام شده" },
+  { id: "not-mentioned", label: "ذکر نشده" },
 ];
 const projectFileExtensionPattern = /\.(?:pdf|png|jpe?g|webp|heic|heif|xls|xlsx|csv|doc|docx)$/i;
 const projectImageExtensionPattern = /\.(?:png|jpe?g|webp|heic|heif)$/i;
@@ -922,6 +1048,236 @@ function supplierContactCanRespond(contact: SupplierContactRecord, requestKind: 
 function supplierContactMatchReason(contact: SupplierContactRecord, requestKind: PurchaseRequestKind) {
   if (!supplierContactCanRespond(contact, requestKind)) return "توان پاسخ ثبت‌شده با نوع این درخواست سازگار نیست؛ این رکورد قابل انتخاب نیست.";
   return `توان پاسخ «${supplierContactResponseCapabilityLabel(contact.responseCapability)}» با نوع درخواست سازگار است؛ دستهٔ «${contact.category}» و پوشش «${contact.tehranCoverage}» را شما ثبت کرده‌اید و باید دستی بررسی شوند.`;
+}
+
+function builderRecordedProposalLineStatusLabel(value: BuilderRecordedProposalLineStatus) {
+  return builderRecordedProposalLineStatuses.find((item) => item.id === value)?.label ?? "ذکر نشده";
+}
+
+function builderRecordedProposalLineHasDeclaredCommercialValues(line: Pick<BuilderRecordedProposalLine, "quantity" | "unit" | "unitPrice" | "totalPrice" | "tax" | "transport" | "minimumOrder" | "leadTime" | "validity" | "paymentTerms">) {
+  return [line.quantity, line.unit, line.unitPrice, line.totalPrice, line.tax, line.transport, line.minimumOrder, line.leadTime, line.validity, line.paymentTerms].some((value) => value !== null);
+}
+
+function builderRecordedProposalLineDraftHasDeclaredCommercialValues(line: BuilderRecordedProposalLineDraft) {
+  return [line.quantity, line.unit, line.unitPrice, line.totalPrice, line.tax, line.transport, line.minimumOrder, line.leadTime, line.validity, line.paymentTerms].some((value) => value.trim() !== "");
+}
+
+function builderRecordedProposalRequestSnapshot(snapshot: PurchaseRequestSnapshot): BuilderRecordedProposalRequestSnapshot {
+  return {
+    requestKind: snapshot.requestKind,
+    title: purchaseRequestSnapshotTitle(snapshot),
+    items: snapshot.items.map((item) => ({ id: item.id, name: item.name, quantity: item.quantity, unit: item.unit })),
+    service: snapshot.service ? { id: snapshot.service.id, scope: snapshot.service.scope, location: snapshot.service.location } : null,
+  };
+}
+
+function blankBuilderRecordedProposalLines(snapshot: BuilderRecordedProposalRequestSnapshot): BuilderRecordedProposalLineDraft[] {
+  if (snapshot.requestKind === "product") {
+    return snapshot.items.map((item, index) => ({
+      id: `proposal-line:${item.id}`,
+      requestItemId: item.id,
+      serviceSpecId: null,
+      requestLabel: item.name ?? `قلم ${index + 1}`,
+      status: "not-mentioned",
+      quantity: "",
+      unit: "",
+      unitPrice: "",
+      totalPrice: "",
+      tax: "",
+      transport: "",
+      minimumOrder: "",
+      leadTime: "",
+      validity: "",
+      paymentTerms: "",
+      notes: "",
+    }));
+  }
+  const service = snapshot.service!;
+  return [{
+    id: `proposal-line:${service.id}`,
+    requestItemId: null,
+    serviceSpecId: service.id,
+    requestLabel: service.scope ?? "خدمت درخواستی",
+    status: "not-mentioned",
+    quantity: "",
+    unit: "",
+    unitPrice: "",
+    totalPrice: "",
+    tax: "",
+    transport: "",
+    minimumOrder: "",
+    leadTime: "",
+    validity: "",
+    paymentTerms: "",
+    notes: "",
+  }];
+}
+
+function builderRecordedProposalDraftFromRecord(record: BuilderRecordedProposalRecord): BuilderRecordedProposalDraft {
+  const revision = record.revisions.find((item) => item.id === record.currentRevisionId)!;
+  return {
+    requestId: record.target.requestId,
+    supplierContactId: record.supplierSnapshot.supplierContactId,
+    projectFileId: record.reference.projectFileId ?? "",
+    declaredAt: revision.declaredAt ?? "",
+    transcript: revision.transcript ?? "",
+    notes: revision.notes ?? "",
+    lines: revision.lines.map((line) => ({
+      ...line,
+      quantity: line.quantity ?? "",
+      unit: line.unit ?? "",
+      unitPrice: line.unitPrice ?? "",
+      totalPrice: line.totalPrice ?? "",
+      tax: line.tax ?? "",
+      transport: line.transport ?? "",
+      minimumOrder: line.minimumOrder ?? "",
+      leadTime: line.leadTime ?? "",
+      validity: line.validity ?? "",
+      paymentTerms: line.paymentTerms ?? "",
+      notes: line.notes ?? "",
+    })),
+  };
+}
+
+function normalizeBuilderRecordedProposalNumber(value: string) {
+  const persianDigits = "۰۱۲۳۴۵۶۷۸۹";
+  const arabicDigits = "٠١٢٣٤٥٦٧٨٩";
+  const normalized = value
+    .trim()
+    .replace(/[۰-۹]/g, (digit) => String(persianDigits.indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String(arabicDigits.indexOf(digit)))
+    .replace(/[٬,\s]/g, "")
+    .replace(/٫/g, ".");
+  if (!normalized) return null;
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) return undefined;
+  const [rawInteger = "", rawFraction = ""] = normalized.split(".");
+  const integer = rawInteger.replace(/^0+(?=\d)/, "") || "0";
+  const fraction = rawFraction.replace(/0+$/, "");
+  return fraction ? `${integer}.${fraction}` : integer;
+}
+
+function normalizeBuilderRecordedProposalText(value: string, maxLength: number) {
+  const normalized = value.trim();
+  if (!normalized) return null;
+  if (!hasVisibleProjectTaskText(normalized) || normalized.length > maxLength) return undefined;
+  return normalized;
+}
+
+function normalizeBuilderRecordedProposalRevisionDraft(
+  draft: BuilderRecordedProposalDraft,
+  requestSnapshot: BuilderRecordedProposalRequestSnapshot,
+  expectedLineIds: string[],
+) {
+  const expectedLines = requestSnapshot.requestKind === "product"
+    ? requestSnapshot.items.map((item, index) => ({ requestItemId: item.id, serviceSpecId: null, requestLabel: item.name ?? `قلم ${index + 1}` }))
+    : [{ requestItemId: null, serviceSpecId: requestSnapshot.service!.id, requestLabel: requestSnapshot.service!.scope ?? "خدمت درخواستی" }];
+  if (draft.lines.length !== expectedLines.length || expectedLineIds.length !== expectedLines.length) return null;
+  const declaredAt = normalizeBuilderRecordedProposalText(draft.declaredAt, 80);
+  const transcript = normalizeBuilderRecordedProposalText(draft.transcript, 2000);
+  const notes = normalizeBuilderRecordedProposalText(draft.notes, 1000);
+  if (declaredAt === undefined || transcript === undefined || notes === undefined) return null;
+  const lineIds = new Set<string>();
+  const lines = draft.lines.flatMap((line, index): BuilderRecordedProposalLine[] => {
+    const expected = expectedLines[index];
+    const quantity = normalizeBuilderRecordedProposalNumber(line.quantity);
+    const unitPrice = normalizeBuilderRecordedProposalNumber(line.unitPrice);
+    const totalPrice = normalizeBuilderRecordedProposalNumber(line.totalPrice);
+    const unit = normalizeBuilderRecordedProposalText(line.unit, 80);
+    const tax = normalizeBuilderRecordedProposalText(line.tax, 160);
+    const transport = normalizeBuilderRecordedProposalText(line.transport, 160);
+    const minimumOrder = normalizeBuilderRecordedProposalText(line.minimumOrder, 160);
+    const leadTime = normalizeBuilderRecordedProposalText(line.leadTime, 160);
+    const validity = normalizeBuilderRecordedProposalText(line.validity, 160);
+    const paymentTerms = normalizeBuilderRecordedProposalText(line.paymentTerms, 240);
+    const lineNotes = normalizeBuilderRecordedProposalText(line.notes, 500);
+    if (
+      line.id !== expectedLineIds[index]
+      || lineIds.has(line.id)
+      || line.requestItemId !== expected.requestItemId
+      || line.serviceSpecId !== expected.serviceSpecId
+      || line.requestLabel !== expected.requestLabel
+      || !builderRecordedProposalLineStatuses.some((status) => status.id === line.status)
+      || quantity === undefined
+      || unit === undefined
+      || unitPrice === undefined
+      || totalPrice === undefined
+      || tax === undefined
+      || transport === undefined
+      || minimumOrder === undefined
+      || leadTime === undefined
+      || validity === undefined
+      || paymentTerms === undefined
+      || lineNotes === undefined
+      || line.status === "not-mentioned" && [quantity, unit, unitPrice, totalPrice, tax, transport, minimumOrder, leadTime, validity, paymentTerms].some((value) => value !== null)
+    ) return [];
+    lineIds.add(line.id);
+    return [{
+      id: line.id,
+      requestItemId: line.requestItemId,
+      serviceSpecId: line.serviceSpecId,
+      requestLabel: line.requestLabel,
+      status: line.status,
+      quantity,
+      unit,
+      unitPrice,
+      totalPrice,
+      currency: "تومان",
+      tax,
+      transport,
+      minimumOrder,
+      leadTime,
+      validity,
+      paymentTerms,
+      notes: lineNotes,
+    }];
+  });
+  return lines.length === expectedLines.length ? { declaredAt, transcript, notes, lines } : null;
+}
+
+function builderRecordedProposalRevisionFingerprint(
+  target: BuilderRecordedProposalRecord["target"],
+  requestSnapshot: BuilderRecordedProposalRequestSnapshot,
+  supplierSnapshot: BuilderRecordedProposalSupplierSnapshot,
+  reference: BuilderRecordedProposalReference,
+  revision: Omit<BuilderRecordedProposalRevision, "fingerprint">,
+) {
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ target, requestSnapshot, supplierSnapshot, reference, revision })))}`;
+}
+
+function builderRecordedProposalRevisionSemanticValue(revision: Pick<BuilderRecordedProposalRevision, "declaredAt" | "transcript" | "notes" | "lines">) {
+  return { declaredAt: revision.declaredAt, transcript: revision.transcript, notes: revision.notes, lines: revision.lines };
+}
+
+function builderRecordedProposalHasMeaningfulInput(reference: BuilderRecordedProposalReference, revision: Pick<BuilderRecordedProposalRevision, "declaredAt" | "transcript" | "notes" | "lines">) {
+  return reference.kind === "project-file-metadata"
+    || revision.declaredAt !== null
+    || revision.transcript !== null
+    || revision.notes !== null
+    || revision.lines.some((line) => line.status !== "not-mentioned" || [line.quantity, line.unit, line.unitPrice, line.totalPrice, line.tax, line.transport, line.minimumOrder, line.leadTime, line.validity, line.paymentTerms, line.notes].some((value) => value !== null));
+}
+
+function builderRecordedProposalEffectiveStatus(
+  proposal: BuilderRecordedProposalRecord,
+  requests: ProjectPurchaseRequestRecord[],
+  approvals: ProjectApprovalRecord[],
+  contacts: SupplierContactRecord[],
+) {
+  const request = requests.find((item) => item.id === proposal.target.requestId && item.projectId === proposal.projectId);
+  const approval = approvals.find((item) => item.id === proposal.target.contentApprovalId && item.projectId === proposal.projectId);
+  const contact = contacts.find((item) => item.id === proposal.supplierSnapshot.supplierContactId && item.projectId === proposal.projectId);
+  return request
+    && approval
+    && request.version === proposal.target.requestVersion
+    && request.status === "ready-for-review"
+    && approval.status === "approved"
+    && approval.target.version === proposal.target.requestVersion
+    && approval.target.revisionId === proposal.target.reviewRevisionId
+    && approvalSnapshotMatchesRevision(approval, request)
+    && contact?.status === "active"
+    && contact.version === proposal.supplierSnapshot.supplierContactVersion
+    && supplierContactCapabilitySupports(contact, proposal.target.requestKind)
+    ? "current" as const
+    : "needs-review" as const;
 }
 
 function dispatchDraftDedupeKey(projectId: string, requestId: string, requestVersion: number, revisionId: string) {
@@ -2166,9 +2522,9 @@ function parseSupplierContact(value: any): SupplierContactRecord | null {
     const eventId = typeof event?.id === "string" ? event.id.trim() : "";
     const at = typeof event?.at === "string" ? event.at.trim() : "";
     const type = event?.type as SupplierContactEventType;
-    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || !["created", "updated", "archived", "restored"].includes(type) || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at)) return [];
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || !["created", "archived", "restored"].includes(type) || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at)) return [];
     if (index === 0) transitionIsValid = type === "created";
-    else if (type === "created" || type === "updated" && derivedStatus !== "active" || type === "archived" && derivedStatus !== "active" || type === "restored" && derivedStatus !== "archived") transitionIsValid = false;
+    else if (type === "created" || type === "archived" && derivedStatus !== "active" || type === "restored" && derivedStatus !== "archived") transitionIsValid = false;
     if (type === "archived") derivedStatus = "archived";
     if (type === "restored") derivedStatus = "active";
     eventIds.add(eventId);
@@ -2537,6 +2893,251 @@ function readStoredProjectDispatchPlanApprovals(
       ids.add(record.id);
       dedupeKeys.add(record.dedupeKey);
       idempotencyKeys.add(record.idempotencyKey);
+      projectCounts.set(record.projectId, nextProjectCount);
+      return [record];
+    });
+    return { records, readError };
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
+function parseBuilderRecordedProposalLine(value: any, expected: { requestItemId: string | null; serviceSpecId: string | null; requestLabel: string }): BuilderRecordedProposalLine | null {
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const requestItemId = value?.requestItemId === null ? null : typeof value?.requestItemId === "string" ? value.requestItemId.trim() : "";
+  const serviceSpecId = value?.serviceSpecId === null ? null : typeof value?.serviceSpecId === "string" ? value.serviceSpecId.trim() : "";
+  const requestLabel = typeof value?.requestLabel === "string" ? value.requestLabel.trim() : "";
+  const status = value?.status as BuilderRecordedProposalLineStatus;
+  const numericValue = (item: unknown) => {
+    if (item === null) return null;
+    if (typeof item !== "string" || item === "") return undefined;
+    const normalized = normalizeBuilderRecordedProposalNumber(item);
+    return normalized !== null && normalized !== undefined && normalized === item ? item : undefined;
+  };
+  const textValue = (item: unknown, maxLength: number) => item === null ? null : typeof item === "string" && hasVisibleProjectTaskText(item) && item.length <= maxLength && item.trim() === item ? item : undefined;
+  const quantity = numericValue(value?.quantity);
+  const unitPrice = numericValue(value?.unitPrice);
+  const totalPrice = numericValue(value?.totalPrice);
+  const unit = textValue(value?.unit, 80);
+  const tax = textValue(value?.tax, 160);
+  const transport = textValue(value?.transport, 160);
+  const minimumOrder = textValue(value?.minimumOrder, 160);
+  const leadTime = textValue(value?.leadTime, 160);
+  const validity = textValue(value?.validity, 160);
+  const paymentTerms = textValue(value?.paymentTerms, 240);
+  const notes = textValue(value?.notes, 500);
+  if (
+    !hasExactObjectKeys(value, ["id", "requestItemId", "serviceSpecId", "requestLabel", "status", "quantity", "unit", "unitPrice", "totalPrice", "currency", "tax", "transport", "minimumOrder", "leadTime", "validity", "paymentTerms", "notes"])
+    || !id
+    || requestItemId !== expected.requestItemId
+    || serviceSpecId !== expected.serviceSpecId
+    || requestLabel !== expected.requestLabel
+    || !["quoted", "unavailable", "alternative", "not-mentioned"].includes(status)
+    || quantity === undefined
+    || unit === undefined
+    || unitPrice === undefined
+    || totalPrice === undefined
+    || value?.currency !== "تومان"
+    || tax === undefined
+    || transport === undefined
+    || minimumOrder === undefined
+    || leadTime === undefined
+    || validity === undefined
+    || paymentTerms === undefined
+    || notes === undefined
+    || status === "not-mentioned" && [quantity, unit, unitPrice, totalPrice, tax, transport, minimumOrder, leadTime, validity, paymentTerms].some((item) => item !== null)
+  ) return null;
+  return { id, requestItemId, serviceSpecId, requestLabel, status, quantity, unit, unitPrice, totalPrice, currency: "تومان", tax, transport, minimumOrder, leadTime, validity, paymentTerms, notes };
+}
+
+function parseBuilderRecordedProposal(
+  value: any,
+  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+  approvals: LocalRecordsReadResult<ProjectApprovalRecord>,
+  contacts: LocalRecordsReadResult<SupplierContactRecord>,
+  files: LocalRecordsReadResult<ProjectFileRecord>,
+): BuilderRecordedProposalRecord | null {
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const target = {
+    requestId: typeof value?.target?.requestId === "string" ? value.target.requestId.trim() : "",
+    requestVersion: value?.target?.requestVersion,
+    reviewRevisionId: typeof value?.target?.reviewRevisionId === "string" ? value.target.reviewRevisionId.trim() : "",
+    reviewRevisionFingerprint: typeof value?.target?.reviewRevisionFingerprint === "string" ? value.target.reviewRevisionFingerprint.trim() : "",
+    contentApprovalId: typeof value?.target?.contentApprovalId === "string" ? value.target.contentApprovalId.trim() : "",
+    requestKind: value?.target?.requestKind as PurchaseRequestKind,
+  } satisfies BuilderRecordedProposalRecord["target"];
+  const request = purchaseRequests.records.find((item) => item.id === target.requestId && item.projectId === projectId);
+  const reviewRevision = request?.reviewRevisions.find((item) => item.id === target.reviewRevisionId && item.requestVersion === target.requestVersion);
+  const contentApproval = approvals.records.find((item) => item.id === target.contentApprovalId && item.projectId === projectId);
+  if (!request || !reviewRevision || !contentApproval || contentApproval.status !== "approved" || contentApproval.target.id !== target.requestId || contentApproval.target.version !== target.requestVersion || contentApproval.target.revisionId !== target.reviewRevisionId || !approvalSnapshotMatchesRevision(contentApproval, request) || target.reviewRevisionFingerprint !== reviewRevision.fingerprint || target.requestKind !== reviewRevision.snapshot.requestKind) return null;
+  const requestSnapshot = builderRecordedProposalRequestSnapshot(reviewRevision.snapshot);
+  if (JSON.stringify(stablePurchaseRequestValue(value?.requestSnapshot)) !== JSON.stringify(stablePurchaseRequestValue(requestSnapshot))) return null;
+
+  const supplierContactId = typeof value?.supplierSnapshot?.supplierContactId === "string" ? value.supplierSnapshot.supplierContactId.trim() : "";
+  const supplierContactVersion = value?.supplierSnapshot?.supplierContactVersion;
+  const contact = contacts.records.find((item) => item.id === supplierContactId && item.projectId === projectId);
+  if (!contact || !Number.isInteger(supplierContactVersion) || supplierContactVersion < 1 || supplierContactVersion > contact.version || !contact.history.some((event) => event.version === supplierContactVersion) || !supplierContactCapabilitySupports(contact, target.requestKind)) return null;
+  const supplierDisplayName = typeof value?.supplierSnapshot?.displayName === "string" ? value.supplierSnapshot.displayName.trim() : "";
+  const supplierCategory = typeof value?.supplierSnapshot?.category === "string" ? value.supplierSnapshot.category.trim() : "";
+  const supplierTehranCoverage = typeof value?.supplierSnapshot?.tehranCoverage === "string" ? value.supplierSnapshot.tehranCoverage.trim() : "";
+  const supplierResponseCapability = value?.supplierSnapshot?.responseCapability as SupplierContactResponseCapability;
+  if (
+    !hasExactObjectKeys(value?.supplierSnapshot, ["supplierContactId", "supplierContactVersion", "displayName", "category", "tehranCoverage", "responseCapability", "networkStatus"])
+    || !hasVisibleProjectTaskText(supplierDisplayName)
+    || supplierDisplayName.length > 120
+    || !hasVisibleProjectTaskText(supplierCategory)
+    || supplierCategory.length > 120
+    || !hasVisibleProjectTaskText(supplierTehranCoverage)
+    || supplierTehranCoverage.length > 160
+    || !["product", "service", "both"].includes(supplierResponseCapability)
+    || !supplierContactCapabilitySupports({ responseCapability: supplierResponseCapability }, target.requestKind)
+    || value?.supplierSnapshot?.networkStatus !== "خارج از شبکه چیدا"
+  ) return null;
+  const supplierSnapshot = {
+    supplierContactId,
+    supplierContactVersion,
+    displayName: supplierDisplayName,
+    category: supplierCategory,
+    tehranCoverage: supplierTehranCoverage,
+    responseCapability: supplierResponseCapability,
+    networkStatus: "خارج از شبکه چیدا",
+  } satisfies BuilderRecordedProposalSupplierSnapshot;
+  if (JSON.stringify(stablePurchaseRequestValue(supplierSnapshot)) !== JSON.stringify(stablePurchaseRequestValue({ supplierContactId: contact.id, supplierContactVersion, displayName: contact.displayName, category: contact.category, tehranCoverage: contact.tehranCoverage, responseCapability: contact.responseCapability, networkStatus: "خارج از شبکه چیدا" }))) return null;
+
+  const referenceKind = value?.reference?.kind as BuilderRecordedProposalReference["kind"];
+  const projectFileId = value?.reference?.projectFileId === null ? null : typeof value?.reference?.projectFileId === "string" ? value.reference.projectFileId.trim() : "";
+  let reference: BuilderRecordedProposalReference | null = null;
+  if (referenceKind === "unattached" && projectFileId === null && value?.reference?.fileSnapshot === null) {
+    reference = { kind: "unattached", projectFileId: null, fileSnapshot: null, contentPersisted: false, extractionPerformed: false };
+  } else if (referenceKind === "project-file-metadata" && projectFileId) {
+    const file = files.records.find((item) => item.id === projectFileId && item.projectId === projectId && item.storageMode === "metadata-only");
+    const snapshot = value?.reference?.fileSnapshot;
+    const displayName = typeof snapshot?.displayName === "string" ? snapshot.displayName.trim() : "";
+    if (
+      file
+      && hasExactObjectKeys(snapshot, ["id", "displayName", "originalName", "mimeType", "size", "category", "createdAt", "storageMode"])
+      && snapshot?.id === file.id
+      && hasVisibleProjectTaskText(displayName)
+      && displayName.length <= 140
+      && snapshot?.originalName === file.originalName
+      && snapshot?.mimeType === file.mimeType
+      && snapshot?.size === file.size
+      && snapshot?.category === file.category
+      && snapshot?.createdAt === file.createdAt
+      && snapshot?.storageMode === "metadata-only"
+    ) reference = { kind: "project-file-metadata", projectFileId, fileSnapshot: { id: file.id, displayName, originalName: file.originalName, mimeType: file.mimeType, size: file.size, category: file.category, createdAt: file.createdAt, storageMode: "metadata-only" }, contentPersisted: false, extractionPerformed: false };
+  }
+  if (!reference || !hasExactObjectKeys(value?.reference, ["kind", "projectFileId", "fileSnapshot", "contentPersisted", "extractionPerformed"]) || value?.reference?.contentPersisted !== false || value?.reference?.extractionPerformed !== false || JSON.stringify(stablePurchaseRequestValue(value.reference)) !== JSON.stringify(stablePurchaseRequestValue(reference))) return null;
+
+  const expectedLines = requestSnapshot.requestKind === "product"
+    ? requestSnapshot.items.map((item, index) => ({ requestItemId: item.id, serviceSpecId: null, requestLabel: item.name ?? `قلم ${index + 1}` }))
+    : [{ requestItemId: null, serviceSpecId: requestSnapshot.service!.id, requestLabel: requestSnapshot.service!.scope ?? "خدمت درخواستی" }];
+  const eventIds = new Set<string>();
+  const history: BuilderRecordedProposalEvent[] = Array.isArray(value?.history) ? value.history.flatMap((event: any, index: number): BuilderRecordedProposalEvent[] => {
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as BuilderRecordedProposalEvent["type"];
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || (type !== "created" && type !== "updated") || event?.actor !== "شما" || event?.version !== index + 1 || index === 0 && type !== "created" || index > 0 && type !== "updated" || !isValidProjectFileDate(at)) return [];
+    eventIds.add(eventId);
+    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
+  }) : [];
+  const revisionIds = new Set<string>();
+  const revisions: BuilderRecordedProposalRevision[] = Array.isArray(value?.revisions) ? value.revisions.flatMap((revisionValue: any, index: number): BuilderRecordedProposalRevision[] => {
+    const revisionId = typeof revisionValue?.id === "string" ? revisionValue.id.trim() : "";
+    const createdAt = typeof revisionValue?.createdAt === "string" ? revisionValue.createdAt.trim() : "";
+    const declaredAt = revisionValue?.declaredAt === null ? null : typeof revisionValue?.declaredAt === "string" && hasVisibleProjectTaskText(revisionValue.declaredAt) && revisionValue.declaredAt.length <= 80 && revisionValue.declaredAt.trim() === revisionValue.declaredAt ? revisionValue.declaredAt : undefined;
+    const transcript = revisionValue?.transcript === null ? null : typeof revisionValue?.transcript === "string" && hasVisibleProjectTaskText(revisionValue.transcript) && revisionValue.transcript.length <= 2000 && revisionValue.transcript.trim() === revisionValue.transcript ? revisionValue.transcript : undefined;
+    const notes = revisionValue?.notes === null ? null : typeof revisionValue?.notes === "string" && hasVisibleProjectTaskText(revisionValue.notes) && revisionValue.notes.length <= 1000 && revisionValue.notes.trim() === revisionValue.notes ? revisionValue.notes : undefined;
+    if (!hasExactObjectKeys(revisionValue, ["id", "version", "createdAt", "declaredAt", "transcript", "notes", "lines", "fingerprint"]) || !revisionId || revisionIds.has(revisionId) || revisionValue?.version !== index + 1 || createdAt !== history[index]?.at || declaredAt === undefined || transcript === undefined || notes === undefined || !Array.isArray(revisionValue?.lines) || revisionValue.lines.length !== expectedLines.length) return [];
+    const lineIds = new Set<string>();
+    const lines: BuilderRecordedProposalLine[] = revisionValue.lines.flatMap((lineValue: any, lineIndex: number): BuilderRecordedProposalLine[] => {
+      const line = parseBuilderRecordedProposalLine(lineValue, expectedLines[lineIndex]);
+      if (!line || lineIds.has(line.id)) return [];
+      lineIds.add(line.id);
+      return [line];
+    });
+    if (lines.length !== expectedLines.length || index > 0 && JSON.stringify(lines.map((line) => line.id)) !== JSON.stringify((value.revisions[index - 1]?.lines ?? []).map((line: any) => line.id))) return [];
+    const revision = { id: revisionId, version: revisionValue.version, createdAt, declaredAt, transcript, notes, lines } satisfies Omit<BuilderRecordedProposalRevision, "fingerprint">;
+    const fingerprint = builderRecordedProposalRevisionFingerprint(target, requestSnapshot, supplierSnapshot, reference!, revision);
+    if (revisionValue?.fingerprint !== fingerprint || !builderRecordedProposalHasMeaningfulInput(reference!, revision)) return [];
+    revisionIds.add(revisionId);
+    return [{ ...revision, fingerprint }];
+  }) : [];
+  const version = value?.version;
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
+  const firstDependencyAt = Math.max(new Date(reviewRevision.createdAt).getTime(), new Date(contentApproval.updatedAt).getTime(), new Date(contact.history[supplierContactVersion - 1].at).getTime(), reference.fileSnapshot ? new Date(reference.fileSnapshot.createdAt).getTime() : 0);
+  const createdAtTime = new Date(createdAt).getTime();
+  const latestRequestEventAtCreation = request.history.filter((event) => new Date(event.at).getTime() <= createdAtTime).at(-1);
+  const latestContactEventAtCreation = contact.history.filter((event) => new Date(event.at).getTime() <= createdAtTime).at(-1);
+  const creationDependenciesWereEligible = latestRequestEventAtCreation !== undefined
+    && latestContactEventAtCreation !== undefined
+    && latestRequestEventAtCreation.version === target.requestVersion
+    && latestRequestEventAtCreation.type === "marked-ready-for-review"
+    && latestContactEventAtCreation.version === supplierContactVersion
+    && latestContactEventAtCreation.type !== "archived";
+  const hasRepeatedSemanticRevision = revisions.some((revision, index) => index > 0
+    && JSON.stringify(stablePurchaseRequestValue(builderRecordedProposalRevisionSemanticValue(revision)))
+      === JSON.stringify(stablePurchaseRequestValue(builderRecordedProposalRevisionSemanticValue(revisions[index - 1]))));
+  if (
+    !hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "source", "networkStatus", "supplierAuthenticated", "receivedThroughChida", "externalEffect", "target", "requestSnapshot", "supplierSnapshot", "reference", "currentRevisionId", "visibility", "localStatus", "version", "createdAt", "updatedAt", "history", "revisions"])
+    || !hasExactObjectKeys(value?.target, ["requestId", "requestVersion", "reviewRevisionId", "reviewRevisionFingerprint", "contentApprovalId", "requestKind"])
+    || value?.schemaVersion !== 1
+    || !id
+    || !projectId
+    || value?.source !== "ثبت دستی سازنده"
+    || value?.networkStatus !== "خارج از شبکه چیدا"
+    || value?.supplierAuthenticated !== false
+    || value?.receivedThroughChida !== false
+    || value?.externalEffect !== "none"
+    || value?.visibility !== "خصوصی پروژه"
+    || value?.localStatus !== "ثبت محلی"
+    || !Number.isInteger(version)
+    || version < 1
+    || !Array.isArray(value?.history)
+    || !Array.isArray(value?.revisions)
+    || history.length !== value.history.length
+    || revisions.length !== value.revisions.length
+    || history.length !== version
+    || revisions.length !== version
+    || currentRevisionId !== revisions[revisions.length - 1]?.id
+    || createdAt !== history[0]?.at
+    || updatedAt !== history[history.length - 1]?.at
+    || revisions[0]?.createdAt !== createdAt
+    || revisions[revisions.length - 1]?.createdAt !== updatedAt
+    || createdAtTime < firstDependencyAt
+    || !creationDependenciesWereEligible
+    || hasRepeatedSemanticRevision
+    || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())
+  ) return null;
+  return { schemaVersion: 1, id, projectId, source: "ثبت دستی سازنده", networkStatus: "خارج از شبکه چیدا", supplierAuthenticated: false, receivedThroughChida: false, externalEffect: "none", target, requestSnapshot, supplierSnapshot, reference, currentRevisionId, visibility: "خصوصی پروژه", localStatus: "ثبت محلی", version, createdAt, updatedAt, history, revisions };
+}
+
+function readStoredBuilderRecordedProposals(
+  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+  approvals: LocalRecordsReadResult<ProjectApprovalRecord>,
+  contacts: LocalRecordsReadResult<SupplierContactRecord>,
+  files: LocalRecordsReadResult<ProjectFileRecord>,
+): LocalRecordsReadResult<BuilderRecordedProposalRecord> {
+  if (purchaseRequests.readError || approvals.readError || contacts.readError || files.readError) return { records: [], readError: true };
+  try {
+    const raw = window.localStorage.getItem(projectBuilderRecordedProposalsStorageKey);
+    if (raw === null) return { records: [], readError: false };
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
+    const ids = new Set<string>();
+    const projectCounts = new Map<string, number>();
+    let readError = false;
+    const records = parsed.flatMap((value): BuilderRecordedProposalRecord[] => {
+      const record = parseBuilderRecordedProposal(value, purchaseRequests, approvals, contacts, files);
+      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
+      if (!record || ids.has(record.id) || nextProjectCount > 100) {
+        readError = true;
+        return [];
+      }
+      ids.add(record.id);
       projectCounts.set(record.projectId, nextProjectCount);
       return [record];
     });
@@ -3310,10 +3911,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const homeRef = useRef<HTMLDivElement>(null);
   const projectWorkspaceScrollPositions = useRef(new Map<string, number>());
   const pendingPurchaseRequestsReturnFocus = useRef<PurchaseRequestsReturnView | null>(null);
+  const pendingProposalsReturnFocus = useRef<ProposalsReturnView | null>(null);
   const [view, setView] = useState<HomeView>("chat");
   const [filesReturnView, setFilesReturnView] = useState<FilesReturnView>("project");
   const [memoryReturnView, setMemoryReturnView] = useState<MemoryReturnView>("project");
   const [purchaseRequestsReturnView, setPurchaseRequestsReturnView] = useState<PurchaseRequestsReturnView>("chat");
+  const [proposalsReturnView, setProposalsReturnView] = useState<ProposalsReturnView>("chat");
   const [startPurchaseRequestEditor, setStartPurchaseRequestEditor] = useState(false);
   const [initialPurchaseRequestId, setInitialPurchaseRequestId] = useState<string | null>(null);
   const [projectTasksLaunch, setProjectTasksLaunch] = useState<ProjectTasksLaunch>({ filter: "active", approvalId: null, returnToPurchaseRequestId: null });
@@ -3331,6 +3934,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [initialProjectSupplierContacts] = useState<LocalRecordsReadResult<SupplierContactRecord>>(readStoredProjectSupplierContacts);
   const [initialProjectDispatchDrafts] = useState<LocalRecordsReadResult<DispatchDraftRecord>>(() => readStoredProjectDispatchDrafts(initialProjectPurchaseRequests, initialProjectApprovals, initialProjectSupplierContacts));
   const [initialProjectDispatchPlanApprovals] = useState<LocalRecordsReadResult<DispatchPlanApprovalRecord>>(() => readStoredProjectDispatchPlanApprovals(initialProjectDispatchDrafts, initialProjectPurchaseRequests, initialProjectApprovals, initialProjectSupplierContacts));
+  const [initialBuilderRecordedProposals] = useState<LocalRecordsReadResult<BuilderRecordedProposalRecord>>(() => readStoredBuilderRecordedProposals(initialProjectPurchaseRequests, initialProjectApprovals, initialProjectSupplierContacts, initialProjectFiles));
   const [projectFiles, setProjectFiles] = useState<ProjectFileRecord[]>(initialProjectFiles.records);
   const [projectMemories, setProjectMemories] = useState<ProjectMemoryRecord[]>(initialProjectMemories.records);
   const [projectTasks, setProjectTasks] = useState<ProjectTaskRecord[]>(initialProjectTasks.records);
@@ -3339,6 +3943,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [projectSupplierContacts, setProjectSupplierContacts] = useState<SupplierContactRecord[]>(initialProjectSupplierContacts.records);
   const [projectDispatchDrafts, setProjectDispatchDrafts] = useState<DispatchDraftRecord[]>(initialProjectDispatchDrafts.records);
   const [projectDispatchPlanApprovals, setProjectDispatchPlanApprovals] = useState<DispatchPlanApprovalRecord[]>(initialProjectDispatchPlanApprovals.records);
+  const [builderRecordedProposals, setBuilderRecordedProposals] = useState<BuilderRecordedProposalRecord[]>(initialBuilderRecordedProposals.records);
   const [projectFilesReadError] = useState(initialProjectFiles.readError);
   const [projectMemoriesReadError] = useState(initialProjectMemories.readError);
   const [projectTasksReadError] = useState(initialProjectTasks.readError);
@@ -3347,6 +3952,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [projectSupplierContactsReadError] = useState(initialProjectSupplierContacts.readError);
   const [projectDispatchDraftsReadError] = useState(initialProjectDispatchDrafts.readError);
   const [projectDispatchPlanApprovalsReadError] = useState(initialProjectDispatchPlanApprovals.readError);
+  const [builderRecordedProposalsReadError] = useState(initialBuilderRecordedProposals.readError);
   const [installedTool, setInstalledTool] = useState(() => readLocalStorageValue(installedToolStorageKey) ?? "");
   const [briefSchedule, setBriefSchedule] = useState<BriefSchedule | null>(() => {
     try {
@@ -3425,6 +4031,14 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   }, [view]);
 
   useLayoutEffect(() => {
+    const returnView = pendingProposalsReturnFocus.current;
+    if (!returnView || view !== returnView) return;
+    pendingProposalsReturnFocus.current = null;
+    const targetTestId = returnView === "chat" ? "quick-action-compare-offers" : "project-proposals-entry";
+    document.querySelector<HTMLElement>(`[data-testid="${targetTestId}"]`)?.focus();
+  }, [view]);
+
+  useLayoutEffect(() => {
     const returnView = pendingPurchaseRequestsReturnFocus.current;
     if (!returnView || view !== returnView) return;
     pendingPurchaseRequestsReturnFocus.current = null;
@@ -3468,6 +4082,10 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const activeProjectDispatchPlanApprovals = useMemo(
     () => projectDispatchPlanApprovals.filter((approval) => approval.projectId === activeProject.id),
     [activeProject.id, projectDispatchPlanApprovals],
+  );
+  const activeBuilderRecordedProposals = useMemo(
+    () => builderRecordedProposals.filter((proposal) => proposal.projectId === activeProject.id),
+    [activeProject.id, builderRecordedProposals],
   );
   const activeProjectTaskCount = activeProjectTasks.filter((task) => task.status === "in-progress").length;
   const briefSummary = briefSchedule
@@ -3562,6 +4180,17 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     setInitialPurchaseRequestId(null);
     setStartPurchaseRequestEditor(startWithEditor && !projectPurchaseRequestsReadError);
     setView("purchase-requests");
+  };
+
+  const openProjectProposals = (returnView: ProposalsReturnView) => {
+    keyboard.hide();
+    onOpenSheet(null);
+    if (returnView === "project") {
+      const projectScroll = document.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
+      if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
+    }
+    setProposalsReturnView(returnView);
+    setView("proposals");
   };
 
   const returnToProjectPurchaseRequest = (requestId: string) => {
@@ -4272,6 +4901,140 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return persistProjectDispatchPlanApprovals(nextApprovals);
   };
 
+  const persistBuilderRecordedProposals = (nextProposals: BuilderRecordedProposalRecord[]) => {
+    if (builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError) return false;
+    try {
+      if (nextProposals.length === 0) window.localStorage.removeItem(projectBuilderRecordedProposalsStorageKey);
+      else window.localStorage.setItem(projectBuilderRecordedProposalsStorageKey, JSON.stringify(nextProposals));
+    } catch {
+      return false;
+    }
+    setBuilderRecordedProposals(nextProposals);
+    return true;
+  };
+
+  const createBuilderRecordedProposal = (draft: BuilderRecordedProposalDraft) => {
+    if (builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError) return null;
+    if (builderRecordedProposals.length >= 1000 || builderRecordedProposals.filter((proposal) => proposal.projectId === activeProject.id).length >= 100) return null;
+    const request = projectPurchaseRequests.find((item) => item.id === draft.requestId && item.projectId === activeProject.id);
+    const approval = request ? projectApprovals.find((item) => item.projectId === activeProject.id && item.target.id === request.id && item.target.version === request.version && item.status === "approved" && isApprovalEligibleForDispatch(item, request, activeProject.id)) : null;
+    const reviewRevision = request && approval ? request.reviewRevisions.find((item) => item.id === approval.target.revisionId && item.requestVersion === approval.target.version) : null;
+    const contact = request ? projectSupplierContacts.find((item) => item.id === draft.supplierContactId && item.projectId === activeProject.id && supplierContactCanRespond(item, request.requestKind)) : null;
+    if (!request || !approval || !reviewRevision || !contact) return null;
+    const requestSnapshot = builderRecordedProposalRequestSnapshot(reviewRevision.snapshot);
+    const target = {
+      requestId: request.id,
+      requestVersion: request.version,
+      reviewRevisionId: reviewRevision.id,
+      reviewRevisionFingerprint: reviewRevision.fingerprint,
+      contentApprovalId: approval.id,
+      requestKind: request.requestKind,
+    } satisfies BuilderRecordedProposalRecord["target"];
+    const supplierSnapshot = {
+      supplierContactId: contact.id,
+      supplierContactVersion: contact.version,
+      displayName: contact.displayName,
+      category: contact.category,
+      tehranCoverage: contact.tehranCoverage,
+      responseCapability: contact.responseCapability,
+      networkStatus: "خارج از شبکه چیدا",
+    } satisfies BuilderRecordedProposalSupplierSnapshot;
+    let reference: BuilderRecordedProposalReference = { kind: "unattached", projectFileId: null, fileSnapshot: null, contentPersisted: false, extractionPerformed: false };
+    if (draft.projectFileId) {
+      const file = projectFiles.find((item) => item.id === draft.projectFileId && item.projectId === activeProject.id && item.storageMode === "metadata-only");
+      const displayName = file?.displayName.trim() ?? "";
+      if (!file || !hasVisibleProjectTaskText(displayName) || displayName.length > 140) return null;
+      reference = {
+        kind: "project-file-metadata",
+        projectFileId: file.id,
+        fileSnapshot: { id: file.id, displayName, originalName: file.originalName, mimeType: file.mimeType, size: file.size, category: file.category, createdAt: file.createdAt, storageMode: "metadata-only" },
+        contentPersisted: false,
+        extractionPerformed: false,
+      };
+    }
+    const expectedLineIds = blankBuilderRecordedProposalLines(requestSnapshot).map((line) => line.id);
+    const normalized = normalizeBuilderRecordedProposalRevisionDraft(draft, requestSnapshot, expectedLineIds);
+    if (!normalized) return null;
+    const timestamp = new Date(Math.max(
+      Date.now(),
+      new Date(reviewRevision.createdAt).getTime(),
+      new Date(approval.updatedAt).getTime(),
+      new Date(contact.history[contact.version - 1].at).getTime(),
+      reference.fileSnapshot ? new Date(reference.fileSnapshot.createdAt).getTime() : 0,
+    )).toISOString();
+    const proposalId = `builder-recorded-proposal-${window.crypto.randomUUID()}`;
+    const revisionBase = { id: `builder-recorded-proposal-revision-${window.crypto.randomUUID()}`, version: 1, createdAt: timestamp, ...normalized } satisfies Omit<BuilderRecordedProposalRevision, "fingerprint">;
+    if (!builderRecordedProposalHasMeaningfulInput(reference, revisionBase)) return null;
+    const revision = { ...revisionBase, fingerprint: builderRecordedProposalRevisionFingerprint(target, requestSnapshot, supplierSnapshot, reference, revisionBase) } satisfies BuilderRecordedProposalRevision;
+    const record = {
+      schemaVersion: 1,
+      id: proposalId,
+      projectId: activeProject.id,
+      source: "ثبت دستی سازنده",
+      networkStatus: "خارج از شبکه چیدا",
+      supplierAuthenticated: false,
+      receivedThroughChida: false,
+      externalEffect: "none",
+      target,
+      requestSnapshot,
+      supplierSnapshot,
+      reference,
+      currentRevisionId: revision.id,
+      visibility: "خصوصی پروژه",
+      localStatus: "ثبت محلی",
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      history: [{ id: `builder-recorded-proposal-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+      revisions: [revision],
+    } satisfies BuilderRecordedProposalRecord;
+    if (!parseBuilderRecordedProposal(
+      record,
+      { records: projectPurchaseRequests, readError: false },
+      { records: projectApprovals, readError: false },
+      { records: projectSupplierContacts, readError: false },
+      { records: projectFiles, readError: false },
+    )) return null;
+    return persistBuilderRecordedProposals([...builderRecordedProposals, record]) ? proposalId : null;
+  };
+
+  const updateBuilderRecordedProposal = (proposalId: string, draft: BuilderRecordedProposalDraft) => {
+    if (builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError) return false;
+    const current = builderRecordedProposals.find((item) => item.id === proposalId && item.projectId === activeProject.id);
+    const currentRevision = current?.revisions.find((item) => item.id === current.currentRevisionId);
+    if (
+      !current
+      || !currentRevision
+      || draft.requestId !== current.target.requestId
+      || draft.supplierContactId !== current.supplierSnapshot.supplierContactId
+      || draft.projectFileId !== (current.reference.projectFileId ?? "")
+    ) return false;
+    const normalized = normalizeBuilderRecordedProposalRevisionDraft(draft, current.requestSnapshot, currentRevision.lines.map((line) => line.id));
+    if (!normalized || !builderRecordedProposalHasMeaningfulInput(current.reference, normalized)) return false;
+    const currentSemanticRevision = builderRecordedProposalRevisionSemanticValue(currentRevision);
+    if (JSON.stringify(stablePurchaseRequestValue(currentSemanticRevision)) === JSON.stringify(stablePurchaseRequestValue(normalized))) return "unchanged" as const;
+    const timestamp = new Date(Math.max(Date.now(), new Date(current.updatedAt).getTime())).toISOString();
+    const version = current.version + 1;
+    const revisionBase = { id: `builder-recorded-proposal-revision-${window.crypto.randomUUID()}`, version, createdAt: timestamp, ...normalized } satisfies Omit<BuilderRecordedProposalRevision, "fingerprint">;
+    const revision = { ...revisionBase, fingerprint: builderRecordedProposalRevisionFingerprint(current.target, current.requestSnapshot, current.supplierSnapshot, current.reference, revisionBase) } satisfies BuilderRecordedProposalRevision;
+    const updated = {
+      ...current,
+      currentRevisionId: revision.id,
+      version,
+      updatedAt: timestamp,
+      history: [...current.history, { id: `builder-recorded-proposal-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }],
+      revisions: [...current.revisions, revision],
+    } satisfies BuilderRecordedProposalRecord;
+    if (!parseBuilderRecordedProposal(
+      updated,
+      { records: projectPurchaseRequests, readError: false },
+      { records: projectApprovals, readError: false },
+      { records: projectSupplierContacts, readError: false },
+      { records: projectFiles, readError: false },
+    )) return false;
+    return persistBuilderRecordedProposals(builderRecordedProposals.map((item) => item.id === current.id ? updated : item)) ? "updated" as const : false;
+  };
+
   const leaveProjectWorkspace = () => {
     projectWorkspaceScrollPositions.current.delete(activeProject.id);
     setView("chat");
@@ -4285,9 +5048,11 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         imageCount={activeProjectImages.length}
         memoryCount={activeProjectMemories.length}
         purchaseRequestCount={activeProjectPurchaseRequests.length}
+        proposalCount={activeBuilderRecordedProposals.length}
         filesReadError={projectFilesReadError}
         memoriesReadError={projectMemoriesReadError}
         purchaseRequestsReadError={projectPurchaseRequestsReadError}
+        proposalsReadError={builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError}
         initialScrollTop={projectWorkspaceScrollPositions.current.get(activeProject.id) ?? 0}
         onBack={leaveProjectWorkspace}
         onContinue={leaveProjectWorkspace}
@@ -4303,6 +5068,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
           openProjectMemory("project");
         }}
         onOpenPurchaseRequests={() => openProjectPurchaseRequests("project")}
+        onOpenProposals={() => openProjectProposals("project")}
         onUpdate={(draft) => onProjectUpdate(activeProject.id, draft)}
       />
     );
@@ -4420,6 +5186,24 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     );
   }
 
+  if (view === "proposals") {
+    return (
+      <ProjectProposalsView
+        project={activeProject}
+        proposals={activeBuilderRecordedProposals}
+        requests={activeProjectPurchaseRequests}
+        approvals={activeProjectApprovals}
+        contacts={activeProjectSupplierContacts}
+        files={activeProjectFiles.filter((file) => file.storageMode === "metadata-only" && hasVisibleProjectTaskText(file.displayName.trim()) && file.displayName.trim().length <= 140)}
+        storageLocked={builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError}
+        backLabel={proposalsReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
+        onBack={() => { keyboard.hide(); pendingProposalsReturnFocus.current = proposalsReturnView; setView(proposalsReturnView); }}
+        onCreate={createBuilderRecordedProposal}
+        onUpdate={updateBuilderRecordedProposal}
+      />
+    );
+  }
+
   if (view === "source-demo") {
     return (
       <ProjectSourceAnswerDemoView
@@ -4456,7 +5240,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <section className="composer-dock" style={{ bottom: bottomInset + 8 }} data-testid="composer-dock">
         <Carousel ariaLabel="اقدام‌های سریع" className="quick-actions" contentClassName="quick-actions-track">
           {quickActions.map(({ id, label, icon: Icon }) => (
-            <button className="quick-chip" type="button" key={id} onClick={() => { if (id === "purchase-request") openProjectPurchaseRequests("chat", true); else setDraft(label); }} data-testid={`quick-action-${id}`}>
+            <button className="quick-chip" type="button" key={id} onClick={() => { if (id === "purchase-request") openProjectPurchaseRequests("chat", true); else if (id === "compare-offers") openProjectProposals("chat"); else setDraft(label); }} data-testid={`quick-action-${id}`}>
               <Icon size={16} strokeWidth={1.7} /><span>{label}</span>
             </button>
           ))}
@@ -4533,7 +5317,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   );
 }
 
-function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, purchaseRequestCount, filesReadError, memoriesReadError, purchaseRequestsReadError, initialScrollTop, onBack, onContinue, onOpenFiles, onOpenGallery, onOpenMemory, onOpenPurchaseRequests, onUpdate }: { project: BuilderProject; fileCount: number; imageCount: number; memoryCount: number; purchaseRequestCount: number; filesReadError: boolean; memoriesReadError: boolean; purchaseRequestsReadError: boolean; initialScrollTop: number; onBack: () => void; onContinue: () => void; onOpenFiles: () => void; onOpenGallery: () => void; onOpenMemory: () => void; onOpenPurchaseRequests: () => void; onUpdate: (draft: ProjectProfileDraft) => void }) {
+function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, purchaseRequestCount, proposalCount, filesReadError, memoriesReadError, purchaseRequestsReadError, proposalsReadError, initialScrollTop, onBack, onContinue, onOpenFiles, onOpenGallery, onOpenMemory, onOpenPurchaseRequests, onOpenProposals, onUpdate }: { project: BuilderProject; fileCount: number; imageCount: number; memoryCount: number; purchaseRequestCount: number; proposalCount: number; filesReadError: boolean; memoriesReadError: boolean; purchaseRequestsReadError: boolean; proposalsReadError: boolean; initialScrollTop: number; onBack: () => void; onContinue: () => void; onOpenFiles: () => void; onOpenGallery: () => void; onOpenMemory: () => void; onOpenPurchaseRequests: () => void; onOpenProposals: () => void; onUpdate: (draft: ProjectProfileDraft) => void }) {
   const keyboard = useKeyboard();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -4644,6 +5428,15 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, purchas
             <ArrowRight size={18} aria-hidden="true" />
           </button>
 
+          <button className="project-files-entry project-proposals-entry" type="button" onClick={onOpenProposals} data-testid="project-proposals-entry" aria-label={`باز کردن صندوق پیشنهادهای پروژهٔ ${project.name}`}>
+            <span className="project-files-entry-icon"><PackageCheck size={22} strokeWidth={1.65} /></span>
+            <span className="project-files-entry-copy">
+              <strong>صندوق پیشنهادها</strong>
+              <small>{proposalsReadError ? "بازیابی محلی کامل نشد" : proposalCount ? `${proposalCount.toLocaleString("fa-IR")} پیشنهاد ثبت‌شده` : "هنوز پیشنهادی ثبت نشده"}</small>
+            </span>
+            <ArrowRight size={18} aria-hidden="true" />
+          </button>
+
           <p className="project-workspace-note"><ShieldCheck size={16} /> اطلاعات این فضا فعلاً فقط داخل همین مرورگر نگه‌داری می‌شود.</p>
           <button className="primary-button project-continue-button" type="button" onClick={onContinue} data-testid="project-space-continue"><MessageSquare size={18} /> ادامهٔ گفتگو در این پروژه</button>
         </main>
@@ -4657,6 +5450,284 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, purchas
         onClose={() => setEditOpen(false)}
         onSave={saveDetails}
       />
+    </div>
+  );
+}
+
+function ProjectProposalsView({ project, proposals, requests, approvals, contacts, files, storageLocked, backLabel, onBack, onCreate, onUpdate }: { project: BuilderProject; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; files: ProjectFileRecord[]; storageLocked: boolean; backLabel: string; onBack: () => void; onCreate: (draft: BuilderRecordedProposalDraft) => string | null; onUpdate: (proposalId: string, draft: BuilderRecordedProposalDraft) => false | "unchanged" | "updated" }) {
+  const keyboard = useKeyboard();
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+  const editorHeadingRef = useRef<HTMLSpanElement>(null);
+  const detailHeadingRef = useRef<HTMLElement>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [previewRevisionId, setPreviewRevisionId] = useState<string | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<BuilderRecordedProposalDraft>({ requestId: "", supplierContactId: "", projectFileId: "", declaredAt: "", transcript: "", notes: "", lines: [] });
+  const [formError, setFormError] = useState("");
+  const [liveMessage, setLiveMessage] = useState("");
+
+  const orderedProposals = useMemo(() => [...proposals].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [proposals]);
+  const selectedProposal = proposals.find((proposal) => proposal.id === selectedId) ?? null;
+  const currentRevision = selectedProposal?.revisions.find((revision) => revision.id === selectedProposal.currentRevisionId) ?? null;
+  const previewRevision = selectedProposal?.revisions.find((revision) => revision.id === previewRevisionId) ?? currentRevision;
+  const eligibleRequests = useMemo(() => requests.flatMap((request) => {
+    const approval = approvals.find((item) => item.projectId === project.id && item.target.id === request.id && item.target.version === request.version && item.status === "approved" && isApprovalEligibleForDispatch(item, request, project.id));
+    const reviewRevision = approval ? request.reviewRevisions.find((item) => item.id === approval.target.revisionId && item.requestVersion === approval.target.version) : null;
+    return approval && reviewRevision ? [{ request, approval, reviewRevision, snapshot: builderRecordedProposalRequestSnapshot(reviewRevision.snapshot) }] : [];
+  }), [approvals, project.id, requests]);
+  const draftRequestOption = eligibleRequests.find((item) => item.request.id === draft.requestId) ?? null;
+  const compatibleContacts = draftRequestOption ? contacts.filter((contact) => supplierContactCanRespond(contact, draftRequestOption.request.requestKind)) : [];
+
+  useEffect(() => {
+    if (selectedId && !proposals.some((proposal) => proposal.id === selectedId)) {
+      setSelectedId(null);
+      setPreviewRevisionId(null);
+    }
+  }, [proposals, selectedId]);
+
+  const createDraftForRequest = (requestId: string): BuilderRecordedProposalDraft => {
+    const option = eligibleRequests.find((item) => item.request.id === requestId);
+    return { requestId, supplierContactId: "", projectFileId: "", declaredAt: "", transcript: "", notes: "", lines: option ? blankBuilderRecordedProposalLines(option.snapshot) : [] };
+  };
+
+  const openCreate = () => {
+    if (storageLocked) return;
+    const initialRequestId = eligibleRequests.length === 1 ? eligibleRequests[0].request.id : "";
+    setEditingId(null);
+    setDraft(createDraftForRequest(initialRequestId));
+    setFormError("");
+    setEditorOpen(true);
+    window.requestAnimationFrame(() => editorHeadingRef.current?.focus());
+  };
+
+  const openEdit = () => {
+    if (!selectedProposal || storageLocked) return;
+    setEditingId(selectedProposal.id);
+    setDraft(builderRecordedProposalDraftFromRecord(selectedProposal));
+    setFormError("");
+    setEditorOpen(true);
+    window.requestAnimationFrame(() => editorHeadingRef.current?.focus());
+  };
+
+  const closeEditor = () => {
+    keyboard.hide();
+    setEditorOpen(false);
+    setFormError("");
+    window.requestAnimationFrame(() => (editingId ? editButtonRef.current : addButtonRef.current)?.focus());
+  };
+
+  const changeRequest = (requestId: string) => {
+    setDraft(createDraftForRequest(requestId));
+    setFormError("");
+  };
+
+  const changeLine = (lineId: string, field: keyof BuilderRecordedProposalLineDraft, value: string) => {
+    setDraft((current) => ({ ...current, lines: current.lines.map((line) => line.id === lineId ? { ...line, [field]: value } : line) }));
+    setFormError("");
+  };
+
+  const saveProposal = (event: React.FormEvent) => {
+    event.preventDefault();
+    keyboard.hide();
+    if (!draft.requestId) {
+      setFormError("درخواست تأییدشده را انتخاب کن.");
+      window.requestAnimationFrame(() => document.getElementById("proposal-request-select")?.focus());
+      return;
+    }
+    if (!draft.supplierContactId) {
+      setFormError("تماس سازگار و فعال را انتخاب کن.");
+      window.requestAnimationFrame(() => document.getElementById("proposal-supplier-select")?.focus());
+      return;
+    }
+    const inconsistentLineIndex = draft.lines.findIndex((line) => line.status === "not-mentioned" && builderRecordedProposalLineDraftHasDeclaredCommercialValues(line));
+    if (inconsistentLineIndex >= 0) {
+      setFormError("برای قلمی که دادهٔ تجاری وارد شده، وضعیت اعلامی را از «ذکر نشده» تغییر بده.");
+      window.requestAnimationFrame(() => document.getElementById(`proposal-line-status-${inconsistentLineIndex}`)?.focus());
+      return;
+    }
+    if (!draft.projectFileId && !draft.transcript.trim() && !draft.declaredAt.trim() && !draft.notes.trim() && !draft.lines.some((line) => line.status !== "not-mentioned" || [line.quantity, line.unit, line.unitPrice, line.totalPrice, line.tax, line.transport, line.minimumOrder, line.leadTime, line.validity, line.paymentTerms, line.notes].some((value) => value.trim()))) {
+      setFormError("برای ثبت، دست‌کم مرجع فایل، رونویسی یا یک دادهٔ اعلامی وارد کن.");
+      return;
+    }
+    if (editingId) {
+      const updateResult = onUpdate(editingId, draft);
+      if (!updateResult) {
+        setFormError("ثبت ویرایش انجام نشد؛ داده‌های محلی یا وابستگی‌های رکورد را دوباره بررسی کن.");
+        return;
+      }
+      setLiveMessage(updateResult === "updated" ? "ویرایش به‌عنوان نسخهٔ محلی تازه ثبت شد." : "تغییر تازه‌ای برای ثبت وجود نداشت.");
+      setEditorOpen(false);
+      window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+      return;
+    }
+    const createdId = onCreate(draft);
+    if (!createdId) {
+      setFormError("ثبت پیشنهاد انجام نشد؛ فیلدها و فضای ذخیره‌سازی محلی را دوباره بررسی کن.");
+      return;
+    }
+    setSelectedId(createdId);
+    setPreviewRevisionId(null);
+    setLiveMessage("پیشنهاد دستی در صندوق خصوصی پروژه ثبت شد.");
+    setEditorOpen(false);
+    window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+  };
+
+  const displayValue = (value: string | null, suffix = "") => value ? `${value}${suffix}` : "نامشخص";
+
+  if (editorOpen) {
+    const editingProposal = editingId ? proposals.find((proposal) => proposal.id === editingId) ?? null : null;
+    const lockedRequestTitle = editingProposal?.requestSnapshot.title ?? "";
+    const lockedSupplierName = editingProposal?.supplierSnapshot.displayName ?? "";
+    const lockedReferenceName = editingProposal?.reference.fileSnapshot?.displayName ?? "بدون فایل مرجع";
+    return (
+      <div className="chida-app project-proposals-view proposal-editor-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="proposal-editor">
+        <header className="project-workspace-header">
+          <button className="icon-button" type="button" onClick={closeEditor} aria-label="بستن فرم پیشنهاد" data-testid="proposal-editor-back"><ArrowRight size={21} /></button>
+          <span ref={editorHeadingRef} className="project-workspace-title" tabIndex={-1} data-testid="proposal-editor-title"><small>صندوق خصوصی</small><strong>{editingId ? "ویرایش رونویسی" : "ثبت دستی پیشنهاد"}</strong></span>
+          <span className="project-workspace-header-spacer" aria-hidden="true" />
+        </header>
+        <MobileScroll className="project-proposals-scroll">
+          <form className="proposal-editor-content" onSubmit={saveProposal} noValidate>
+            <section className="proposal-honesty-banner" data-testid="proposal-editor-honesty"><ShieldCheck size={18} /><span><strong>ثبت دستی سازنده</strong><small>این رکورد پاسخ احراز‌شدهٔ تأمین‌کننده نیست، از شبکهٔ چیدا دریافت نشده و هیچ اثر بیرونی ندارد.</small></span></section>
+
+            <section className="proposal-form-section" aria-labelledby="proposal-target-title">
+              <div className="proposal-section-heading"><span><small>اتصال دقیق</small><strong id="proposal-target-title">درخواست و تماس</strong></span></div>
+              {editingProposal ? (
+                <div className="proposal-locked-grid" data-testid="proposal-locked-target">
+                  <div><small>درخواست</small><strong>{lockedRequestTitle}</strong><span>نسخهٔ {editingProposal.target.requestVersion.toLocaleString("fa-IR")} · ثابت</span></div>
+                  <div><small>تماس ثبت‌شده</small><strong>{lockedSupplierName}</strong><span>{editingProposal.supplierSnapshot.networkStatus} · snapshot نسخهٔ {editingProposal.supplierSnapshot.supplierContactVersion.toLocaleString("fa-IR")}</span></div>
+                </div>
+              ) : (
+                <div className="proposal-form-grid">
+                  <label className="field-control" htmlFor="proposal-request-select"><span>درخواست تأییدشده</span><select id="proposal-request-select" value={draft.requestId} onChange={(event) => changeRequest(event.target.value)} data-testid="proposal-request-select"><option value="">انتخاب درخواست</option>{eligibleRequests.map(({ request }) => <option key={request.id} value={request.id}>{purchaseRequestDisplayTitle(request)} · نسخه {request.version.toLocaleString("fa-IR")}</option>)}</select><small>فقط revision جاری با تأیید محتوای معتبر نمایش داده می‌شود.</small></label>
+                  <label className="field-control" htmlFor="proposal-supplier-select"><span>تماس تأمین‌کننده</span><select id="proposal-supplier-select" value={draft.supplierContactId} onChange={(event) => { setDraft((current) => ({ ...current, supplierContactId: event.target.value })); setFormError(""); }} disabled={!draftRequestOption} data-testid="proposal-supplier-select"><option value="">انتخاب تماس</option>{compatibleContacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.displayName} · {supplierContactResponseCapabilityLabel(contact.responseCapability)}</option>)}</select><small>تماس ثبت‌شده توسط شما و خارج از شبکهٔ چیدا است.</small></label>
+                </div>
+              )}
+            </section>
+
+            <section className="proposal-form-section" aria-labelledby="proposal-reference-title">
+              <div className="proposal-section-heading"><span><small>اصل یا مرجع</small><strong id="proposal-reference-title">مرجع و رونویسی خام</strong></span></div>
+              {editingProposal ? <div className="proposal-reference-lock" data-testid="proposal-reference-locked"><FileText size={18} /><span><strong>{lockedReferenceName}</strong><small>مرجع نسخهٔ اولیه ثابت می‌ماند.</small></span></div> : <label className="field-control" htmlFor="proposal-file-select"><span>فایل پروژه (اختیاری)</span><select id="proposal-file-select" value={draft.projectFileId} onChange={(event) => { setDraft((current) => ({ ...current, projectFileId: event.target.value })); setFormError(""); }} data-testid="proposal-file-select"><option value="">بدون فایل مرجع</option>{files.map((file) => <option key={file.id} value={file.id}>{file.displayName} · {file.category}</option>)}</select><small>فقط شناسنامهٔ محلی فایل پیوند می‌خورد؛ محتوا ذخیره یا استخراج نمی‌شود.</small></label>}
+              <label className="field-control" htmlFor="proposal-declared-at"><span>تاریخ اعلامی پیشنهاد <small>(اختیاری)</small></span><KeyboardInput id="proposal-declared-at" value={draft.declaredAt} onChange={(event) => { setDraft((current) => ({ ...current, declaredAt: event.target.value })); setFormError(""); }} placeholder="مثلاً ۱۴۰۵/۰۶/۰۶ یا نامشخص" data-testid="proposal-declared-at" /></label>
+              <label className="field-control" htmlFor="proposal-transcript"><span>رونویسی خام شما <small>(اختیاری)</small></span><KeyboardTextarea id="proposal-transcript" value={draft.transcript} onChange={(event) => { setDraft((current) => ({ ...current, transcript: event.target.value })); setFormError(""); }} rows={4} placeholder="متن پیام، تماس یا پیش‌فاکتور را بدون تفسیر وارد کن…" data-testid="proposal-transcript" /><small>این متن اعلامی از فیلدهای ساختاریافتهٔ پایین جدا می‌ماند.</small></label>
+            </section>
+
+            <section className="proposal-form-section" aria-labelledby="proposal-structured-title">
+              <div className="proposal-section-heading"><span><small>رونویسی ساختاریافته توسط شما</small><strong id="proposal-structured-title">اقلام و شرایط اعلامی</strong></span><em>خالی = نامشخص</em></div>
+              {draft.lines.length ? draft.lines.map((line, index) => {
+                const requestItem = draftRequestOption?.snapshot.items.find((item) => item.id === line.requestItemId);
+                const editingRequestItem = editingProposal?.requestSnapshot.items.find((item) => item.id === line.requestItemId);
+                const requestedContext = requestItem ?? editingRequestItem;
+                return (
+                  <article className="proposal-line-editor" key={line.id} data-testid="proposal-line-editor">
+                    <div className="proposal-line-heading"><span><small>{line.requestItemId ? `قلم ${(index + 1).toLocaleString("fa-IR")}` : "خدمت"}</small><strong>{line.requestLabel}</strong></span><em>{requestedContext ? `درخواست: ${requestedContext.quantity ?? "نامشخص"} ${requestedContext.unit ?? ""}` : "مشخصات خدمت"}</em></div>
+                    <label className="field-control" htmlFor={`proposal-line-status-${index}`}><span>وضعیت اعلامی</span><select id={`proposal-line-status-${index}`} value={line.status} onChange={(event) => changeLine(line.id, "status", event.target.value as BuilderRecordedProposalLineStatus)} data-testid={`proposal-line-status-${index}`}>{builderRecordedProposalLineStatuses.map((status) => <option key={status.id} value={status.id}>{status.label}</option>)}</select></label>
+                    <div className="proposal-line-main-grid">
+                      <label className="field-control" htmlFor={`proposal-line-quantity-${index}`}><span>مقدار پیشنهادی</span><KeyboardInput id={`proposal-line-quantity-${index}`} inputMode="decimal" value={line.quantity} onChange={(event) => changeLine(line.id, "quantity", event.target.value)} placeholder="نامشخص" data-testid={`proposal-line-quantity-${index}`} /></label>
+                      <label className="field-control" htmlFor={`proposal-line-unit-${index}`}><span>واحد</span><KeyboardInput id={`proposal-line-unit-${index}`} value={line.unit} onChange={(event) => changeLine(line.id, "unit", event.target.value)} placeholder="نامشخص" data-testid={`proposal-line-unit-${index}`} /></label>
+                      <label className="field-control" htmlFor={`proposal-line-unit-price-${index}`}><span>قیمت واحد (تومان)</span><KeyboardInput id={`proposal-line-unit-price-${index}`} inputMode="decimal" value={line.unitPrice} onChange={(event) => changeLine(line.id, "unitPrice", event.target.value)} placeholder="نامشخص" data-testid={`proposal-line-unit-price-${index}`} /></label>
+                      <label className="field-control" htmlFor={`proposal-line-total-price-${index}`}><span>قیمت کل (تومان)</span><KeyboardInput id={`proposal-line-total-price-${index}`} inputMode="decimal" value={line.totalPrice} onChange={(event) => changeLine(line.id, "totalPrice", event.target.value)} placeholder="نامشخص" data-testid={`proposal-line-total-price-${index}`} /></label>
+                    </div>
+                    <details className="proposal-conditions">
+                      <summary><SlidersHorizontal size={16} /> شرایط تکمیلی اعلامی</summary>
+                      <div className="proposal-conditions-grid">
+                        {([
+                          ["tax", "مالیات", "مثلاً با ارزش افزوده"],
+                          ["transport", "حمل", "مثلاً در محل پروژه"],
+                          ["minimumOrder", "حداقل سفارش", "نامشخص"],
+                          ["leadTime", "موعد آماده‌سازی", "نامشخص"],
+                          ["validity", "اعتبار پیشنهاد", "نامشخص"],
+                          ["paymentTerms", "شرایط پرداخت", "نامشخص"],
+                        ] as const).map(([field, label, placeholder]) => <label className="field-control" key={field} htmlFor={`proposal-line-${field}-${index}`}><span>{label}</span><KeyboardInput id={`proposal-line-${field}-${index}`} value={line[field]} onChange={(event) => changeLine(line.id, field, event.target.value)} placeholder={placeholder} data-testid={`proposal-line-${field}-${index}`} /></label>)}
+                        <label className="field-control proposal-line-notes" htmlFor={`proposal-line-notes-${index}`}><span>یادداشت همین مورد</span><KeyboardTextarea id={`proposal-line-notes-${index}`} value={line.notes} onChange={(event) => changeLine(line.id, "notes", event.target.value)} rows={3} placeholder="توضیح بدون تفسیر…" data-testid={`proposal-line-notes-${index}`} /></label>
+                      </div>
+                    </details>
+                  </article>
+                );
+              }) : <p className="proposal-form-empty">ابتدا درخواست را انتخاب کن تا اقلام دقیق همان revision نمایش داده شوند.</p>}
+              <label className="field-control" htmlFor="proposal-notes"><span>یادداشت داخلی شما <small>(اختیاری)</small></span><KeyboardTextarea id="proposal-notes" value={draft.notes} onChange={(event) => { setDraft((current) => ({ ...current, notes: event.target.value })); setFormError(""); }} rows={3} placeholder="نکته‌ای برای بازبینی بعدی…" data-testid="proposal-notes" /></label>
+            </section>
+
+            {formError ? <p className="proposal-form-error" role="alert" data-testid="proposal-form-error">{formError}</p> : null}
+            <div className="proposal-editor-actions"><button className="secondary-button" type="button" onClick={closeEditor}>انصراف</button><button className="primary-button" type="submit" data-testid="proposal-save">{editingId ? "ثبت نسخهٔ جدید" : "ثبت در صندوق خصوصی"}</button></div>
+          </form>
+        </MobileScroll>
+      </div>
+    );
+  }
+
+  if (selectedProposal && previewRevision) {
+    const status = builderRecordedProposalEffectiveStatus(selectedProposal, requests, approvals, contacts);
+    return (
+      <div className="chida-app project-proposals-view proposal-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="proposal-detail">
+        <header className="project-workspace-header">
+          <button className="icon-button" type="button" onClick={() => { setSelectedId(null); setPreviewRevisionId(null); window.requestAnimationFrame(() => Array.from(document.querySelectorAll<HTMLElement>("[data-proposal-id]")).find((element) => element.dataset.proposalId === selectedProposal.id)?.focus()); }} aria-label="بازگشت به صندوق پیشنهادها" data-testid="proposal-detail-back"><ArrowRight size={21} /></button>
+          <span className="project-workspace-title"><small>پیشنهاد ثبت‌شده</small><strong>{selectedProposal.supplierSnapshot.displayName}</strong></span>
+          <span className="project-workspace-header-spacer" aria-hidden="true" />
+        </header>
+        <MobileScroll className="project-proposals-scroll">
+          <main className="proposal-detail-content">
+            <section className="proposal-detail-hero" tabIndex={-1} ref={detailHeadingRef} data-testid="proposal-detail-hero">
+              <span className="proposal-detail-icon"><PackageCheck size={24} /></span>
+              <span className={`proposal-status-badge ${status}`} data-testid="proposal-effective-status">{status === "current" ? "متصل به نسخهٔ جاری" : "تاریخی · نیازمند بازبینی"}</span>
+              <h1>{selectedProposal.requestSnapshot.title}</h1>
+              <p>{selectedProposal.source} · {selectedProposal.networkStatus}</p>
+            </section>
+            <section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>مرز صداقت</strong><small>تأمین‌کننده در چیدا احراز نشده؛ این پیشنهاد را شما ثبت کرده‌اید و هیچ ارسال، سفارش یا اثر بیرونی رخ نداده است.</small></span></section>
+            <section className="proposal-detail-section" aria-labelledby="proposal-detail-link-title">
+              <div className="proposal-section-heading"><span><small>اتصال و منشأ</small><strong id="proposal-detail-link-title">رکورد دقیق</strong></span></div>
+              <dl className="proposal-detail-meta">
+                <div><dt>درخواست</dt><dd>نسخهٔ {selectedProposal.target.requestVersion.toLocaleString("fa-IR")} · {selectedProposal.target.requestKind === "product" ? "محصول" : "خدمت"}</dd></div>
+                <div><dt>revision</dt><dd>{selectedProposal.target.reviewRevisionId}</dd></div>
+                <div><dt>تماس ثبت‌شده</dt><dd>{selectedProposal.supplierSnapshot.displayName} · snapshot نسخهٔ {selectedProposal.supplierSnapshot.supplierContactVersion.toLocaleString("fa-IR")}</dd></div>
+                <div><dt>تاریخ اعلامی</dt><dd>{displayValue(previewRevision.declaredAt)}</dd></div>
+                <div><dt>نسخهٔ رونویسی</dt><dd>{previewRevision.version.toLocaleString("fa-IR")} از {selectedProposal.version.toLocaleString("fa-IR")}</dd></div>
+                <div><dt>ثبت محلی</dt><dd>{selectedProposal.visibility} · {formatProjectFileDate(previewRevision.createdAt)}</dd></div>
+              </dl>
+              {selectedProposal.revisions.length > 1 ? <label className="proposal-revision-picker" htmlFor="proposal-revision-select"><span>نمایش نسخه</span><select id="proposal-revision-select" value={previewRevision.id} onChange={(event) => setPreviewRevisionId(event.target.value)} data-testid="proposal-revision-select">{[...selectedProposal.revisions].reverse().map((revision) => <option key={revision.id} value={revision.id}>نسخهٔ {revision.version.toLocaleString("fa-IR")} · {revision.id === selectedProposal.currentRevisionId ? "جاری" : "تاریخی"}</option>)}</select></label> : null}
+            </section>
+            <section className="proposal-detail-section" aria-labelledby="proposal-detail-reference-title">
+              <div className="proposal-section-heading"><span><small>اصل یا مرجع</small><strong id="proposal-detail-reference-title">مرجع ثبت‌شده</strong></span></div>
+              {selectedProposal.reference.kind === "project-file-metadata" ? <div className="proposal-reference-card" data-testid="proposal-reference"><FileText size={20} /><span><strong>{selectedProposal.reference.fileSnapshot!.displayName}</strong><small>{selectedProposal.reference.fileSnapshot!.category} · {formatProjectFileSize(selectedProposal.reference.fileSnapshot!.size)}</small><em>فقط شناسنامهٔ محلی؛ محتوای فایل نگه‌داری یا استخراج نشده است.</em></span></div> : <div className="proposal-reference-card empty" data-testid="proposal-reference"><FileText size={20} /><span><strong>بدون فایل مرجع</strong><em>رکورد بر پایهٔ ورود دستی شماست.</em></span></div>}
+              <div className="proposal-transcript-card"><small>رونویسی خام شما</small><p dir="auto">{previewRevision.transcript ?? "ثبت نشده"}</p></div>
+            </section>
+            <section className="proposal-detail-section" aria-labelledby="proposal-detail-lines-title">
+              <div className="proposal-section-heading"><span><small>دادهٔ ساختاریافتهٔ دستی</small><strong id="proposal-detail-lines-title">اقلام و شرایط</strong></span><em>بدون مقایسه یا توصیه</em></div>
+              <div className="proposal-lines-list">{previewRevision.lines.map((line, index) => <article className="proposal-line-card" key={line.id} data-testid="proposal-line-card"><div className="proposal-line-heading"><span><small>{line.requestItemId ? `قلم ${(index + 1).toLocaleString("fa-IR")}` : "خدمت"}</small><strong>{line.requestLabel}</strong></span><em>{builderRecordedProposalLineStatusLabel(line.status)}</em></div><dl><div><dt>مقدار و واحد</dt><dd>{displayValue(line.quantity)} · {displayValue(line.unit)}</dd></div><div><dt>قیمت واحد</dt><dd>{displayValue(line.unitPrice, " تومان")}</dd></div><div><dt>قیمت کل</dt><dd>{displayValue(line.totalPrice, " تومان")}</dd></div><div><dt>مالیات</dt><dd>{displayValue(line.tax)}</dd></div><div><dt>حمل</dt><dd>{displayValue(line.transport)}</dd></div><div><dt>حداقل سفارش</dt><dd>{displayValue(line.minimumOrder)}</dd></div><div><dt>موعد آماده‌سازی</dt><dd>{displayValue(line.leadTime)}</dd></div><div><dt>اعتبار</dt><dd>{displayValue(line.validity)}</dd></div><div><dt>شرایط پرداخت</dt><dd>{displayValue(line.paymentTerms)}</dd></div><div><dt>یادداشت</dt><dd>{displayValue(line.notes)}</dd></div></dl></article>)}</div>
+              <div className="proposal-transcript-card internal"><small>یادداشت داخلی شما</small><p dir="auto">{previewRevision.notes ?? "ثبت نشده"}</p></div>
+            </section>
+            <section className="proposal-detail-section" aria-labelledby="proposal-history-title"><div className="proposal-section-heading"><span><small>تاریخچهٔ تغییرناپذیر</small><strong id="proposal-history-title">نسخه‌ها</strong></span></div><ol className="proposal-history">{[...selectedProposal.history].reverse().map((event) => <li key={event.id}><span><Check size={13} /></span><div><strong>{event.type === "created" ? "ثبت دستی ساخته شد" : "رونویسی ویرایش شد"}</strong><small>نسخهٔ {event.version.toLocaleString("fa-IR")} · {formatProjectFileDate(event.at)}</small></div></li>)}</ol></section>
+            <button ref={editButtonRef} className="primary-button proposal-edit-button" type="button" onClick={openEdit} disabled={storageLocked} data-testid="proposal-edit">ویرایش رونویسی و ثبت نسخهٔ جدید</button>
+          </main>
+        </MobileScroll>
+      </div>
+    );
+  }
+
+  return (
+    <div className="chida-app project-proposals-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-proposals-view">
+      <header className="project-workspace-header">
+        <button className="icon-button" type="button" onClick={onBack} aria-label={backLabel} data-testid="proposals-back"><ArrowRight size={21} /></button>
+        <span className="project-workspace-title"><small>فضای پروژه</small><strong>صندوق پیشنهادها</strong></span>
+        <span className="project-workspace-header-spacer" aria-hidden="true" />
+      </header>
+      <MobileScroll className="project-proposals-scroll">
+        <main className="project-proposals-content">
+          <section className="project-proposals-heading"><span className="project-proposals-mark"><PackageCheck size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>پیشنهادهای ثبت‌شده توسط شما</h1><p>اصل یا مرجع، رونویسی خام و فیلدهای اعلامی را بدون ساختن ادعای پاسخ واقعی نگه‌دار.</p></div></section>
+          <section className="proposal-honesty-banner" data-testid="proposal-inbox-honesty"><ShieldCheck size={18} /><span><strong>این صندوق دستی است</strong><small>هیچ پیشنهاد واقعی از شبکهٔ چیدا دریافت نشده و هیچ مقایسه، انتخاب برنده، سفارش یا ارسال بیرونی انجام نمی‌شود.</small></span></section>
+          {storageLocked ? <section className="proposal-storage-error" role="alert" data-testid="proposal-storage-error"><CircleHelp size={19} /><span><strong>بازیابی دادهٔ محلی کامل نشد</strong><small>برای جلوگیری از بازنویسی دادهٔ ناخوانده، ثبت و ویرایش قفل شده است.</small></span></section> : null}
+          <div className="project-proposals-toolbar"><span><strong>{orderedProposals.length.toLocaleString("fa-IR")}</strong><small>رکورد محلی</small></span><button ref={addButtonRef} className="primary-button" type="button" onClick={openCreate} disabled={storageLocked || eligibleRequests.length === 0} data-testid="proposal-add"><Plus size={17} /> ثبت دستی پیشنهاد</button></div>
+          {!storageLocked && eligibleRequests.length === 0 ? <p className="proposal-prerequisite-note" data-testid="proposal-prerequisite-note">برای ثبت پیشنهاد تازه، ابتدا یک درخواست را «آمادهٔ بازبینی» کن و تأیید محتوای همان نسخه را ثبت کن. تأیید برنامهٔ ارسال لازم نیست.</p> : null}
+          {orderedProposals.length ? <div className="project-proposals-list">{orderedProposals.map((proposal) => {
+            const revision = proposal.revisions.find((item) => item.id === proposal.currentRevisionId)!;
+            const status = builderRecordedProposalEffectiveStatus(proposal, requests, approvals, contacts);
+            return <button className="proposal-card" type="button" key={proposal.id} data-proposal-id={proposal.id} onClick={() => { setSelectedId(proposal.id); setPreviewRevisionId(proposal.currentRevisionId); setLiveMessage(""); window.requestAnimationFrame(() => detailHeadingRef.current?.focus()); }} data-testid="proposal-card"><span className="proposal-card-icon"><PackageCheck size={20} /></span><span className="proposal-card-copy"><span><small>{status === "current" ? "نسخهٔ جاری" : "تاریخی · بازبینی"}</small><small>{formatProjectFileDate(proposal.updatedAt)}</small></span><strong>{proposal.supplierSnapshot.displayName}</strong><em>{proposal.requestSnapshot.title}</em><small>نسخهٔ رونویسی {revision.version.toLocaleString("fa-IR")} · {proposal.source}</small></span><ArrowRight size={17} aria-hidden="true" /></button>;
+          })}</div> : <section className="proposal-empty-state" data-testid="proposal-empty-state"><PackageCheck size={26} /><h2>صندوق هنوز خالی است</h2><p>وقتی بیرون از چیدا قیمت یا شرایطی گرفتی، آن را دستی و شفاف به درخواست دقیق وصل کن.</p></section>}
+        </main>
+      </MobileScroll>
+      <span className="sr-only" aria-live="polite">{liveMessage}</span>
     </div>
   );
 }
