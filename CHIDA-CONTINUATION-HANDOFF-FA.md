@@ -2,7 +2,7 @@
 
 **تاریخ تهیه:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
 **مسیر پروژه:** `/Users/mahyarkl/Desktop/ChatGPT/CHIDA`
-**نقطهٔ ادامه:** اصلاحات بازخوردی C-010 برای خانه، کار، Brief، Settings، تصویر نمایشی پروفایل و حذف گیر اسکرول افقی کامل و روی snapshot نهایی آزموده شده‌اند. انتشار same-source همین release در گفت‌وگوی جاری انجام و رسید دقیق آن در بخش Git ثبت می‌شود. گفت‌وگوی بعدی فقط نسخه را مشاهده و تسک بعدی سازنده را با ماهیار انتخاب می‌کند؛ T7-B و اتصال مدل محلی هنوز شروع نشده‌اند.
+**نقطهٔ ادامه:** اصلاحات بازخوردی C-010 برای خانه، کار، Brief، Settings، تصویر نمایشی پروفایل و حذف گیر اسکرول افقی کامل، آزموده و با commit کد `d750f88fcfbf72f30ff8b58e4331b3d081bf9f4f` روی GitHub `main`، Cloudflare Pages و ChatGPT Sites نسخهٔ ۸ same-source منتشر شدند. commit مستندیِ جاری فقط receipt همین انتشار را ثبت می‌کند و prototype tree را تغییر نمی‌دهد. گفت‌وگوی بعدی فقط نسخه را مشاهده و تسک بعدی سازنده را با ماهیار انتخاب می‌کند؛ T7-B و اتصال مدل محلی هنوز شروع نشده‌اند.
 
 ## مأموریت گفت‌وگوی بعدی
 
@@ -37,10 +37,12 @@
 
 ## وضعیت Git و انتشار در آخرین ممیزی
 
-release بازخوردی C-010 در ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹ برای انتشار آماده شد:
+release بازخوردی C-010 در ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹ منتشر و راستی‌آزمایی شد:
 
-- snapshot نهایی شامل قرارداد Projects-only، ویرایش/موعد کار، Brief transactional، Settings صادقانه، تصویر نمایشی پروفایل و gridهای بدون overflow است؛ سند مادر تغییر نکرده و runtime محافظت‌شده سالم مانده است.
-- پنج کنترل اجباری و QA موبایل این snapshot پاس شده‌اند. commit، SHA و receiptهای GitHub، Cloudflare Pages و ChatGPT Sites پس از انتشار همین release در این بند جایگزین می‌شوند.
+- commit کد `d750f88fcfbf72f30ff8b58e4331b3d081bf9f4f` شامل قرارداد Projects-only، ویرایش/موعد کار، Brief transactional، Settings صادقانه، تصویر نمایشی پروفایل و gridهای بدون overflow است. `HEAD`/`main`/`origin/main`/`git ls-remote` و مخزن منبع Sites هنگام ذخیرهٔ نسخه همگی همین SHA را گزارش کردند.
+- Cloudflare Pages deployment تولید `a09cde6f-628f-4d94-bc56-0fd8c5915133` با trigger برابر `github:push`، شاخهٔ `main`، `commit_dirty=false` و همین SHA با وضعیت `success` منتشر شد. canonical `https://chida-prototype.pages.dev` و immutable `https://a09cde6f.chida-prototype.pages.dev` پاسخ موفق داشتند و hash فایل‌های HTML، JS و CSS هر دو با build محلی دقیقاً یکسان بود.
+- ChatGPT Sites نسخهٔ ۸ با source commit همین SHA و ۱۸ فایل ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_a8888bc4c5548191a3ad269ed6b8d6d9` و deployment خصوصی `appgdep_6a91fd0cbe4c8191ae0af74919f4411c` با وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. access همچنان owner-only/custom با یک مالک و بدون گروه یا مهمان بیرونی است.
+- سند مادر تغییر نکرد، runtime محافظت‌شده سالم ماند و credential کوتاه‌عمر Sites فقط با header همان فرمان استفاده شد؛ در remote URL، Git config، فایل یا log پروژه ذخیره نشد. commit مستندی بعدی فقط همین receipt و وضعیت C-010 را به‌روز می‌کند و prototype tree آن با `d750f88` یکسان می‌ماند؛ SHA نهایی جاری را در گفت‌وگوی تازه با `git rev-parse HEAD` تطبیق بده.
 - مجوز صریح کاربر فقط برای انتشار همین اصلاحات و ساخت هنداف/گفت‌وگوی جدید مصرف می‌شود؛ T7-B، مدل محلی و تسک بعدی مجوز اجرا نگرفته‌اند.
 
 release تاریخی T7-A در ۱۴۰۵/۰۶/۰۶ — ۲۰۲۶/۰۸/۲۸ بسته شد:
