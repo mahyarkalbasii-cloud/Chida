@@ -368,6 +368,7 @@ async function createCompleteServiceComparisonWithDecision(page: Page) {
 
 const negotiationDraftStorageKey = "chida-prototype-builder-negotiation-drafts:v1";
 const manualNegotiationResponseStorageKey = "chida-prototype-builder-manual-negotiation-responses:v1";
+const manualNegotiationResponseReviewStorageKey = "chida-prototype-builder-manual-negotiation-response-reviews:v1";
 
 async function commercialSourceStoreBytes(page: Page) {
   return page.evaluate(() => ({
@@ -457,6 +458,25 @@ async function createExactManualNegotiationResponse(page: Page, responseText = "
   const responseStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey);
   const responseRecord = JSON.parse(responseStore ?? "[]")[0];
   return { ...question, responseText, responseStore, responseRecord };
+}
+
+async function createExactManualNegotiationResponseReview(page: Page, values: { outcome: "appears-addressed" | "needs-clarification" | "potential-conflict"; reason: string } = {
+  outcome: "needs-clarification",
+  reason: "از نظر من پاسخ زمان شروع را گفته، اما معلوم نکرده منظور روز کاری است یا تقویمی.",
+}) {
+  const response = await createExactManualNegotiationResponse(page);
+  await expect(page.getByTestId("manual-response-review-add")).toHaveAccessibleName(`ثبت بازبینی دستی پاسخ برای مدت و زمان اجرا و ${response.firstSupplier}`);
+  await page.getByTestId("manual-response-review-add").click();
+  await expect(page.getByTestId("manual-response-review-editor")).toBeVisible();
+  await expect(page.getByTestId("manual-response-review-editor-title")).toBeFocused();
+  await page.getByTestId(`manual-response-review-outcome-${values.outcome}`).check();
+  await page.getByTestId("manual-response-review-reason").fill(values.reason);
+  await page.getByTestId("manual-response-review-save").click();
+  await expect(page.getByTestId("manual-response-review-detail")).toBeVisible();
+  await expect(page.getByTestId("manual-response-review-detail-hero")).toBeFocused();
+  const reviewStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey);
+  const reviewRecord = JSON.parse(reviewStore ?? "[]")[0];
+  return { ...response, reviewValues: values, reviewStore, reviewRecord };
 }
 
 async function createTwoCurrentProductProposalsForComparison(page: Page, overrides: { firstTotalPrice?: string } = {}) {
@@ -6534,4 +6554,315 @@ test("T8-A2 makes a response historical after an upstream comparison revision wi
   expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
   expect(created.externalRequests).toEqual([]);
   page.off("request", created.requestListener);
+});
+
+test("T8-A3 pins one explicit builder review to the exact service response revision without automated detection or external effect", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationResponseReview(page);
+  const responseRevision = created.responseRecord.revisions.find((item: { id: string }) => item.id === created.responseRecord.currentRevisionId);
+
+  await expect(page.getByTestId("manual-response-review-detail")).toContainText("ارزیابی شما؛ نه تشخیص چیدا");
+  await expect(page.getByTestId("manual-response-review-detail")).toContainText("از نظر شما نیازمند روشن‌سازی است");
+  await expect(page.getByTestId("manual-response-review-reason-text")).toHaveText(created.reviewValues.reason);
+  await expect(page.getByTestId("manual-response-review-reason-text")).toHaveAttribute("dir", "auto");
+  await expect(page.getByTestId("manual-response-review-boundary")).toContainText("automatedDetectionUsed=false");
+  await expect(page.getByTestId("manual-response-review-boundary")).toContainText("aiUsed=false");
+  await expect(page.getByTestId("manual-response-review-boundary")).toContainText("externalEffect=none");
+  expect(await page.getByTestId("manual-response-review-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+  expect(created.reviewRecord).toMatchObject({
+    schemaVersion: 1,
+    projectId: created.projectId,
+    purpose: "record-local-builder-manual-response-review",
+    status: "manual-review",
+    target: {
+      manualNegotiationResponseId: created.responseRecord.id,
+      manualNegotiationResponseRevisionId: responseRevision.id,
+      manualNegotiationResponseRevisionVersion: responseRevision.version,
+      manualNegotiationResponseRevisionFingerprint: responseRevision.fingerprint,
+    },
+    source: "بازبینی مستقیم سازنده",
+    reviewMethod: "manual",
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    automatedDetectionUsed: false,
+    aiUsed: false,
+    networkUsed: false,
+    authenticityVerified: false,
+    externalEffect: "none",
+    sendAuthorized: false,
+    supplierNotified: false,
+    sharedWithSupplier: false,
+    externalActionAttempted: false,
+    version: 1,
+  });
+  expect(created.reviewRecord.revisions).toHaveLength(1);
+  expect(created.reviewRecord.revisions[0]).toMatchObject({ version: 1, ...created.reviewValues });
+  expect(created.reviewRecord.history.map((event: { type: string }) => event.type)).toEqual(["created"]);
+  expect(created.reviewRecord).not.toHaveProperty("detectedConflict");
+  expect(created.reviewRecord).not.toHaveProperty("modelOutput");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
+  expect(await commercialSourceStoreBytes(page)).toEqual(created.sourceStoresBeforeDraft);
+
+  await page.getByTestId("manual-response-review-edit").click();
+  await expect(page.getByTestId("manual-response-review-editor-title")).toBeFocused();
+  expect(await page.getByTestId("manual-response-review-editor").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  await page.getByTestId("manual-response-review-editor-back").click();
+  await expect(page.getByTestId("manual-response-review-detail-hero")).toBeFocused();
+
+  await page.getByTestId("manual-response-review-detail-back").click();
+  await expect(page.getByTestId("manual-response-review-open")).toBeFocused();
+  await expect(page.getByTestId("manual-response-review-open")).toHaveAccessibleName(`بازکردن بازبینی دستی پاسخ برای مدت و زمان اجرا و ${created.firstSupplier}`);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A3 keeps no-op bytes stable, versions semantic edits, and exposes historical review revisions read-only", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationResponseReview(page);
+
+  await page.getByTestId("manual-response-review-edit").click();
+  await expect(page.getByTestId("manual-response-review-editor-title")).toBeFocused();
+  await page.getByTestId("manual-response-review-save").click();
+  await expect(page.getByTestId("manual-response-review-detail")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBe(created.reviewStore);
+
+  const reasonV2 = "از نظر من پاسخ تازه با زمان اعلام‌شده در متن پیشنهاد تعارض احتمالی دارد و باید بیرون از چیدا روشن شود.";
+  await page.getByTestId("manual-response-review-edit").click();
+  await page.getByTestId("manual-response-review-outcome-potential-conflict").check();
+  await page.getByTestId("manual-response-review-reason").fill(reasonV2);
+  await page.getByTestId("manual-response-review-save").click();
+  await expect(page.getByTestId("manual-response-review-detail")).toContainText("از نظر شما تعارض احتمالی دارد");
+  await expect(page.getByTestId("manual-response-review-reason-text")).toHaveText(reasonV2);
+  const v2Store = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey);
+  const v2 = JSON.parse(v2Store ?? "[]")[0];
+  expect(v2.version).toBe(2);
+  expect(v2.revisions).toHaveLength(2);
+  expect(v2.history.map((event: { type: string }) => event.type)).toEqual(["created", "updated"]);
+  expect(v2.revisions[0]).toEqual(created.reviewRecord.revisions[0]);
+
+  await page.getByTestId("manual-response-review-revision-select").selectOption(created.reviewRecord.currentRevisionId);
+  await expect(page.getByTestId("manual-response-review-detail-hero")).toContainText("نسخهٔ تاریخی ارزیابی");
+  await expect(page.getByTestId("manual-response-review-edit")).toBeDisabled();
+  await expect(page.getByTestId("manual-response-review-reason-text")).toHaveText(created.reviewValues.reason);
+  await page.getByTestId("manual-response-review-revision-select").selectOption(v2.currentRevisionId);
+  await expect(page.getByTestId("manual-response-review-edit")).toBeEnabled();
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A3 validates explicit judgment, rolls back failed writes, and isolates an unreadable review store from the healthy response", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const response = await createExactManualNegotiationResponse(page);
+  await page.getByTestId("manual-response-review-add").click();
+  await page.getByTestId("manual-response-review-save").click();
+  await expect(page.getByTestId("manual-response-review-outcome-appears-addressed")).toBeFocused();
+  await expect(page.getByTestId("manual-response-review-outcome-group")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("manual-response-review-outcome-group")).toHaveAttribute("aria-describedby", "manual-response-review-form-error");
+  await expect(page.getByTestId("manual-response-review-reason")).toHaveAttribute("aria-invalid", "false");
+  await expect(page.getByTestId("manual-response-review-reason")).not.toHaveAttribute("aria-describedby", "manual-response-review-form-error");
+  await expect(page.getByTestId("manual-response-review-form-error")).toContainText("ارزیابی خودت را انتخاب کن");
+  await page.getByTestId("manual-response-review-outcome-needs-clarification").check();
+  await page.getByTestId("manual-response-review-save").click();
+  await expect(page.getByTestId("manual-response-review-reason")).toBeFocused();
+  await expect(page.getByTestId("manual-response-review-outcome-group")).toHaveAttribute("aria-invalid", "false");
+  await expect(page.getByTestId("manual-response-review-reason")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("manual-response-review-reason")).toHaveAttribute("aria-describedby", "manual-response-review-form-error");
+  await expect(page.getByTestId("manual-response-review-form-error")).toContainText("دلیل ارزیابی خودت را بنویس");
+  await page.getByTestId("manual-response-review-reason").fill("پاسخ هنوز واحد زمان را روشن نکرده است.");
+  await page.evaluate((key) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__manualReviewNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      if (this === window.localStorage && storageKey === key) throw new DOMException("Manual review write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, storageKey, value);
+    };
+  }, manualNegotiationResponseReviewStorageKey);
+  await page.getByTestId("manual-response-review-save").click();
+  await expect(page.getByTestId("manual-response-review-editor")).toBeVisible();
+  await expect(page.getByTestId("manual-response-review-form-error")).toContainText("بازبینی دستی ثبت نشد");
+  await expect(page.getByTestId("manual-response-review-reason")).toHaveAttribute("aria-invalid", "false");
+  await expect(page.getByTestId("manual-response-review-reason")).not.toHaveAttribute("aria-describedby", "manual-response-review-form-error");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(response.responseStore);
+
+  await page.evaluate(() => { Storage.prototype.setItem = (window as Window & { __manualReviewNativeSetItem: typeof Storage.prototype.setItem }).__manualReviewNativeSetItem; });
+  await page.getByTestId("manual-response-review-save").click();
+  await expect(page.getByTestId("manual-response-review-detail")).toBeVisible();
+  const validReviewStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey);
+  await page.addInitScript((key) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Object.defineProperty(window, "__manualReviewNativeGetItem", { value: nativeGetItem, configurable: true });
+    Storage.prototype.getItem = function getItem(storageKey: string) {
+      if (this === window.localStorage && storageKey === key) throw new DOMException("Manual review read failed", "SecurityError");
+      return nativeGetItem.call(this, storageKey);
+    };
+  }, manualNegotiationResponseReviewStorageKey);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await page.getByTestId("negotiation-draft-card").click();
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await expect(page.getByTestId("manual-response-review-storage-error")).toBeVisible();
+  await expect(page.getByTestId("manual-response-review-add")).toHaveCount(0);
+  await expect(page.getByTestId("manual-response-review-open")).toHaveCount(0);
+  await expect(page.getByTestId("manual-negotiation-response-edit")).toBeEnabled();
+  await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(response.responseText);
+  expect(await page.evaluate((key) => (window as Window & { __manualReviewNativeGetItem: typeof Storage.prototype.getItem }).__manualReviewNativeGetItem.call(window.localStorage, key), manualNegotiationResponseReviewStorageKey)).toBe(validReviewStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(response.responseStore);
+  expect(response.externalRequests).toEqual([]);
+  page.off("request", response.requestListener);
+});
+
+test("T8-A3 fail-closes tampered review lineage without hiding or rewriting the healthy response", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationResponseReview(page);
+  const tamperedReviewStore = await page.evaluate((key) => {
+    const records = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    records[0].target.manualNegotiationResponseRevisionFingerprint = "fnv1a-deadbeef";
+    window.localStorage.setItem(key, JSON.stringify(records));
+    return window.localStorage.getItem(key);
+  }, manualNegotiationResponseReviewStorageKey);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await page.getByTestId("negotiation-draft-card").click();
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await expect(page.getByTestId("manual-response-review-storage-error")).toBeVisible();
+  await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(created.responseText);
+  await expect(page.getByTestId("manual-negotiation-response-edit")).toBeEnabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBe(tamperedReviewStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A3 keeps a review historical after a response correction and creates a separate review for the new exact revision", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationResponseReview(page);
+  const oldResponseRevisionId = created.responseRecord.currentRevisionId;
+  await page.getByTestId("manual-response-review-detail-back").click();
+  await page.getByTestId("manual-negotiation-response-edit").click();
+  const correctedResponse = "اصلاح رونویسی: شروع سه روز کاری پس از تأیید کتبی اعلام شد.";
+  await page.getByTestId("manual-negotiation-response-text").fill(correctedResponse);
+  await page.getByTestId("manual-negotiation-response-save").click();
+  const responseV2 = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey) ?? "[]")[0];
+  expect(responseV2.version).toBe(2);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBe(created.reviewStore);
+
+  await page.getByTestId("manual-negotiation-response-revision-select").selectOption(oldResponseRevisionId);
+  await expect(page.getByTestId("manual-response-review-open")).toBeVisible();
+  await page.getByTestId("manual-response-review-open").click();
+  await expect(page.getByTestId("manual-response-review-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("manual-response-review-edit")).toBeDisabled();
+  await page.getByTestId("manual-response-review-detail-back").click();
+
+  await page.getByTestId("manual-negotiation-response-revision-select").selectOption(responseV2.currentRevisionId);
+  await expect(page.getByTestId("manual-response-review-add")).toBeVisible();
+  await page.getByTestId("manual-response-review-add").click();
+  await page.getByTestId("manual-response-review-outcome-appears-addressed").check();
+  await page.getByTestId("manual-response-review-reason").fill("از نظر من اصلاح رونویسی، واحد زمان و شرط شروع را روشن کرده است.");
+  await page.getByTestId("manual-response-review-save").click();
+  const reviews = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey) ?? "[]");
+  expect(reviews).toHaveLength(2);
+  expect(reviews[0]).toEqual(created.reviewRecord);
+  expect(reviews[0].target.manualNegotiationResponseRevisionId).toBe(oldResponseRevisionId);
+  expect(reviews[1].target.manualNegotiationResponseRevisionId).toBe(responseV2.currentRevisionId);
+  expect(new Set(reviews.map((record: { target: { manualNegotiationResponseRevisionId: string } }) => record.target.manualNegotiationResponseRevisionId)).size).toBe(2);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A3 makes the review historical after an upstream comparison revision without rewriting review or response bytes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationResponseReview(page);
+  await page.getByTestId("manual-response-review-detail-back").click();
+  await page.getByTestId("manual-negotiation-response-detail-back").click();
+  await page.getByTestId("negotiation-draft-detail-back").click();
+  await page.getByTestId("service-comparison-edit").click();
+  await serviceComparisonAssessmentEditor(page, "timing", created.firstSupplier).getByTestId("service-comparison-declared-value").fill("شروع قطعی ظرف پنج روز و اجرای هفت روزه");
+  await page.getByTestId("service-comparison-save").click();
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخهٔ مقایسه ۲");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBe(created.reviewStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+
+  await page.getByTestId("service-comparison-detail-back").click();
+  await page.getByTestId("service-comparisons-back").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await page.getByTestId("negotiation-draft-card").click();
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await page.getByTestId("manual-response-review-open").click();
+  await expect(page.getByTestId("manual-response-review-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("manual-response-review-edit")).toBeDisabled();
+  await expect(page.getByTestId("manual-response-review-reason-text")).toHaveText(created.reviewValues.reason);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBe(created.reviewStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A3 applies the same exact-review contract to a product response and keeps project isolation", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const prerequisites = await createExactProductComparisonWithDecision(page);
+  const sourceStoresBeforeReview = await commercialSourceStoreBytes(page);
+  const comparison = JSON.parse(sourceStoresBeforeReview.productComparisons ?? "[]")[0];
+  const comparisonRevision = comparison.revisions.find((revision: { id: string }) => revision.id === comparison.currentRevisionId);
+  const proposal = JSON.parse(sourceStoresBeforeReview.proposals ?? "[]").find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
+  const line = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === proposal.id).lines[0];
+  await page.locator(`[data-testid="negotiation-draft-start"][data-comparison-kind="product"][data-proposal-id="${proposal.id}"][data-criterion-id="${line.requestItemId}"]`).click();
+  await page.getByTestId("negotiation-draft-purpose").fill("روشن‌سازی اعتبار قیمت قلم محصول");
+  await page.getByTestId("negotiation-draft-message").fill("اعتبار این قیمت دقیقاً تا چه تاریخی است؟");
+  await page.getByTestId("negotiation-draft-save").click();
+  await page.getByTestId("manual-negotiation-response-add").click();
+  await page.getByTestId("manual-negotiation-response-text").fill("در تماس بیرونی گفته شد قیمت تا پایان هفته معتبر است.");
+  await page.getByTestId("manual-negotiation-response-save").click();
+  await page.getByTestId("manual-response-review-add").click();
+  await page.getByTestId("manual-response-review-outcome-appears-addressed").check();
+  await page.getByTestId("manual-response-review-reason").fill("از نظر من پاسخ مستقیماً بازهٔ اعتبار قیمت را بیان می‌کند.");
+  await page.getByTestId("manual-response-review-save").click();
+
+  const response = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey) ?? "[]")[0];
+  const responseRevision = response.revisions.find((revision: { id: string }) => revision.id === response.currentRevisionId);
+  const reviewStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey);
+  const review = JSON.parse(reviewStore ?? "[]")[0];
+  expect(response.questionSnapshot.negotiationTarget).toMatchObject({ comparisonKind: "product", proposalId: proposal.id, proposalLineId: line.proposalLineId, criterionKind: "product-line", criterionId: line.requestItemId });
+  expect(review.target).toEqual({
+    manualNegotiationResponseId: response.id,
+    manualNegotiationResponseRevisionId: responseRevision.id,
+    manualNegotiationResponseRevisionVersion: responseRevision.version,
+    manualNegotiationResponseRevisionFingerprint: responseRevision.fingerprint,
+  });
+  expect(await commercialSourceStoreBytes(page)).toEqual(sourceStoresBeforeReview);
+
+  const firstProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  await page.evaluate(() => {
+    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
+    projects.push({ id: "t8a3-isolation-project-b", name: "پروژه مستقل بازبینی", location: "منطقهٔ ۵", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
+    window.localStorage.setItem("chida-prototype-active-project", "t8a3-isolation-project-b");
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
+  expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey) ?? "[]")).toHaveLength(1);
+
+  await page.evaluate((projectId) => window.localStorage.setItem("chida-prototype-active-project", projectId!), firstProjectId);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBe(reviewStore);
 });

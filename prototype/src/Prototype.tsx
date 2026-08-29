@@ -1016,6 +1016,50 @@ type BuilderManualNegotiationResponseRecord = {
   revisions: BuilderManualNegotiationResponseRevision[];
 };
 type BuilderManualNegotiationResponseForm = { responseText: string };
+type BuilderManualNegotiationResponseReviewOutcome = "appears-addressed" | "needs-clarification" | "potential-conflict";
+type BuilderManualNegotiationResponseReviewTarget = {
+  manualNegotiationResponseId: string;
+  manualNegotiationResponseRevisionId: string;
+  manualNegotiationResponseRevisionVersion: number;
+  manualNegotiationResponseRevisionFingerprint: string;
+};
+type BuilderManualNegotiationResponseReviewRevision = {
+  id: string;
+  version: number;
+  createdAt: string;
+  outcome: BuilderManualNegotiationResponseReviewOutcome;
+  reason: string;
+  fingerprint: string;
+};
+type BuilderManualNegotiationResponseReviewEvent = { id: string; type: "created" | "updated"; actor: "شما"; at: string; version: number };
+type BuilderManualNegotiationResponseReviewRecord = {
+  schemaVersion: 1;
+  id: string;
+  projectId: string;
+  purpose: "record-local-builder-manual-response-review";
+  status: "manual-review";
+  target: BuilderManualNegotiationResponseReviewTarget;
+  source: "بازبینی مستقیم سازنده";
+  reviewMethod: "manual";
+  visibility: "خصوصی پروژه";
+  localStatus: "ثبت محلی";
+  automatedDetectionUsed: false;
+  aiUsed: false;
+  networkUsed: false;
+  authenticityVerified: false;
+  externalEffect: "none";
+  sendAuthorized: false;
+  supplierNotified: false;
+  sharedWithSupplier: false;
+  externalActionAttempted: false;
+  currentRevisionId: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  history: BuilderManualNegotiationResponseReviewEvent[];
+  revisions: BuilderManualNegotiationResponseReviewRevision[];
+};
+type BuilderManualNegotiationResponseReviewForm = { outcome: BuilderManualNegotiationResponseReviewOutcome | ""; reason: string };
 type MockSourceKind = "فایل پروژهٔ ساختگی" | "وب رسمی ساختگی";
 type MockSourceRecord = {
   id: string;
@@ -1079,6 +1123,7 @@ const projectBuilderServiceProposalComparisonsStorageKey = "chida-prototype-buil
 const projectBuilderServiceProposalComparisonDecisionsStorageKey = "chida-prototype-builder-service-proposal-comparison-decisions:v1";
 const projectBuilderNegotiationDraftsStorageKey = "chida-prototype-builder-negotiation-drafts:v1";
 const projectBuilderManualNegotiationResponsesStorageKey = "chida-prototype-builder-manual-negotiation-responses:v1";
+const projectBuilderManualNegotiationResponseReviewsStorageKey = "chida-prototype-builder-manual-negotiation-response-reviews:v1";
 const projectImagesDatabaseName = "chida-prototype-project-images:v1";
 const projectImagesStoreName = "images";
 const projectStages = [
@@ -2467,6 +2512,51 @@ function builderManualNegotiationResponseEffectiveStatus(
   return evidence
     && evidence.draft.currentRevisionId === record.target.negotiationDraftRevisionId
     && builderNegotiationDraftEffectiveStatus(evidence.draft, productComparisons, serviceComparisons, proposals, requests, approvals, contacts) === "current"
+    ? "current" as const
+    : "needs-review" as const;
+}
+
+function builderManualNegotiationResponseReviewTargetKey(target: BuilderManualNegotiationResponseReviewTarget) {
+  return `${target.manualNegotiationResponseId}:${target.manualNegotiationResponseRevisionId}`;
+}
+
+function builderManualNegotiationResponseReviewRevisionFingerprint(
+  projectId: string,
+  target: BuilderManualNegotiationResponseReviewTarget,
+  revision: Omit<BuilderManualNegotiationResponseReviewRevision, "fingerprint">,
+) {
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ projectId, target, revision })))}`;
+}
+
+function builderManualNegotiationResponseReviewEvidence(
+  projectId: string,
+  target: BuilderManualNegotiationResponseReviewTarget,
+  responses: BuilderManualNegotiationResponseRecord[],
+) {
+  const response = responses.find((item) => item.id === target.manualNegotiationResponseId && item.projectId === projectId);
+  const revision = response?.revisions.find((item) => (
+    item.id === target.manualNegotiationResponseRevisionId
+    && item.version === target.manualNegotiationResponseRevisionVersion
+    && item.fingerprint === target.manualNegotiationResponseRevisionFingerprint
+  ));
+  return response && revision ? { response, revision } : null;
+}
+
+function builderManualNegotiationResponseReviewEffectiveStatus(
+  record: BuilderManualNegotiationResponseReviewRecord,
+  responses: BuilderManualNegotiationResponseRecord[],
+  drafts: BuilderNegotiationDraftRecord[],
+  productComparisons: BuilderProposalComparisonRecord[],
+  serviceComparisons: BuilderServiceProposalComparisonRecord[],
+  proposals: BuilderRecordedProposalRecord[],
+  requests: ProjectPurchaseRequestRecord[],
+  approvals: ProjectApprovalRecord[],
+  contacts: SupplierContactRecord[],
+) {
+  const evidence = builderManualNegotiationResponseReviewEvidence(record.projectId, record.target, responses);
+  return evidence
+    && evidence.response.currentRevisionId === record.target.manualNegotiationResponseRevisionId
+    && builderManualNegotiationResponseEffectiveStatus(evidence.response, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts) === "current"
     ? "current" as const
     : "needs-review" as const;
 }
@@ -5341,6 +5431,177 @@ function readStoredBuilderManualNegotiationResponses(
   }
 }
 
+function parseBuilderManualNegotiationResponseReview(
+  value: any,
+  manualResponses: LocalRecordsReadResult<BuilderManualNegotiationResponseRecord>,
+): BuilderManualNegotiationResponseReviewRecord | null {
+  if (
+    manualResponses.readError
+    || !hasExactObjectKeys(value?.target, ["manualNegotiationResponseId", "manualNegotiationResponseRevisionId", "manualNegotiationResponseRevisionVersion", "manualNegotiationResponseRevisionFingerprint"])
+  ) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const target = {
+    manualNegotiationResponseId: typeof value?.target?.manualNegotiationResponseId === "string" ? value.target.manualNegotiationResponseId.trim() : "",
+    manualNegotiationResponseRevisionId: typeof value?.target?.manualNegotiationResponseRevisionId === "string" ? value.target.manualNegotiationResponseRevisionId.trim() : "",
+    manualNegotiationResponseRevisionVersion: value?.target?.manualNegotiationResponseRevisionVersion,
+    manualNegotiationResponseRevisionFingerprint: typeof value?.target?.manualNegotiationResponseRevisionFingerprint === "string" ? value.target.manualNegotiationResponseRevisionFingerprint.trim() : "",
+  } satisfies BuilderManualNegotiationResponseReviewTarget;
+  const evidence = projectId ? builderManualNegotiationResponseReviewEvidence(projectId, target, manualResponses.records) : null;
+  if (
+    !id
+    || id !== value?.id
+    || !projectId
+    || projectId !== value?.projectId
+    || !target.manualNegotiationResponseId
+    || target.manualNegotiationResponseId !== value?.target?.manualNegotiationResponseId
+    || !target.manualNegotiationResponseRevisionId
+    || target.manualNegotiationResponseRevisionId !== value?.target?.manualNegotiationResponseRevisionId
+    || !Number.isInteger(target.manualNegotiationResponseRevisionVersion)
+    || target.manualNegotiationResponseRevisionVersion < 1
+    || !target.manualNegotiationResponseRevisionFingerprint
+    || target.manualNegotiationResponseRevisionFingerprint !== value?.target?.manualNegotiationResponseRevisionFingerprint
+    || !evidence
+  ) return null;
+
+  const eventIds = new Set<string>();
+  const history: BuilderManualNegotiationResponseReviewEvent[] = Array.isArray(value?.history) && value.history.length <= 100 ? value.history.flatMap((event: any, index: number): BuilderManualNegotiationResponseReviewEvent[] => {
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as BuilderManualNegotiationResponseReviewEvent["type"];
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventId !== event?.id || !at || at !== event?.at || eventIds.has(eventId) || (index === 0 ? type !== "created" : type !== "updated") || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at)) return [];
+    eventIds.add(eventId);
+    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
+  }) : [];
+  const revisionIds = new Set<string>();
+  const allowedOutcomes: BuilderManualNegotiationResponseReviewOutcome[] = ["appears-addressed", "needs-clarification", "potential-conflict"];
+  const revisions: BuilderManualNegotiationResponseReviewRevision[] = Array.isArray(value?.revisions) && value.revisions.length <= 100 ? value.revisions.flatMap((revisionValue: any, index: number): BuilderManualNegotiationResponseReviewRevision[] => {
+    const revisionId = typeof revisionValue?.id === "string" ? revisionValue.id.trim() : "";
+    const createdAt = typeof revisionValue?.createdAt === "string" ? revisionValue.createdAt.trim() : "";
+    const outcome = revisionValue?.outcome as BuilderManualNegotiationResponseReviewOutcome;
+    const reason = typeof revisionValue?.reason === "string" ? revisionValue.reason.trim() : "";
+    if (
+      !hasExactObjectKeys(revisionValue, ["id", "version", "createdAt", "outcome", "reason", "fingerprint"])
+      || !revisionId
+      || revisionId !== revisionValue?.id
+      || !createdAt
+      || createdAt !== revisionValue?.createdAt
+      || revisionIds.has(revisionId)
+      || revisionValue?.version !== index + 1
+      || createdAt !== history[index]?.at
+      || !allowedOutcomes.includes(outcome)
+      || !hasVisibleProjectTaskText(reason)
+      || reason.length > 1200
+      || reason !== revisionValue?.reason
+      || new Date(createdAt).getTime() < new Date(evidence.revision.createdAt).getTime()
+    ) return [];
+    const revisionBase = { id: revisionId, version: revisionValue.version, createdAt, outcome, reason } satisfies Omit<BuilderManualNegotiationResponseReviewRevision, "fingerprint">;
+    const fingerprint = builderManualNegotiationResponseReviewRevisionFingerprint(projectId, target, revisionBase);
+    if (revisionValue?.fingerprint !== fingerprint) return [];
+    revisionIds.add(revisionId);
+    return [{ ...revisionBase, fingerprint }];
+  }) : [];
+  const version = value?.version;
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
+  const hasRepeatedSemanticRevision = revisions.some((revision, index) => index > 0 && revision.outcome === revisions[index - 1].outcome && revision.reason === revisions[index - 1].reason);
+  if (
+    !hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "purpose", "status", "target", "source", "reviewMethod", "visibility", "localStatus", "automatedDetectionUsed", "aiUsed", "networkUsed", "authenticityVerified", "externalEffect", "sendAuthorized", "supplierNotified", "sharedWithSupplier", "externalActionAttempted", "currentRevisionId", "version", "createdAt", "updatedAt", "history", "revisions"])
+    || value?.schemaVersion !== 1
+    || value?.purpose !== "record-local-builder-manual-response-review"
+    || value?.status !== "manual-review"
+    || value?.source !== "بازبینی مستقیم سازنده"
+    || value?.reviewMethod !== "manual"
+    || value?.visibility !== "خصوصی پروژه"
+    || value?.localStatus !== "ثبت محلی"
+    || value?.automatedDetectionUsed !== false
+    || value?.aiUsed !== false
+    || value?.networkUsed !== false
+    || value?.authenticityVerified !== false
+    || value?.externalEffect !== "none"
+    || value?.sendAuthorized !== false
+    || value?.supplierNotified !== false
+    || value?.sharedWithSupplier !== false
+    || value?.externalActionAttempted !== false
+    || currentRevisionId !== value?.currentRevisionId
+    || createdAt !== value?.createdAt
+    || updatedAt !== value?.updatedAt
+    || !Number.isInteger(version)
+    || version < 1
+    || history.length !== value?.history?.length
+    || revisions.length !== value?.revisions?.length
+    || history.length !== version
+    || revisions.length !== version
+    || currentRevisionId !== revisions[revisions.length - 1]?.id
+    || createdAt !== history[0]?.at
+    || updatedAt !== history[history.length - 1]?.at
+    || revisions[0]?.createdAt !== createdAt
+    || revisions[revisions.length - 1]?.createdAt !== updatedAt
+    || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())
+    || hasRepeatedSemanticRevision
+  ) return null;
+  return {
+    schemaVersion: 1,
+    id,
+    projectId,
+    purpose: "record-local-builder-manual-response-review",
+    status: "manual-review",
+    target,
+    source: "بازبینی مستقیم سازنده",
+    reviewMethod: "manual",
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    automatedDetectionUsed: false,
+    aiUsed: false,
+    networkUsed: false,
+    authenticityVerified: false,
+    externalEffect: "none",
+    sendAuthorized: false,
+    supplierNotified: false,
+    sharedWithSupplier: false,
+    externalActionAttempted: false,
+    currentRevisionId,
+    version,
+    createdAt,
+    updatedAt,
+    history,
+    revisions,
+  };
+}
+
+function readStoredBuilderManualNegotiationResponseReviews(
+  manualResponses: LocalRecordsReadResult<BuilderManualNegotiationResponseRecord>,
+): LocalRecordsReadResult<BuilderManualNegotiationResponseReviewRecord> {
+  if (manualResponses.readError) return { records: [], readError: true };
+  try {
+    const raw = window.localStorage.getItem(projectBuilderManualNegotiationResponseReviewsStorageKey);
+    if (raw === null) return { records: [], readError: false };
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
+    const ids = new Set<string>();
+    const targets = new Set<string>();
+    const projectCounts = new Map<string, number>();
+    let readError = false;
+    const records = parsed.flatMap((item): BuilderManualNegotiationResponseReviewRecord[] => {
+      const record = parseBuilderManualNegotiationResponseReview(item, manualResponses);
+      const targetKey = record ? `${record.projectId}:${builderManualNegotiationResponseReviewTargetKey(record.target)}` : "";
+      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
+      if (!record || ids.has(record.id) || targets.has(targetKey) || nextProjectCount > 100) {
+        readError = true;
+        return [];
+      }
+      ids.add(record.id);
+      targets.add(targetKey);
+      projectCounts.set(record.projectId, nextProjectCount);
+      return [record];
+    });
+    return { records, readError };
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
 function inferProjectFileCategory(file: File): ProjectFileCategory {
   const normalizedName = file.name.replace(/[\s‌_-]+/g, " ").toLocaleLowerCase("fa");
   if (normalizedName.includes("پیش فاکتور") || normalizedName.includes("پیش‌فاکتور")) return "پیش‌فاکتور";
@@ -6134,6 +6395,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [initialBuilderServiceProposalComparisonDecisions] = useState<LocalRecordsReadResult<BuilderServiceProposalComparisonDecisionRecord>>(() => readStoredBuilderServiceProposalComparisonDecisions(initialBuilderServiceProposalComparisons));
   const [initialBuilderNegotiationDrafts] = useState<LocalRecordsReadResult<BuilderNegotiationDraftRecord>>(() => readStoredBuilderNegotiationDrafts(initialBuilderProposalComparisons, initialBuilderServiceProposalComparisons));
   const [initialBuilderManualNegotiationResponses] = useState<LocalRecordsReadResult<BuilderManualNegotiationResponseRecord>>(() => readStoredBuilderManualNegotiationResponses(initialBuilderNegotiationDrafts));
+  const [initialBuilderManualNegotiationResponseReviews] = useState<LocalRecordsReadResult<BuilderManualNegotiationResponseReviewRecord>>(() => readStoredBuilderManualNegotiationResponseReviews(initialBuilderManualNegotiationResponses));
   const [projectFiles, setProjectFiles] = useState<ProjectFileRecord[]>(initialProjectFiles.records);
   const [projectMemories, setProjectMemories] = useState<ProjectMemoryRecord[]>(initialProjectMemories.records);
   const [projectTasks, setProjectTasks] = useState<ProjectTaskRecord[]>(initialProjectTasks.records);
@@ -6149,6 +6411,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [builderServiceProposalComparisonDecisions, setBuilderServiceProposalComparisonDecisions] = useState<BuilderServiceProposalComparisonDecisionRecord[]>(initialBuilderServiceProposalComparisonDecisions.records);
   const [builderNegotiationDrafts, setBuilderNegotiationDrafts] = useState<BuilderNegotiationDraftRecord[]>(initialBuilderNegotiationDrafts.records);
   const [builderManualNegotiationResponses, setBuilderManualNegotiationResponses] = useState<BuilderManualNegotiationResponseRecord[]>(initialBuilderManualNegotiationResponses.records);
+  const [builderManualNegotiationResponseReviews, setBuilderManualNegotiationResponseReviews] = useState<BuilderManualNegotiationResponseReviewRecord[]>(initialBuilderManualNegotiationResponseReviews.records);
   const [projectFilesReadError] = useState(initialProjectFiles.readError);
   const [projectMemoriesReadError] = useState(initialProjectMemories.readError);
   const [projectTasksReadError] = useState(initialProjectTasks.readError);
@@ -6164,6 +6427,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [builderServiceProposalComparisonDecisionsReadError] = useState(initialBuilderServiceProposalComparisonDecisions.readError);
   const [builderNegotiationDraftsReadError] = useState(initialBuilderNegotiationDrafts.readError);
   const [builderManualNegotiationResponsesReadError] = useState(initialBuilderManualNegotiationResponses.readError);
+  const [builderManualNegotiationResponseReviewsReadError] = useState(initialBuilderManualNegotiationResponseReviews.readError);
   const [installedTool, setInstalledTool] = useState(() => readLocalStorageValue(installedToolStorageKey) ?? "");
   const [briefSchedule, setBriefSchedule] = useState<BriefSchedule | null>(() => {
     try {
@@ -6307,6 +6571,10 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const activeBuilderManualNegotiationResponses = useMemo(
     () => builderManualNegotiationResponses.filter((response) => response.projectId === activeProject.id),
     [activeProject.id, builderManualNegotiationResponses],
+  );
+  const activeBuilderManualNegotiationResponseReviews = useMemo(
+    () => builderManualNegotiationResponseReviews.filter((review) => review.projectId === activeProject.id),
+    [activeProject.id, builderManualNegotiationResponseReviews],
   );
   const activeProjectTaskCount = activeProjectTasks.filter((task) => task.status === "in-progress").length;
   const briefSummary = briefSchedule
@@ -7790,6 +8058,117 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return persistBuilderManualNegotiationResponses(builderManualNegotiationResponses.map((item) => item.id === current.id ? updated : item)) ? "updated" as const : false;
   };
 
+  const manualNegotiationResponseReviewsStorageLocked = builderManualNegotiationResponseReviewsReadError
+    || builderManualNegotiationResponsesReadError;
+
+  const persistBuilderManualNegotiationResponseReviews = (nextReviews: BuilderManualNegotiationResponseReviewRecord[]) => {
+    if (manualNegotiationResponseReviewsStorageLocked) return false;
+    try {
+      if (nextReviews.length === 0) window.localStorage.removeItem(projectBuilderManualNegotiationResponseReviewsStorageKey);
+      else window.localStorage.setItem(projectBuilderManualNegotiationResponseReviewsStorageKey, JSON.stringify(nextReviews));
+    } catch {
+      return false;
+    }
+    setBuilderManualNegotiationResponseReviews(nextReviews);
+    return true;
+  };
+
+  const upsertBuilderManualNegotiationResponseReview = (
+    responseId: string,
+    responseRevisionId: string,
+    form: BuilderManualNegotiationResponseReviewForm,
+  ) => {
+    if (manualNegotiationResponseReviewsStorageLocked) return false;
+    const response = activeBuilderManualNegotiationResponses.find((item) => item.id === responseId);
+    const responseRevision = response?.revisions.find((item) => item.id === responseRevisionId);
+    const allowedOutcomes: BuilderManualNegotiationResponseReviewOutcome[] = ["appears-addressed", "needs-clarification", "potential-conflict"];
+    const outcome = form.outcome as BuilderManualNegotiationResponseReviewOutcome;
+    const reason = normalizeBuilderRecordedProposalText(form.reason, 1200);
+    if (
+      !response
+      || !responseRevision
+      || response.currentRevisionId !== responseRevision.id
+      || !allowedOutcomes.includes(outcome)
+      || !reason
+      || builderManualNegotiationResponseEffectiveStatus(response, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current"
+    ) return false;
+    const target = {
+      manualNegotiationResponseId: response.id,
+      manualNegotiationResponseRevisionId: responseRevision.id,
+      manualNegotiationResponseRevisionVersion: responseRevision.version,
+      manualNegotiationResponseRevisionFingerprint: responseRevision.fingerprint,
+    } satisfies BuilderManualNegotiationResponseReviewTarget;
+    const existing = builderManualNegotiationResponseReviews.find((item) => item.projectId === activeProject.id && builderManualNegotiationResponseReviewTargetKey(item.target) === builderManualNegotiationResponseReviewTargetKey(target)) ?? null;
+    if (!existing) {
+      if (builderManualNegotiationResponseReviews.length >= 1000 || activeBuilderManualNegotiationResponseReviews.length >= 100) return false;
+      const timestamp = new Date(Math.max(Date.now(), new Date(responseRevision.createdAt).getTime())).toISOString();
+      const revisionBase = {
+        id: `builder-manual-negotiation-response-review-revision-${window.crypto.randomUUID()}`,
+        version: 1,
+        createdAt: timestamp,
+        outcome,
+        reason,
+      } satisfies Omit<BuilderManualNegotiationResponseReviewRevision, "fingerprint">;
+      const revision = { ...revisionBase, fingerprint: builderManualNegotiationResponseReviewRevisionFingerprint(activeProject.id, target, revisionBase) } satisfies BuilderManualNegotiationResponseReviewRevision;
+      const record = {
+        schemaVersion: 1,
+        id: `builder-manual-negotiation-response-review-${window.crypto.randomUUID()}`,
+        projectId: activeProject.id,
+        purpose: "record-local-builder-manual-response-review",
+        status: "manual-review",
+        target,
+        source: "بازبینی مستقیم سازنده",
+        reviewMethod: "manual",
+        visibility: "خصوصی پروژه",
+        localStatus: "ثبت محلی",
+        automatedDetectionUsed: false,
+        aiUsed: false,
+        networkUsed: false,
+        authenticityVerified: false,
+        externalEffect: "none",
+        sendAuthorized: false,
+        supplierNotified: false,
+        sharedWithSupplier: false,
+        externalActionAttempted: false,
+        currentRevisionId: revision.id,
+        version: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        history: [{ id: `builder-manual-negotiation-response-review-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+        revisions: [revision],
+      } satisfies BuilderManualNegotiationResponseReviewRecord;
+      if (!parseBuilderManualNegotiationResponseReview(record, { records: builderManualNegotiationResponses, readError: false })) return false;
+      return persistBuilderManualNegotiationResponseReviews([...builderManualNegotiationResponseReviews, record]) ? "created" as const : false;
+    }
+    const currentRevision = existing.revisions.find((item) => item.id === existing.currentRevisionId);
+    if (
+      !currentRevision
+      || existing.version >= 100
+      || builderManualNegotiationResponseReviewEffectiveStatus(existing, activeBuilderManualNegotiationResponses, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current"
+    ) return false;
+    if (currentRevision.outcome === outcome && currentRevision.reason === reason) return "unchanged" as const;
+    const timestamp = new Date(Math.max(Date.now(), new Date(existing.updatedAt).getTime(), new Date(responseRevision.createdAt).getTime())).toISOString();
+    const version = existing.version + 1;
+    const revisionBase = {
+      id: `builder-manual-negotiation-response-review-revision-${window.crypto.randomUUID()}`,
+      version,
+      createdAt: timestamp,
+      outcome,
+      reason,
+    } satisfies Omit<BuilderManualNegotiationResponseReviewRevision, "fingerprint">;
+    const revision = { ...revisionBase, fingerprint: builderManualNegotiationResponseReviewRevisionFingerprint(activeProject.id, existing.target, revisionBase) } satisfies BuilderManualNegotiationResponseReviewRevision;
+    const updated = {
+      ...existing,
+      currentRevisionId: revision.id,
+      version,
+      updatedAt: timestamp,
+      history: [...existing.history, { id: `builder-manual-negotiation-response-review-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }],
+      revisions: [...existing.revisions, revision],
+    } satisfies BuilderManualNegotiationResponseReviewRecord;
+    if (!parseBuilderManualNegotiationResponseReview(updated, { records: builderManualNegotiationResponses, readError: false })) return false;
+    return persistBuilderManualNegotiationResponseReviews(builderManualNegotiationResponseReviews.map((item) => item.id === existing.id ? updated : item)) ? "updated" as const : false;
+  };
+
   const leaveProjectWorkspace = () => {
     projectWorkspaceScrollPositions.current.delete(activeProject.id);
     setView("chat");
@@ -7953,6 +8332,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         serviceDecisions={activeBuilderServiceProposalComparisonDecisions}
         negotiationDrafts={activeBuilderNegotiationDrafts}
         manualNegotiationResponses={activeBuilderManualNegotiationResponses}
+        manualNegotiationResponseReviews={activeBuilderManualNegotiationResponseReviews}
         requests={activeProjectPurchaseRequests}
         approvals={activeProjectApprovals}
         contacts={activeProjectSupplierContacts}
@@ -7964,6 +8344,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         serviceDecisionsStorageLocked={builderServiceProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError}
         negotiationDraftsStorageLocked={negotiationDraftsStorageLocked}
         manualNegotiationResponsesStorageLocked={manualNegotiationResponsesStorageLocked}
+        manualNegotiationResponseReviewsStorageLocked={manualNegotiationResponseReviewsStorageLocked}
         backLabel={proposalsReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
         onBack={() => { keyboard.hide(); pendingProposalsReturnFocus.current = proposalsReturnView; setView(proposalsReturnView); }}
         onCreate={createBuilderRecordedProposal}
@@ -7978,6 +8359,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         onUpdateNegotiationDraft={updateBuilderNegotiationDraft}
         onCreateManualNegotiationResponse={createBuilderManualNegotiationResponse}
         onUpdateManualNegotiationResponse={updateBuilderManualNegotiationResponse}
+        onUpsertManualNegotiationResponseReview={upsertBuilderManualNegotiationResponseReview}
       />
     );
   }
@@ -8090,7 +8472,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         sheet={sheet}
         projectName={activeProject.name}
         projectCount={projects.length}
-        localRecordCount={projectFilesReadError || projectMemoriesReadError || projectTasksReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError
+        localRecordCount={projectFilesReadError || projectMemoriesReadError || projectTasksReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError
           ? null
           : activeProjectFiles.length
             + activeProjectMemories.length
@@ -8106,7 +8488,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
             + activeBuilderServiceProposalComparisons.length
             + activeBuilderServiceProposalComparisonDecisions.length
             + activeBuilderNegotiationDrafts.length
-            + activeBuilderManualNegotiationResponses.length}
+            + activeBuilderManualNegotiationResponses.length
+            + activeBuilderManualNegotiationResponseReviews.length}
         briefSummary={briefSummary}
         modelMode={modelMode}
         onClose={() => onOpenSheet(null)}
@@ -8741,14 +9124,127 @@ function ProjectServiceProposalComparisonsView({ project, proposals, comparisons
   return <div className="chida-app project-proposals-view comparisons-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="service-proposal-comparisons-view"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="service-comparisons-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>مقایسه‌های خدمت</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><LayoutGrid size={24} /></span><div><small>T7-B2 · خصوصی · پروژهٔ {project.name}</small><h1>ماتریس خدمت و تصمیم</h1><p>تفاوت‌های دامنه، روش، زمان، صلاحیت، ضمانت و پرداخت را بدون رتبه‌بندی کنار هم ببین.</p></div></section><section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>این مسیر مستقل از فرمول محصول است</strong><small>همهٔ پاسخ‌های معیارها رونویسی دستی شما هستند؛ هیچ استخراج، امتیاز، بهترین، قیمت هم‌سطح، AI، شبکه یا اثر بیرونی وجود ندارد.</small></span></section>{storageLocked ? <section className="proposal-storage-error" role="alert" data-testid="service-comparison-storage-error"><CircleHelp size={19} /><span><strong>وضعیت مقایسه‌های خدمت قابل تأیید نیست</strong><small>خواندن مخزن کامل نشد؛ این وضعیت «مقایسه‌ای ثبت نشده» نیست و ساخت/ویرایش قفل می‌ماند.</small></span></section> : null}<div className="project-proposals-toolbar"><span><strong>{storageLocked ? "—" : orderedComparisons.length.toLocaleString("fa-IR")}</strong><small>ماتریس نسخه‌دار</small></span><button ref={addButtonRef} className="primary-button" type="button" onClick={openCreate} disabled={storageLocked || eligibleGroups.length === 0} data-testid="service-comparison-add"><Plus size={17} /> ساخت ماتریس</button></div>{!storageLocked && eligibleGroups.length === 0 ? <p className="proposal-prerequisite-note" data-testid="service-comparison-prerequisite-note">برای ساخت ماتریس، دست‌کم دو پیشنهاد خدمتِ جاری باید به همان نسخهٔ دقیق یک درخواست وصل باشند.</p> : null}{!storageLocked && orderedComparisons.length ? <div className="project-proposals-list comparison-list">{orderedComparisons.map((comparison) => { const revision = comparison.revisions.find((item) => item.id === comparison.currentRevisionId)!; const status = builderServiceProposalComparisonEffectiveStatus(comparison, proposals, requests, approvals, contacts); return <button className="proposal-card comparison-card" type="button" key={comparison.id} data-service-comparison-id={comparison.id} onClick={() => { setSelectedId(comparison.id); setPreviewRevisionId(comparison.currentRevisionId); setLiveMessage(""); window.requestAnimationFrame(() => detailHeadingRef.current?.focus()); }} data-testid="service-comparison-card"><span className="proposal-card-icon"><LayoutGrid size={20} /></span><span className="proposal-card-copy"><span><small>{status === "current" ? "نسخهٔ جاری" : "تاریخی · بازبینی"}</small><small>{formatProjectFileDate(comparison.updatedAt)}</small></span><strong>{comparison.requestSnapshot.scope ?? "خدمت درخواستی"}</strong><em>{revision.inputs.length.toLocaleString("fa-IR")} پیشنهاد · {revision.summary.status === "ready-for-human-decision" ? "آمادهٔ تصمیم انسانی" : "نیازمند روشن‌سازی"}</em><small>نسخهٔ مقایسه {revision.version.toLocaleString("fa-IR")}</small></span><ArrowRight size={17} /></button>; })}</div> : !storageLocked ? <section className="proposal-empty-state"><LayoutGrid size={26} /><h2>ماتریسی ثبت نشده</h2><p>پس از ثبت دو پیشنهاد جاری برای یک درخواست خدمت، پاسخ‌ها و ارزیابی خودت را معیاربه‌معیار ثبت کن.</p></section> : null}</main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span></div>;
 }
 
-function ProjectManualNegotiationResponseView({ project, questionDraft, questionRevision, response, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, storageLocked, onBack, onCreate, onUpdate }: { project: BuilderProject; questionDraft: BuilderNegotiationDraftRecord; questionRevision: BuilderNegotiationDraftRevision; response: BuilderManualNegotiationResponseRecord | null; drafts: BuilderNegotiationDraftRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; onBack: () => void; onCreate: (draftId: string, draftRevisionId: string, form: BuilderManualNegotiationResponseForm) => string | null; onUpdate: (responseId: string, form: BuilderManualNegotiationResponseForm) => false | "unchanged" | "updated" }) {
+function builderManualNegotiationResponseReviewOutcomeLabel(outcome: BuilderManualNegotiationResponseReviewOutcome) {
+  if (outcome === "appears-addressed") return "از نظر شما پاسخ به پرسش می‌پردازد";
+  if (outcome === "needs-clarification") return "از نظر شما نیازمند روشن‌سازی است";
+  return "از نظر شما تعارض احتمالی دارد";
+}
+
+function ProjectManualNegotiationResponseReviewView({ project, questionDraft, response, responseRevision, review, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, storageLocked, onBack, onUpsert }: { project: BuilderProject; questionDraft: BuilderNegotiationDraftRecord; response: BuilderManualNegotiationResponseRecord; responseRevision: BuilderManualNegotiationResponseRevision; review: BuilderManualNegotiationResponseReviewRecord | null; responses: BuilderManualNegotiationResponseRecord[]; drafts: BuilderNegotiationDraftRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; onBack: () => void; onUpsert: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationResponseReviewForm) => false | "unchanged" | "created" | "updated" }) {
   const keyboard = useKeyboard();
   const editorHeadingRef = useRef<HTMLSpanElement>(null);
   const detailHeadingRef = useRef<HTMLElement>(null);
+  const currentReviewRevision = review?.revisions.find((item) => item.id === review.currentRevisionId) ?? null;
+  const [editorOpen, setEditorOpen] = useState(!review && !storageLocked);
+  const [form, setForm] = useState<BuilderManualNegotiationResponseReviewForm>({ outcome: currentReviewRevision?.outcome ?? "", reason: currentReviewRevision?.reason ?? "" });
+  const [formError, setFormError] = useState("");
+  const [previewRevisionId, setPreviewRevisionId] = useState<string | null>(null);
+  const [liveMessage, setLiveMessage] = useState("");
+  const previewReviewRevision = review?.revisions.find((item) => item.id === previewRevisionId) ?? currentReviewRevision;
+  const reviewEffectiveStatus = review
+    ? builderManualNegotiationResponseReviewEffectiveStatus(review, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts)
+    : "needs-review" as const;
+  const responseEffectiveStatus = builderManualNegotiationResponseEffectiveStatus(response, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts);
+  const responseIsCurrent = response.currentRevisionId === responseRevision.id && responseEffectiveStatus === "current";
+
+  useEffect(() => {
+    if (editorOpen) window.requestAnimationFrame(() => editorHeadingRef.current?.focus());
+    else if (review) window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+  }, [editorOpen, review]);
+
+  const closeEditor = () => {
+    keyboard.hide();
+    setFormError("");
+    if (review) {
+      setEditorOpen(false);
+      window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+      return;
+    }
+    onBack();
+  };
+
+  const openEdit = () => {
+    if (!review || !currentReviewRevision || storageLocked || reviewEffectiveStatus !== "current") return;
+    setForm({ outcome: currentReviewRevision.outcome, reason: currentReviewRevision.reason });
+    setFormError("");
+    setEditorOpen(true);
+  };
+
+  const saveReview = (event: React.FormEvent) => {
+    event.preventDefault();
+    keyboard.hide();
+    if (!form.outcome) {
+      setFormError("ارزیابی خودت را انتخاب کن.");
+      window.requestAnimationFrame(() => document.getElementById("manual-response-review-outcome-appears-addressed")?.focus());
+      return;
+    }
+    if (!form.reason.trim()) {
+      setFormError("دلیل ارزیابی خودت را بنویس.");
+      window.requestAnimationFrame(() => document.getElementById("manual-response-review-reason")?.focus());
+      return;
+    }
+    const result = onUpsert(response.id, responseRevision.id, form);
+    if (!result) {
+      setFormError("بازبینی دستی ثبت نشد؛ revision پاسخ یا فضای ذخیره‌سازی محلی را دوباره بررسی کن.");
+      return;
+    }
+    setEditorOpen(false);
+    setPreviewRevisionId(null);
+    setLiveMessage(result === "created" ? "بازبینی دستی پاسخ ثبت شد." : result === "updated" ? "نسخهٔ تازهٔ بازبینی دستی ثبت شد." : "تغییر تازه‌ای برای ثبت وجود نداشت.");
+    window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+  };
+
+  if (editorOpen) {
+    const outcomeInvalid = formError === "ارزیابی خودت را انتخاب کن.";
+    const reasonInvalid = formError === "دلیل ارزیابی خودت را بنویس.";
+    return (
+      <div className="chida-app project-proposals-view manual-response-review-editor-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="manual-response-review-editor">
+        <header className="project-workspace-header"><button className="icon-button" type="button" onClick={closeEditor} aria-label="بستن ویرایشگر بازبینی دستی پاسخ" data-testid="manual-response-review-editor-back"><ArrowRight size={21} /></button><span ref={editorHeadingRef} className="project-workspace-title" tabIndex={-1} data-testid="manual-response-review-editor-title"><small>T8-A3 · خصوصی · دستی</small><strong>{review ? "اصلاح بازبینی پاسخ" : "بازبینی دستی پاسخ"}</strong></span><span className="project-workspace-header-spacer" /></header>
+        <MobileScroll className="project-proposals-scroll"><form className="proposal-editor-content negotiation-draft-editor-content manual-response-review-editor-content" onSubmit={saveReview} noValidate>
+          <section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>ارزیابی شما؛ نه تشخیص چیدا</strong><small>چیدا متن را تحلیل نکرده، تعارضی تشخیص نداده و اصالت پاسخ را تأیید نکرده است.</small></span></section>
+          <section className="proposal-form-section" data-testid="manual-response-review-context"><div className="proposal-section-heading"><span><small>اتصال تغییرناپذیر</small><strong>revision دقیق پاسخ</strong></span></div><div className="proposal-locked-grid"><div><small>پاسخ رونویسی‌شده</small><strong>{questionDraft.target.criterionLabel}</strong><span>نسخهٔ {responseRevision.version.toLocaleString("fa-IR")}</span></div><div><small>تماس ثبت‌شده</small><strong>{questionDraft.target.supplierSnapshot.displayName}</strong><span>اصالت تأیید نشده</span></div><div><small>سؤال مرتبط</small><strong>{response.questionSnapshot.purpose}</strong><span>ارسال‌نشده در چیدا</span></div><div><small>روش ارزیابی</small><strong>ثبت مستقیم سازنده</strong><span>بدون AI و تشخیص خودکار</span></div></div><p className="manual-negotiation-response-message" dir="auto">{responseRevision.responseText}</p></section>
+          <fieldset className="manual-response-review-options" data-testid="manual-response-review-outcome-group" aria-invalid={outcomeInvalid} aria-describedby={outcomeInvalid ? "manual-response-review-form-error" : undefined}><legend>از نظر شما این پاسخ چه وضعیتی دارد؟</legend>{(["appears-addressed", "needs-clarification", "potential-conflict"] as BuilderManualNegotiationResponseReviewOutcome[]).map((outcome) => <label key={outcome} htmlFor={`manual-response-review-outcome-${outcome}`}><input id={`manual-response-review-outcome-${outcome}`} type="radio" name="manual-response-review-outcome" value={outcome} checked={form.outcome === outcome} onChange={() => { setForm((current) => ({ ...current, outcome })); setFormError(""); }} data-testid={`manual-response-review-outcome-${outcome}`} /><span><strong>{builderManualNegotiationResponseReviewOutcomeLabel(outcome)}</strong><small>{outcome === "appears-addressed" ? "این فقط برداشت شما از میزان پاسخ‌گویی متن است." : outcome === "needs-clarification" ? "برای رفع ابهام، پیگیری بیرون از چیدا لازم می‌دانید." : "این فقط علامت‌گذاری احتمالی شماست، نه کشف خودکار."}</small></span></label>)}</fieldset>
+          <section className="proposal-form-section"><label className="field-control" htmlFor="manual-response-review-reason"><span>دلیل ارزیابی شما</span><KeyboardTextarea id="manual-response-review-reason" data-testid="manual-response-review-reason" value={form.reason} maxLength={1200} rows={6} dir="auto" placeholder="مشخص کن کدام بخش پاسخ ابهام را رفع کرده یا هنوز نیازمند روشن‌سازی است…" onChange={(event) => { setForm((current) => ({ ...current, reason: event.target.value })); setFormError(""); }} aria-invalid={reasonInvalid} aria-describedby={reasonInvalid ? "manual-response-review-form-error" : formError ? undefined : "manual-response-review-boundary-note"} /><small id="manual-response-review-boundary-note">این نتیجه فقط قضاوت ثبت‌شدهٔ شما روی همین revision پاسخ است.</small></label></section>
+          <p className="purchase-request-boundary" data-testid="manual-response-review-boundary"><ShieldCheck size={16} /><span>automatedDetectionUsed=false · aiUsed=false · networkUsed=false · externalEffect=none</span></p>
+          {formError ? <p id="manual-response-review-form-error" className="proposal-form-error" role="alert" data-testid="manual-response-review-form-error">{formError}</p> : null}
+          <div className="proposal-editor-actions negotiation-draft-editor-actions"><button className="secondary-button" type="button" onClick={closeEditor}>انصراف</button><button className="primary-button" type="submit" disabled={storageLocked || !responseIsCurrent} data-testid="manual-response-review-save">{review ? "ذخیرهٔ نسخهٔ جدید" : "ثبت بازبینی دستی"}</button></div>
+        </form></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span>
+      </div>
+    );
+  }
+
+  if (review && previewReviewRevision) {
+    const currentPreview = previewReviewRevision.id === review.currentRevisionId;
+    return (
+      <div className="chida-app project-proposals-view manual-response-review-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="manual-response-review-detail">
+        <header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به پاسخ رونویسی‌شده" data-testid="manual-response-review-detail-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>T8-A3 · بازبینی دستی</small><strong>ارزیابی پاسخ</strong></span><span className="project-workspace-header-spacer" /></header>
+        <MobileScroll className="project-proposals-scroll"><main className="proposal-detail-content negotiation-draft-detail-content manual-response-review-detail-content">
+          <section className="proposal-detail-hero negotiation-draft-detail-hero manual-response-review-detail-hero" tabIndex={-1} ref={detailHeadingRef} data-testid="manual-response-review-detail-hero"><span className="proposal-detail-icon"><ClipboardCheck size={24} /></span><span className={`proposal-status-badge ${reviewEffectiveStatus}`}>{reviewEffectiveStatus === "current" ? currentPreview ? "بازبینی دستی جاری" : "نسخهٔ تاریخی ارزیابی" : "تاریخی · نیازمند بازبینی"}</span><h1>{questionDraft.target.criterionLabel}</h1><p>{questionDraft.target.supplierSnapshot.displayName} · ارزیابی شما؛ نه تشخیص چیدا</p></section>
+          <section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>ارزیابی شما؛ نه تشخیص چیدا</strong><small>این برچسب و دلیل را شما ثبت کرده‌اید؛ چیدا متن را تحلیل یا اصالت آن را تأیید نکرده است.</small></span></section>
+          {review.revisions.length > 1 ? <label className="proposal-revision-picker" htmlFor="manual-response-review-revision-select"><span>نمایش نسخه</span><select id="manual-response-review-revision-select" value={previewReviewRevision.id} onChange={(event) => setPreviewRevisionId(event.target.value)} data-testid="manual-response-review-revision-select">{[...review.revisions].reverse().map((revision) => <option key={revision.id} value={revision.id}>نسخهٔ {revision.version.toLocaleString("fa-IR")} · {revision.id === review.currentRevisionId ? "جاری" : "تاریخی"}</option>)}</select></label> : null}
+          <section className="proposal-detail-section"><div className="proposal-section-heading"><span><small>قضاوت ثبت‌شدهٔ سازنده</small><strong data-testid="manual-response-review-outcome">{builderManualNegotiationResponseReviewOutcomeLabel(previewReviewRevision.outcome)}</strong></span></div><p className="negotiation-draft-message" dir="auto" data-testid="manual-response-review-reason-text">{previewReviewRevision.reason}</p></section>
+          <section className="proposal-detail-section"><div className="proposal-section-heading"><span><small>revision پاسخ مورد بازبینی</small><strong>اتصال دقیق و بدون بازاتصال</strong></span></div><p className="manual-negotiation-response-message" dir="auto">{responseRevision.responseText}</p><dl className="proposal-detail-meta"><div><dt>نسخهٔ پاسخ</dt><dd>{responseRevision.version.toLocaleString("fa-IR")} · {responseRevision.id}</dd></div><div><dt>سؤال</dt><dd>{response.questionSnapshot.purpose}</dd></div><div><dt>معیار</dt><dd>{questionDraft.target.criterionLabel}</dd></div><div><dt>منشأ</dt><dd>{review.source}</dd></div><div><dt>روش</dt><dd>دستی · بدون تشخیص خودکار</dd></div><div><dt>اصالت</dt><dd>تأیید نشده</dd></div></dl></section>
+          <p className="purchase-request-boundary" data-testid="manual-response-review-boundary"><ShieldCheck size={16} /><span>automatedDetectionUsed=false · aiUsed=false · networkUsed=false · externalEffect=none</span></p>
+          <section className="proposal-detail-section"><div className="proposal-section-heading"><span><small>تاریخچهٔ تغییرناپذیر</small><strong>نسخه‌های ارزیابی شما</strong></span></div><ol className="proposal-history" data-testid="manual-response-review-history">{[...review.revisions].reverse().map((revision) => <li key={revision.id}><span><Check size={13} /></span><div><strong>{builderManualNegotiationResponseReviewOutcomeLabel(revision.outcome)}</strong><small>نسخهٔ {revision.version.toLocaleString("fa-IR")} · {formatProjectFileDate(revision.createdAt)}</small><small className="negotiation-draft-history-message" dir="auto">{revision.reason}</small></div></li>)}</ol></section>
+          <button className="primary-button proposal-edit-button" type="button" onClick={openEdit} disabled={storageLocked || reviewEffectiveStatus !== "current" || !currentPreview} data-testid="manual-response-review-edit">اصلاح ارزیابی و ثبت نسخهٔ جدید</button>
+        </main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span>
+      </div>
+    );
+  }
+
+  return <div className="chida-app project-proposals-view manual-response-review-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به پاسخ رونویسی‌شده"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>T8-A3 · خصوصی</small><strong>بازبینی دستی پاسخ</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="proposal-detail-content"><section className="proposal-empty-state"><CircleHelp size={26} /><h2>بازبینی قابل نمایش نیست</h2><p>revision دقیق پاسخ یا مخزن محلی بازبینی قابل تأیید نیست.</p></section></main></MobileScroll></div>;
+}
+
+function ProjectManualNegotiationResponseView({ project, questionDraft, questionRevision, response, reviews, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, storageLocked, reviewsStorageLocked, onBack, onCreate, onUpdate, onUpsertReview }: { project: BuilderProject; questionDraft: BuilderNegotiationDraftRecord; questionRevision: BuilderNegotiationDraftRevision; response: BuilderManualNegotiationResponseRecord | null; reviews: BuilderManualNegotiationResponseReviewRecord[]; responses: BuilderManualNegotiationResponseRecord[]; drafts: BuilderNegotiationDraftRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; reviewsStorageLocked: boolean; onBack: () => void; onCreate: (draftId: string, draftRevisionId: string, form: BuilderManualNegotiationResponseForm) => string | null; onUpdate: (responseId: string, form: BuilderManualNegotiationResponseForm) => false | "unchanged" | "updated"; onUpsertReview: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationResponseReviewForm) => false | "unchanged" | "created" | "updated" }) {
+  const keyboard = useKeyboard();
+  const editorHeadingRef = useRef<HTMLSpanElement>(null);
+  const detailHeadingRef = useRef<HTMLElement>(null);
+  const reviewActionRef = useRef<HTMLButtonElement>(null);
   const [editorOpen, setEditorOpen] = useState(!response && !storageLocked);
   const [form, setForm] = useState<BuilderManualNegotiationResponseForm>({ responseText: response?.revisions.find((item) => item.id === response.currentRevisionId)?.responseText ?? "" });
   const [formError, setFormError] = useState("");
   const [previewRevisionId, setPreviewRevisionId] = useState<string | null>(null);
+  const [reviewResponseRevisionId, setReviewResponseRevisionId] = useState<string | null>(null);
   const [liveMessage, setLiveMessage] = useState("");
   const currentResponseRevision = response?.revisions.find((item) => item.id === response.currentRevisionId) ?? null;
   const previewResponseRevision = response?.revisions.find((item) => item.id === previewRevisionId) ?? currentResponseRevision;
@@ -8803,6 +9299,14 @@ function ProjectManualNegotiationResponseView({ project, questionDraft, question
     window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
   };
 
+  if (response && reviewResponseRevisionId) {
+    const targetResponseRevision = response.revisions.find((item) => item.id === reviewResponseRevisionId) ?? null;
+    const targetReview = reviews.find((item) => item.target.manualNegotiationResponseId === response.id && item.target.manualNegotiationResponseRevisionId === reviewResponseRevisionId) ?? null;
+    if (targetResponseRevision) {
+      return <ProjectManualNegotiationResponseReviewView project={project} questionDraft={questionDraft} response={response} responseRevision={targetResponseRevision} review={targetReview} responses={responses} drafts={drafts} productComparisons={productComparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} storageLocked={reviewsStorageLocked} onBack={() => { setReviewResponseRevisionId(null); window.requestAnimationFrame(() => (reviewActionRef.current ?? detailHeadingRef.current)?.focus()); }} onUpsert={onUpsertReview} />;
+    }
+  }
+
   if (editorOpen) {
     return (
       <div className="chida-app project-proposals-view manual-negotiation-response-editor-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="manual-negotiation-response-editor">
@@ -8821,6 +9325,7 @@ function ProjectManualNegotiationResponseView({ project, questionDraft, question
 
   if (response && previewResponseRevision) {
     const currentPreview = previewResponseRevision.id === response.currentRevisionId;
+    const responseReview = reviews.find((item) => item.target.manualNegotiationResponseId === response.id && item.target.manualNegotiationResponseRevisionId === previewResponseRevision.id) ?? null;
     return (
       <div className="chida-app project-proposals-view manual-negotiation-response-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="manual-negotiation-response-detail">
         <header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به سؤال ارسال‌نشده" data-testid="manual-negotiation-response-detail-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>T8-A2 · رونویسی دستی</small><strong>پاسخ مرتبط</strong></span><span className="project-workspace-header-spacer" /></header>
@@ -8829,6 +9334,7 @@ function ProjectManualNegotiationResponseView({ project, questionDraft, question
           <section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>پاسخ احرازنشده · خارج از شبکهٔ چیدا</strong><small>چیدا این سؤال را ارسال نکرده و این پاسخ را دریافت، احراز یا تأیید نکرده است.</small></span></section>
           {response.revisions.length > 1 ? <label className="proposal-revision-picker" htmlFor="manual-negotiation-response-revision-select"><span>نمایش نسخه</span><select id="manual-negotiation-response-revision-select" value={previewResponseRevision.id} onChange={(event) => setPreviewRevisionId(event.target.value)} data-testid="manual-negotiation-response-revision-select">{[...response.revisions].reverse().map((revision) => <option key={revision.id} value={revision.id}>نسخهٔ {revision.version.toLocaleString("fa-IR")} · {revision.id === response.currentRevisionId ? "جاری" : "تاریخی"}</option>)}</select></label> : null}
           <section className="proposal-detail-section"><div className="proposal-section-heading"><span><small>رونویسی ثبت‌شده</small><strong>متن پاسخ منتسب</strong></span></div><p className="negotiation-draft-message manual-negotiation-response-message" dir="auto" data-testid="manual-negotiation-response-message">{previewResponseRevision.responseText}</p></section>
+          <section className="proposal-detail-section manual-response-review-entry" data-testid="manual-response-review-entry"><div className="proposal-section-heading"><span><small>T8-A3 · ثبت دستی سازنده</small><strong>بازبینی ابهام یا تعارض احتمالی</strong></span></div><p>فقط برداشت خودت از همین revision پاسخ را ثبت کن؛ چیدا متن را تحلیل نمی‌کند و تعارضی تشخیص نمی‌دهد.</p>{reviewsStorageLocked ? <section className="proposal-storage-error" role="alert" data-testid="manual-response-review-storage-error"><CircleHelp size={19} /><span><strong>وضعیت بازبینی‌های دستی قابل تأیید نیست</strong><small>این وضعیت «بازبینی ثبت نشده» نیست؛ پاسخ سالم می‌ماند و فقط تغییر بازبینی قفل است.</small></span></section> : responseReview ? <button ref={reviewActionRef} className="secondary-button manual-negotiation-response-action" type="button" onClick={() => setReviewResponseRevisionId(previewResponseRevision.id)} aria-label={`بازکردن بازبینی دستی پاسخ برای ${questionDraft.target.criterionLabel} و ${questionDraft.target.supplierSnapshot.displayName}`} data-testid="manual-response-review-open"><ClipboardCheck size={16} /> بازکردن بازبینی دستی</button> : responseEffectiveStatus === "current" && currentPreview ? <button ref={reviewActionRef} className="secondary-button manual-negotiation-response-action" type="button" onClick={() => setReviewResponseRevisionId(previewResponseRevision.id)} aria-label={`ثبت بازبینی دستی پاسخ برای ${questionDraft.target.criterionLabel} و ${questionDraft.target.supplierSnapshot.displayName}`} data-testid="manual-response-review-add"><ClipboardCheck size={16} /> ثبت بازبینی دستی پاسخ</button> : <p className="proposal-prerequisite-note" data-testid="manual-response-review-historical-note">برای revision تاریخیِ بدون بازبینی، ارزیابی تازه ساخته نمی‌شود.</p>}</section>
           <section className="proposal-detail-section"><div className="proposal-section-heading"><span><small>سؤال مرتبط</small><strong>{response.questionSnapshot.purpose}</strong></span></div><p className="manual-negotiation-question-copy">{response.questionSnapshot.message}</p><dl className="proposal-detail-meta"><div><dt>revision سؤال</dt><dd>نسخهٔ {response.target.negotiationDraftRevisionVersion.toLocaleString("fa-IR")} · {response.target.negotiationDraftRevisionId}</dd></div><div><dt>معیار</dt><dd>{response.questionSnapshot.negotiationTarget.criterionLabel}</dd></div><div><dt>تماس ثبت‌شده</dt><dd>{response.questionSnapshot.negotiationTarget.supplierSnapshot.displayName}</dd></div><div><dt>منشأ</dt><dd>{response.source}</dd></div><div><dt>زمان</dt><dd>زمان ثبت محلی · {formatProjectFileDate(previewResponseRevision.createdAt)}</dd></div><div><dt>اصالت</dt><dd>تأیید نشده · خارج از شبکهٔ چیدا</dd></div></dl></section>
           {storageLocked ? <section className="proposal-storage-error" role="alert" data-testid="manual-negotiation-response-storage-error"><CircleHelp size={19} /><span><strong>وضعیت کامل رونویسی پاسخ قابل تأیید نیست</strong><small>این وضعیت «پاسخی ثبت نشده» نیست؛ ویرایش تا بازیابی موفق قفل می‌ماند.</small></span></section> : null}
           <p className="purchase-request-boundary" data-testid="manual-negotiation-response-boundary"><ShieldCheck size={16} /><span>questionSentThroughChida=false · receivedThroughChida=false · sendAuthorized=false · externalEffect=none</span></p>
@@ -8847,7 +9353,7 @@ function ProjectManualNegotiationResponseView({ project, questionDraft, question
   );
 }
 
-function ProjectNegotiationDraftsView({ project, drafts, manualResponses, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, storageLocked, manualResponsesStorageLocked, initialTargetKey, initialDraftId, returnToOrigin, onBack, onCreate, onUpdate, onCreateManualResponse, onUpdateManualResponse }: { project: BuilderProject; drafts: BuilderNegotiationDraftRecord[]; manualResponses: BuilderManualNegotiationResponseRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; manualResponsesStorageLocked: boolean; initialTargetKey: string | null; initialDraftId: string | null; returnToOrigin: boolean; onBack: () => void; onCreate: (draft: BuilderNegotiationDraftForm) => string | null; onUpdate: (draftId: string, draft: BuilderNegotiationDraftForm) => false | "unchanged" | "updated"; onCreateManualResponse: (draftId: string, draftRevisionId: string, form: BuilderManualNegotiationResponseForm) => string | null; onUpdateManualResponse: (responseId: string, form: BuilderManualNegotiationResponseForm) => false | "unchanged" | "updated" }) {
+function ProjectNegotiationDraftsView({ project, drafts, manualResponses, manualResponseReviews, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, storageLocked, manualResponsesStorageLocked, manualResponseReviewsStorageLocked, initialTargetKey, initialDraftId, returnToOrigin, onBack, onCreate, onUpdate, onCreateManualResponse, onUpdateManualResponse, onUpsertManualResponseReview }: { project: BuilderProject; drafts: BuilderNegotiationDraftRecord[]; manualResponses: BuilderManualNegotiationResponseRecord[]; manualResponseReviews: BuilderManualNegotiationResponseReviewRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; manualResponsesStorageLocked: boolean; manualResponseReviewsStorageLocked: boolean; initialTargetKey: string | null; initialDraftId: string | null; returnToOrigin: boolean; onBack: () => void; onCreate: (draft: BuilderNegotiationDraftForm) => string | null; onUpdate: (draftId: string, draft: BuilderNegotiationDraftForm) => false | "unchanged" | "updated"; onCreateManualResponse: (draftId: string, draftRevisionId: string, form: BuilderManualNegotiationResponseForm) => string | null; onUpdateManualResponse: (responseId: string, form: BuilderManualNegotiationResponseForm) => false | "unchanged" | "updated"; onUpsertManualResponseReview: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationResponseReviewForm) => false | "unchanged" | "created" | "updated" }) {
   const keyboard = useKeyboard();
   const editorHeadingRef = useRef<HTMLSpanElement>(null);
   const detailHeadingRef = useRef<HTMLElement>(null);
@@ -8933,7 +9439,7 @@ function ProjectNegotiationDraftsView({ project, drafts, manualResponses, produc
   };
 
   if (manualResponseFlow && manualResponseQuestionDraft && manualResponseQuestionRevision) {
-    return <ProjectManualNegotiationResponseView project={project} questionDraft={manualResponseQuestionDraft} questionRevision={manualResponseQuestionRevision} response={selectedManualResponse} drafts={drafts} productComparisons={productComparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} storageLocked={manualResponsesStorageLocked} onBack={() => { setManualResponseFlow(null); window.requestAnimationFrame(() => manualResponseActionRef.current?.focus()); }} onCreate={onCreateManualResponse} onUpdate={onUpdateManualResponse} />;
+    return <ProjectManualNegotiationResponseView project={project} questionDraft={manualResponseQuestionDraft} questionRevision={manualResponseQuestionRevision} response={selectedManualResponse} reviews={manualResponseReviews} responses={manualResponses} drafts={drafts} productComparisons={productComparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} storageLocked={manualResponsesStorageLocked} reviewsStorageLocked={manualResponseReviewsStorageLocked} onBack={() => { setManualResponseFlow(null); window.requestAnimationFrame(() => manualResponseActionRef.current?.focus()); }} onCreate={onCreateManualResponse} onUpdate={onUpdateManualResponse} onUpsertReview={onUpsertManualResponseReview} />;
   }
 
   if (editorOpen && formTarget) {
@@ -8983,7 +9489,7 @@ function ProjectNegotiationDraftsView({ project, drafts, manualResponses, produc
   );
 }
 
-function ProjectProposalsView({ project, proposals, comparisons, decisions, serviceComparisons, serviceDecisions, negotiationDrafts, manualNegotiationResponses, requests, approvals, contacts, files, storageLocked, comparisonsStorageLocked, decisionsStorageLocked, serviceComparisonsStorageLocked, serviceDecisionsStorageLocked, negotiationDraftsStorageLocked, manualNegotiationResponsesStorageLocked, backLabel, onBack, onCreate, onUpdate, onCreateComparison, onUpdateComparison, onUpsertDecision, onCreateServiceComparison, onUpdateServiceComparison, onUpsertServiceDecision, onCreateNegotiationDraft, onUpdateNegotiationDraft, onCreateManualNegotiationResponse, onUpdateManualNegotiationResponse }: { project: BuilderProject; proposals: BuilderRecordedProposalRecord[]; comparisons: BuilderProposalComparisonRecord[]; decisions: BuilderProposalComparisonDecisionRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; serviceDecisions: BuilderServiceProposalComparisonDecisionRecord[]; negotiationDrafts: BuilderNegotiationDraftRecord[]; manualNegotiationResponses: BuilderManualNegotiationResponseRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; files: ProjectFileRecord[]; storageLocked: boolean; comparisonsStorageLocked: boolean; decisionsStorageLocked: boolean; serviceComparisonsStorageLocked: boolean; serviceDecisionsStorageLocked: boolean; negotiationDraftsStorageLocked: boolean; manualNegotiationResponsesStorageLocked: boolean; backLabel: string; onBack: () => void; onCreate: (draft: BuilderRecordedProposalDraft) => string | null; onUpdate: (proposalId: string, draft: BuilderRecordedProposalDraft) => false | "unchanged" | "updated"; onCreateComparison: (draft: BuilderProposalComparisonDraft) => string | null; onUpdateComparison: (comparisonId: string, draft: BuilderProposalComparisonDraft) => false | "unchanged" | "updated"; onUpsertDecision: (comparisonId: string, revisionId: string, draft: BuilderProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated"; onCreateServiceComparison: (draft: BuilderServiceProposalComparisonDraft) => string | null; onUpdateServiceComparison: (comparisonId: string, draft: BuilderServiceProposalComparisonDraft) => false | "unchanged" | "updated"; onUpsertServiceDecision: (comparisonId: string, revisionId: string, draft: BuilderServiceProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated"; onCreateNegotiationDraft: (draft: BuilderNegotiationDraftForm) => string | null; onUpdateNegotiationDraft: (draftId: string, draft: BuilderNegotiationDraftForm) => false | "unchanged" | "updated"; onCreateManualNegotiationResponse: (draftId: string, draftRevisionId: string, form: BuilderManualNegotiationResponseForm) => string | null; onUpdateManualNegotiationResponse: (responseId: string, form: BuilderManualNegotiationResponseForm) => false | "unchanged" | "updated" }) {
+function ProjectProposalsView({ project, proposals, comparisons, decisions, serviceComparisons, serviceDecisions, negotiationDrafts, manualNegotiationResponses, manualNegotiationResponseReviews, requests, approvals, contacts, files, storageLocked, comparisonsStorageLocked, decisionsStorageLocked, serviceComparisonsStorageLocked, serviceDecisionsStorageLocked, negotiationDraftsStorageLocked, manualNegotiationResponsesStorageLocked, manualNegotiationResponseReviewsStorageLocked, backLabel, onBack, onCreate, onUpdate, onCreateComparison, onUpdateComparison, onUpsertDecision, onCreateServiceComparison, onUpdateServiceComparison, onUpsertServiceDecision, onCreateNegotiationDraft, onUpdateNegotiationDraft, onCreateManualNegotiationResponse, onUpdateManualNegotiationResponse, onUpsertManualNegotiationResponseReview }: { project: BuilderProject; proposals: BuilderRecordedProposalRecord[]; comparisons: BuilderProposalComparisonRecord[]; decisions: BuilderProposalComparisonDecisionRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; serviceDecisions: BuilderServiceProposalComparisonDecisionRecord[]; negotiationDrafts: BuilderNegotiationDraftRecord[]; manualNegotiationResponses: BuilderManualNegotiationResponseRecord[]; manualNegotiationResponseReviews: BuilderManualNegotiationResponseReviewRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; files: ProjectFileRecord[]; storageLocked: boolean; comparisonsStorageLocked: boolean; decisionsStorageLocked: boolean; serviceComparisonsStorageLocked: boolean; serviceDecisionsStorageLocked: boolean; negotiationDraftsStorageLocked: boolean; manualNegotiationResponsesStorageLocked: boolean; manualNegotiationResponseReviewsStorageLocked: boolean; backLabel: string; onBack: () => void; onCreate: (draft: BuilderRecordedProposalDraft) => string | null; onUpdate: (proposalId: string, draft: BuilderRecordedProposalDraft) => false | "unchanged" | "updated"; onCreateComparison: (draft: BuilderProposalComparisonDraft) => string | null; onUpdateComparison: (comparisonId: string, draft: BuilderProposalComparisonDraft) => false | "unchanged" | "updated"; onUpsertDecision: (comparisonId: string, revisionId: string, draft: BuilderProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated"; onCreateServiceComparison: (draft: BuilderServiceProposalComparisonDraft) => string | null; onUpdateServiceComparison: (comparisonId: string, draft: BuilderServiceProposalComparisonDraft) => false | "unchanged" | "updated"; onUpsertServiceDecision: (comparisonId: string, revisionId: string, draft: BuilderServiceProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated"; onCreateNegotiationDraft: (draft: BuilderNegotiationDraftForm) => string | null; onUpdateNegotiationDraft: (draftId: string, draft: BuilderNegotiationDraftForm) => false | "unchanged" | "updated"; onCreateManualNegotiationResponse: (draftId: string, draftRevisionId: string, form: BuilderManualNegotiationResponseForm) => string | null; onUpdateManualNegotiationResponse: (responseId: string, form: BuilderManualNegotiationResponseForm) => false | "unchanged" | "updated"; onUpsertManualNegotiationResponseReview: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationResponseReviewForm) => false | "unchanged" | "created" | "updated" }) {
   const keyboard = useKeyboard();
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const productComparisonsButtonRef = useRef<HTMLButtonElement>(null);
@@ -9130,7 +9636,7 @@ function ProjectProposalsView({ project, proposals, comparisons, decisions, serv
   }
 
   if (comparisonMode === "negotiation") {
-    return <ProjectNegotiationDraftsView project={project} drafts={negotiationDrafts} manualResponses={manualNegotiationResponses} productComparisons={comparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} storageLocked={negotiationDraftsStorageLocked} manualResponsesStorageLocked={manualNegotiationResponsesStorageLocked} initialTargetKey={negotiationInitialTargetKey} initialDraftId={negotiationInitialDraftId} returnToOrigin={Boolean(negotiationOriginTarget)} onBack={() => { const originKind = negotiationOriginTarget?.comparisonKind ?? null; setNegotiationInitialTargetKey(null); setNegotiationInitialDraftId(null); setComparisonMode(originKind); if (!originKind) window.requestAnimationFrame(() => negotiationDraftsButtonRef.current?.focus()); }} onCreate={onCreateNegotiationDraft} onUpdate={onUpdateNegotiationDraft} onCreateManualResponse={onCreateManualNegotiationResponse} onUpdateManualResponse={onUpdateManualNegotiationResponse} />;
+    return <ProjectNegotiationDraftsView project={project} drafts={negotiationDrafts} manualResponses={manualNegotiationResponses} manualResponseReviews={manualNegotiationResponseReviews} productComparisons={comparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} storageLocked={negotiationDraftsStorageLocked} manualResponsesStorageLocked={manualNegotiationResponsesStorageLocked} manualResponseReviewsStorageLocked={manualNegotiationResponseReviewsStorageLocked} initialTargetKey={negotiationInitialTargetKey} initialDraftId={negotiationInitialDraftId} returnToOrigin={Boolean(negotiationOriginTarget)} onBack={() => { const originKind = negotiationOriginTarget?.comparisonKind ?? null; setNegotiationInitialTargetKey(null); setNegotiationInitialDraftId(null); setComparisonMode(originKind); if (!originKind) window.requestAnimationFrame(() => negotiationDraftsButtonRef.current?.focus()); }} onCreate={onCreateNegotiationDraft} onUpdate={onUpdateNegotiationDraft} onCreateManualResponse={onCreateManualNegotiationResponse} onUpdateManualResponse={onUpdateManualNegotiationResponse} onUpsertManualResponseReview={onUpsertManualNegotiationResponseReview} />;
   }
 
   if (editorOpen) {

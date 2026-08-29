@@ -1016,7 +1016,7 @@
 ## T8-A2 — رونویسی خصوصی پاسخ مرتبط توسط سازنده
 
 - **تاریخ:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
-- **وضعیت:** قرارداد، پیاده‌سازی، regression، suite کامل، QA موبایل و بازبینی مستقل کامل و توسط ماهیار تأیید شد؛ release کد با commit `f5d68b6e757c0763a6770a46c5c3a211825713d3` در GitHub، Cloudflare و ChatGPT Sites نسخهٔ ۱۶ موفق و هم‌منبع شد؛ commit مستندی receipt هنوز در حال بسته‌شدن است
+- **وضعیت:** قرارداد، پیاده‌سازی، regression، suite کامل، QA موبایل و بازبینی مستقل کامل و توسط ماهیار تأیید شد؛ release کد با commit `f5d68b6e757c0763a6770a46c5c3a211825713d3` و receipt مستندی نهایی با SHA `5357fc503df57f51bd4659401399f1b3b76a0caa` در GitHub، Cloudflare و ChatGPT Sites نسخهٔ ۱۷ موفق و هم‌منبع شدند؛ T8-A2 منتشر و بسته شد
 - **دامنه:** یک متن پاسخ که خود سازنده دستی رونویسی می‌کند و به revision دقیق سؤال T8-A1 متصل است؛ بدون ارسال سؤال از چیدا، دریافت پاسخ در چیدا، هویت/اصالت/زمان/کانال تأییدشده، پیام مشترک، شبکه، AI، اعلان یا اثر بیرونی.
 
 ### تجربهٔ مشاهده‌شده
@@ -1061,8 +1061,27 @@
 
 - commit کد `f5d68b6e757c0763a6770a46c5c3a211825713d3` روی local/GitHub `main` هم‌تراز شد. Cloudflare Pages deployment `11eb968e-8348-455a-abcf-6187221f897b` با `github:push`، شاخهٔ `main`، `commit_dirty=false` و همین source به وضعیت `success` رسید؛ canonical `https://chida-prototype.pages.dev` و immutable `https://11eb968e.chida-prototype.pages.dev` با build محلی hash یکسان داشتند: HTML برابر `e1d80ca062a1736bb6c1c1814b6920160f255c80b4362db4a80736fb4561f616`، JavaScript برابر `d9a5af99b514e38fe7106d9bc13d70a4b786d51e14ffa0f59fa20f8b6470246e` و CSS برابر `a8cc77e688cfdf669d53be72c248434f4f4122b2ddf6ace2f8f56bd141a5d444`.
 - ChatGPT Sites نسخهٔ ۱۶ با ۱۸ فایل، source commit همین SHA و archive hash `sha256:9790a1b4054451e1192669dfea8ecb8a2a9f4e2086d54cfa13d8452d4bdce76e` ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_1c2eb22ab4c48191823c95adc6f00677` و deployment خصوصی `appgdep_6a92b4ea95748191be4cd9f8eed39bf8` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. access owner-only/custom با یک مالک و بدون گروه یا مهمان بیرونی حفظ شد.
-- commit مستندی جاری فقط receipt و وضعیت را ثبت می‌کند و prototype tree آن با `f5d68b6` یکسان می‌ماند. SHA نهایی پس از commit تعیین و همان source دوباره در GitHub، Cloudflare و Sites هم‌تراز می‌شود؛ receipt نهایی آن پیش از آغاز پیاده‌سازی T8-A3 در working tree ثبت خواهد شد.
+- **[وضعیت تاریخی پیش از receipt نهایی]** commit مستندی جاری فقط receipt و وضعیت را ثبت می‌کرد و prototype tree آن با `f5d68b6` یکسان می‌ماند؛ نتیجهٔ نهایی همان SHA `5357fc503df57f51bd4659401399f1b3b76a0caa` و receiptهای زیر شد و پس از آن T8-A3 فقط در working tree اصلی آغاز شد.
+
+### receipt نهایی انتشار T8-A2
+
+- commit مستندی نهایی `5357fc503df57f51bd4659401399f1b3b76a0caa` روی local/GitHub `main` هم‌تراز شد. prototype tree آن با commit کد `f5d68b6e757c0763a6770a46c5c3a211825713d3` یکسان و برابر `30440070ef4bf6b63633fccd0a9999953a36a16c` ماند؛ اختلاف این دو commit فقط سه سند وضعیت و receipt بود.
+- Cloudflare Pages deployment نهایی `4ae8e8ee-bc2d-4b44-b542-7bffe7332181` با `github:push`، شاخهٔ `main`، `commit_dirty=false` و source commit نهایی به وضعیت `success` رسید. canonical `https://chida-prototype.pages.dev` همان asset hashهای release کد را حفظ کرد: HTML برابر `e1d80ca062a1736bb6c1c1814b6920160f255c80b4362db4a80736fb4561f616`، JavaScript برابر `d9a5af99b514e38fe7106d9bc13d70a4b786d51e14ffa0f59fa20f8b6470246e` و CSS برابر `a8cc77e688cfdf669d53be72c248434f4f4122b2ddf6ace2f8f56bd141a5d444`.
+- ChatGPT Sites نسخهٔ ۱۷ با source commit نهایی، ۱۸ فایل و archive hash `sha256:9790a1b4054451e1192669dfea8ecb8a2a9f4e2086d54cfa13d8452d4bdce76e` ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_7be8bd1b07208191a90be04771891562` و deployment خصوصی `appgdep_6a92b60a7f848191bc8de2ac805a2934` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی owner-only/custom حفظ شد؛ T8-A2 منتشر و بسته شد.
 
 ### خارج از T8-A2
 
 - ارسال/دریافت واقعی، حساب یا احراز تأمین‌کننده، delivery/read state، پیام مشترک، پاسخ AI، کشف تناقض، محاسبهٔ اثر تغییر شرایط، amendment و مقایسهٔ پیشنهاد تازه، deadline/follow-up، فایل، sync/backend و هر اقدام بیرونی ساخته نمی‌شوند.
+
+## T8-A3 — ارزیابی خصوصی تناقض و ابهام سؤال/پاسخ
+
+- **تاریخ شروع:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
+- **وضعیت:** قرارداد، پیاده‌سازی، هفت regression متمرکز، suite کامل، QA مرورگر داخلی `390 × 844` و بازبینی مستقل کامل است؛ ماهیار پس از مشاهده، همین snapshot آزموده و receipt آن را برای commit، push و انتشار روی GitHub، Cloudflare Pages و ChatGPT Sites صریحاً تأیید کرد. انتشار در حال انجام است و تا receipt موفق، منتشرشده تلقی نمی‌شود.
+- **تجربهٔ مشاهده‌شده:** در جزئیات revision دقیق پاسخ T8-A2، سازنده یک child-flow تمام‌صفحه برای ثبت یا بازکردن بازبینی دستی دارد. سه قضاوت «از نظر شما پاسخ به پرسش می‌پردازد»، «از نظر شما نیازمند روشن‌سازی است» و «از نظر شما تعارض احتمالی دارد» همراه دلیل اجباری، منشأ و تاریخچه نمایش داده می‌شوند. editor/detail در viewport واقعی بدون overflow افقی بودند، focus روی heading/خطای مرتبط/رکورد/CTA بازگشت درست جابه‌جا شد و console خطا یا هشدار مرتبط نداشت.
+- **بازخورد و تصمیم ماهیار:** نسخهٔ مشاهده‌شده تأیید شد؛ مجوز فقط انتشار same-source همین برش و ثبت receipt آن است. درخواست ساخت گفت‌وگوی تازه با هنداف کامل پس از پایان انتشار نیز ثبت شد؛ این تأیید مجوز شروع برش بعدی، مدل محلی یا مسیر تأمین‌کننده نیست.
+- **قرارداد داده و شکست:** `BuilderManualNegotiationResponseReviewRecord` به `id/version/fingerprint` دقیق revision پاسخ pin می‌شود؛ lineage سؤال T8-A1 از snapshot تغییرناپذیر همان پاسخ به ارث می‌رسد و pin موازی دوم ساخته نمی‌شود. هر response revision رکورد مستقل دارد؛ تغییر پاسخ یا dependency بالادستی رکورد قبلی را تاریخی و فقط‌خواندنی می‌کند، نه اینکه آن را rebind کند. exact-key parser، fingerprint محلی، سقف رکورد/نسخه، project isolation، no-op byte stability، write-before-state/rollback و read-error lock مستقل پوشش داده شده‌اند؛ خرابی store بازبینی، پاسخ سالم T8-A2 را قفل یا پنهان نمی‌کند.
+- **مرز صداقت:** این قضاوت فقط ثبت مستقیم سازنده است. `automatedDetectionUsed=false`، `aiUsed=false`، `networkUsed=false`، `authenticityVerified=false` و `externalEffect=none` ثابت‌اند؛ هیچ کشف AI، هویت یا اصالت طرف مقابل، پیام مشترک، شبکه، اعلان، اصلاح خودکار پیشنهاد، مجوز ارسال یا اثر بیرونی ادعا نمی‌شود.
+- **شکاف/ابهام سند مادر:** عبارت‌های «پیداکردن ابهام یا تناقض» در مسیر مذاکره روشن نمی‌کنند که این نتیجه در برش پیش از مدل باید تشخیص چیدا باشد یا قضاوت صریح سازنده؛ نسبت آن با revision دقیق رونویسی پاسخ و رفتار historical/no-rebind نیز صریح نیست.
+- **تصمیم پروتوتایپ تأییدشده:** تا اتصال مدل و منابع واقعی، فقط قضاوت دستی و برچسب‌خوردهٔ سازنده روی revision دقیق پاسخ مجاز است. هیچ outcome به‌تنهایی سؤال تازه، اعلان، تغییر پیشنهاد یا اقدام تجاری نمی‌سازد.
+- **پیشنهاد اصلاح سند مادر:** در بازنگری بعدی، «بازبینی دستی سازنده» از «تشخیص مدل/منبع» جدا تعریف شود و target دقیق پاسخ، reason اجباری، version/history، currentness مشتق‌شده، historical/no-rebind و نبود اثر خودکار برای هر outcome تصریح شوند.
+- **شواهد کیفیت محلی:** `T8-A3` متمرکز ۷/۷، `test:app` برابر ۱۳۲/۱۳۲، `test:runtime` برابر ۱۴۰/۱۴۰، `test:sites` برابر ۴/۴، build/TypeScript، `check:runtime` برای ۲۸ فایل، `npx tsc --noEmit` و `git diff --check` پاس شدند. دو finding دسترس‌پذیری P2 دربارهٔ focus خنثیِ outcome و `aria-describedby` نامرتبط پیش از تحویل اصلاح و با regression بسته شدند؛ بازبینی نهایی finding باز P0/P1/P2 ندارد.
