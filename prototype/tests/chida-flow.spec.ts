@@ -221,6 +221,88 @@ async function createServiceProposalPrerequisites(page: Page, contactName = "م�
   await returnFromDispatchToHome(page);
 }
 
+async function createTwoCurrentProductProposalsForComparison(page: Page, overrides: { firstTotalPrice?: string } = {}) {
+  const firstSupplier = "فولاد مقایسه الف";
+  const secondSupplier = "فولاد مقایسه ب";
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: firstSupplier, category: "میلگرد", coverage: "غرب تهران", capability: "product" });
+  await addLocalSupplierContact(page, { name: secondSupplier, category: "میلگرد", coverage: "مرکز تهران", capability: "product" });
+  await returnFromDispatchToHome(page);
+  await page.getByTestId("quick-action-compare-offers").click();
+
+  const recordProposal = async (supplierName: string, values: { quantity: string; unit: string; unitPrice: string; totalPrice: string; transcript: string }) => {
+    await page.getByTestId("proposal-add").click();
+    await page.getByTestId("proposal-supplier-select").selectOption({ label: `${supplierName} · محصول` });
+    await page.getByTestId("proposal-transcript").fill(values.transcript);
+    await page.getByTestId("proposal-line-status-0").selectOption("quoted");
+    await page.getByTestId("proposal-line-quantity-0").fill(values.quantity);
+    await page.getByTestId("proposal-line-unit-0").fill(values.unit);
+    await page.getByTestId("proposal-line-unit-price-0").fill(values.unitPrice);
+    await page.getByTestId("proposal-line-total-price-0").fill(values.totalPrice);
+    await page.getByTestId("proposal-save").click();
+    await expect(page.getByTestId("proposal-detail")).toBeVisible();
+    await page.getByTestId("proposal-detail-back").click();
+  };
+
+  await recordProposal(firstSupplier, {
+    quantity: "۵",
+    unit: "تن",
+    unitPrice: "4300000",
+    totalPrice: overrides.firstTotalPrice ?? "21500000",
+    transcript: "پنج تن میلگرد با قیمت کل بیست و یک میلیون و پانصد هزار تومان اعلام شد.",
+  });
+  await recordProposal(secondSupplier, {
+    quantity: "۵۰۰۰",
+    unit: "کیلوگرم",
+    unitPrice: "4200",
+    totalPrice: "21000000",
+    transcript: "پنج هزار کیلوگرم میلگرد با قیمت واحد چهار هزار و دویست تومان اعلام شد.",
+  });
+  await expect(page.getByTestId("proposal-card")).toHaveCount(2);
+  return { firstSupplier, secondSupplier };
+}
+
+function comparisonSupplierEditor(page: Page, supplierName: string) {
+  return page.getByTestId("comparison-supplier-editor").filter({ hasText: supplierName });
+}
+
+async function createExactProductComparisonWithDecision(page: Page) {
+  const { firstSupplier, secondSupplier } = await createTwoCurrentProductProposalsForComparison(page);
+  const proposals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
+  const firstProposal = proposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === firstSupplier);
+  const secondProposal = proposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === secondSupplier);
+  await page.getByTestId("proposal-comparisons-entry").click();
+  await page.getByTestId("comparison-add").click();
+
+  const firstEditor = comparisonSupplierEditor(page, firstSupplier);
+  await firstEditor.getByTestId(/^comparison-tax-mode-/).selectOption("rate");
+  await firstEditor.getByTestId(/^comparison-tax-value-/).fill("۹");
+  await firstEditor.getByTestId(/^comparison-tax-assumption-/).fill("مالیات ۹ درصد جدا از مبلغ اعلامی");
+  await firstEditor.getByTestId(/^comparison-transport-mode-/).selectOption("fixed");
+  await firstEditor.getByTestId(/^comparison-transport-value-/).fill("۱۰۰۰۰۰۰");
+  await firstEditor.getByTestId(/^comparison-transport-assumption-/).fill("حمل ثابت تا پروژه");
+
+  const secondEditor = comparisonSupplierEditor(page, secondSupplier);
+  await secondEditor.getByTestId(/^comparison-basis-/).selectOption("unit-price-times-adjusted-quantity");
+  await secondEditor.getByTestId(/^comparison-adjusted-quantity-/).fill("۵۰۰۰");
+  await expect(secondEditor.getByTestId(/^comparison-adjusted-unit-/)).toHaveValue("کیلوگرم");
+  await secondEditor.getByTestId(/^comparison-assumption-/).fill("۵۰۰۰ کیلوگرم برابر مقدار پنج تن درخواست است");
+  await secondEditor.getByTestId(/^comparison-tax-mode-/).selectOption("included");
+  await secondEditor.getByTestId(/^comparison-tax-assumption-/).fill("مالیات داخل مبلغ اعلامی است");
+  await secondEditor.getByTestId(/^comparison-transport-mode-/).selectOption("fixed");
+  await secondEditor.getByTestId(/^comparison-transport-value-/).fill("۲۰۰۰۰۰۰");
+  await secondEditor.getByTestId(/^comparison-transport-assumption-/).fill("حمل ثابت تا پروژه");
+  await page.getByTestId("comparison-save").click();
+  await expect(page.getByTestId("comparison-detail")).toBeVisible();
+
+  await page.getByTestId("comparison-decision-outcome").selectOption("preferred-for-follow-up");
+  await page.getByTestId("comparison-decision-proposal").selectOption(secondProposal.id);
+  await page.getByTestId("comparison-decision-reason").fill("نسخهٔ نخست تصمیم برای ادامهٔ بررسی پیشنهاد ب");
+  await page.getByTestId("comparison-decision-save").click();
+  await expect(page.getByTestId("comparison-decision-history")).toBeVisible();
+  return { firstSupplier, secondSupplier, firstProposal, secondProposal };
+}
+
 async function openSavedProjectMemory(page: Page) {
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
@@ -4740,4 +4822,438 @@ test("T7-A rolls back failed writes and fails closed on a tampered proposal reco
   await expect(page.getByTestId("proposal-card")).toHaveCount(0);
   await expect(page.getByTestId("proposal-add")).toBeDisabled();
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(supplierTamperedStore);
+});
+
+test("T7-B1 builds an exact product comparison without mutating its sources and keeps the decision independent", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { firstSupplier, secondSupplier } = await createTwoCurrentProductProposalsForComparison(page);
+  const sourceStoresBeforeComparison = await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+  }));
+  const sourceProposals = JSON.parse(sourceStoresBeforeComparison.proposals ?? "[]");
+  const firstProposal = sourceProposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === firstSupplier);
+  const secondProposal = sourceProposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === secondSupplier);
+  expect(firstProposal).toBeTruthy();
+  expect(secondProposal).toBeTruthy();
+
+  const appOrigin = new URL(page.url()).origin;
+  const externalRequests: string[] = [];
+  const requestListener = (request: Request) => {
+    const url = new URL(request.url());
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
+  };
+  page.on("request", requestListener);
+
+  await page.getByTestId("proposal-comparisons-entry").click();
+  await expect(page.getByTestId("proposal-comparisons-view")).toBeVisible();
+  await page.getByTestId("comparison-add").click();
+  await expect(page.getByTestId("comparison-editor-title")).toBeFocused();
+  await expect(page.getByTestId("comparison-request-select")).not.toHaveValue("");
+  await expect(page.getByTestId("comparison-supplier-editor")).toHaveCount(2);
+
+  const firstEditor = comparisonSupplierEditor(page, firstSupplier);
+  await firstEditor.getByTestId(/^comparison-tax-mode-/).selectOption("rate");
+  await firstEditor.getByTestId(/^comparison-tax-value-/).fill("۹");
+  await firstEditor.getByTestId(/^comparison-tax-assumption-/).fill("مالیات ۹ درصد جدا از مبلغ اعلامی");
+  await firstEditor.getByTestId(/^comparison-transport-mode-/).selectOption("fixed");
+  await firstEditor.getByTestId(/^comparison-transport-value-/).fill("۱۰۰۰۰۰۰");
+  await firstEditor.getByTestId(/^comparison-transport-assumption-/).fill("حمل ثابت تا پروژه");
+
+  const secondEditor = comparisonSupplierEditor(page, secondSupplier);
+  await secondEditor.getByTestId(/^comparison-basis-/).selectOption("unit-price-times-adjusted-quantity");
+  await secondEditor.getByTestId(/^comparison-adjusted-quantity-/).fill("۵۰۰۰");
+  await expect(secondEditor.getByTestId(/^comparison-adjusted-unit-/)).toHaveValue("کیلوگرم");
+  await secondEditor.getByTestId(/^comparison-assumption-/).fill("۵۰۰۰ کیلوگرم برابر مقدار پنج تن درخواست است");
+  await secondEditor.getByTestId(/^comparison-tax-mode-/).selectOption("included");
+  await secondEditor.getByTestId(/^comparison-tax-assumption-/).fill("مالیات داخل مبلغ اعلامی است");
+  await secondEditor.getByTestId(/^comparison-transport-mode-/).selectOption("fixed");
+  await secondEditor.getByTestId(/^comparison-transport-value-/).fill("۲۰۰۰۰۰۰");
+  await secondEditor.getByTestId(/^comparison-transport-assumption-/).fill("حمل ثابت تا پروژه");
+
+  await expect(firstEditor.getByTestId(/^comparison-live-total-/)).toContainText("۲۴٬۴۳۵٬۰۰۰ تومان");
+  await expect(secondEditor.getByTestId(/^comparison-live-total-/)).toContainText("۲۳٬۰۰۰٬۰۰۰ تومان");
+  await expect(page.getByTestId("comparison-recommendation-preview")).toContainText(`نامزد بررسی: ${secondSupplier}`);
+  await page.getByTestId("comparison-save").click();
+
+  await expect(page.getByTestId("comparison-detail")).toBeVisible();
+  await expect(page.getByTestId("comparison-detail-hero")).toBeFocused();
+  await expect(page.getByTestId("comparison-result-card")).toHaveCount(2);
+  await expect(page.getByTestId("comparison-recommendation")).toContainText(secondSupplier);
+  expect(await page.getByTestId("comparison-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  for (const resultCard of await page.getByTestId("comparison-result-card").all()) {
+    expect(await resultCard.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  }
+
+  const comparisonStoreBeforeDecision = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
+  const comparisons = JSON.parse(comparisonStoreBeforeDecision ?? "[]");
+  expect(comparisons).toHaveLength(1);
+  const comparison = comparisons[0];
+  const comparisonRevision = comparison.revisions[0];
+  const firstResult = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === firstProposal.id);
+  const secondResult = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === secondProposal.id);
+  expect(comparison).toMatchObject({
+    schemaVersion: 1,
+    projectId: firstProposal.projectId,
+    purpose: "compare-builder-recorded-product-proposals",
+    target: {
+      requestId: firstProposal.target.requestId,
+      requestVersion: firstProposal.target.requestVersion,
+      reviewRevisionId: firstProposal.target.reviewRevisionId,
+      reviewRevisionFingerprint: firstProposal.target.reviewRevisionFingerprint,
+      requestKind: "product",
+    },
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    externalEffect: "none",
+    networkUsed: false,
+    aiUsed: false,
+    version: 1,
+  });
+  expect(comparison.history.map((event: { type: string }) => event.type)).toEqual(["created"]);
+  expect(comparisonRevision.inputs).toHaveLength(2);
+  expect(comparisonRevision.recommendation).toMatchObject({
+    criterion: "lowest-complete-normalized-total",
+    status: "conditional",
+    candidateProposalId: secondProposal.id,
+    tiedProposalIds: [],
+  });
+  expect(firstResult).toMatchObject({
+    proposalId: firstProposal.id,
+    subtotal: "21500000",
+    taxAmount: "1935000",
+    transportAmount: "1000000",
+    normalizedTotal: "24435000",
+    coverage: "complete",
+  });
+  expect(firstResult.lines[0].calculation).toMatchObject({
+    formula: "قیمت کل اعلامی 21500000 تومان",
+    basisAmount: "21500000",
+    normalizedLineTotal: "21500000",
+    status: "complete",
+    rounding: "none",
+  });
+  expect(secondResult).toMatchObject({
+    proposalId: secondProposal.id,
+    subtotal: "21000000",
+    taxAmount: "0",
+    transportAmount: "2000000",
+    normalizedTotal: "23000000",
+    coverage: "complete",
+  });
+  expect(secondResult.lines[0].calculation).toMatchObject({
+    formula: "4200 × 5000 کیلوگرم",
+    basisAmount: "21000000",
+    normalizedLineTotal: "21000000",
+    status: "complete",
+    rounding: "none",
+  });
+  expect(JSON.stringify(comparison)).not.toMatch(/"(?:orderId|sent|sentAt|purchaseAuthorized|sendAuthorized)":/);
+  expect(await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+  }))).toEqual(sourceStoresBeforeComparison);
+
+  await page.getByTestId("comparison-decision-outcome").selectOption("preferred-for-follow-up");
+  await page.getByTestId("comparison-decision-proposal").selectOption(secondProposal.id);
+  await page.getByTestId("comparison-decision-reason").fill("بر پایهٔ مبلغ هم‌سطح کمتر، فقط برای ادامهٔ بررسی انتخاب شد.");
+  await page.getByTestId("comparison-decision-save").click();
+  await expect(page.getByTestId("comparison-decision-history")).toBeVisible();
+
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonStoreBeforeDecision);
+  const decisionStoreBeforeReload = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"));
+  const decisions = JSON.parse(decisionStoreBeforeReload ?? "[]");
+  expect(decisions).toHaveLength(1);
+  const decision = decisions[0];
+  const decisionRevision = decision.revisions[0];
+  expect(decision).toMatchObject({
+    schemaVersion: 1,
+    projectId: firstProposal.projectId,
+    purpose: "record-local-proposal-comparison-decision",
+    target: {
+      comparisonId: comparison.id,
+      comparisonVersion: 1,
+      comparisonRevisionId: comparisonRevision.id,
+      comparisonRevisionFingerprint: comparisonRevision.fingerprint,
+    },
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    externalEffect: "none",
+    sendAuthorized: false,
+    purchaseAuthorized: false,
+    supplierNotified: false,
+    version: 1,
+  });
+  expect(decisionRevision).toMatchObject({
+    version: 1,
+    outcome: "preferred-for-follow-up",
+    selectedProposalId: secondProposal.id,
+    reason: "بر پایهٔ مبلغ هم‌سطح کمتر، فقط برای ادامهٔ بررسی انتخاب شد.",
+  });
+  expect(decision.history.map((event: { type: string }) => event.type)).toEqual(["created"]);
+  expect(await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+  }))).toEqual(sourceStoresBeforeComparison);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-comparisons-entry").click();
+  await expect(page.getByTestId("comparison-card")).toHaveCount(1);
+  await page.getByTestId("comparison-card").click();
+  await expect(page.getByTestId("comparison-recommendation")).toContainText(secondSupplier);
+  await expect(page.getByTestId("comparison-decision-history")).toContainText("ادامهٔ بررسی با یک پیشنهاد");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonStoreBeforeDecision);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionStoreBeforeReload);
+  expect(externalRequests).toEqual([]);
+  page.off("request", requestListener);
+});
+
+test("T7-B1 canonicalizes a temporary 201-digit decimal coefficient before enforcing the result limit", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const boundarySubtotal = "9".repeat(199);
+  const canonicalBoundaryTotal = `1${"0".repeat(199)}`;
+  const { firstSupplier, secondSupplier } = await createTwoCurrentProductProposalsForComparison(page, { firstTotalPrice: boundarySubtotal });
+  const proposals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
+  const firstProposal = proposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === firstSupplier);
+
+  await page.getByTestId("proposal-comparisons-entry").click();
+  await page.getByTestId("comparison-add").click();
+  const firstEditor = comparisonSupplierEditor(page, firstSupplier);
+  await firstEditor.getByTestId(/^comparison-tax-mode-/).selectOption("fixed");
+  await firstEditor.getByTestId(/^comparison-tax-value-/).fill("۰٫۵");
+  await firstEditor.getByTestId(/^comparison-tax-assumption-/).fill("نیم تومان مبلغ ثابت برای آزمون مرزی");
+  await firstEditor.getByTestId(/^comparison-transport-mode-/).selectOption("fixed");
+  await firstEditor.getByTestId(/^comparison-transport-value-/).fill("۰٫۵");
+  await firstEditor.getByTestId(/^comparison-transport-assumption-/).fill("نیم تومان حمل ثابت برای آزمون مرزی");
+
+  const secondEditor = comparisonSupplierEditor(page, secondSupplier);
+  await secondEditor.getByTestId(/^comparison-tax-mode-/).selectOption("included");
+  await secondEditor.getByTestId(/^comparison-tax-assumption-/).fill("داخل مبلغ اعلامی");
+  await secondEditor.getByTestId(/^comparison-transport-mode-/).selectOption("included");
+  await secondEditor.getByTestId(/^comparison-transport-assumption-/).fill("داخل مبلغ اعلامی");
+  await page.getByTestId("comparison-save").click();
+  await expect(page.getByTestId("comparison-detail")).toBeVisible();
+
+  const comparisons = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1") ?? "[]"));
+  const firstResult = comparisons[0].revisions[0].results.find((result: { proposalId: string }) => result.proposalId === firstProposal.id);
+  expect(firstResult).toMatchObject({
+    subtotal: boundarySubtotal,
+    taxAmount: "0.5",
+    transportAmount: "0.5",
+    normalizedTotal: canonicalBoundaryTotal,
+    coverage: "complete",
+    missingReasons: [],
+  });
+  expect(firstResult.normalizedTotal).toHaveLength(200);
+  expect(firstResult.normalizedTotal).toMatch(/^10{199}$/);
+});
+
+test("T7-B1 keeps unknown comparison data incomplete and rolls back a failed comparison write", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { secondSupplier } = await createTwoCurrentProductProposalsForComparison(page);
+  const sourceStoresBeforeComparison = await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+  }));
+
+  await page.getByTestId("proposal-comparisons-entry").click();
+  await page.getByTestId("comparison-add").click();
+  const secondEditor = comparisonSupplierEditor(page, secondSupplier);
+  await secondEditor.getByTestId(/^comparison-basis-/).selectOption("unit-price-times-adjusted-quantity");
+  await secondEditor.getByTestId(/^comparison-adjusted-quantity-/).fill("۵۰۰۰");
+  await expect(secondEditor.getByTestId(/^comparison-adjusted-unit-/)).toHaveValue("کیلوگرم");
+  await secondEditor.getByTestId(/^comparison-assumption-/).fill("۵۰۰۰ کیلوگرم برابر مقدار پنج تن درخواست است");
+  await expect(page.getByTestId("comparison-recommendation-preview")).toContainText("داده برای جمع‌بندی کافی نیست");
+
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__comparisonNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-builder-proposal-comparisons:v1") throw new DOMException("Comparison write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await page.getByTestId("comparison-save").click();
+  await expect(page.getByTestId("comparison-editor")).toBeVisible();
+  await expect(page.getByTestId("comparison-form-error")).toContainText("مقایسه ثبت نشد");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBeNull();
+  expect(await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+  }))).toEqual(sourceStoresBeforeComparison);
+
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __comparisonNativeSetItem: typeof Storage.prototype.setItem }).__comparisonNativeSetItem;
+  });
+  await page.getByTestId("comparison-save").click();
+  await expect(page.getByTestId("comparison-detail")).toBeVisible();
+  await expect(page.getByTestId("comparison-recommendation")).toContainText("دادهٔ ناکافی برای جمع‌بندی");
+
+  const comparisonStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
+  const comparison = JSON.parse(comparisonStore ?? "[]")[0];
+  const revision = comparison.revisions[0];
+  expect(revision.recommendation).toMatchObject({
+    criterion: "lowest-complete-normalized-total",
+    status: "insufficient-data",
+    candidateProposalId: null,
+    tiedProposalIds: [],
+  });
+  expect(revision.results).toHaveLength(2);
+  for (const result of revision.results) {
+    expect(result).toMatchObject({
+      taxAmount: null,
+      transportAmount: null,
+      normalizedTotal: null,
+      coverage: "incomplete",
+    });
+    expect(result.missingReasons).toEqual(expect.arrayContaining([
+      "وضعیت یا مبلغ مالیات برای هم‌سطح‌سازی مشخص نیست.",
+      "وضعیت یا مبلغ حمل برای هم‌سطح‌سازی مشخص نیست.",
+    ]));
+  }
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBeNull();
+  expect(await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+  }))).toEqual(sourceStoresBeforeComparison);
+});
+
+test("T7-B1 keeps no-op bytes stable, versions real comparison edits, and marks stale proposal lineage for review", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { firstSupplier } = await createExactProductComparisonWithDecision(page);
+  const comparisonV1Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
+  const decisionV1Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"));
+  const comparisonV1 = JSON.parse(comparisonV1Store ?? "[]")[0];
+  const decisionV1 = JSON.parse(decisionV1Store ?? "[]")[0];
+  expect(comparisonV1.version).toBe(1);
+  expect(decisionV1.version).toBe(1);
+
+  await page.getByTestId("comparison-edit").click();
+  await expect(page.getByTestId("comparison-editor-title")).toBeFocused();
+  await page.getByTestId("comparison-save").click();
+  await expect(page.getByTestId("comparison-detail")).toBeVisible();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonV1Store);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
+
+  await page.getByTestId("comparison-edit").click();
+  const firstEditor = comparisonSupplierEditor(page, firstSupplier);
+  await firstEditor.getByTestId(/^comparison-transport-value-/).fill("۱۵۰۰۰۰۰");
+  await page.getByTestId("comparison-save").click();
+  await expect(page.getByTestId("comparison-detail-hero")).toContainText("نسخهٔ مقایسه ۲");
+
+  const comparisonV2Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
+  const comparisonV2 = JSON.parse(comparisonV2Store ?? "[]")[0];
+  expect(comparisonV2Store).not.toBe(comparisonV1Store);
+  expect(comparisonV2.version).toBe(2);
+  expect(comparisonV2.history.map((event: { type: string }) => event.type)).toEqual(["created", "updated"]);
+  expect(comparisonV2.revisions).toHaveLength(2);
+  expect(comparisonV2.revisions[0]).toEqual(comparisonV1.revisions[0]);
+  expect(comparisonV2.revisions[1].results.find((result: { supplierDisplayName: string }) => result.supplierDisplayName === firstSupplier)).toMatchObject({
+    transportAmount: "1500000",
+    normalizedTotal: "24935000",
+  });
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
+  await expect(page.getByTestId("comparison-decision-history")).toHaveCount(0);
+
+  await expect(page.getByTestId("comparison-revision-select")).toBeVisible();
+  await page.getByTestId("comparison-revision-select").selectOption(comparisonV1.revisions[0].id);
+  await expect(page.getByTestId("comparison-detail-hero")).toContainText("نسخهٔ تاریخی مقایسه");
+  await expect(page.getByTestId("comparison-decision-history")).toContainText("نسخهٔ نخست تصمیم برای ادامهٔ بررسی پیشنهاد ب");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonV2Store);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
+
+  await page.getByTestId("comparison-detail-back").click();
+  await page.getByTestId("comparisons-back").click();
+  await page.getByTestId("proposal-card").filter({ hasText: firstSupplier }).click();
+  await page.getByTestId("proposal-edit").click();
+  await page.getByTestId("proposal-notes").fill("نسخهٔ تازهٔ پیشنهاد پس از ثبت مقایسه");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail")).toContainText("نسخهٔ رونویسی");
+  await expect(page.getByTestId("proposal-revision-select")).toContainText("نسخهٔ ۲ · جاری");
+  await page.getByTestId("proposal-detail-back").click();
+  await page.getByTestId("proposal-comparisons-entry").click();
+  await expect(page.getByTestId("comparison-card")).toContainText("تاریخی · بازبینی");
+  await page.getByTestId("comparison-card").click();
+  await expect(page.getByTestId("comparison-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("comparison-decision-save")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonV2Store);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
+});
+
+test("T7-B1 fail-closes tampered comparison results and distinguishes an unreadable decision store from empty", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { firstSupplier } = await createExactProductComparisonWithDecision(page);
+  const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  const validComparisonStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
+  const validDecisionStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"));
+
+  const tamperedComparisonStore = await page.evaluate(() => {
+    const key = "chida-prototype-builder-proposal-comparisons:v1";
+    const records = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    records[0].revisions[0].results[0].lines[0].calculation.formula = "۱ + ۱ = ۳";
+    records[0].revisions[0].results[0].normalizedTotal = "1";
+    window.localStorage.setItem(key, JSON.stringify(records));
+    return window.localStorage.getItem(key);
+  });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-card")).toHaveCount(2);
+  await page.getByTestId("proposal-card").filter({ hasText: firstSupplier }).click();
+  await expect(page.getByTestId("proposal-detail")).toBeVisible();
+  await page.getByTestId("proposal-detail-back").click();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
+
+  await page.getByTestId("proposal-comparisons-entry").click();
+  await expect(page.getByTestId("comparison-storage-error")).toBeVisible();
+  await expect(page.getByTestId("comparison-card")).toHaveCount(0);
+  await expect(page.getByTestId("comparison-add")).toBeDisabled();
+  await expect(page.getByText("مقایسه‌ای ثبت نشده", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(tamperedComparisonStore);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
+
+  await page.evaluate((validStore) => window.localStorage.setItem("chida-prototype-builder-proposal-comparisons:v1", validStore!), validComparisonStore);
+  await page.addInitScript(() => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Object.defineProperty(window, "__comparisonDecisionNativeGetItem", { value: nativeGetItem, configurable: true });
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === "chida-prototype-builder-proposal-comparison-decisions:v1") throw new DOMException("Comparison decision read failed", "SecurityError");
+      return nativeGetItem.call(this, key);
+    };
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(2);
+  await page.getByTestId("proposal-comparisons-entry").click();
+  await expect(page.getByTestId("comparison-storage-error")).toHaveCount(0);
+  await expect(page.getByTestId("comparison-card")).toHaveCount(1);
+  await page.getByTestId("comparison-card").click();
+  await expect(page.getByTestId("comparison-decision-storage-error")).toBeVisible();
+  await expect(page.getByTestId("comparison-decision-section")).toHaveCount(0);
+  await expect(page.getByTestId("comparison-decision-save")).toHaveCount(0);
+  await expect(page.getByText("ثبت نشده", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(validComparisonStore);
+  expect(await page.evaluate(() => (window as Window & { __comparisonDecisionNativeGetItem: typeof Storage.prototype.getItem }).__comparisonDecisionNativeGetItem.call(window.localStorage, "chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(validDecisionStore);
 });

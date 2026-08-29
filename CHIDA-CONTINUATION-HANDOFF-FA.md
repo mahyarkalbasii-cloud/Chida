@@ -2,7 +2,7 @@
 
 **تاریخ تهیه:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
 **مسیر پروژه:** `/Users/mahyarkl/Desktop/ChatGPT/CHIDA`
-**نقطهٔ ادامه:** اصلاحات بازخوردی C-010 برای خانه، کار، Brief، Settings، تصویر نمایشی پروفایل و حذف گیر اسکرول افقی کامل، آزموده و با commit کد `d750f88fcfbf72f30ff8b58e4331b3d081bf9f4f` روی GitHub `main`، Cloudflare Pages و ChatGPT Sites نسخهٔ ۸ same-source منتشر شدند. commit مستندیِ جاری فقط receipt همین انتشار را ثبت می‌کند و prototype tree را تغییر نمی‌دهد. گفت‌وگوی بعدی فقط نسخه را مشاهده و تسک بعدی سازنده را با ماهیار انتخاب می‌کند؛ T7-B و اتصال مدل محلی هنوز شروع نشده‌اند.
+**نقطهٔ ادامه:** T7-B1، یعنی هم‌سطح‌سازی و مقایسهٔ نسخه‌دارِ پیشنهادهای **محصول** و تصمیم مستقل سازنده، در checkout اصلی `main` پیاده‌سازی، بازبینی و در `390 × 844` QA شد و ماهیار انتشار همه‌جا را صریحاً تأیید کرد. commit/push/deploy همین snapshot اکنون در حال انجام است؛ baseline پیش از آن `57bbf6560e40a7b2ef9bb0a369af253c1b063d82` بود. فقط پس از موفقیت و same-source شدن سه مقصد، T7-B2 مقایسهٔ خدمت آغاز می‌شود. اتصال مدل محلی و مسیر تأمین‌کننده شروع نشده‌اند.
 
 ## مأموریت گفت‌وگوی بعدی
 
@@ -22,11 +22,11 @@
 
 1. `AGENTS.md` و `prototype/AGENTS.md` را کامل بخوان.
 2. منبع حقیقت را فقط `CHIDA-Product-Definition-FA.md` بدان؛ `BUILDER-FEATURE-BACKLOG-FA.md` فقط ترتیب اجرایی و این فایل فقط هنداف است.
-3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007، C-008، C-009، C-010 و T6-A/T6-B/T6-B2/T6-C/T6-D/T7-A، بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه فقط C-010 است.
+3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007، C-008، C-009، C-010 و T6-A/T6-B/T6-B2/T6-C/T6-D/T7-A/T7-B1، بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه فقط C-010 است.
 4. `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را بررسی کن.
 5. پیش‌نمایش محلی را در viewport واقعی `390 × 844` باز کن؛ فقط Mobile و Dark در دامنه است.
-6. release بازخوردی C-010 را در `390 × 844` از آخرین commit منتشرشده مشاهده کن و SHA/receipt سه مقصد را با بخش Git همین هنداف تطبیق بده؛ بدون درخواست صریح تازه آن را دوباره منتشر نکن.
-7. پیش از انتخاب صریح ماهیار، T7-B یا تسک دیگری را شروع نکن؛ پاسخ واقعی تأمین‌کننده، اتصال مدل محلی، شبکه و هر اثر بیرونی نیز همچنان خارج از این نقطه‌اند.
+6. T7-B1 لوکال را در `390 × 844` مشاهده کن و baseline منتشرشده و receipt سه مقصد را با بخش Git همین هنداف تطبیق بده؛ پیش از تأیید ماهیار commit/push/deploy نکن.
+7. پیش از تأیید صریح T7-B1 و انتشار موفق same-source آن، T7-B2 یا تسک دیگری را شروع نکن؛ پاسخ واقعی تأمین‌کننده، اتصال مدل محلی، شبکه و هر اثر بیرونی نیز همچنان خارج از این نقطه‌اند.
 
 ## سلسله‌مراتب تصمیم
 
@@ -37,13 +37,20 @@
 
 ## وضعیت Git و انتشار در آخرین ممیزی
 
-release بازخوردی C-010 در ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹ منتشر و راستی‌آزمایی شد:
+وضعیت تحویل لوکال T7-B1 در ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹:
+
+- پیش از شروع، `HEAD`، `main` و `origin/main` روی `57bbf6560e40a7b2ef9bb0a369af253c1b063d82` و working tree تمیز بودند. تغییرهای T7-B1 اکنون فقط در working tree همان checkout اصلی `main` هستند و هنوز commit/push/deploy نشده‌اند.
+- receipt نهاییِ تحویلی برای baseline منتشرشده: Cloudflare Pages deployment `d2162e8b-8ff3-4fa6-9b38-6f5bd4d38bc7` با وضعیت `success` روی `https://chida-prototype.pages.dev` و SHA نهایی؛ ChatGPT Sites نسخهٔ ۹ با source commit نهایی و deployment `appgdep_6a91fdd4e5108191a463c45298665152` با وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site`.
+- receiptهای قدیمی‌تر C-010 در ادامه برای تاریخچه حفظ شده‌اند. آن‌ها baseline نهایی این هنداف نیستند.
+- پس از مشاهده و تأیید ماهیار، باید همین snapshot T7-B1 یک بار تست نهایی، commit، push و روی Cloudflare/Sites منتشر شود و هم‌ترازی source commit هر سه مقصد دوباره اثبات شود.
+
+release کد بازخوردی C-010 در ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹ منتشر و راستی‌آزمایی شد؛ commit مستندی بعدی baseline نهایی را به `57bbf656` رساند:
 
 - commit کد `d750f88fcfbf72f30ff8b58e4331b3d081bf9f4f` شامل قرارداد Projects-only، ویرایش/موعد کار، Brief transactional، Settings صادقانه، تصویر نمایشی پروفایل و gridهای بدون overflow است. `HEAD`/`main`/`origin/main`/`git ls-remote` و مخزن منبع Sites هنگام ذخیرهٔ نسخه همگی همین SHA را گزارش کردند.
 - Cloudflare Pages deployment تولید `a09cde6f-628f-4d94-bc56-0fd8c5915133` با trigger برابر `github:push`، شاخهٔ `main`، `commit_dirty=false` و همین SHA با وضعیت `success` منتشر شد. canonical `https://chida-prototype.pages.dev` و immutable `https://a09cde6f.chida-prototype.pages.dev` پاسخ موفق داشتند و hash فایل‌های HTML، JS و CSS هر دو با build محلی دقیقاً یکسان بود.
 - ChatGPT Sites نسخهٔ ۸ با source commit همین SHA و ۱۸ فایل ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_a8888bc4c5548191a3ad269ed6b8d6d9` و deployment خصوصی `appgdep_6a91fd0cbe4c8191ae0af74919f4411c` با وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. access همچنان owner-only/custom با یک مالک و بدون گروه یا مهمان بیرونی است.
 - سند مادر تغییر نکرد، runtime محافظت‌شده سالم ماند و credential کوتاه‌عمر Sites فقط با header همان فرمان استفاده شد؛ در remote URL، Git config، فایل یا log پروژه ذخیره نشد. commit مستندی بعدی فقط همین receipt و وضعیت C-010 را به‌روز می‌کند و prototype tree آن با `d750f88` یکسان می‌ماند؛ SHA نهایی جاری را در گفت‌وگوی تازه با `git rev-parse HEAD` تطبیق بده.
-- مجوز صریح کاربر فقط برای انتشار همین اصلاحات و ساخت هنداف/گفت‌وگوی جدید مصرف می‌شود؛ T7-B، مدل محلی و تسک بعدی مجوز اجرا نگرفته‌اند.
+- این بند سابقهٔ همان لحظه است: مجوز انتشار C-010 مصرف شده بود و T7-B هنوز مجوز اجرا نداشت. ماهیار بعداً در ۱۴۰۵/۰۶/۰۷ روال ادامهٔ تسک‌های سازنده را صریح کرد و T7-B1 بر همان اساس آغاز شد؛ این مجوز شامل انتشار T7-B1 پیش از مشاهده و تأیید او نیست.
 
 release تاریخی T7-A در ۱۴۰۵/۰۶/۰۶ — ۲۰۲۶/۰۸/۲۸ بسته شد:
 
@@ -85,6 +92,13 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 پاک‌سازی محلی فقط روی artifactهای قابل‌بازتولید انجام شد: `.DS_Store`، `prototype/dist` و `prototype/test-results` در دورهای قبلی به Trash منتقل شدند. آخرین build/test نیز `dist` و `test-results` را دوباره ساخت؛ هر دو پیش از تحویل به‌صورت recoverable به `/Users/mahyarkl/.Trash/CHIDA-integrated-cleanup-20260828.sfGZxE` منتقل شدند. فونت مجاز، `node_modules`، artifactهای tracked و فایل‌های مستندی حفظ شدند.
 
+## کنترل کیفیت T7-B1 لوکال
+
+- پنج regression متمرکز T7-B1 محاسبهٔ دقیق، استقلال byte-for-byte storeهای مبدأ، تصمیم مستقل و reload، unknown بدون candidate، rollback نوشتن، no-op/version/history، invalidation، فساد/read-error fail-closed و مرز canonicalization یک coefficient موقت ۲۰۱رقمی به خروجی معتبر ۲۰۰رقمی را پوشش داده و پاس شده‌اند.
+- QA مرورگر داخلی در viewport واقعی `390 × 844` مبلغ‌های `۲۴٬۴۳۵٬۰۰۰` و `۲۳٬۰۰۰٬۰۰۰` تومان، نامزد شرطی درست، focus روی hero پس از ذخیره و overflow افقی صفر در editor، detail، کارت‌های نتیجه و تصمیم را نشان داد.
+- سه بازبینی مستقل همهٔ findingهای قرارداد/داده/UI را بستند؛ پس از اصلاح نهایی، finding باز P0/P1/P2 باقی نماند.
+- اعتبارسنجی نهایی همین snapshot: `npm run check:runtime` برای ۲۸ فایل محافظت‌شده، `npm run build` شامل TypeScript، `npm run test:app` با ۱۰۸/۱۰۸، `npm run test:runtime` با ۱۱۶/۱۱۶، `npm run test:sites` با ۴/۴، `npx tsc --noEmit` و `git diff --check` پاس شدند. تنها هشدار شناخته‌شده، chunk جاوااسکریپت بزرگ‌تر از 500kB است. این snapshot هنوز فقط لوکال است.
+
 ## خط مبنای کنترل کیفیت release بازخوردی C-010
 
 - روی snapshot نهایی، `npm run check:runtime` برای ۲۸ فایل محافظت‌شده، `npm run build` و TypeScript، `npm run test:app` با ۱۰۳/۱۰۳، `npm run test:runtime` با ۱۱۱/۱۱۱، `npm run test:sites` با ۴/۴ و `git diff --check` پاس شدند. تنها هشدار شناخته‌شده، chunk جاوااسکریپت بزرگ‌تر از 500kB است.
@@ -116,11 +130,12 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - اصلاح تجربهٔ استعلام: فرم و جزئیات درخواست با حالت «ساده» آغاز می‌شوند و حالت «پیشرفته» همان draft/schema را با جزئیات بیشتر نشان می‌دهد؛ جابه‌جایی mode دادهٔ پنهان را حذف نمی‌کند و unknown/clarification همچنان قرارداد اصلی است.
 - T6-C: گیرندهٔ خصوصی محلی، انتخاب دستی، پیش‌نمایش allowlist اشتراک و DispatchDraft نسخه‌دار با `externalEffect=none` و `sendAuthorized=false`؛ توسط کاربر تأیید و در release `bd766bc` منتشر شد.
 - T6-D: Approval مستقل و خصوصیِ برنامهٔ ارسال با snapshot مقصد/payload/privacy، چرخهٔ pending/withdraw/reopen/approve، اعتبار جاری مشتق‌شده و نمایش تاریخی invalidated؛ فقط شبیه‌سازی محلی با `simulationOnly=true`، `externalEffect=none` و `sendAuthorized=false`؛ توسط کاربر تأیید و در release `bd766bc` منتشر شد.
-- T7-A: صندوق خصوصی پیشنهادهای ثبت‌شده توسط سازنده با target دقیق، reference metadata-only، رونویسی و مقادیر ساختاریافتهٔ نسخه‌دار؛ در release `bf59df1` روی هر سه مقصد same-source منتشر و سپس توسط کاربر مشاهده شد، اما مجوز T7-B هنوز صادر نشده است.
+- T7-A: صندوق خصوصی پیشنهادهای ثبت‌شده توسط سازنده با target دقیق، reference metadata-only، رونویسی و مقادیر ساختاریافتهٔ نسخه‌دار؛ در release `bf59df1` روی هر سه مقصد same-source منتشر و سپس توسط کاربر مشاهده شد.
+- T7-B1: مقایسهٔ محصول با پیشنهادهای pin‌شده، سه لایهٔ declared/assumption/calculation، arithmetic اعشاری دقیق، recommendation محدود و تصمیم مستقل نسخه‌دار؛ لوکال کامل و منتظر مشاهده/تأیید ماهیار است و هنوز منتشر نشده است.
 - Build و Brief: شبیه‌سازی محلی مرورگر بدون نصب، زمان‌بندی یا اثر بیرونی واقعی. ذخیرهٔ موفق Brief صفحه را می‌بندد و شکست ذخیره همان صفحه و برنامهٔ قبلی را نگه می‌دارد.
 - Settings: تصویر کاملاً فرضی و برچسب‌خوردهٔ سازنده، شمارش project-scoped رکوردهای محلی، نقش ثابت، حریم، حالت مدل، Brief، Dark-only و نسخه را صادقانه نشان می‌دهد؛ token/usage/billing/quota تا اتصال منبع معتبر عمداً unavailable هستند.
 
-شمار snapshot نهایی C-010: اپ ۱۰۳/۱۰۳، runtime ۱۱۱/۱۱۱ و Sites ۴/۴. خط مبنای منتشرشدهٔ `bd766bc` اپ ۹۳/۹۳ و runtime ۱۰۱/۱۰۱ و snapshot T7-A اپ ۱۰۱/۱۰۱ و runtime ۱۰۹/۱۰۹ داشتند؛ اعداد کوچک‌تر در بخش‌های تاریخی فقط نتیجهٔ همان برش‌ها در زمان تحویل قبلی‌اند.
+شمار snapshot لوکال T7-B1: اپ ۱۰۸/۱۰۸، runtime ۱۱۶/۱۱۶ و Sites ۴/۴. snapshot نهایی C-010 اپ ۱۰۳/۱۰۳ و runtime ۱۱۱/۱۱۱، خط مبنای منتشرشدهٔ `bd766bc` اپ ۹۳/۹۳ و runtime ۱۰۱/۱۰۱ و snapshot T7-A اپ ۱۰۱/۱۰۱ و runtime ۱۰۹/۱۰۹ داشتند؛ اعداد کوچک‌تر در بخش‌های تاریخی فقط نتیجهٔ همان برش‌ها در زمان تحویل قبلی‌اند.
 
 ## فاز ۱ — تاریخچهٔ برش‌های بسته و فهرست اولویت‌دار باقی‌ماندهٔ سازنده
 
@@ -177,13 +192,21 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - شواهد نهایی لوکال: `check:runtime` برای ۲۸ فایل، `build`، اپ ۱۰۱/۱۰۱، runtime ۱۰۹/۱۰۹، Sites ۴/۴، `npx tsc --noEmit` و `git diff --check` پاس شدند. هشدار شناخته‌شدهٔ chunk بزرگ‌تر از 500kB باقی است.
 - QA مرورگر داخلی در `390 × 844` صندوق و فرم دو‌قلمی را نشان داد؛ overflow افقی سند/صفحه صفر، focus ورود فرم روی عنوان و بازگشت روی دکمهٔ افزودن، و error overlay صفر بود. سه بازبینی مستقل پس از اصلاحات نهایی blocker مادی گزارش نکردند.
 
-### T7-B — نرمال‌سازی و مقایسهٔ پیشنهادها
+### T7-B1 — نرمال‌سازی و مقایسهٔ پیشنهادهای محصول
 
-- نسخهٔ اصلی هر پیشنهاد هرگز بازنویسی نشود.
-- تعدیل واحد، مقدار، مالیات و حمل با فرمول و فرض آشکار انجام شود.
-- دادهٔ اعلامی فروشنده، ورود سازنده و محاسبهٔ چیدا از هم جدا باشند.
-- دادهٔ ناقص و دلیل توصیه دیده شوند؛ «برندهٔ مطلق» بدون معیار و پوشش کافی ساخته نشود.
-- مقایسه و تصمیم به‌صورت شیء نسخه‌دار پروژه ذخیره شوند.
+این برش در working tree اصلی `main` پیاده‌سازی، آزموده و QA شد؛ ماهیار آن را برای commit/push/deploy همه‌جا تأیید کرده و انتشار در حال انجام است.
+
+- نسخهٔ اصلی هر پیشنهاد و storeهای request/approval/dispatch بایت‌به‌بایت مستقل می‌مانند؛ مقایسه و تصمیم دو شیء و دو store جدا و پروژه‌محورند.
+- تعدیل مقدار/واحد، مالیات و حمل با input، فرض، mode/value و فرمول آشکار انجام می‌شود. مبلغ با decimal رشته‌ای و `BigInt`، بدون `Number/parseFloat` یا گردکردن پنهان، محاسبه می‌شود.
+- دادهٔ اعلامیِ رونویسی‌شده توسط سازنده، فرض سازنده و محاسبهٔ قطعی محلی چیدا در schema و UI جدا هستند؛ متن خام مالیات/حمل و شروط غیرقیمتی کنار نتیجه باقی می‌مانند.
+- دادهٔ ناقص توصیه نمی‌سازد. نتیجه فقط بر معیار آشکار `lowest-complete-normalized-total` و با وضعیت `conditional / tie / insufficient-data` است؛ تصمیم انسانی جداست و هیچ «بهترین/برنده»، خرید، ارسال یا اثر بیرونی ادعا نمی‌شود.
+- revisionهای proposal/request/contact بعدی، مقایسه را بدون rebinding تاریخی/نیازمند بازبینی می‌کنند. parser ورودی و derived output را fail-closed بازسازی می‌کند؛ read-error از empty جداست و mutation را قفل می‌کند.
+
+### T7-B2 — مقایسهٔ پیشنهادهای خدمت
+
+- نامزد تسک بعدی فقط پس از تأیید و انتشار موفق T7-B1 است و هنوز شروع نشده است.
+- قرارداد مستقل خدمت باید دامنه، مدت، روش، صلاحیت، داخل/خارج کار، ضمانت، موعد و پرداخت را پوشش دهد؛ فرمول محصول یا unit-price نباید به خدمت تعمیم داده شود.
+- هر معیار، unknown، هم‌سطح‌سازی و recommendation خدمت پیش از ساخت باید با سند مادر و یادگیری T7-B1 تطبیق داده شود.
 
 ### T8-A — مذاکرهٔ کنترل‌شده از دید سازنده
 
@@ -334,4 +357,4 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 ## متن کوتاه آماده برای آغاز گفت‌وگوی جدید
 
-> این گفت‌وگو ادامهٔ مستقیم پروژهٔ CHIDA در `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` است. ابتدا `AGENTS.md`، `prototype/AGENTS.md` و `CHIDA-CONTINUATION-HANDOFF-FA.md` را کامل بخوان؛ سپس C-010 در `CHIDA-PRODUCT-LEARNINGS-FA.md`، وضعیت Git و receipt سه مقصد و پیش‌نمایش موبایل `390×844` را بدون تغییر بررسی کن. منبع حقیقت فقط `CHIDA-Product-Definition-FA.md` است. release بازخوردی C-010 شامل Projects-only، ویرایش/موعد کار، Brief اصلاح‌شده، Settings واقعی، تصویر فرضی پروفایل و حذف گیر اسکرول افقی است و روی GitHub `main`، Cloudflare Pages و ChatGPT Sites same-source منتشر شده است؛ SHA دقیق جاری را از بخش Git همین هنداف و `git rev-parse HEAD` بگیر و نسخهٔ Sites را در `https://chida-prototype.mahyarkl.chatgpt.site` ببین. ترتیب قطعی کار: تکمیل و تأیید سازنده، سپس مدل محلی، سپس تأمین‌کننده. T7-B پیشنهاد بعدی در ترتیب بک‌لاگ است، اما تا انتخاب صریح من هیچ تسک، commit/push/deploy یا اتصال مدل محلی را شروع نکن.
+> این گفت‌وگو ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز. ابتدا `AGENTS.md`، `prototype/AGENTS.md` و `CHIDA-CONTINUATION-HANDOFF-FA.md` را کامل بخوان؛ سپس C-010، T7-A و T7-B1 در `CHIDA-PRODUCT-LEARNINGS-FA.md`، سند مادر و بک‌لاگ را بخوان. T7-B1 مقایسهٔ محصول و تصمیم مستقل سازنده لوکال پیاده‌سازی/QA شده و منتظر مشاهدهٔ من است؛ هنوز commit/push/deploy نشده. baseline منتشرشده `57bbf6560e40a7b2ef9bb0a369af253c1b063d82` با Cloudflare deployment `d2162e8b-8ff3-4fa6-9b38-6f5bd4d38bc7` و ChatGPT Sites نسخهٔ ۹/deployment `appgdep_6a91fdd4e5108191a463c45298665152` است. ابتدا فقط وضعیت و پیش‌نمایش `390×844` را تطبیق بده. پس از تأیید صریح من، T7-B1 را همه‌جا same-source منتشر کن؛ فقط بعد از موفقیت انتشار، T7-B2 مقایسهٔ خدمت نامزد بعدی است. مدل محلی و مسیر تأمین‌کننده شروع نشده‌اند.

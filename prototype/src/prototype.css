@@ -3710,6 +3710,154 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 .proposal-history small { color: var(--text-soft); font-size: 8px; }
 .proposal-edit-button { min-height: 50px; }
 
+.proposal-comparisons-entry { min-width: 0; }
+.proposal-comparisons-entry .project-files-entry-icon { color: var(--copper); background: var(--copper-soft); }
+
+.comparison-proposal-toggles,
+.comparison-results-list,
+.comparison-result-layers,
+.comparison-money-treatments,
+.comparison-decision-form { display: grid; gap: 10px; min-width: 0; }
+
+.comparison-proposal-toggles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.comparison-proposal-toggles button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 2px 8px;
+  align-items: center;
+  min-width: 0;
+  min-height: 62px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  color: var(--text-soft);
+  background: var(--surface-muted);
+  text-align: right;
+}
+.comparison-proposal-toggles button[aria-pressed="true"] { border-color: color-mix(in srgb, var(--copper) 55%, var(--line)); color: var(--copper); background: var(--copper-soft); }
+.comparison-proposal-toggles button > span { grid-row: 1 / 3; display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid currentColor; border-radius: 8px; }
+.comparison-proposal-toggles strong { min-width: 0; overflow: hidden; color: var(--text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.comparison-proposal-toggles small { font-size: 8px; }
+
+.comparison-supplier-editor { border-color: color-mix(in srgb, var(--copper) 22%, var(--line)); }
+.comparison-line-editor {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface-muted);
+}
+
+.comparison-layer {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+}
+.comparison-layer > small { color: var(--copper); font-size: 8px; font-weight: 680; line-height: 1.7; }
+.comparison-layer > strong { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: 10px; line-height: 1.75; }
+.comparison-layer > span { color: var(--copper-strong); font-size: 13px; font-weight: 720; overflow-wrap: anywhere; }
+.comparison-layer > p,
+.comparison-layer > em { color: var(--text-soft); font-size: 8px; font-style: normal; line-height: 1.75; overflow-wrap: anywhere; }
+.comparison-layer.assumption { border-style: dashed; }
+.comparison-layer.calculation { border-color: color-mix(in srgb, var(--copper) 28%, var(--line)); background: color-mix(in srgb, var(--copper-soft) 48%, var(--surface)); }
+.comparison-layer dl { display: grid; gap: 0; }
+.comparison-layer dl > div { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 9px; min-width: 0; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.comparison-layer dl > div:last-child { border-bottom: 0; }
+.comparison-layer dt { color: var(--text-soft); font-size: 8px; }
+.comparison-layer dd { min-width: 0; margin: 0; color: var(--text); font-size: 8px; text-align: left; overflow-wrap: anywhere; }
+.comparison-two-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; min-width: 0; }
+.comparison-money-treatments { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.comparison-treatment { display: grid; align-content: start; gap: 9px; min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-muted); }
+
+.comparison-live-total {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+.comparison-live-total > span { display: grid; gap: 2px; min-width: 0; }
+.comparison-live-total small { color: var(--text-soft); font-size: 8px; }
+.comparison-live-total strong { overflow-wrap: anywhere; color: var(--text); font-size: 12px; }
+.comparison-live-total em { max-width: 44%; color: var(--text-soft); font-size: 8px; font-style: normal; line-height: 1.6; text-align: left; }
+.comparison-live-total.complete { border-color: color-mix(in srgb, var(--copper) 36%, var(--line)); }
+
+.comparison-recommendation-preview,
+.comparison-recommendation-detail {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--copper) 35%, var(--line));
+  border-radius: 17px;
+  color: var(--copper);
+  background: color-mix(in srgb, var(--copper-soft) 55%, var(--surface));
+}
+.comparison-recommendation-preview > span,
+.comparison-recommendation-detail > span { display: grid; gap: 4px; min-width: 0; }
+.comparison-recommendation-preview small,
+.comparison-recommendation-detail small { color: var(--copper); font-size: 8px; line-height: 1.65; }
+.comparison-recommendation-preview strong,
+.comparison-recommendation-detail strong { color: var(--text); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.comparison-recommendation-preview p,
+.comparison-recommendation-detail p { color: var(--text-soft); font-size: 8px; line-height: 1.75; }
+.comparison-recommendation-preview.insufficient-data,
+.comparison-recommendation-detail.insufficient-data { border-color: var(--line-strong); color: var(--text-soft); background: var(--surface-muted); }
+
+.comparison-card .proposal-card-copy em { white-space: normal; overflow-wrap: anywhere; }
+.comparison-detail-content { min-width: 0; }
+.comparison-detail-hero p { overflow-wrap: anywhere; }
+.comparison-result-line { min-width: 0; padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-muted); overflow: hidden; }
+.comparison-result-line summary { display: flex; gap: 10px; align-items: center; justify-content: space-between; min-width: 0; padding: 12px; cursor: pointer; }
+.comparison-result-line summary > span { display: grid; gap: 2px; min-width: 0; }
+.comparison-result-line summary small { color: var(--copper); font-size: 8px; }
+.comparison-result-line summary strong { color: var(--text); font-size: 10px; overflow-wrap: anywhere; }
+.comparison-result-line summary em { max-width: 47%; color: var(--text); font-size: 9px; font-style: normal; text-align: left; overflow-wrap: anywhere; }
+.comparison-result-layers { padding: 0 10px 10px; }
+.comparison-result-totals dd { display: grid; gap: 2px; }
+.comparison-result-totals dd small { color: var(--text-soft); font-size: 7px; line-height: 1.6; }
+.comparison-missing-list { display: grid; gap: 6px; padding: 10px 26px 10px 10px; border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--line)); border-radius: 12px; color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
+.comparison-missing-list li { font-size: 8px; line-height: 1.75; overflow-wrap: anywhere; }
+
+.comparison-boundary-note { display: flex; gap: 8px; align-items: flex-start; padding: 10px; border: 1px dashed var(--line-strong); border-radius: 12px; color: var(--text-soft); font-size: 8px; line-height: 1.75; }
+.comparison-boundary-note svg { flex: 0 0 auto; color: var(--copper); }
+.comparison-detail-content .field-control { min-width: 0; }
+.comparison-detail-content .field-control input,
+.comparison-detail-content .field-control textarea,
+.comparison-detail-content .field-control select {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 11px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--surface-muted);
+  font-family: inherit;
+  font-size: 16px;
+  outline: 0;
+}
+.comparison-detail-content .field-control textarea { min-height: 88px; resize: vertical; line-height: 1.75; }
+.comparison-detail-content .field-control input:focus,
+.comparison-detail-content .field-control textarea:focus,
+.comparison-detail-content .field-control select:focus { border-color: var(--copper); }
+.comparison-decision-form .primary-button { min-height: 50px; }
+.comparison-save-message { padding: 10px; border-radius: 11px; color: var(--copper); background: var(--copper-soft); font-size: 8px; line-height: 1.7; }
+.comparison-decision-history { padding-top: 10px; border-top: 1px solid var(--line); }
+.comparison-decision-history li > div small:last-child { overflow-wrap: anywhere; }
+
 @media (max-width: 360px) {
   .proposal-form-grid,
   .proposal-line-main-grid,
@@ -3717,6 +3865,9 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
   .proposal-line-notes { grid-column: auto; }
   .project-proposals-toolbar { align-items: stretch; flex-direction: column; }
   .project-proposals-toolbar .primary-button { width: 100%; }
+  .comparison-proposal-toggles,
+  .comparison-money-treatments,
+  .comparison-two-fields { grid-template-columns: 1fr; }
 }
 
 .sheet-overlay { background: rgba(20, 15, 12, 0.44); backdrop-filter: blur(2px); }
