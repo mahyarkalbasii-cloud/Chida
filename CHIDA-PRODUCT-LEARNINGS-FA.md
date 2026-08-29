@@ -917,7 +917,7 @@
 ## T7-B2 — مقایسهٔ کیفی پیشنهادهای خدمت و تصمیم مستقل سازنده
 
 - **تاریخ:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
-- **وضعیت:** پیاده‌سازی، regression و QA موبایل محلی کامل؛ ماهیار پس از مشاهده آن را تأیید و commit/push/deploy همه‌جا را صریحاً مجاز کرد؛ receipt نهایی انتشار در حال بسته‌شدن است
+- **وضعیت:** پیاده‌سازی، regression و QA موبایل کامل؛ ماهیار پس از مشاهده آن را تأیید کرد؛ commit کد `0d633e0dbf3d9291d6bba963f64855143b5cf1ef` روی GitHub، Cloudflare Pages و ChatGPT Sites منتشر شده و commit مستندی جاری receipt نهایی را بدون تغییر prototype tree هم‌تراز می‌کند
 - **دامنه:** مقایسهٔ کیفیِ معیارمحورِ حداقل دو پیشنهاد خدمتِ جاری برای همان `projectId` و همان target/revision دقیق، همراه با تصمیم انسانی جدا؛ بدون امتیازدهی، رتبه‌بندی، نرمال‌سازی قیمت، AI، شبکه، پیام، ارسال، خرید یا هر اثر بیرونی.
 
 ### تجربهٔ مشاهده‌شده
@@ -956,5 +956,6 @@
 - چهار regression متمرکز T7-B2 ماتریس کیفی ۱۰×۲ با oracle/countهای مستقل، lineage و provenance، decision جدا، reload/no-network/source-byte invariants، declared value همراه unknown، rollback شکست نوشتن، no-op/version/history/invalidation و tamper/read-error fail-closed را پوشش می‌دهند. اجرای متمرکز نهایی ۴/۴، `test:app` کامل ۱۱۲/۱۱۲ و `test:runtime` نهایی ۱۲۰/۱۲۰ پاس شدند.
 - `check:runtime` برای ۲۸ فایل محافظت‌شده، build شامل TypeScript و آماده‌سازی Sites، `test:sites` چهار از چهار، `npx tsc --noEmit` و `git diff --check` پاس شدند؛ فقط هشدار شناخته‌شدهٔ chunk جاوااسکریپت بزرگ‌تر از 500kB باقی است.
 - QA مرورگر داخلی در viewport واقعی `390 × 844` مسیر صندوق پیشنهادها ← ماتریس خدمت ← تصمیم مستقل را با دو پیشنهاد و ده معیار طی کرد. نام‌های screen reader بر پایهٔ «کنترل + معیار + مجری» قابل تشخیص بودند، جمع‌بندی همیشه بدون نامزد خودکار ماند، تصمیم محلی ثبت شد، console خطا/هشدار مرتبط نداشت و overflow افقی editor، detail و document صفر بود.
-- این شواهد snapshot working tree محلیِ تأییدشده را پوشش می‌دهند؛ مجوز صریح commit، push و deploy صادر شده، اما receipt آن هنوز در این نسخه ثبت نشده است.
-- رسید نهایی انتشار T7-B1 همان SHA `92dcc14b911ff7840c3816ce5345c472604bff98`، Cloudflare deployment `c5c067b2-a623-4476-a024-6f6c81be8c4a` و ChatGPT Sites نسخهٔ ۱۱/deployment `appgdep_6a926a6591608191995a04aaeab7da6` با وضعیت `succeeded` است؛ T7-B2 هنوز جزو هیچ‌یک از این مقصدها نیست.
+- commit کد T7-B2 برابر `0d633e0dbf3d9291d6bba963f64855143b5cf1ef` روی local/GitHub `main` هم‌تراز شد. Cloudflare Pages deployment `20cfc7ac-0984-4102-a394-6d2605eb7158` با `github:push`، شاخهٔ `main`، `commit_dirty=false` و همین SHA به وضعیت `success` رسید؛ hashهای local/canonical/immutable برای HTML، JavaScript و CSS به‌ترتیب `5fa8b8a4ad0ce83907303ca74c086115117208ee20b62bdcf94991815a23a2cd`، `80dc42150e9e44b4d4eb46924f2458c2b959065c414f674ddc71ab81aa768093` و `01be34119cc0b87cb2f85c0af2942f0f0d9a7e87ddae1ca8c64ebaf730badfee` یکسان بودند.
+- ChatGPT Sites نسخهٔ ۱۲ با ۱۸ فایل، source commit همین SHA و archive hash `sha256:86daac1e62c11b0f26fbfe4ae6020d3cafecf21c3cd45a068fee4453fec17e3d` ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_31ac1fcd9cec8191b00f8f2096f2f7e9` و deployment خصوصی `appgdep_6a927bee77808191812616e41360858c` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی owner-only/custom با یک مالک و بدون گروه یا مهمان بیرونی حفظ شد.
+- commit مستندی جاری فقط receipt و وضعیت را ثبت می‌کند و prototype tree آن با `0d633e0` یکسان می‌ماند؛ همان source نهایی باید دوباره در GitHub، Cloudflare و Sites هم‌تراز شود و سپس T8-A آغاز گردد.
