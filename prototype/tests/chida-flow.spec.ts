@@ -221,6 +221,151 @@ async function createServiceProposalPrerequisites(page: Page, contactName = "م�
   await returnFromDispatchToHome(page);
 }
 
+const serviceComparisonCriterionIds = [
+  "scope",
+  "location",
+  "size-or-volume",
+  "qualification",
+  "timing",
+  "method",
+  "in-scope",
+  "out-of-scope",
+  "warranty",
+  "payment-terms",
+] as const;
+
+type ServiceComparisonCriterionId = typeof serviceComparisonCriterionIds[number];
+type ServiceComparisonAssessment = "aligned" | "partial" | "different" | "unknown" | "not-applicable";
+type ServiceComparisonAssessmentFixture = { assessment: ServiceComparisonAssessment; declaredValue: string; rationale: string };
+
+const firstServiceComparisonAssessments: Record<ServiceComparisonCriterionId, ServiceComparisonAssessmentFixture> = {
+  scope: { assessment: "aligned", declaredValue: "آماده سازی و اجرای کامل عایق دولایه", rationale: "دامنه اعلامی همه اجزای نیاز را پوشش می دهد" },
+  location: { assessment: "aligned", declaredValue: "بام پروژه در سعادت آباد", rationale: "موقعیت اعلامی با محدوده درخواست یکسان است" },
+  "size-or-volume": { assessment: "partial", declaredValue: "پوشش قطعی ۸۰۰ مترمربع", rationale: "پنجاه مترمربع نیازمند روشن سازی است" },
+  qualification: { assessment: "aligned", declaredValue: "گواهی صلاحیت عایق کاری پایه دو", rationale: "صلاحیت اعلامی با نیاز ثبت شده هم راستاست" },
+  timing: { assessment: "partial", declaredValue: "شروع تا ده روز آینده و اجرای دوازده روزه", rationale: "شروع دیرتر از بازه درخواستی اعلام شده است" },
+  method: { assessment: "different", declaredValue: "اجرای سرد با پرایمر", rationale: "روش اعلامی با روش گرمایی درخواستی متفاوت است" },
+  "in-scope": { assessment: "aligned", declaredValue: "زیرسازی اجرا و آزمون آب بندی", rationale: "هر سه جزء داخل دامنه اعلام شده اند" },
+  "out-of-scope": { assessment: "different", declaredValue: "جمع آوری نخاله خارج از کار", rationale: "درخواست جمع آوری نخاله را داخل تعهد می خواهد" },
+  warranty: { assessment: "aligned", declaredValue: "ضمانت کتبی هجده ماهه", rationale: "مدت ضمانت از حداقل نیاز بیشتر است" },
+  "payment-terms": { assessment: "aligned", declaredValue: "سی درصد پیش پرداخت و مانده پس از تحویل", rationale: "شرایط پرداخت با درخواست ثبت شده هم راستاست" },
+};
+
+const secondServiceComparisonAssessments: Record<ServiceComparisonCriterionId, ServiceComparisonAssessmentFixture> = {
+  scope: { assessment: "partial", declaredValue: "اجرای عایق بدون ترمیم زیرسازی", rationale: "بخش ترمیم زیرسازی پوشش داده نشده است" },
+  location: { assessment: "different", declaredValue: "فقط پروژه های شرق تهران", rationale: "محدوده اعلامی با محل پروژه متفاوت است" },
+  "size-or-volume": { assessment: "aligned", declaredValue: "پوشش کامل ۸۵۰ مترمربع", rationale: "حجم اعلامی دقیقاً با نیاز برابر است" },
+  qualification: { assessment: "partial", declaredValue: "رزومه سه پروژه مشابه بدون گواهی پایه دو", rationale: "سابقه اعلام شده اما گواهی خواسته شده روشن نیست" },
+  timing: { assessment: "aligned", declaredValue: "شروع ظرف پنج روز و اجرای هفت روزه", rationale: "بازه اعلامی داخل زمان مورد نیاز است" },
+  method: { assessment: "aligned", declaredValue: "اجرای گرمایی طبق دستورالعمل کارخانه", rationale: "روش اعلامی با نیاز ثبت شده یکسان است" },
+  "in-scope": { assessment: "different", declaredValue: "فقط اجرا و آزمون آب بندی", rationale: "زیرسازی از دامنه اعلامی حذف شده است" },
+  "out-of-scope": { assessment: "partial", declaredValue: "حمل نخاله تا پای کار", rationale: "انتقال نخاله تا بیرون پروژه روشن نشده است" },
+  warranty: { assessment: "different", declaredValue: "ضمانت شش ماهه", rationale: "مدت اعلامی از حداقل دوازده ماه کمتر است" },
+  "payment-terms": { assessment: "aligned", declaredValue: "بیست درصد پیش پرداخت و مانده مرحله ای", rationale: "پرداخت مرحله ای با نیاز ثبت شده سازگار است" },
+};
+
+async function createTwoCurrentServiceProposalsForComparison(page: Page) {
+  const firstSupplier = "مجری مقایسه خدمت الف";
+  const secondSupplier = "مجری مقایسه خدمت ب";
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.getByTestId("purchase-request-kind-service").click();
+  await page.getByTestId("purchase-request-raw-input").fill("برای عایق کاری بام دو پیشنهاد خدمت بیرون از چیدا دریافت شده است");
+  await page.getByTestId("purchase-request-service-scope-input").fill("آماده سازی و اجرای عایق دولایه بام");
+  await page.getByTestId("purchase-request-service-location-input").fill("بام پروژه در سعادت آباد");
+  await page.getByTestId("purchase-request-service-size-input").fill("۸۵۰ مترمربع");
+  await page.getByTestId("purchase-request-service-timing-input").fill("شروع حداکثر تا هفت روز آینده");
+  await page.getByTestId("purchase-request-mode-advanced").click();
+  await page.getByTestId("purchase-request-service-qualification-input").fill("گواهی صلاحیت عایق کاری پایه دو");
+  await page.getByTestId("purchase-request-service-method-input").fill("اجرای گرمایی طبق دستورالعمل کارخانه");
+  await page.getByTestId("purchase-request-service-in-scope-input").fill("زیرسازی اجرا و آزمون آب بندی");
+  await page.getByTestId("purchase-request-service-out-scope-input").fill("هیچ بخش اجرایی خارج از دامنه نیست");
+  await page.getByTestId("purchase-request-service-warranty-input").fill("حداقل ضمانت کتبی دوازده ماهه");
+  await page.getByTestId("purchase-request-service-payment-input").fill("حداکثر سی درصد پیش پرداخت و مانده مرحله ای");
+  await page.getByTestId("purchase-request-save").click();
+  await page.getByTestId("purchase-request-ready").click();
+  await approveCurrentRequestAndOpenDispatch(page);
+  await addLocalSupplierContact(page, { name: firstSupplier, category: "عایق کاری", coverage: "غرب تهران", capability: "service" });
+  await addLocalSupplierContact(page, { name: secondSupplier, category: "عایق کاری", coverage: "تمام تهران", capability: "service" });
+  await page.getByTestId("dispatch-draft-save").click();
+  await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
+  await returnFromDispatchToHome(page);
+  await page.getByTestId("quick-action-compare-offers").click();
+
+  const recordProposal = async (supplierName: string, values: { totalPrice: string; leadTime: string; paymentTerms: string; validity: string; transcript: string }) => {
+    await page.getByTestId("proposal-add").click();
+    await page.getByTestId("proposal-supplier-select").selectOption({ label: `${supplierName} · خدمت` });
+    await page.getByTestId("proposal-transcript").fill(values.transcript);
+    await page.getByTestId("proposal-line-status-0").selectOption("quoted");
+    await page.getByTestId("proposal-line-total-price-0").fill(values.totalPrice);
+    await page.getByTestId("proposal-line-editor").locator("summary").click();
+    await page.getByTestId("proposal-line-leadTime-0").fill(values.leadTime);
+    await page.getByTestId("proposal-line-paymentTerms-0").fill(values.paymentTerms);
+    await page.getByTestId("proposal-line-validity-0").fill(values.validity);
+    await page.getByTestId("proposal-save").click();
+    await expect(page.getByTestId("proposal-detail")).toBeVisible();
+    await page.getByTestId("proposal-detail-back").click();
+  };
+
+  await recordProposal(firstSupplier, {
+    totalPrice: "120000000",
+    leadTime: "۱۲ روز کاری",
+    paymentTerms: "۳۰ درصد پیش پرداخت و مانده پس از تحویل",
+    validity: "۷ روز",
+    transcript: "مجری الف مبلغ و شرایط خام خدمت را اعلام کرد.",
+  });
+  await recordProposal(secondSupplier, {
+    totalPrice: "108000000",
+    leadTime: "۷ روز کاری",
+    paymentTerms: "۲۰ درصد پیش پرداخت و مانده مرحله ای",
+    validity: "۵ روز",
+    transcript: "مجری ب مبلغ و شرایط خام خدمت را اعلام کرد.",
+  });
+  await expect(page.getByTestId("proposal-card")).toHaveCount(2);
+  const proposals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
+  return {
+    firstSupplier,
+    secondSupplier,
+    firstProposal: proposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === firstSupplier),
+    secondProposal: proposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === secondSupplier),
+  };
+}
+
+function serviceComparisonAssessmentEditor(page: Page, criterionId: ServiceComparisonCriterionId, supplierName: string) {
+  return page.locator(`[data-testid="service-comparison-criterion-editor"][data-criterion="${criterionId}"]`)
+    .getByTestId("service-comparison-proposal-assessment")
+    .filter({ hasText: supplierName });
+}
+
+async function fillServiceComparisonAssessment(page: Page, criterionId: ServiceComparisonCriterionId, supplierName: string, fixture: ServiceComparisonAssessmentFixture) {
+  const editor = serviceComparisonAssessmentEditor(page, criterionId, supplierName);
+  await editor.getByTestId("service-comparison-assessment-status").selectOption(fixture.assessment);
+  if (fixture.assessment !== "not-applicable") await editor.getByTestId("service-comparison-declared-value").fill(fixture.declaredValue);
+  await editor.getByTestId("service-comparison-assessment-rationale").fill(fixture.rationale);
+}
+
+async function fillCompleteServiceComparisonMatrix(page: Page, firstSupplier: string, secondSupplier: string) {
+  for (const criterionId of serviceComparisonCriterionIds) {
+    await fillServiceComparisonAssessment(page, criterionId, firstSupplier, firstServiceComparisonAssessments[criterionId]);
+    await fillServiceComparisonAssessment(page, criterionId, secondSupplier, secondServiceComparisonAssessments[criterionId]);
+  }
+}
+
+async function createCompleteServiceComparisonWithDecision(page: Page) {
+  const prerequisites = await createTwoCurrentServiceProposalsForComparison(page);
+  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await page.getByTestId("service-comparison-add").click();
+  await fillCompleteServiceComparisonMatrix(page, prerequisites.firstSupplier, prerequisites.secondSupplier);
+  await page.getByTestId("service-comparison-save").click();
+  await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
+  await page.getByTestId("service-comparison-decision-outcome").selectOption("preferred-for-follow-up");
+  await page.getByTestId("service-comparison-decision-proposal").selectOption(prerequisites.secondProposal.id);
+  await page.getByTestId("service-comparison-decision-reason").fill("نسخه نخست تصمیم برای ادامه بررسی مجری ب");
+  await page.getByTestId("service-comparison-decision-save").click();
+  await expect(page.getByTestId("service-comparison-decision-history")).toBeVisible();
+  return prerequisites;
+}
+
 async function createTwoCurrentProductProposalsForComparison(page: Page, overrides: { firstTotalPrice?: string } = {}) {
   const firstSupplier = "فولاد مقایسه الف";
   const secondSupplier = "فولاد مقایسه ب";
@@ -5256,4 +5401,382 @@ test("T7-B1 fail-closes tampered comparison results and distinguishes an unreada
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(validComparisonStore);
   expect(await page.evaluate(() => (window as Window & { __comparisonDecisionNativeGetItem: typeof Storage.prototype.getItem }).__comparisonDecisionNativeGetItem.call(window.localStorage, "chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(validDecisionStore);
+});
+
+test("T7-B2 stores a traceable qualitative service matrix and keeps the human decision independent", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { firstSupplier, secondSupplier, firstProposal, secondProposal } = await createTwoCurrentServiceProposalsForComparison(page);
+  const sourceStoresBeforeComparison = await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
+    productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
+  }));
+  const requestAndApproval = await page.evaluate(() => ({
+    request: JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]")[0],
+    approval: JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]")[0],
+  }));
+  const exactReview = requestAndApproval.request.reviewRevisions.find((revision: { id: string }) => revision.id === requestAndApproval.approval.target.revisionId);
+  const appOrigin = new URL(page.url()).origin;
+  const externalRequests: string[] = [];
+  const requestListener = (request: Request) => {
+    const url = new URL(request.url());
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
+  };
+  page.on("request", requestListener);
+
+  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await expect(page.getByTestId("service-proposal-comparisons-view")).toBeVisible();
+  await page.getByTestId("service-comparison-add").click();
+  await expect(page.getByTestId("service-comparison-editor-title")).toBeFocused();
+  await expect(page.getByTestId("service-comparison-request-select")).not.toHaveValue("");
+  await expect(page.getByLabel(`وضعیت انطباق دامنهٔ کار برای ${firstSupplier}`)).toBeVisible();
+  await expect(page.getByLabel(`مقدار اعلامی دامنهٔ کار برای ${firstSupplier}`)).toBeVisible();
+  await expect(page.getByLabel(`دلیل ارزیابی دامنهٔ کار برای ${firstSupplier}`)).toBeVisible();
+  await fillCompleteServiceComparisonMatrix(page, firstSupplier, secondSupplier);
+  await expect(page.getByTestId("service-comparison-coverage-preview")).toContainText("آماده برای تصمیم انسانی");
+  await page.getByTestId("service-comparison-save").click();
+  await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
+  await expect(page.getByTestId("service-comparison-detail-hero")).toBeFocused();
+  await expect(page.getByTestId("service-comparison-summary")).toContainText("نامزد خودکار ندارد");
+
+  const comparisonStoreBeforeDecision = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"));
+  const comparison = JSON.parse(comparisonStoreBeforeDecision ?? "[]")[0];
+  const revision = comparison.revisions[0];
+  expect(comparison).toMatchObject({
+    schemaVersion: 1,
+    projectId: requestAndApproval.request.projectId,
+    purpose: "compare-builder-recorded-service-proposals",
+    target: {
+      requestId: firstProposal.target.requestId,
+      requestVersion: firstProposal.target.requestVersion,
+      reviewRevisionId: firstProposal.target.reviewRevisionId,
+      reviewRevisionFingerprint: firstProposal.target.reviewRevisionFingerprint,
+      requestKind: "service",
+    },
+    requestSnapshot: {
+      id: exactReview.snapshot.service.id,
+      scope: "آماده سازی و اجرای عایق دولایه بام",
+      location: "بام پروژه در سعادت آباد",
+      sizeOrVolume: "۸۵۰ مترمربع",
+      qualification: "گواهی صلاحیت عایق کاری پایه دو",
+      timing: "شروع حداکثر تا هفت روز آینده",
+      method: "اجرای گرمایی طبق دستورالعمل کارخانه",
+      inScope: "زیرسازی اجرا و آزمون آب بندی",
+      outOfScope: "هیچ بخش اجرایی خارج از دامنه نیست",
+      warranty: "حداقل ضمانت کتبی دوازده ماهه",
+      paymentTerms: "حداکثر سی درصد پیش پرداخت و مانده مرحله ای",
+    },
+    currentRevisionId: revision.id,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    externalEffect: "none",
+    networkUsed: false,
+    aiUsed: false,
+    scoringUsed: false,
+    version: 1,
+  });
+  expect(comparison.history.map((event: { type: string; version: number }) => ({ type: event.type, version: event.version }))).toEqual([{ type: "created", version: 1 }]);
+  expect(revision.inputs).toHaveLength(2);
+  const expectedInputCriteria = (fixtures: Record<ServiceComparisonCriterionId, ServiceComparisonAssessmentFixture>) => serviceComparisonCriterionIds.map((criterionId) => ({
+    criterionId,
+    ...fixtures[criterionId],
+    declaredSource: "رونویسی تکمیلی سازنده برای مقایسه",
+    assessmentSource: "ارزیابی سازنده",
+  }));
+  for (const [proposal, fixtures] of [[firstProposal, firstServiceComparisonAssessments], [secondProposal, secondServiceComparisonAssessments]] as const) {
+    const proposalRevision = proposal.revisions.find((item: { id: string }) => item.id === proposal.currentRevisionId);
+    const input = revision.inputs.find((item: { proposalId: string }) => item.proposalId === proposal.id);
+    expect(input).toMatchObject({
+      proposalId: proposal.id,
+      proposalVersion: proposal.version,
+      proposalRevisionId: proposalRevision.id,
+      proposalRevisionFingerprint: proposalRevision.fingerprint,
+      proposalLineId: proposalRevision.lines[0].id,
+      serviceSpecId: exactReview.snapshot.service.id,
+      supplierSnapshot: proposal.supplierSnapshot,
+    });
+    expect(input.criteria).toEqual(expectedInputCriteria(fixtures));
+    const result = revision.results.find((item: { proposalId: string }) => item.proposalId === proposal.id);
+    expect(result.declaredCommercialSnapshot).toEqual(proposalRevision.lines[0]);
+    expect(result.source).toBe("ماتریس ساختاریافتهٔ محلی چیدا");
+    expect(result.coverage).toBe("complete");
+    expect(result).not.toHaveProperty("normalizedTotal");
+    expect(result).not.toHaveProperty("score");
+    expect(result).not.toHaveProperty("rank");
+  }
+  expect(revision.results.find((item: { proposalId: string }) => item.proposalId === firstProposal.id).counts).toEqual({ aligned: 6, partial: 2, different: 2, unknown: 0, notApplicable: 0 });
+  expect(revision.results.find((item: { proposalId: string }) => item.proposalId === secondProposal.id).counts).toEqual({ aligned: 4, partial: 3, different: 3, unknown: 0, notApplicable: 0 });
+  expect(revision.summary).toEqual({
+    formulaVersion: "service-coverage-v1",
+    criterion: "all-service-criteria-reviewed",
+    status: "ready-for-human-decision",
+    candidateProposalId: null,
+    unknownCount: 0,
+    reasonCode: "all-criteria-reviewed",
+    reason: "همهٔ معیارهای خدمت بازبینی شده‌اند؛ تفاوت‌ها برای تصمیم مستقل سازنده نمایش داده می‌شوند و هیچ امتیاز، رتبه یا گزینهٔ برتر ساخته نشده است.",
+    source: "جمع‌بندی قاعده‌محور محلی",
+  });
+  expect(await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
+    productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
+  }))).toEqual(sourceStoresBeforeComparison);
+
+  await page.getByTestId("service-comparison-decision-outcome").selectOption("preferred-for-follow-up");
+  await page.getByTestId("service-comparison-decision-proposal").selectOption(secondProposal.id);
+  await page.getByTestId("service-comparison-decision-reason").fill("شرایط زمانی مجری ب مناسب تر است اما تصمیم هنوز سفارش نیست");
+  await page.getByTestId("service-comparison-decision-save").click();
+  await expect(page.getByTestId("service-comparison-decision-history")).toContainText("شرایط زمانی مجری ب مناسب تر است");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonStoreBeforeDecision);
+  const decisionStoreBeforeReload = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"));
+  const decision = JSON.parse(decisionStoreBeforeReload ?? "[]")[0];
+  expect(decision).toMatchObject({
+    schemaVersion: 1,
+    projectId: comparison.projectId,
+    purpose: "record-local-service-proposal-comparison-decision",
+    target: {
+      comparisonId: comparison.id,
+      comparisonVersion: revision.version,
+      comparisonRevisionId: revision.id,
+      comparisonRevisionFingerprint: revision.fingerprint,
+    },
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    externalEffect: "none",
+    sendAuthorized: false,
+    purchaseAuthorized: false,
+    supplierNotified: false,
+    version: 1,
+  });
+  expect(decision.revisions[0]).toMatchObject({ outcome: "preferred-for-follow-up", selectedProposalId: secondProposal.id, reason: "شرایط زمانی مجری ب مناسب تر است اما تصمیم هنوز سفارش نیست", version: 1 });
+  expect(await page.getByTestId("service-comparison-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await expect(page.getByTestId("service-comparison-card")).toHaveCount(1);
+  await page.getByTestId("service-comparison-card").click();
+  await expect(page.getByTestId("service-comparison-detail-hero")).toBeFocused();
+  await expect(page.locator('[data-testid="service-comparison-criterion-card"][data-criterion="scope"]')).toContainText(firstServiceComparisonAssessments.scope.declaredValue);
+  await expect(page.locator('[data-testid="service-comparison-criterion-card"][data-criterion="scope"]')).toContainText(secondServiceComparisonAssessments.scope.declaredValue);
+  await expect(page.getByTestId("service-comparison-decision-history")).toContainText("شرایط زمانی مجری ب مناسب تر است");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonStoreBeforeDecision);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(decisionStoreBeforeReload);
+  expect(await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
+    productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
+  }))).toEqual(sourceStoresBeforeComparison);
+  expect(externalRequests).toEqual([]);
+  page.off("request", requestListener);
+});
+
+test("T7-B2 preserves a declared value with unknown assessment and rolls back a failed service comparison write", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { firstSupplier, firstProposal } = await createTwoCurrentServiceProposalsForComparison(page);
+  const sourceStoresBeforeComparison = await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+  }));
+  const appOrigin = new URL(page.url()).origin;
+  const externalRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
+  });
+
+  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await page.getByTestId("service-comparison-add").click();
+  const scopeEditor = serviceComparisonAssessmentEditor(page, "scope", firstSupplier);
+  await expect(scopeEditor.getByTestId("service-comparison-assessment-status")).toHaveValue("unknown");
+  await scopeEditor.getByTestId("service-comparison-declared-value").fill("مجری گفته اجرای کامل را می پذیرد");
+  await scopeEditor.getByTestId("service-comparison-assessment-rationale").fill("جزئیات زیرسازی هنوز برای ارزیابی انطباق روشن نیست");
+  await expect(page.getByTestId("service-comparison-coverage-preview")).toContainText("۲۰ معیار نیازمند روشن‌سازی");
+
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__serviceComparisonNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-builder-service-proposal-comparisons:v1") throw new DOMException("Service comparison write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await page.getByTestId("service-comparison-save").click();
+  await expect(page.getByTestId("service-comparison-editor")).toBeVisible();
+  await expect(page.getByTestId("service-comparison-form-error")).toContainText("مقایسه ثبت نشد");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBeNull();
+  expect(await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+  }))).toEqual(sourceStoresBeforeComparison);
+
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __serviceComparisonNativeSetItem: typeof Storage.prototype.setItem }).__serviceComparisonNativeSetItem;
+  });
+  await page.getByTestId("service-comparison-save").click();
+  await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
+  await expect(page.getByTestId("service-comparison-summary")).toContainText("۲۰ معیار نیازمند روشن‌سازی");
+
+  const comparison = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1") ?? "[]")[0]);
+  const revision = comparison.revisions[0];
+  const firstInput = revision.inputs.find((input: { proposalId: string }) => input.proposalId === firstProposal.id);
+  expect(firstInput.criteria.find((criterion: { criterionId: string }) => criterion.criterionId === "scope")).toEqual({
+    criterionId: "scope",
+    declaredValue: "مجری گفته اجرای کامل را می پذیرد",
+    assessment: "unknown",
+    rationale: "جزئیات زیرسازی هنوز برای ارزیابی انطباق روشن نیست",
+    declaredSource: "رونویسی تکمیلی سازنده برای مقایسه",
+    assessmentSource: "ارزیابی سازنده",
+  });
+  expect(revision.summary).toMatchObject({ status: "needs-clarification", candidateProposalId: null, unknownCount: 20, reasonCode: "criteria-need-clarification" });
+  expect(revision.results).toHaveLength(2);
+  for (const result of revision.results) {
+    expect(result.counts).toEqual({ aligned: 0, partial: 0, different: 0, unknown: 10, notApplicable: 0 });
+    expect(result.coverage).toBe("incomplete");
+    expect(result).not.toHaveProperty("normalizedTotal");
+    expect(result).not.toHaveProperty("score");
+    expect(result).not.toHaveProperty("rank");
+  }
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBeNull();
+  expect(await page.evaluate(() => ({
+    proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
+    requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+  }))).toEqual(sourceStoresBeforeComparison);
+  expect(externalRequests).toEqual([]);
+});
+
+test("T7-B2 keeps no-op bytes stable, versions a real matrix edit, and invalidates stale service proposal lineage", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { firstSupplier } = await createCompleteServiceComparisonWithDecision(page);
+  const comparisonV1Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"));
+  const decisionV1Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"));
+  const comparisonV1 = JSON.parse(comparisonV1Store ?? "[]")[0];
+  const decisionV1 = JSON.parse(decisionV1Store ?? "[]")[0];
+  expect(comparisonV1.version).toBe(1);
+  expect(decisionV1.version).toBe(1);
+
+  await page.getByTestId("service-comparison-edit").click();
+  await expect(page.getByTestId("service-comparison-editor-title")).toBeFocused();
+  await page.getByTestId("service-comparison-save").click();
+  await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonV1Store);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
+
+  await page.getByTestId("service-comparison-edit").click();
+  await serviceComparisonAssessmentEditor(page, "scope", firstSupplier).getByTestId("service-comparison-declared-value").fill("آماده سازی ترمیم و اجرای کامل عایق دولایه");
+  await page.getByTestId("service-comparison-save").click();
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخهٔ مقایسه ۲");
+  const comparisonV2Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"));
+  const comparisonV2 = JSON.parse(comparisonV2Store ?? "[]")[0];
+  expect(comparisonV2Store).not.toBe(comparisonV1Store);
+  expect(comparisonV2.version).toBe(2);
+  expect(comparisonV2.history.map((event: { type: string }) => event.type)).toEqual(["created", "updated"]);
+  expect(comparisonV2.revisions).toHaveLength(2);
+  expect(comparisonV2.revisions[0]).toEqual(comparisonV1.revisions[0]);
+  expect(comparisonV2.revisions[1].inputs.find((input: { supplierSnapshot: { displayName: string } }) => input.supplierSnapshot.displayName === firstSupplier).criteria.find((criterion: { criterionId: string }) => criterion.criterionId === "scope").declaredValue).toBe("آماده سازی ترمیم و اجرای کامل عایق دولایه");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
+  await expect(page.getByTestId("service-comparison-decision-history")).toHaveCount(0);
+
+  await page.getByTestId("service-comparison-revision-select").selectOption(comparisonV1.revisions[0].id);
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخهٔ تاریخی مقایسه");
+  await expect(page.getByTestId("service-comparison-decision-history")).toContainText("نسخه نخست تصمیم برای ادامه بررسی مجری ب");
+  await expect(page.getByTestId("service-comparison-decision-save")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonV2Store);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
+
+  await page.getByTestId("service-comparison-detail-back").click();
+  await page.getByTestId("service-comparisons-back").click();
+  await page.getByTestId("proposal-card").filter({ hasText: firstSupplier }).click();
+  await page.getByTestId("proposal-edit").click();
+  await page.getByTestId("proposal-notes").fill("نسخه تازه پیشنهاد خدمت پس از ثبت ماتریس");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-revision-select")).toContainText("نسخهٔ ۲ · جاری");
+  await page.getByTestId("proposal-detail-back").click();
+  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await expect(page.getByTestId("service-comparison-card")).toContainText("تاریخی · بازبینی");
+  await page.getByTestId("service-comparison-card").click();
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("service-comparison-decision-save")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonV2Store);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
+});
+
+test("T7-B2 fail-closes a tampered service matrix and distinguishes an unreadable decision store from empty", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { firstSupplier } = await createCompleteServiceComparisonWithDecision(page);
+  const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  const validComparisonStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"));
+  const validDecisionStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"));
+
+  const tamperedComparisonStore = await page.evaluate(() => {
+    const key = "chida-prototype-builder-service-proposal-comparisons:v1";
+    const records = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    records[0].revisions[0].results[0].counts.aligned = 999;
+    records[0].revisions[0].summary.candidateProposalId = records[0].revisions[0].inputs[0].proposalId;
+    window.localStorage.setItem(key, JSON.stringify(records));
+    return window.localStorage.getItem(key);
+  });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-card")).toHaveCount(2);
+  await page.getByTestId("proposal-card").filter({ hasText: firstSupplier }).click();
+  await expect(page.getByTestId("proposal-detail")).toBeVisible();
+  await page.getByTestId("proposal-detail-back").click();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
+
+  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await expect(page.getByTestId("service-comparison-storage-error")).toBeVisible();
+  await expect(page.getByTestId("service-comparison-card")).toHaveCount(0);
+  await expect(page.getByTestId("service-comparison-add")).toBeDisabled();
+  await expect(page.getByText("ماتریسی ثبت نشده", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(tamperedComparisonStore);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
+
+  await page.evaluate((validStore) => window.localStorage.setItem("chida-prototype-builder-service-proposal-comparisons:v1", validStore!), validComparisonStore);
+  await page.addInitScript(() => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Object.defineProperty(window, "__serviceComparisonDecisionNativeGetItem", { value: nativeGetItem, configurable: true });
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === "chida-prototype-builder-service-proposal-comparison-decisions:v1") throw new DOMException("Service comparison decision read failed", "SecurityError");
+      return nativeGetItem.call(this, key);
+    };
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(2);
+  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await expect(page.getByTestId("service-comparison-storage-error")).toHaveCount(0);
+  await expect(page.getByTestId("service-comparison-card")).toHaveCount(1);
+  await page.getByTestId("service-comparison-card").click();
+  await expect(page.getByTestId("service-comparison-decision-storage-error")).toBeVisible();
+  await expect(page.getByTestId("service-comparison-decision-section")).toHaveCount(0);
+  await expect(page.getByTestId("service-comparison-decision-save")).toHaveCount(0);
+  await expect(page.getByText("ثبت نشده", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(validComparisonStore);
+  expect(await page.evaluate(() => (window as Window & { __serviceComparisonDecisionNativeGetItem: typeof Storage.prototype.getItem }).__serviceComparisonDecisionNativeGetItem.call(window.localStorage, "chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(validDecisionStore);
 });

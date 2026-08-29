@@ -3710,6 +3710,7 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 .proposal-history small { color: var(--text-soft); font-size: 8px; }
 .proposal-edit-button { min-height: 50px; }
 
+.proposal-comparison-entries { display: grid; gap: 10px; min-width: 0; }
 .proposal-comparisons-entry { min-width: 0; }
 .proposal-comparisons-entry .project-files-entry-icon { color: var(--copper); background: var(--copper-soft); }
 
@@ -3857,6 +3858,77 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 .comparison-save-message { padding: 10px; border-radius: 11px; color: var(--copper); background: var(--copper-soft); font-size: 8px; line-height: 1.7; }
 .comparison-decision-history { padding-top: 10px; border-top: 1px solid var(--line); }
 .comparison-decision-history li > div small:last-child { overflow-wrap: anywhere; }
+
+.service-comparison-editor-view .comparison-proposal-toggles,
+.service-comparison-criterion-results,
+.service-comparison-assessments {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.service-comparison-criterion-editor,
+.service-comparison-criterion-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface-muted);
+}
+
+.service-comparison-criterion-heading {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.service-comparison-criterion-heading > span { display: grid; gap: 2px; min-width: 0; }
+.service-comparison-criterion-heading small { color: var(--copper); font-size: 8px; font-weight: 650; }
+.service-comparison-criterion-heading strong { color: var(--text); font-size: 11px; overflow-wrap: anywhere; }
+.service-comparison-criterion-heading em { color: var(--text-soft); font-size: 8px; font-style: normal; line-height: 1.75; overflow-wrap: anywhere; }
+
+.service-comparison-proposal-assessment,
+.service-comparison-result-assessment,
+.service-commercial-card {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.service-comparison-proposal-assessment > strong,
+.service-comparison-result-assessment > strong,
+.service-commercial-card > strong { color: var(--text); font-size: 10px; line-height: 1.7; overflow-wrap: anywhere; }
+.service-comparison-proposal-assessment > small,
+.service-comparison-result-assessment > small,
+.service-commercial-card > small { color: var(--text-soft); font-size: 8px; line-height: 1.75; overflow-wrap: anywhere; }
+
+.service-comparison-result-assessment > span {
+  justify-self: start;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--text-soft);
+  background: var(--surface-muted);
+  font-size: 8px;
+  font-weight: 650;
+}
+.service-comparison-result-assessment.aligned { border-color: color-mix(in srgb, var(--copper) 40%, var(--line)); }
+.service-comparison-result-assessment.aligned > span { color: var(--copper-strong); background: var(--copper-soft); }
+.service-comparison-result-assessment.partial { border-style: dashed; border-color: color-mix(in srgb, var(--copper) 34%, var(--line)); }
+.service-comparison-result-assessment.different { border-color: color-mix(in srgb, var(--danger) 34%, var(--line)); }
+.service-comparison-result-assessment.different > span { color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, var(--surface)); }
+
+.service-comparison-result-assessment dl { display: grid; gap: 0; min-width: 0; margin: 0; }
+.service-comparison-result-assessment dl > div { display: grid; gap: 4px; min-width: 0; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.service-comparison-result-assessment dl > div:last-child { border-bottom: 0; }
+.service-comparison-result-assessment dt { color: var(--text-soft); font-size: 8px; }
+.service-comparison-result-assessment dd { min-width: 0; margin: 0; color: var(--text); font-size: 9px; line-height: 1.75; overflow-wrap: anywhere; }
 
 @media (max-width: 360px) {
   .proposal-form-grid,

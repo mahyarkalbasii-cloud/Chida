@@ -754,6 +754,153 @@ type BuilderProposalComparisonDecisionDraft = {
   selectedProposalId: string;
   reason: string;
 };
+type BuilderServiceProposalComparisonCriterionId = "scope" | "location" | "size-or-volume" | "qualification" | "timing" | "method" | "in-scope" | "out-of-scope" | "warranty" | "payment-terms";
+type BuilderServiceProposalComparisonAssessment = "aligned" | "partial" | "different" | "unknown" | "not-applicable";
+type BuilderServiceProposalComparisonRequestSnapshot = {
+  id: string;
+  scope: string | null;
+  location: string | null;
+  sizeOrVolume: string | null;
+  qualification: string | null;
+  timing: string | null;
+  method: string | null;
+  inScope: string | null;
+  outOfScope: string | null;
+  warranty: string | null;
+  paymentTerms: string | null;
+};
+type BuilderServiceProposalComparisonCriterionInput = {
+  criterionId: BuilderServiceProposalComparisonCriterionId;
+  declaredValue: string | null;
+  assessment: BuilderServiceProposalComparisonAssessment;
+  rationale: string | null;
+  declaredSource: "رونویسی تکمیلی سازنده برای مقایسه";
+  assessmentSource: "ارزیابی سازنده";
+};
+type BuilderServiceProposalComparisonInput = {
+  proposalId: string;
+  proposalVersion: number;
+  proposalRevisionId: string;
+  proposalRevisionFingerprint: string;
+  proposalLineId: string;
+  serviceSpecId: string;
+  supplierSnapshot: BuilderRecordedProposalSupplierSnapshot;
+  criteria: BuilderServiceProposalComparisonCriterionInput[];
+};
+type BuilderServiceProposalComparisonCriterionResult = BuilderServiceProposalComparisonCriterionInput & {
+  requestValue: string | null;
+  status: "assessed" | "unknown";
+};
+type BuilderServiceProposalComparisonProposalResult = {
+  proposalId: string;
+  supplierDisplayName: string;
+  declaredCommercialSnapshot: BuilderRecordedProposalLine;
+  criteria: BuilderServiceProposalComparisonCriterionResult[];
+  counts: { aligned: number; partial: number; different: number; unknown: number; notApplicable: number };
+  coverage: "complete" | "incomplete";
+  source: "ماتریس ساختاریافتهٔ محلی چیدا";
+};
+type BuilderServiceProposalComparisonSummary = {
+  formulaVersion: "service-coverage-v1";
+  criterion: "all-service-criteria-reviewed";
+  status: "ready-for-human-decision" | "needs-clarification";
+  candidateProposalId: null;
+  unknownCount: number;
+  reasonCode: "criteria-need-clarification" | "all-criteria-reviewed";
+  reason: string;
+  source: "جمع‌بندی قاعده‌محور محلی";
+};
+type BuilderServiceProposalComparisonEvent = { id: string; type: "created" | "updated"; actor: "شما"; at: string; version: number };
+type BuilderServiceProposalComparisonRevision = {
+  id: string;
+  version: number;
+  createdAt: string;
+  inputs: BuilderServiceProposalComparisonInput[];
+  results: BuilderServiceProposalComparisonProposalResult[];
+  summary: BuilderServiceProposalComparisonSummary;
+  fingerprint: string;
+};
+type BuilderServiceProposalComparisonRecord = {
+  schemaVersion: 1;
+  id: string;
+  projectId: string;
+  purpose: "compare-builder-recorded-service-proposals";
+  target: {
+    requestId: string;
+    requestVersion: number;
+    reviewRevisionId: string;
+    reviewRevisionFingerprint: string;
+    requestKind: "service";
+  };
+  requestSnapshot: BuilderServiceProposalComparisonRequestSnapshot;
+  currentRevisionId: string;
+  visibility: "خصوصی پروژه";
+  localStatus: "ثبت محلی";
+  externalEffect: "none";
+  networkUsed: false;
+  aiUsed: false;
+  scoringUsed: false;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  history: BuilderServiceProposalComparisonEvent[];
+  revisions: BuilderServiceProposalComparisonRevision[];
+};
+type BuilderServiceProposalComparisonCriterionDraft = {
+  criterionId: BuilderServiceProposalComparisonCriterionId;
+  declaredValue: string;
+  assessment: BuilderServiceProposalComparisonAssessment;
+  rationale: string;
+};
+type BuilderServiceProposalComparisonProposalDraft = {
+  proposalId: string;
+  selected: boolean;
+  criteria: BuilderServiceProposalComparisonCriterionDraft[];
+};
+type BuilderServiceProposalComparisonDraft = {
+  requestKey: string;
+  proposals: BuilderServiceProposalComparisonProposalDraft[];
+};
+type BuilderServiceProposalComparisonDecisionOutcome = "preferred-for-follow-up" | "needs-clarification" | "no-selection";
+type BuilderServiceProposalComparisonDecisionRevision = {
+  id: string;
+  version: number;
+  createdAt: string;
+  outcome: BuilderServiceProposalComparisonDecisionOutcome;
+  selectedProposalId: string | null;
+  reason: string;
+  fingerprint: string;
+};
+type BuilderServiceProposalComparisonDecisionEvent = { id: string; type: "created" | "updated"; actor: "شما"; at: string; version: number };
+type BuilderServiceProposalComparisonDecisionRecord = {
+  schemaVersion: 1;
+  id: string;
+  projectId: string;
+  purpose: "record-local-service-proposal-comparison-decision";
+  target: {
+    comparisonId: string;
+    comparisonVersion: number;
+    comparisonRevisionId: string;
+    comparisonRevisionFingerprint: string;
+  };
+  currentRevisionId: string;
+  visibility: "خصوصی پروژه";
+  localStatus: "ثبت محلی";
+  externalEffect: "none";
+  sendAuthorized: false;
+  purchaseAuthorized: false;
+  supplierNotified: false;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  history: BuilderServiceProposalComparisonDecisionEvent[];
+  revisions: BuilderServiceProposalComparisonDecisionRevision[];
+};
+type BuilderServiceProposalComparisonDecisionDraft = {
+  outcome: BuilderServiceProposalComparisonDecisionOutcome;
+  selectedProposalId: string;
+  reason: string;
+};
 type MockSourceKind = "فایل پروژهٔ ساختگی" | "وب رسمی ساختگی";
 type MockSourceRecord = {
   id: string;
@@ -813,6 +960,8 @@ const projectDispatchPlanApprovalsStorageKey = "chida-prototype-project-dispatch
 const projectBuilderRecordedProposalsStorageKey = "chida-prototype-builder-recorded-proposals:v1";
 const projectBuilderProposalComparisonsStorageKey = "chida-prototype-builder-proposal-comparisons:v1";
 const projectBuilderProposalComparisonDecisionsStorageKey = "chida-prototype-builder-proposal-comparison-decisions:v1";
+const projectBuilderServiceProposalComparisonsStorageKey = "chida-prototype-builder-service-proposal-comparisons:v1";
+const projectBuilderServiceProposalComparisonDecisionsStorageKey = "chida-prototype-builder-service-proposal-comparison-decisions:v1";
 const projectImagesDatabaseName = "chida-prototype-project-images:v1";
 const projectImagesStoreName = "images";
 const projectStages = [
@@ -853,6 +1002,18 @@ const builderRecordedProposalLineStatuses: readonly { id: BuilderRecordedProposa
   { id: "alternative", label: "جایگزین پیشنهاد شده" },
   { id: "unavailable", label: "ناموجود اعلام شده" },
   { id: "not-mentioned", label: "ذکر نشده" },
+];
+const builderServiceProposalComparisonCriteriaV1: readonly { id: BuilderServiceProposalComparisonCriterionId; label: string; requestField: keyof Omit<BuilderServiceProposalComparisonRequestSnapshot, "id"> }[] = [
+  { id: "scope", label: "دامنهٔ کار", requestField: "scope" },
+  { id: "location", label: "موقعیت اجرا", requestField: "location" },
+  { id: "size-or-volume", label: "اندازه یا حجم", requestField: "sizeOrVolume" },
+  { id: "qualification", label: "صلاحیت", requestField: "qualification" },
+  { id: "timing", label: "مدت و زمان اجرا", requestField: "timing" },
+  { id: "method", label: "روش اجرا", requestField: "method" },
+  { id: "in-scope", label: "موارد داخل کار", requestField: "inScope" },
+  { id: "out-of-scope", label: "موارد خارج از کار", requestField: "outOfScope" },
+  { id: "warranty", label: "ضمانت اعلامی", requestField: "warranty" },
+  { id: "payment-terms", label: "شرایط پرداخت", requestField: "paymentTerms" },
 ];
 const projectFileExtensionPattern = /\.(?:pdf|png|jpe?g|webp|heic|heif|xls|xlsx|csv|doc|docx)$/i;
 const projectImageExtensionPattern = /\.(?:png|jpe?g|webp|heic|heif)$/i;
@@ -1751,6 +1912,202 @@ function builderProposalComparisonEffectiveStatus(
 function builderProposalComparisonDecisionRevisionFingerprint(
   target: BuilderProposalComparisonDecisionRecord["target"],
   revision: Omit<BuilderProposalComparisonDecisionRevision, "fingerprint">,
+) {
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ target, revision })))}`;
+}
+
+function builderServiceProposalComparisonRequestSnapshotFromReview(snapshot: PurchaseRequestSnapshot): BuilderServiceProposalComparisonRequestSnapshot | null {
+  if (snapshot.requestKind !== "service" || !snapshot.service) return null;
+  return {
+    id: snapshot.service.id,
+    scope: snapshot.service.scope,
+    location: snapshot.service.location,
+    sizeOrVolume: snapshot.service.sizeOrVolume,
+    qualification: snapshot.service.qualification,
+    timing: snapshot.service.timing,
+    method: snapshot.service.method,
+    inScope: snapshot.service.inScope,
+    outOfScope: snapshot.service.outOfScope,
+    warranty: snapshot.service.warranty,
+    paymentTerms: snapshot.service.paymentTerms,
+  };
+}
+
+function builderServiceProposalComparisonDefaultDraft(proposals: BuilderRecordedProposalRecord[], requestKey: string): BuilderServiceProposalComparisonDraft {
+  return {
+    requestKey,
+    proposals: proposals.filter((proposal) => proposal.target.requestKind === "service" && builderProposalComparisonRequestKey(proposal) === requestKey).slice(0, 8).map((proposal) => ({
+      proposalId: proposal.id,
+      selected: true,
+      criteria: builderServiceProposalComparisonCriteriaV1.map((criterion) => ({ criterionId: criterion.id, declaredValue: "", assessment: "unknown", rationale: "" })),
+    })),
+  };
+}
+
+function builderServiceProposalComparisonDraftFromRecord(record: BuilderServiceProposalComparisonRecord): BuilderServiceProposalComparisonDraft {
+  const revision = record.revisions.find((item) => item.id === record.currentRevisionId)!;
+  return {
+    requestKey: [record.target.requestId, record.target.requestVersion, record.target.reviewRevisionId, record.target.reviewRevisionFingerprint].join(":"),
+    proposals: revision.inputs.map((input) => ({
+      proposalId: input.proposalId,
+      selected: true,
+      criteria: input.criteria.map((criterion) => ({
+        criterionId: criterion.criterionId,
+        declaredValue: criterion.declaredValue ?? "",
+        assessment: criterion.assessment,
+        rationale: criterion.rationale ?? "",
+      })),
+    })),
+  };
+}
+
+function normalizeBuilderServiceProposalComparisonInputs(
+  draft: BuilderServiceProposalComparisonDraft,
+  proposals: BuilderRecordedProposalRecord[],
+  requestSnapshot: BuilderServiceProposalComparisonRequestSnapshot,
+) {
+  const selectedDrafts = draft.proposals.filter((item) => item.selected);
+  if (selectedDrafts.length < 2 || selectedDrafts.length > 8 || new Set(selectedDrafts.map((item) => item.proposalId)).size !== selectedDrafts.length) return null;
+  const inputs = selectedDrafts.flatMap((proposalDraft): BuilderServiceProposalComparisonInput[] => {
+    const proposal = proposals.find((item) => item.id === proposalDraft.proposalId && item.target.requestKind === "service" && builderProposalComparisonRequestKey(item) === draft.requestKey);
+    const revision = proposal?.revisions.find((item) => item.id === proposal.currentRevisionId);
+    if (!proposal || !revision || revision.lines.length !== 1 || revision.lines[0].serviceSpecId !== requestSnapshot.id || proposalDraft.criteria.length !== builderServiceProposalComparisonCriteriaV1.length) return [];
+    const seenCriteria = new Set<BuilderServiceProposalComparisonCriterionId>();
+    const criteria = proposalDraft.criteria.flatMap((criterionDraft, index): BuilderServiceProposalComparisonCriterionInput[] => {
+      const definition = builderServiceProposalComparisonCriteriaV1[index];
+      if (!definition || criterionDraft.criterionId !== definition.id || seenCriteria.has(criterionDraft.criterionId)) return [];
+      seenCriteria.add(criterionDraft.criterionId);
+      const declaredValue = normalizeBuilderRecordedProposalText(criterionDraft.declaredValue, 500);
+      const rationale = normalizeBuilderRecordedProposalText(criterionDraft.rationale, 500);
+      const assessment = criterionDraft.assessment;
+      const requestValue = requestSnapshot[definition.requestField];
+      if (declaredValue === undefined || rationale === undefined || !["aligned", "partial", "different", "unknown", "not-applicable"].includes(assessment)) return [];
+      if (assessment === "unknown") {
+        // Declared text and a clarification note may exist even when the builder
+        // has not yet assessed whether the response aligns with the request.
+      } else if (assessment === "not-applicable") {
+        if (requestValue !== null || declaredValue !== null || rationale === null) return [];
+      } else if (declaredValue === null || rationale === null || requestValue === null) return [];
+      return [{
+        criterionId: definition.id,
+        declaredValue,
+        assessment,
+        rationale,
+        declaredSource: "رونویسی تکمیلی سازنده برای مقایسه",
+        assessmentSource: "ارزیابی سازنده",
+      }];
+    });
+    if (criteria.length !== builderServiceProposalComparisonCriteriaV1.length) return [];
+    return [{
+      proposalId: proposal.id,
+      proposalVersion: revision.version,
+      proposalRevisionId: revision.id,
+      proposalRevisionFingerprint: revision.fingerprint,
+      proposalLineId: revision.lines[0].id,
+      serviceSpecId: revision.lines[0].serviceSpecId!,
+      supplierSnapshot: structuredClone(proposal.supplierSnapshot),
+      criteria,
+    }];
+  });
+  return inputs.length === selectedDrafts.length ? inputs : null;
+}
+
+function deriveBuilderServiceProposalComparisonPayload(
+  inputs: BuilderServiceProposalComparisonInput[],
+  proposals: BuilderRecordedProposalRecord[],
+  requestSnapshot: BuilderServiceProposalComparisonRequestSnapshot,
+) {
+  const results = inputs.flatMap((input): BuilderServiceProposalComparisonProposalResult[] => {
+    const proposal = proposals.find((item) => item.id === input.proposalId && item.target.requestKind === "service");
+    const revision = proposal?.revisions.find((item) => item.id === input.proposalRevisionId && item.version === input.proposalVersion && item.fingerprint === input.proposalRevisionFingerprint);
+    const declaredLine = revision?.lines[0];
+    if (!proposal || !revision || !declaredLine || input.proposalLineId !== declaredLine.id || input.serviceSpecId !== declaredLine.serviceSpecId || declaredLine.serviceSpecId !== requestSnapshot.id || input.criteria.length !== builderServiceProposalComparisonCriteriaV1.length) return [];
+    const criteria = builderServiceProposalComparisonCriteriaV1.flatMap((definition, index): BuilderServiceProposalComparisonCriterionResult[] => {
+      const criterion = input.criteria[index];
+      if (!criterion || criterion.criterionId !== definition.id) return [];
+      return [{
+        ...structuredClone(criterion),
+        requestValue: requestSnapshot[definition.requestField],
+        status: criterion.assessment === "unknown" ? "unknown" : "assessed",
+      }];
+    });
+    if (criteria.length !== builderServiceProposalComparisonCriteriaV1.length) return [];
+    const counts = {
+      aligned: criteria.filter((criterion) => criterion.assessment === "aligned").length,
+      partial: criteria.filter((criterion) => criterion.assessment === "partial").length,
+      different: criteria.filter((criterion) => criterion.assessment === "different").length,
+      unknown: criteria.filter((criterion) => criterion.assessment === "unknown").length,
+      notApplicable: criteria.filter((criterion) => criterion.assessment === "not-applicable").length,
+    };
+    return [{
+      proposalId: proposal.id,
+      supplierDisplayName: proposal.supplierSnapshot.displayName,
+      declaredCommercialSnapshot: structuredClone(declaredLine),
+      criteria,
+      counts,
+      coverage: counts.unknown === 0 ? "complete" : "incomplete",
+      source: "ماتریس ساختاریافتهٔ محلی چیدا",
+    }];
+  });
+  if (results.length !== inputs.length) return null;
+  const unknownCount = results.reduce((total, result) => total + result.counts.unknown, 0);
+  const summary: BuilderServiceProposalComparisonSummary = unknownCount > 0
+    ? {
+      formulaVersion: "service-coverage-v1",
+      criterion: "all-service-criteria-reviewed",
+      status: "needs-clarification",
+      candidateProposalId: null,
+      unknownCount,
+      reasonCode: "criteria-need-clarification",
+      reason: "حداقل یک معیار در پیشنهادهای انتخاب‌شده هنوز نامشخص است؛ پیش از تصمیم انسانی روشن‌سازی لازم است.",
+      source: "جمع‌بندی قاعده‌محور محلی",
+    }
+    : {
+      formulaVersion: "service-coverage-v1",
+      criterion: "all-service-criteria-reviewed",
+      status: "ready-for-human-decision",
+      candidateProposalId: null,
+      unknownCount: 0,
+      reasonCode: "all-criteria-reviewed",
+      reason: "همهٔ معیارهای خدمت بازبینی شده‌اند؛ تفاوت‌ها برای تصمیم مستقل سازنده نمایش داده می‌شوند و هیچ امتیاز، رتبه یا گزینهٔ برتر ساخته نشده است.",
+      source: "جمع‌بندی قاعده‌محور محلی",
+    };
+  return { results, summary };
+}
+
+function builderServiceProposalComparisonRevisionFingerprint(
+  recordIdentity: Pick<BuilderServiceProposalComparisonRecord, "projectId" | "target" | "requestSnapshot">,
+  revision: Omit<BuilderServiceProposalComparisonRevision, "fingerprint">,
+) {
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ ...recordIdentity, revision })))}`;
+}
+
+function builderServiceProposalComparisonSemanticValue(revision: BuilderServiceProposalComparisonRevision) {
+  return { inputs: revision.inputs, results: revision.results, summary: revision.summary };
+}
+
+function builderServiceProposalComparisonEffectiveStatus(
+  comparison: BuilderServiceProposalComparisonRecord,
+  proposals: BuilderRecordedProposalRecord[],
+  requests: ProjectPurchaseRequestRecord[],
+  approvals: ProjectApprovalRecord[],
+  contacts: SupplierContactRecord[],
+  revisionId = comparison.currentRevisionId,
+) {
+  const revision = comparison.revisions.find((item) => item.id === revisionId);
+  if (!revision) return "needs-review" as const;
+  return revision.inputs.every((input) => {
+    const proposal = proposals.find((item) => item.id === input.proposalId && item.projectId === comparison.projectId);
+    return proposal
+      && proposal.currentRevisionId === input.proposalRevisionId
+      && proposal.version === input.proposalVersion
+      && builderRecordedProposalEffectiveStatus(proposal, requests, approvals, contacts) === "current";
+  }) ? "current" as const : "needs-review" as const;
+}
+
+function builderServiceProposalComparisonDecisionRevisionFingerprint(
+  target: BuilderServiceProposalComparisonDecisionRecord["target"],
+  revision: Omit<BuilderServiceProposalComparisonDecisionRevision, "fingerprint">,
 ) {
   return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ target, revision })))}`;
 }
@@ -3926,6 +4283,310 @@ function readStoredBuilderProposalComparisonDecisions(comparisons: LocalRecordsR
   }
 }
 
+function parseBuilderServiceProposalComparisonRequestSnapshot(value: any): BuilderServiceProposalComparisonRequestSnapshot | null {
+  if (!hasExactObjectKeys(value, ["id", "scope", "location", "sizeOrVolume", "qualification", "timing", "method", "inScope", "outOfScope", "warranty", "paymentTerms"])) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const textValue = (item: unknown) => item === null ? null : typeof item === "string" && item.trim() === item && hasVisibleProjectTaskText(item) && item.length <= 500 ? item : undefined;
+  const scope = textValue(value?.scope);
+  const location = textValue(value?.location);
+  const sizeOrVolume = textValue(value?.sizeOrVolume);
+  const qualification = textValue(value?.qualification);
+  const timing = textValue(value?.timing);
+  const method = textValue(value?.method);
+  const inScope = textValue(value?.inScope);
+  const outOfScope = textValue(value?.outOfScope);
+  const warranty = textValue(value?.warranty);
+  const paymentTerms = textValue(value?.paymentTerms);
+  if (!id || [scope, location, sizeOrVolume, qualification, timing, method, inScope, outOfScope, warranty, paymentTerms].some((item) => item === undefined)) return null;
+  return { id, scope: scope!, location: location!, sizeOrVolume: sizeOrVolume!, qualification: qualification!, timing: timing!, method: method!, inScope: inScope!, outOfScope: outOfScope!, warranty: warranty!, paymentTerms: paymentTerms! };
+}
+
+function parseBuilderServiceProposalComparisonInput(
+  value: any,
+  proposals: BuilderRecordedProposalRecord[],
+  projectId: string,
+  target: BuilderServiceProposalComparisonRecord["target"],
+  requestSnapshot: BuilderServiceProposalComparisonRequestSnapshot,
+): BuilderServiceProposalComparisonInput | null {
+  const proposalId = typeof value?.proposalId === "string" ? value.proposalId.trim() : "";
+  const proposalVersion = value?.proposalVersion;
+  const proposalRevisionId = typeof value?.proposalRevisionId === "string" ? value.proposalRevisionId.trim() : "";
+  const proposalRevisionFingerprint = typeof value?.proposalRevisionFingerprint === "string" ? value.proposalRevisionFingerprint.trim() : "";
+  const proposal = proposals.find((item) => item.id === proposalId && item.projectId === projectId && item.target.requestKind === "service");
+  const proposalRevision = proposal?.revisions.find((item) => item.id === proposalRevisionId && item.version === proposalVersion && item.fingerprint === proposalRevisionFingerprint);
+  const targetKey = [target.requestId, target.requestVersion, target.reviewRevisionId, target.reviewRevisionFingerprint].join(":");
+  if (
+    !hasExactObjectKeys(value, ["proposalId", "proposalVersion", "proposalRevisionId", "proposalRevisionFingerprint", "proposalLineId", "serviceSpecId", "supplierSnapshot", "criteria"])
+    || !proposal
+    || builderProposalComparisonRequestKey(proposal) !== targetKey
+    || !proposalRevision
+    || proposalRevision.lines.length !== 1
+    || value?.proposalLineId !== proposalRevision.lines[0].id
+    || value?.serviceSpecId !== proposalRevision.lines[0].serviceSpecId
+    || proposalRevision.lines[0].serviceSpecId !== requestSnapshot.id
+    || JSON.stringify(stablePurchaseRequestValue(value?.supplierSnapshot)) !== JSON.stringify(stablePurchaseRequestValue(proposal.supplierSnapshot))
+    || !Array.isArray(value?.criteria)
+    || value.criteria.length !== builderServiceProposalComparisonCriteriaV1.length
+  ) return null;
+  const seenCriteria = new Set<BuilderServiceProposalComparisonCriterionId>();
+  const criteria = value.criteria.flatMap((criterionValue: any, index: number): BuilderServiceProposalComparisonCriterionInput[] => {
+    const definition = builderServiceProposalComparisonCriteriaV1[index];
+    const criterionId = criterionValue?.criterionId as BuilderServiceProposalComparisonCriterionId;
+    const assessment = criterionValue?.assessment as BuilderServiceProposalComparisonAssessment;
+    const declaredValue = criterionValue?.declaredValue === null ? null : typeof criterionValue?.declaredValue === "string" && criterionValue.declaredValue.trim() === criterionValue.declaredValue && hasVisibleProjectTaskText(criterionValue.declaredValue) && criterionValue.declaredValue.length <= 500 ? criterionValue.declaredValue : undefined;
+    const rationale = criterionValue?.rationale === null ? null : typeof criterionValue?.rationale === "string" && criterionValue.rationale.trim() === criterionValue.rationale && hasVisibleProjectTaskText(criterionValue.rationale) && criterionValue.rationale.length <= 500 ? criterionValue.rationale : undefined;
+    const requestValue = definition ? requestSnapshot[definition.requestField] : null;
+    const stateIsValid = assessment === "unknown"
+      ? true
+      : assessment === "not-applicable"
+        ? requestValue === null && declaredValue === null && typeof rationale === "string"
+        : typeof declaredValue === "string" && typeof rationale === "string" && requestValue !== null;
+    if (
+      !definition
+      || !hasExactObjectKeys(criterionValue, ["criterionId", "declaredValue", "assessment", "rationale", "declaredSource", "assessmentSource"])
+      || criterionId !== definition.id
+      || seenCriteria.has(criterionId)
+      || !["aligned", "partial", "different", "unknown", "not-applicable"].includes(assessment)
+      || declaredValue === undefined
+      || rationale === undefined
+      || !stateIsValid
+      || criterionValue?.declaredSource !== "رونویسی تکمیلی سازنده برای مقایسه"
+      || criterionValue?.assessmentSource !== "ارزیابی سازنده"
+    ) return [];
+    seenCriteria.add(criterionId);
+    return [{ criterionId, declaredValue, assessment, rationale, declaredSource: "رونویسی تکمیلی سازنده برای مقایسه", assessmentSource: "ارزیابی سازنده" }];
+  });
+  if (criteria.length !== builderServiceProposalComparisonCriteriaV1.length) return null;
+  return { proposalId, proposalVersion, proposalRevisionId, proposalRevisionFingerprint, proposalLineId: proposalRevision.lines[0].id, serviceSpecId: proposalRevision.lines[0].serviceSpecId!, supplierSnapshot: structuredClone(proposal.supplierSnapshot), criteria };
+}
+
+function parseBuilderServiceProposalComparison(
+  value: any,
+  proposals: LocalRecordsReadResult<BuilderRecordedProposalRecord>,
+  requests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+): BuilderServiceProposalComparisonRecord | null {
+  if (proposals.readError || requests.readError) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const target = {
+    requestId: typeof value?.target?.requestId === "string" ? value.target.requestId.trim() : "",
+    requestVersion: value?.target?.requestVersion,
+    reviewRevisionId: typeof value?.target?.reviewRevisionId === "string" ? value.target.reviewRevisionId.trim() : "",
+    reviewRevisionFingerprint: typeof value?.target?.reviewRevisionFingerprint === "string" ? value.target.reviewRevisionFingerprint.trim() : "",
+    requestKind: value?.target?.requestKind,
+  } satisfies BuilderServiceProposalComparisonRecord["target"];
+  const request = requests.records.find((item) => item.id === target.requestId && item.projectId === projectId);
+  const reviewRevision = request?.reviewRevisions.find((item) => item.id === target.reviewRevisionId && item.requestVersion === target.requestVersion && item.fingerprint === target.reviewRevisionFingerprint);
+  const expectedRequestSnapshot = reviewRevision ? builderServiceProposalComparisonRequestSnapshotFromReview(reviewRevision.snapshot) : null;
+  const requestSnapshot = parseBuilderServiceProposalComparisonRequestSnapshot(value?.requestSnapshot);
+  if (!request || !reviewRevision || !expectedRequestSnapshot || !requestSnapshot || JSON.stringify(stablePurchaseRequestValue(requestSnapshot)) !== JSON.stringify(stablePurchaseRequestValue(expectedRequestSnapshot))) return null;
+  const eventIds = new Set<string>();
+  const history: BuilderServiceProposalComparisonEvent[] = Array.isArray(value?.history) && value.history.length <= 100 ? value.history.flatMap((event: any, index: number): BuilderServiceProposalComparisonEvent[] => {
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as BuilderServiceProposalComparisonEvent["type"];
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || (index === 0 ? type !== "created" : type !== "updated") || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at)) return [];
+    eventIds.add(eventId);
+    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
+  }) : [];
+  const revisionIds = new Set<string>();
+  const revisions: BuilderServiceProposalComparisonRevision[] = Array.isArray(value?.revisions) && value.revisions.length <= 100 ? value.revisions.flatMap((revisionValue: any, index: number): BuilderServiceProposalComparisonRevision[] => {
+    const revisionId = typeof revisionValue?.id === "string" ? revisionValue.id.trim() : "";
+    const createdAt = typeof revisionValue?.createdAt === "string" ? revisionValue.createdAt.trim() : "";
+    if (!hasExactObjectKeys(revisionValue, ["id", "version", "createdAt", "inputs", "results", "summary", "fingerprint"]) || !revisionId || revisionIds.has(revisionId) || revisionValue?.version !== index + 1 || createdAt !== history[index]?.at || !Array.isArray(revisionValue?.inputs) || revisionValue.inputs.length < 2 || revisionValue.inputs.length > 8) return [];
+    const proposalIds = new Set<string>();
+    const inputs: BuilderServiceProposalComparisonInput[] = revisionValue.inputs.flatMap((inputValue: any): BuilderServiceProposalComparisonInput[] => {
+      const input = parseBuilderServiceProposalComparisonInput(inputValue, proposals.records, projectId, target, requestSnapshot);
+      if (!input || proposalIds.has(input.proposalId)) return [];
+      proposalIds.add(input.proposalId);
+      return [input];
+    });
+    const derived = inputs.length === revisionValue.inputs.length ? deriveBuilderServiceProposalComparisonPayload(inputs, proposals.records, requestSnapshot) : null;
+    if (!derived || JSON.stringify(stablePurchaseRequestValue(revisionValue?.results)) !== JSON.stringify(stablePurchaseRequestValue(derived.results)) || JSON.stringify(stablePurchaseRequestValue(revisionValue?.summary)) !== JSON.stringify(stablePurchaseRequestValue(derived.summary))) return [];
+    const revisionBase = { id: revisionId, version: revisionValue.version, createdAt, inputs, results: derived.results, summary: derived.summary } satisfies Omit<BuilderServiceProposalComparisonRevision, "fingerprint">;
+    const fingerprint = builderServiceProposalComparisonRevisionFingerprint({ projectId, target, requestSnapshot }, revisionBase);
+    const newestDependencyTime = Math.max(new Date(reviewRevision.createdAt).getTime(), ...inputs.map((input) => new Date(proposals.records.find((proposal) => proposal.id === input.proposalId)!.revisions.find((revision) => revision.id === input.proposalRevisionId)!.createdAt).getTime()));
+    if (revisionValue?.fingerprint !== fingerprint || new Date(createdAt).getTime() < newestDependencyTime) return [];
+    revisionIds.add(revisionId);
+    return [{ ...revisionBase, fingerprint }];
+  }) : [];
+  const version = value?.version;
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
+  const hasRepeatedSemanticRevision = revisions.some((revision, index) => index > 0 && JSON.stringify(stablePurchaseRequestValue(builderServiceProposalComparisonSemanticValue(revision))) === JSON.stringify(stablePurchaseRequestValue(builderServiceProposalComparisonSemanticValue(revisions[index - 1]))));
+  if (
+    !hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "purpose", "target", "requestSnapshot", "currentRevisionId", "visibility", "localStatus", "externalEffect", "networkUsed", "aiUsed", "scoringUsed", "version", "createdAt", "updatedAt", "history", "revisions"])
+    || !hasExactObjectKeys(value?.target, ["requestId", "requestVersion", "reviewRevisionId", "reviewRevisionFingerprint", "requestKind"])
+    || value?.schemaVersion !== 1
+    || !id
+    || !projectId
+    || value?.purpose !== "compare-builder-recorded-service-proposals"
+    || target.requestKind !== "service"
+    || !target.requestId
+    || !Number.isInteger(target.requestVersion)
+    || target.requestVersion < 1
+    || !target.reviewRevisionId
+    || !target.reviewRevisionFingerprint
+    || value?.visibility !== "خصوصی پروژه"
+    || value?.localStatus !== "ثبت محلی"
+    || value?.externalEffect !== "none"
+    || value?.networkUsed !== false
+    || value?.aiUsed !== false
+    || value?.scoringUsed !== false
+    || !Number.isInteger(version)
+    || version < 1
+    || history.length !== value?.history?.length
+    || revisions.length !== value?.revisions?.length
+    || history.length !== version
+    || revisions.length !== version
+    || currentRevisionId !== revisions[revisions.length - 1]?.id
+    || createdAt !== history[0]?.at
+    || updatedAt !== history[history.length - 1]?.at
+    || revisions[0]?.createdAt !== createdAt
+    || revisions[revisions.length - 1]?.createdAt !== updatedAt
+    || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())
+    || hasRepeatedSemanticRevision
+  ) return null;
+  return { schemaVersion: 1, id, projectId, purpose: "compare-builder-recorded-service-proposals", target, requestSnapshot, currentRevisionId, visibility: "خصوصی پروژه", localStatus: "ثبت محلی", externalEffect: "none", networkUsed: false, aiUsed: false, scoringUsed: false, version, createdAt, updatedAt, history, revisions };
+}
+
+function readStoredBuilderServiceProposalComparisons(
+  proposals: LocalRecordsReadResult<BuilderRecordedProposalRecord>,
+  requests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+): LocalRecordsReadResult<BuilderServiceProposalComparisonRecord> {
+  if (proposals.readError || requests.readError) return { records: [], readError: true };
+  try {
+    const raw = window.localStorage.getItem(projectBuilderServiceProposalComparisonsStorageKey);
+    if (raw === null) return { records: [], readError: false };
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
+    const ids = new Set<string>();
+    const projectCounts = new Map<string, number>();
+    let readError = false;
+    const records = parsed.flatMap((item): BuilderServiceProposalComparisonRecord[] => {
+      const record = parseBuilderServiceProposalComparison(item, proposals, requests);
+      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
+      if (!record || ids.has(record.id) || nextProjectCount > 100) {
+        readError = true;
+        return [];
+      }
+      ids.add(record.id);
+      projectCounts.set(record.projectId, nextProjectCount);
+      return [record];
+    });
+    return { records, readError };
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
+function parseBuilderServiceProposalComparisonDecision(
+  value: any,
+  comparisons: LocalRecordsReadResult<BuilderServiceProposalComparisonRecord>,
+): BuilderServiceProposalComparisonDecisionRecord | null {
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const target = {
+    comparisonId: typeof value?.target?.comparisonId === "string" ? value.target.comparisonId.trim() : "",
+    comparisonVersion: value?.target?.comparisonVersion,
+    comparisonRevisionId: typeof value?.target?.comparisonRevisionId === "string" ? value.target.comparisonRevisionId.trim() : "",
+    comparisonRevisionFingerprint: typeof value?.target?.comparisonRevisionFingerprint === "string" ? value.target.comparisonRevisionFingerprint.trim() : "",
+  } satisfies BuilderServiceProposalComparisonDecisionRecord["target"];
+  const comparison = comparisons.records.find((item) => item.id === target.comparisonId && item.projectId === projectId);
+  const comparisonRevision = comparison?.revisions.find((item) => item.id === target.comparisonRevisionId && item.version === target.comparisonVersion && item.fingerprint === target.comparisonRevisionFingerprint);
+  if (!comparison || !comparisonRevision) return null;
+  const eventIds = new Set<string>();
+  const history: BuilderServiceProposalComparisonDecisionEvent[] = Array.isArray(value?.history) && value.history.length <= 100 ? value.history.flatMap((event: any, index: number): BuilderServiceProposalComparisonDecisionEvent[] => {
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as BuilderServiceProposalComparisonDecisionEvent["type"];
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || (index === 0 ? type !== "created" : type !== "updated") || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at)) return [];
+    eventIds.add(eventId);
+    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
+  }) : [];
+  const revisionIds = new Set<string>();
+  const revisions: BuilderServiceProposalComparisonDecisionRevision[] = Array.isArray(value?.revisions) && value.revisions.length <= 100 ? value.revisions.flatMap((revisionValue: any, index: number): BuilderServiceProposalComparisonDecisionRevision[] => {
+    const revisionId = typeof revisionValue?.id === "string" ? revisionValue.id.trim() : "";
+    const createdAt = typeof revisionValue?.createdAt === "string" ? revisionValue.createdAt.trim() : "";
+    const outcome = revisionValue?.outcome as BuilderServiceProposalComparisonDecisionOutcome;
+    const selectedProposalId = revisionValue?.selectedProposalId === null ? null : typeof revisionValue?.selectedProposalId === "string" ? revisionValue.selectedProposalId.trim() : "";
+    const reason = typeof revisionValue?.reason === "string" ? revisionValue.reason.trim() : "";
+    const selectionIsValid = outcome === "preferred-for-follow-up" ? Boolean(selectedProposalId && comparisonRevision.inputs.some((input) => input.proposalId === selectedProposalId)) : selectedProposalId === null;
+    if (!hasExactObjectKeys(revisionValue, ["id", "version", "createdAt", "outcome", "selectedProposalId", "reason", "fingerprint"]) || !revisionId || revisionIds.has(revisionId) || revisionValue?.version !== index + 1 || createdAt !== history[index]?.at || !["preferred-for-follow-up", "needs-clarification", "no-selection"].includes(outcome) || !selectionIsValid || !hasVisibleProjectTaskText(reason) || reason.length > 500 || reason !== revisionValue?.reason || new Date(createdAt).getTime() < new Date(comparisonRevision.createdAt).getTime()) return [];
+    const revisionBase = { id: revisionId, version: revisionValue.version, createdAt, outcome, selectedProposalId: selectedProposalId || null, reason } satisfies Omit<BuilderServiceProposalComparisonDecisionRevision, "fingerprint">;
+    const fingerprint = builderServiceProposalComparisonDecisionRevisionFingerprint(target, revisionBase);
+    if (revisionValue?.fingerprint !== fingerprint) return [];
+    revisionIds.add(revisionId);
+    return [{ ...revisionBase, fingerprint }];
+  }) : [];
+  const version = value?.version;
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
+  const hasRepeatedSemanticRevision = revisions.some((revision, index) => index > 0 && revision.outcome === revisions[index - 1].outcome && revision.selectedProposalId === revisions[index - 1].selectedProposalId && revision.reason === revisions[index - 1].reason);
+  if (
+    !hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "purpose", "target", "currentRevisionId", "visibility", "localStatus", "externalEffect", "sendAuthorized", "purchaseAuthorized", "supplierNotified", "version", "createdAt", "updatedAt", "history", "revisions"])
+    || !hasExactObjectKeys(value?.target, ["comparisonId", "comparisonVersion", "comparisonRevisionId", "comparisonRevisionFingerprint"])
+    || value?.schemaVersion !== 1
+    || !id
+    || !projectId
+    || value?.purpose !== "record-local-service-proposal-comparison-decision"
+    || value?.visibility !== "خصوصی پروژه"
+    || value?.localStatus !== "ثبت محلی"
+    || value?.externalEffect !== "none"
+    || value?.sendAuthorized !== false
+    || value?.purchaseAuthorized !== false
+    || value?.supplierNotified !== false
+    || !Number.isInteger(version)
+    || version < 1
+    || history.length !== value?.history?.length
+    || revisions.length !== value?.revisions?.length
+    || history.length !== version
+    || revisions.length !== version
+    || currentRevisionId !== revisions[revisions.length - 1]?.id
+    || createdAt !== history[0]?.at
+    || updatedAt !== history[history.length - 1]?.at
+    || revisions[0]?.createdAt !== createdAt
+    || revisions[revisions.length - 1]?.createdAt !== updatedAt
+    || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())
+    || hasRepeatedSemanticRevision
+  ) return null;
+  return { schemaVersion: 1, id, projectId, purpose: "record-local-service-proposal-comparison-decision", target, currentRevisionId, visibility: "خصوصی پروژه", localStatus: "ثبت محلی", externalEffect: "none", sendAuthorized: false, purchaseAuthorized: false, supplierNotified: false, version, createdAt, updatedAt, history, revisions };
+}
+
+function readStoredBuilderServiceProposalComparisonDecisions(
+  comparisons: LocalRecordsReadResult<BuilderServiceProposalComparisonRecord>,
+): LocalRecordsReadResult<BuilderServiceProposalComparisonDecisionRecord> {
+  if (comparisons.readError) return { records: [], readError: true };
+  try {
+    const raw = window.localStorage.getItem(projectBuilderServiceProposalComparisonDecisionsStorageKey);
+    if (raw === null) return { records: [], readError: false };
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
+    const ids = new Set<string>();
+    const targets = new Set<string>();
+    const projectCounts = new Map<string, number>();
+    let readError = false;
+    const records = parsed.flatMap((item): BuilderServiceProposalComparisonDecisionRecord[] => {
+      const record = parseBuilderServiceProposalComparisonDecision(item, comparisons);
+      const targetKey = record ? `${record.target.comparisonId}:${record.target.comparisonRevisionId}` : "";
+      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
+      if (!record || ids.has(record.id) || targets.has(targetKey) || nextProjectCount > 100) {
+        readError = true;
+        return [];
+      }
+      ids.add(record.id);
+      targets.add(targetKey);
+      projectCounts.set(record.projectId, nextProjectCount);
+      return [record];
+    });
+    return { records, readError };
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
 function inferProjectFileCategory(file: File): ProjectFileCategory {
   const normalizedName = file.name.replace(/[\s‌_-]+/g, " ").toLocaleLowerCase("fa");
   if (normalizedName.includes("پیش فاکتور") || normalizedName.includes("پیش‌فاکتور")) return "پیش‌فاکتور";
@@ -4715,6 +5376,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [initialBuilderRecordedProposals] = useState<LocalRecordsReadResult<BuilderRecordedProposalRecord>>(() => readStoredBuilderRecordedProposals(initialProjectPurchaseRequests, initialProjectApprovals, initialProjectSupplierContacts, initialProjectFiles));
   const [initialBuilderProposalComparisons] = useState<LocalRecordsReadResult<BuilderProposalComparisonRecord>>(() => readStoredBuilderProposalComparisons(initialBuilderRecordedProposals));
   const [initialBuilderProposalComparisonDecisions] = useState<LocalRecordsReadResult<BuilderProposalComparisonDecisionRecord>>(() => readStoredBuilderProposalComparisonDecisions(initialBuilderProposalComparisons));
+  const [initialBuilderServiceProposalComparisons] = useState<LocalRecordsReadResult<BuilderServiceProposalComparisonRecord>>(() => readStoredBuilderServiceProposalComparisons(initialBuilderRecordedProposals, initialProjectPurchaseRequests));
+  const [initialBuilderServiceProposalComparisonDecisions] = useState<LocalRecordsReadResult<BuilderServiceProposalComparisonDecisionRecord>>(() => readStoredBuilderServiceProposalComparisonDecisions(initialBuilderServiceProposalComparisons));
   const [projectFiles, setProjectFiles] = useState<ProjectFileRecord[]>(initialProjectFiles.records);
   const [projectMemories, setProjectMemories] = useState<ProjectMemoryRecord[]>(initialProjectMemories.records);
   const [projectTasks, setProjectTasks] = useState<ProjectTaskRecord[]>(initialProjectTasks.records);
@@ -4726,6 +5389,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [builderRecordedProposals, setBuilderRecordedProposals] = useState<BuilderRecordedProposalRecord[]>(initialBuilderRecordedProposals.records);
   const [builderProposalComparisons, setBuilderProposalComparisons] = useState<BuilderProposalComparisonRecord[]>(initialBuilderProposalComparisons.records);
   const [builderProposalComparisonDecisions, setBuilderProposalComparisonDecisions] = useState<BuilderProposalComparisonDecisionRecord[]>(initialBuilderProposalComparisonDecisions.records);
+  const [builderServiceProposalComparisons, setBuilderServiceProposalComparisons] = useState<BuilderServiceProposalComparisonRecord[]>(initialBuilderServiceProposalComparisons.records);
+  const [builderServiceProposalComparisonDecisions, setBuilderServiceProposalComparisonDecisions] = useState<BuilderServiceProposalComparisonDecisionRecord[]>(initialBuilderServiceProposalComparisonDecisions.records);
   const [projectFilesReadError] = useState(initialProjectFiles.readError);
   const [projectMemoriesReadError] = useState(initialProjectMemories.readError);
   const [projectTasksReadError] = useState(initialProjectTasks.readError);
@@ -4737,6 +5402,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [builderRecordedProposalsReadError] = useState(initialBuilderRecordedProposals.readError);
   const [builderProposalComparisonsReadError] = useState(initialBuilderProposalComparisons.readError);
   const [builderProposalComparisonDecisionsReadError] = useState(initialBuilderProposalComparisonDecisions.readError);
+  const [builderServiceProposalComparisonsReadError] = useState(initialBuilderServiceProposalComparisons.readError);
+  const [builderServiceProposalComparisonDecisionsReadError] = useState(initialBuilderServiceProposalComparisonDecisions.readError);
   const [installedTool, setInstalledTool] = useState(() => readLocalStorageValue(installedToolStorageKey) ?? "");
   const [briefSchedule, setBriefSchedule] = useState<BriefSchedule | null>(() => {
     try {
@@ -4864,6 +5531,14 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const activeBuilderProposalComparisonDecisions = useMemo(
     () => builderProposalComparisonDecisions.filter((decision) => decision.projectId === activeProject.id),
     [activeProject.id, builderProposalComparisonDecisions],
+  );
+  const activeBuilderServiceProposalComparisons = useMemo(
+    () => builderServiceProposalComparisons.filter((comparison) => comparison.projectId === activeProject.id),
+    [activeProject.id, builderServiceProposalComparisons],
+  );
+  const activeBuilderServiceProposalComparisonDecisions = useMemo(
+    () => builderServiceProposalComparisonDecisions.filter((decision) => decision.projectId === activeProject.id),
+    [activeProject.id, builderServiceProposalComparisonDecisions],
   );
   const activeProjectTaskCount = activeProjectTasks.filter((task) => task.status === "in-progress").length;
   const briefSummary = briefSchedule
@@ -5977,6 +6652,145 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return persistBuilderProposalComparisonDecisions(next) ? current ? "updated" as const : "created" as const : false;
   };
 
+  const persistBuilderServiceProposalComparisons = (nextComparisons: BuilderServiceProposalComparisonRecord[]) => {
+    if (builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError) return false;
+    try {
+      if (nextComparisons.length === 0) window.localStorage.removeItem(projectBuilderServiceProposalComparisonsStorageKey);
+      else window.localStorage.setItem(projectBuilderServiceProposalComparisonsStorageKey, JSON.stringify(nextComparisons));
+    } catch {
+      return false;
+    }
+    setBuilderServiceProposalComparisons(nextComparisons);
+    return true;
+  };
+
+  const createBuilderServiceProposalComparison = (draft: BuilderServiceProposalComparisonDraft) => {
+    if (builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError) return null;
+    if (builderServiceProposalComparisons.length >= 1000 || activeBuilderServiceProposalComparisons.length >= 100) return null;
+    const selectedDraft = draft.proposals.find((item) => item.selected);
+    const firstProposal = selectedDraft ? activeBuilderRecordedProposals.find((proposal) => proposal.id === selectedDraft.proposalId && proposal.target.requestKind === "service") : null;
+    const request = firstProposal ? activeProjectPurchaseRequests.find((item) => item.id === firstProposal.target.requestId) : null;
+    const reviewRevision = request?.reviewRevisions.find((item) => item.id === firstProposal?.target.reviewRevisionId && item.requestVersion === firstProposal?.target.requestVersion && item.fingerprint === firstProposal?.target.reviewRevisionFingerprint);
+    const requestSnapshot = reviewRevision ? builderServiceProposalComparisonRequestSnapshotFromReview(reviewRevision.snapshot) : null;
+    if (!firstProposal || !request || !reviewRevision || !requestSnapshot || builderProposalComparisonRequestKey(firstProposal) !== draft.requestKey) return null;
+    const inputs = normalizeBuilderServiceProposalComparisonInputs(draft, activeBuilderRecordedProposals, requestSnapshot);
+    if (!inputs) return null;
+    const selectedProposals = inputs.map((input) => activeBuilderRecordedProposals.find((proposal) => proposal.id === input.proposalId)).filter((proposal): proposal is BuilderRecordedProposalRecord => Boolean(proposal));
+    if (selectedProposals.length !== inputs.length || selectedProposals.some((proposal) => proposal.target.requestKind !== "service" || builderProposalComparisonRequestKey(proposal) !== draft.requestKey || builderRecordedProposalEffectiveStatus(proposal, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current")) return null;
+    const derived = deriveBuilderServiceProposalComparisonPayload(inputs, activeBuilderRecordedProposals, requestSnapshot);
+    if (!derived) return null;
+    const target = { requestId: firstProposal.target.requestId, requestVersion: firstProposal.target.requestVersion, reviewRevisionId: firstProposal.target.reviewRevisionId, reviewRevisionFingerprint: firstProposal.target.reviewRevisionFingerprint, requestKind: "service" as const };
+    const timestamp = new Date(Math.max(Date.now(), new Date(reviewRevision.createdAt).getTime(), ...inputs.map((input) => new Date(selectedProposals.find((proposal) => proposal.id === input.proposalId)!.revisions.find((revision) => revision.id === input.proposalRevisionId)!.createdAt).getTime()))).toISOString();
+    const comparisonId = `builder-service-proposal-comparison-${window.crypto.randomUUID()}`;
+    const revisionBase = { id: `builder-service-proposal-comparison-revision-${window.crypto.randomUUID()}`, version: 1, createdAt: timestamp, inputs, results: derived.results, summary: derived.summary } satisfies Omit<BuilderServiceProposalComparisonRevision, "fingerprint">;
+    const revision = { ...revisionBase, fingerprint: builderServiceProposalComparisonRevisionFingerprint({ projectId: activeProject.id, target, requestSnapshot }, revisionBase) } satisfies BuilderServiceProposalComparisonRevision;
+    const record = {
+      schemaVersion: 1,
+      id: comparisonId,
+      projectId: activeProject.id,
+      purpose: "compare-builder-recorded-service-proposals",
+      target,
+      requestSnapshot,
+      currentRevisionId: revision.id,
+      visibility: "خصوصی پروژه",
+      localStatus: "ثبت محلی",
+      externalEffect: "none",
+      networkUsed: false,
+      aiUsed: false,
+      scoringUsed: false,
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      history: [{ id: `builder-service-proposal-comparison-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+      revisions: [revision],
+    } satisfies BuilderServiceProposalComparisonRecord;
+    if (!parseBuilderServiceProposalComparison(record, { records: builderRecordedProposals, readError: false }, { records: projectPurchaseRequests, readError: false })) return null;
+    return persistBuilderServiceProposalComparisons([...builderServiceProposalComparisons, record]) ? comparisonId : null;
+  };
+
+  const updateBuilderServiceProposalComparison = (comparisonId: string, draft: BuilderServiceProposalComparisonDraft) => {
+    if (builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError) return false;
+    const current = builderServiceProposalComparisons.find((comparison) => comparison.id === comparisonId && comparison.projectId === activeProject.id);
+    const currentRevision = current?.revisions.find((revision) => revision.id === current.currentRevisionId);
+    const targetKey = current ? [current.target.requestId, current.target.requestVersion, current.target.reviewRevisionId, current.target.reviewRevisionFingerprint].join(":") : "";
+    if (!current || !currentRevision || draft.requestKey !== targetKey) return false;
+    const inputs = normalizeBuilderServiceProposalComparisonInputs(draft, activeBuilderRecordedProposals, current.requestSnapshot);
+    if (!inputs) return false;
+    const selectedProposals = inputs.map((input) => activeBuilderRecordedProposals.find((proposal) => proposal.id === input.proposalId)).filter((proposal): proposal is BuilderRecordedProposalRecord => Boolean(proposal));
+    if (selectedProposals.length !== inputs.length || selectedProposals.some((proposal) => proposal.target.requestKind !== "service" || builderProposalComparisonRequestKey(proposal) !== targetKey || builderRecordedProposalEffectiveStatus(proposal, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current")) return false;
+    const derived = deriveBuilderServiceProposalComparisonPayload(inputs, activeBuilderRecordedProposals, current.requestSnapshot);
+    if (!derived) return false;
+    const semantic = { inputs, results: derived.results, summary: derived.summary };
+    if (JSON.stringify(stablePurchaseRequestValue(semantic)) === JSON.stringify(stablePurchaseRequestValue(builderServiceProposalComparisonSemanticValue(currentRevision)))) return "unchanged" as const;
+    if (current.version >= 100) return false;
+    const timestamp = new Date(Math.max(Date.now(), new Date(current.updatedAt).getTime(), ...inputs.map((input) => new Date(selectedProposals.find((proposal) => proposal.id === input.proposalId)!.revisions.find((revision) => revision.id === input.proposalRevisionId)!.createdAt).getTime()))).toISOString();
+    const version = current.version + 1;
+    const revisionBase = { id: `builder-service-proposal-comparison-revision-${window.crypto.randomUUID()}`, version, createdAt: timestamp, ...semantic } satisfies Omit<BuilderServiceProposalComparisonRevision, "fingerprint">;
+    const revision = { ...revisionBase, fingerprint: builderServiceProposalComparisonRevisionFingerprint({ projectId: current.projectId, target: current.target, requestSnapshot: current.requestSnapshot }, revisionBase) } satisfies BuilderServiceProposalComparisonRevision;
+    const updated = { ...current, currentRevisionId: revision.id, version, updatedAt: timestamp, history: [...current.history, { id: `builder-service-proposal-comparison-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }], revisions: [...current.revisions, revision] } satisfies BuilderServiceProposalComparisonRecord;
+    if (!parseBuilderServiceProposalComparison(updated, { records: builderRecordedProposals, readError: false }, { records: projectPurchaseRequests, readError: false })) return false;
+    return persistBuilderServiceProposalComparisons(builderServiceProposalComparisons.map((comparison) => comparison.id === current.id ? updated : comparison)) ? "updated" as const : false;
+  };
+
+  const persistBuilderServiceProposalComparisonDecisions = (nextDecisions: BuilderServiceProposalComparisonDecisionRecord[]) => {
+    if (builderServiceProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError) return false;
+    try {
+      if (nextDecisions.length === 0) window.localStorage.removeItem(projectBuilderServiceProposalComparisonDecisionsStorageKey);
+      else window.localStorage.setItem(projectBuilderServiceProposalComparisonDecisionsStorageKey, JSON.stringify(nextDecisions));
+    } catch {
+      return false;
+    }
+    setBuilderServiceProposalComparisonDecisions(nextDecisions);
+    return true;
+  };
+
+  const upsertBuilderServiceProposalComparisonDecision = (comparisonId: string, comparisonRevisionId: string, draft: BuilderServiceProposalComparisonDecisionDraft) => {
+    if (builderServiceProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError) return false;
+    const comparison = builderServiceProposalComparisons.find((item) => item.id === comparisonId && item.projectId === activeProject.id);
+    const comparisonRevision = comparison?.revisions.find((item) => item.id === comparisonRevisionId);
+    const reason = normalizeBuilderRecordedProposalText(draft.reason, 500);
+    const selectedProposalId = draft.outcome === "preferred-for-follow-up" ? draft.selectedProposalId : null;
+    if (!comparison || !comparisonRevision || comparison.currentRevisionId !== comparisonRevision.id || builderServiceProposalComparisonEffectiveStatus(comparison, activeBuilderRecordedProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts, comparisonRevision.id) !== "current" || reason === null || reason === undefined || !["preferred-for-follow-up", "needs-clarification", "no-selection"].includes(draft.outcome) || draft.outcome === "preferred-for-follow-up" && (!selectedProposalId || !comparisonRevision.inputs.some((input) => input.proposalId === selectedProposalId)) || draft.outcome !== "preferred-for-follow-up" && draft.selectedProposalId) return false;
+    const target = { comparisonId: comparison.id, comparisonVersion: comparisonRevision.version, comparisonRevisionId: comparisonRevision.id, comparisonRevisionFingerprint: comparisonRevision.fingerprint };
+    const current = builderServiceProposalComparisonDecisions.find((decision) => decision.projectId === activeProject.id && decision.target.comparisonId === comparison.id && decision.target.comparisonRevisionId === comparisonRevision.id);
+    const currentRevision = current?.revisions.find((revision) => revision.id === current.currentRevisionId);
+    if (current ? current.version >= 100 : builderServiceProposalComparisonDecisions.length >= 1000 || activeBuilderServiceProposalComparisonDecisions.length >= 100) return false;
+    if (currentRevision && currentRevision.outcome === draft.outcome && currentRevision.selectedProposalId === selectedProposalId && currentRevision.reason === reason) return "unchanged" as const;
+    const timestamp = new Date(Math.max(Date.now(), new Date(comparisonRevision.createdAt).getTime(), current ? new Date(current.updatedAt).getTime() : 0)).toISOString();
+    const version = current ? current.version + 1 : 1;
+    const revisionBase = { id: `builder-service-proposal-comparison-decision-revision-${window.crypto.randomUUID()}`, version, createdAt: timestamp, outcome: draft.outcome, selectedProposalId, reason } satisfies Omit<BuilderServiceProposalComparisonDecisionRevision, "fingerprint">;
+    const revision = { ...revisionBase, fingerprint: builderServiceProposalComparisonDecisionRevisionFingerprint(target, revisionBase) } satisfies BuilderServiceProposalComparisonDecisionRevision;
+    const record = current ? {
+      ...current,
+      currentRevisionId: revision.id,
+      version,
+      updatedAt: timestamp,
+      history: [...current.history, { id: `builder-service-proposal-comparison-decision-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }],
+      revisions: [...current.revisions, revision],
+    } satisfies BuilderServiceProposalComparisonDecisionRecord : {
+      schemaVersion: 1,
+      id: `builder-service-proposal-comparison-decision-${window.crypto.randomUUID()}`,
+      projectId: activeProject.id,
+      purpose: "record-local-service-proposal-comparison-decision",
+      target,
+      currentRevisionId: revision.id,
+      visibility: "خصوصی پروژه",
+      localStatus: "ثبت محلی",
+      externalEffect: "none",
+      sendAuthorized: false,
+      purchaseAuthorized: false,
+      supplierNotified: false,
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      history: [{ id: `builder-service-proposal-comparison-decision-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+      revisions: [revision],
+    } satisfies BuilderServiceProposalComparisonDecisionRecord;
+    if (!parseBuilderServiceProposalComparisonDecision(record, { records: builderServiceProposalComparisons, readError: false })) return false;
+    const next = current ? builderServiceProposalComparisonDecisions.map((decision) => decision.id === current.id ? record : decision) : [...builderServiceProposalComparisonDecisions, record];
+    return persistBuilderServiceProposalComparisonDecisions(next) ? current ? "updated" as const : "created" as const : false;
+  };
+
   const leaveProjectWorkspace = () => {
     projectWorkspaceScrollPositions.current.delete(activeProject.id);
     setView("chat");
@@ -6136,6 +6950,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         proposals={activeBuilderRecordedProposals}
         comparisons={activeBuilderProposalComparisons}
         decisions={activeBuilderProposalComparisonDecisions}
+        serviceComparisons={activeBuilderServiceProposalComparisons}
+        serviceDecisions={activeBuilderServiceProposalComparisonDecisions}
         requests={activeProjectPurchaseRequests}
         approvals={activeProjectApprovals}
         contacts={activeProjectSupplierContacts}
@@ -6143,6 +6959,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         storageLocked={builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError}
         comparisonsStorageLocked={builderProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError}
         decisionsStorageLocked={builderProposalComparisonDecisionsReadError || builderProposalComparisonsReadError}
+        serviceComparisonsStorageLocked={builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError}
+        serviceDecisionsStorageLocked={builderServiceProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError}
         backLabel={proposalsReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
         onBack={() => { keyboard.hide(); pendingProposalsReturnFocus.current = proposalsReturnView; setView(proposalsReturnView); }}
         onCreate={createBuilderRecordedProposal}
@@ -6150,6 +6968,9 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         onCreateComparison={createBuilderProposalComparison}
         onUpdateComparison={updateBuilderProposalComparison}
         onUpsertDecision={upsertBuilderProposalComparisonDecision}
+        onCreateServiceComparison={createBuilderServiceProposalComparison}
+        onUpdateServiceComparison={updateBuilderServiceProposalComparison}
+        onUpsertServiceDecision={upsertBuilderServiceProposalComparisonDecision}
       />
     );
   }
@@ -6262,7 +7083,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         sheet={sheet}
         projectName={activeProject.name}
         projectCount={projects.length}
-        localRecordCount={projectFilesReadError || projectMemoriesReadError || projectTasksReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError
+        localRecordCount={projectFilesReadError || projectMemoriesReadError || projectTasksReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError
           ? null
           : activeProjectFiles.length
             + activeProjectMemories.length
@@ -6274,7 +7095,9 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
             + activeProjectDispatchPlanApprovals.length
             + activeBuilderRecordedProposals.length
             + activeBuilderProposalComparisons.length
-            + activeBuilderProposalComparisonDecisions.length}
+            + activeBuilderProposalComparisonDecisions.length
+            + activeBuilderServiceProposalComparisons.length
+            + activeBuilderServiceProposalComparisonDecisions.length}
         briefSummary={briefSummary}
         modelMode={modelMode}
         onClose={() => onOpenSheet(null)}
@@ -6665,10 +7488,219 @@ function ProjectProposalComparisonsView({ project, proposals, comparisons, decis
   return <div className="chida-app project-proposals-view comparisons-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="proposal-comparisons-view"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="comparisons-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>مقایسه‌های محصول</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><LayoutGrid size={24} /></span><div><small>T7-B1 · خصوصی · پروژهٔ {project.name}</small><h1>مقایسهٔ هم‌سطح و تصمیم</h1><p>اصل پیشنهادها جدا می‌ماند؛ فقط فرض‌های صریح شما وارد محاسبهٔ قطعی می‌شوند.</p></div></section><section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>دامنهٔ این برش فقط محصول است</strong><small>مقایسهٔ خدمت، AI، استخراج متن، رتبه‌بندی اعتبار و هر اقدام خرید یا ارسال در این مسیر وجود ندارد.</small></span></section><div className="project-proposals-toolbar"><span><strong>{orderedComparisons.length.toLocaleString("fa-IR")}</strong><small>مقایسهٔ نسخه‌دار</small></span><button ref={addButtonRef} className="primary-button" type="button" onClick={openCreate} disabled={eligibleGroups.length === 0} data-testid="comparison-add"><Plus size={17} /> ساخت مقایسه</button></div>{eligibleGroups.length === 0 ? <p className="proposal-prerequisite-note" data-testid="comparison-prerequisite-note">برای ساخت مقایسه، دست‌کم دو پیشنهاد محصولِ جاری باید به همان نسخهٔ دقیق یک درخواست وصل باشند.</p> : null}{orderedComparisons.length ? <div className="project-proposals-list comparison-list">{orderedComparisons.map((comparison) => { const revision = comparison.revisions.find((item) => item.id === comparison.currentRevisionId)!; const status = builderProposalComparisonEffectiveStatus(comparison, proposals, requests, approvals, contacts); return <button className="proposal-card comparison-card" type="button" key={comparison.id} data-comparison-id={comparison.id} onClick={() => { setSelectedId(comparison.id); setPreviewRevisionId(comparison.currentRevisionId); setLiveMessage(""); window.requestAnimationFrame(() => detailHeadingRef.current?.focus()); }} data-testid="comparison-card"><span className="proposal-card-icon"><LayoutGrid size={20} /></span><span className="proposal-card-copy"><span><small>{status === "current" ? "نسخهٔ جاری" : "تاریخی · بازبینی"}</small><small>{formatProjectFileDate(comparison.updatedAt)}</small></span><strong>{comparison.requestSnapshot.title}</strong><em>{revision.inputs.length.toLocaleString("fa-IR")} پیشنهاد · {revision.recommendation.status === "conditional" ? "جمع‌بندی شرطی" : revision.recommendation.status === "tie" ? "تساوی" : "دادهٔ ناکافی"}</em><small>نسخهٔ مقایسه {revision.version.toLocaleString("fa-IR")}</small></span><ArrowRight size={17} /></button>; })}</div> : <section className="proposal-empty-state"><LayoutGrid size={26} /><h2>مقایسه‌ای ثبت نشده</h2><p>پس از ثبت دو پیشنهاد جاری برای یک درخواست محصول، فرض‌ها را شفاف هم‌سطح کن.</p></section>}</main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span></div>;
 }
 
-function ProjectProposalsView({ project, proposals, comparisons, decisions, requests, approvals, contacts, files, storageLocked, comparisonsStorageLocked, decisionsStorageLocked, backLabel, onBack, onCreate, onUpdate, onCreateComparison, onUpdateComparison, onUpsertDecision }: { project: BuilderProject; proposals: BuilderRecordedProposalRecord[]; comparisons: BuilderProposalComparisonRecord[]; decisions: BuilderProposalComparisonDecisionRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; files: ProjectFileRecord[]; storageLocked: boolean; comparisonsStorageLocked: boolean; decisionsStorageLocked: boolean; backLabel: string; onBack: () => void; onCreate: (draft: BuilderRecordedProposalDraft) => string | null; onUpdate: (proposalId: string, draft: BuilderRecordedProposalDraft) => false | "unchanged" | "updated"; onCreateComparison: (draft: BuilderProposalComparisonDraft) => string | null; onUpdateComparison: (comparisonId: string, draft: BuilderProposalComparisonDraft) => false | "unchanged" | "updated"; onUpsertDecision: (comparisonId: string, revisionId: string, draft: BuilderProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated" }) {
+function builderServiceProposalComparisonAssessmentLabel(value: BuilderServiceProposalComparisonAssessment) {
+  if (value === "aligned") return "هم‌راستا با نیاز";
+  if (value === "partial") return "پوشش جزئی";
+  if (value === "different") return "متفاوت";
+  if (value === "not-applicable") return "برای این نیاز نامرتبط";
+  return "انطباق نامشخص";
+}
+
+function builderServiceProposalComparisonOutcomeLabel(outcome: BuilderServiceProposalComparisonDecisionOutcome) {
+  if (outcome === "preferred-for-follow-up") return "ادامهٔ بررسی با یک پیشنهاد";
+  if (outcome === "needs-clarification") return "نیازمند روشن‌سازی";
+  return "فعلاً هیچ‌کدام";
+}
+
+function ServiceProposalComparisonDecisionPanel({ comparison, revision, decision, disabled, onSave }: { comparison: BuilderServiceProposalComparisonRecord; revision: BuilderServiceProposalComparisonRevision; decision: BuilderServiceProposalComparisonDecisionRecord | null; disabled: boolean; onSave: (draft: BuilderServiceProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated" }) {
+  const currentDecisionRevision = decision?.revisions.find((item) => item.id === decision.currentRevisionId) ?? null;
+  const [draft, setDraft] = useState<BuilderServiceProposalComparisonDecisionDraft>(() => ({ outcome: currentDecisionRevision?.outcome ?? "no-selection", selectedProposalId: currentDecisionRevision?.selectedProposalId ?? "", reason: currentDecisionRevision?.reason ?? "" }));
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (draft.outcome === "preferred-for-follow-up" && !draft.selectedProposalId) {
+      setError("پیشنهادی را که می‌خواهی بیشتر بررسی شود انتخاب کن.");
+      document.getElementById("service-comparison-decision-proposal")?.focus();
+      return;
+    }
+    if (!draft.reason.trim()) {
+      setError("دلیل تصمیم سازنده را ثبت کن.");
+      document.getElementById("service-comparison-decision-reason")?.focus();
+      return;
+    }
+    const result = onSave(draft);
+    if (!result) {
+      setError("تصمیم ثبت نشد؛ دادهٔ محلی و نسخهٔ مقایسه را دوباره بررسی کن.");
+      return;
+    }
+    setError("");
+    setMessage(result === "unchanged" ? "تغییر تازه‌ای برای ثبت وجود نداشت." : "تصمیم خصوصی شما به‌صورت نسخه‌دار ثبت شد.");
+  };
+  return (
+    <section className="proposal-detail-section comparison-decision-section" aria-labelledby="service-comparison-decision-title" data-testid="service-comparison-decision-section">
+      <div className="proposal-section-heading"><span><small>تصمیم مستقل سازنده</small><strong id="service-comparison-decision-title">ثبت تصمیم من</strong></span><em>{decision ? `نسخهٔ ${decision.version.toLocaleString("fa-IR")}` : "ثبت نشده"}</em></div>
+      <p className="comparison-boundary-note"><ShieldCheck size={16} /> این تصمیم سفارش، قرارداد، پرداخت، پیام یا اطلاع به مجری ایجاد نمی‌کند.</p>
+      <form className="comparison-decision-form" onSubmit={submit}>
+        <label className="field-control" htmlFor="service-comparison-decision-outcome"><span>وضعیت تصمیم</span><select id="service-comparison-decision-outcome" value={draft.outcome} onChange={(event) => { const outcome = event.target.value as BuilderServiceProposalComparisonDecisionOutcome; setDraft((current) => ({ ...current, outcome, selectedProposalId: outcome === "preferred-for-follow-up" ? current.selectedProposalId : "" })); setError(""); }} disabled={disabled} data-testid="service-comparison-decision-outcome"><option value="no-selection">فعلاً هیچ‌کدام</option><option value="needs-clarification">نیازمند روشن‌سازی</option><option value="preferred-for-follow-up">ادامهٔ بررسی با یک پیشنهاد</option></select></label>
+        {draft.outcome === "preferred-for-follow-up" ? <label className="field-control" htmlFor="service-comparison-decision-proposal"><span>پیشنهاد برای ادامهٔ بررسی</span><select id="service-comparison-decision-proposal" value={draft.selectedProposalId} onChange={(event) => { setDraft((current) => ({ ...current, selectedProposalId: event.target.value })); setError(""); }} disabled={disabled} data-testid="service-comparison-decision-proposal"><option value="">انتخاب پیشنهاد</option>{revision.inputs.map((input) => <option key={input.proposalId} value={input.proposalId}>{input.supplierSnapshot.displayName}</option>)}</select></label> : null}
+        <label className="field-control" htmlFor="service-comparison-decision-reason"><span>دلیل شما</span><KeyboardTextarea id="service-comparison-decision-reason" value={draft.reason} onChange={(event) => { setDraft((current) => ({ ...current, reason: event.target.value })); setError(""); }} rows={3} placeholder="چرا این تصمیم را ثبت می‌کنی؟" disabled={disabled} data-testid="service-comparison-decision-reason" /></label>
+        {error ? <p className="proposal-form-error" role="alert" data-testid="service-comparison-decision-error">{error}</p> : null}
+        {message ? <p className="comparison-save-message" role="status">{message}</p> : null}
+        <button className="primary-button" type="submit" disabled={disabled} data-testid="service-comparison-decision-save">{decision ? "ثبت نسخهٔ تازهٔ تصمیم" : "ثبت تصمیم خصوصی"}</button>
+      </form>
+      {decision ? <ol className="proposal-history comparison-decision-history" data-testid="service-comparison-decision-history">{[...decision.revisions].reverse().map((item) => { const selectedSupplier = item.selectedProposalId ? revision.inputs.find((input) => input.proposalId === item.selectedProposalId)?.supplierSnapshot.displayName ?? "پیشنهاد ناشناخته" : null; return <li key={item.id}><span><Check size={13} /></span><div><strong>{builderServiceProposalComparisonOutcomeLabel(item.outcome)}</strong><small>نسخهٔ {item.version.toLocaleString("fa-IR")} · {formatProjectFileDate(item.createdAt)}</small>{item.selectedProposalId ? <small>پیشنهاد: {selectedSupplier} · شناسه: {item.selectedProposalId}</small> : <small>پیشنهاد منتخب ندارد</small>}<small>{item.reason}</small></div></li>; })}</ol> : null}
+    </section>
+  );
+}
+
+function ProjectServiceProposalComparisonsView({ project, proposals, comparisons, decisions, requests, approvals, contacts, storageLocked, decisionsStorageLocked, onBack, onCreate, onUpdate, onUpsertDecision }: { project: BuilderProject; proposals: BuilderRecordedProposalRecord[]; comparisons: BuilderServiceProposalComparisonRecord[]; decisions: BuilderServiceProposalComparisonDecisionRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; decisionsStorageLocked: boolean; onBack: () => void; onCreate: (draft: BuilderServiceProposalComparisonDraft) => string | null; onUpdate: (comparisonId: string, draft: BuilderServiceProposalComparisonDraft) => false | "unchanged" | "updated"; onUpsertDecision: (comparisonId: string, revisionId: string, draft: BuilderServiceProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated" }) {
   const keyboard = useKeyboard();
   const addButtonRef = useRef<HTMLButtonElement>(null);
-  const comparisonsButtonRef = useRef<HTMLButtonElement>(null);
+  const editorHeadingRef = useRef<HTMLSpanElement>(null);
+  const detailHeadingRef = useRef<HTMLElement>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [previewRevisionId, setPreviewRevisionId] = useState<string | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<BuilderServiceProposalComparisonDraft>({ requestKey: "", proposals: [] });
+  const [formError, setFormError] = useState("");
+  const [liveMessage, setLiveMessage] = useState("");
+  const currentServiceProposals = useMemo(() => proposals.filter((proposal) => proposal.target.requestKind === "service" && builderRecordedProposalEffectiveStatus(proposal, requests, approvals, contacts) === "current"), [approvals, contacts, proposals, requests]);
+  const eligibleGroups = useMemo(() => {
+    const groups = new Map<string, BuilderRecordedProposalRecord[]>();
+    currentServiceProposals.forEach((proposal) => {
+      const key = builderProposalComparisonRequestKey(proposal);
+      groups.set(key, [...(groups.get(key) ?? []), proposal]);
+    });
+    return Array.from(groups.entries()).flatMap(([key, items]) => {
+      if (items.length < 2) return [];
+      const first = items[0];
+      const request = requests.find((item) => item.id === first.target.requestId && item.projectId === project.id);
+      const reviewRevision = request?.reviewRevisions.find((item) => item.id === first.target.reviewRevisionId && item.requestVersion === first.target.requestVersion && item.fingerprint === first.target.reviewRevisionFingerprint);
+      const requestSnapshot = reviewRevision ? builderServiceProposalComparisonRequestSnapshotFromReview(reviewRevision.snapshot) : null;
+      return requestSnapshot ? [{ key, proposals: items, title: requestSnapshot.scope ?? "خدمت درخواستی", requestSnapshot }] : [];
+    });
+  }, [currentServiceProposals, project.id, requests]);
+  const orderedComparisons = useMemo(() => [...comparisons].sort((first, second) => second.updatedAt.localeCompare(first.updatedAt)), [comparisons]);
+  const selectedComparison = comparisons.find((comparison) => comparison.id === selectedId) ?? null;
+  const currentRevision = selectedComparison?.revisions.find((revision) => revision.id === selectedComparison.currentRevisionId) ?? null;
+  const previewRevision = selectedComparison?.revisions.find((revision) => revision.id === previewRevisionId) ?? currentRevision;
+  const draftGroup = eligibleGroups.find((group) => group.key === draft.requestKey) ?? (selectedComparison && draft.requestKey === [selectedComparison.target.requestId, selectedComparison.target.requestVersion, selectedComparison.target.reviewRevisionId, selectedComparison.target.reviewRevisionFingerprint].join(":") ? { key: draft.requestKey, proposals: [], title: selectedComparison.requestSnapshot.scope ?? "خدمت درخواستی", requestSnapshot: selectedComparison.requestSnapshot } : null);
+  const liveInputs = draftGroup ? normalizeBuilderServiceProposalComparisonInputs(draft, currentServiceProposals, draftGroup.requestSnapshot) : null;
+  const livePreview = liveInputs && draftGroup ? deriveBuilderServiceProposalComparisonPayload(liveInputs, currentServiceProposals, draftGroup.requestSnapshot) : null;
+
+  const openCreate = () => {
+    if (storageLocked || !eligibleGroups.length) return;
+    const key = eligibleGroups.length === 1 ? eligibleGroups[0].key : "";
+    setEditingId(null);
+    setDraft(key ? builderServiceProposalComparisonDefaultDraft(currentServiceProposals, key) : { requestKey: "", proposals: [] });
+    setFormError("");
+    setEditorOpen(true);
+    window.requestAnimationFrame(() => editorHeadingRef.current?.focus());
+  };
+  const openEdit = () => {
+    if (!selectedComparison || !currentRevision || storageLocked || builderServiceProposalComparisonEffectiveStatus(selectedComparison, proposals, requests, approvals, contacts) !== "current") return;
+    setEditingId(selectedComparison.id);
+    setDraft(builderServiceProposalComparisonDraftFromRecord(selectedComparison));
+    setFormError("");
+    setEditorOpen(true);
+    window.requestAnimationFrame(() => editorHeadingRef.current?.focus());
+  };
+  const closeEditor = () => {
+    keyboard.hide();
+    setEditorOpen(false);
+    setFormError("");
+    window.requestAnimationFrame(() => (editingId ? detailHeadingRef.current : addButtonRef.current)?.focus());
+  };
+  const changeGroup = (requestKey: string) => {
+    setDraft(requestKey ? builderServiceProposalComparisonDefaultDraft(currentServiceProposals, requestKey) : { requestKey: "", proposals: [] });
+    setFormError("");
+  };
+  const updateProposalDraft = (proposalId: string, updater: (current: BuilderServiceProposalComparisonProposalDraft) => BuilderServiceProposalComparisonProposalDraft) => {
+    setDraft((current) => ({ ...current, proposals: current.proposals.map((item) => item.proposalId === proposalId ? updater(item) : item) }));
+    setFormError("");
+  };
+  const updateCriterionDraft = (proposalId: string, criterionId: BuilderServiceProposalComparisonCriterionId, updater: (current: BuilderServiceProposalComparisonCriterionDraft) => BuilderServiceProposalComparisonCriterionDraft) => updateProposalDraft(proposalId, (current) => ({ ...current, criteria: current.criteria.map((criterion) => criterion.criterionId === criterionId ? updater(criterion) : criterion) }));
+  const saveComparison = (event: React.FormEvent) => {
+    event.preventDefault();
+    keyboard.hide();
+    if (!draft.requestKey) {
+      setFormError("درخواست خدمت دارای حداقل دو پیشنهاد جاری را انتخاب کن.");
+      document.getElementById("service-comparison-request-select")?.focus();
+      return;
+    }
+    if (draft.proposals.filter((item) => item.selected).length < 2) {
+      setFormError("برای مقایسه دست‌کم دو پیشنهاد خدمت را نگه دار.");
+      document.querySelector<HTMLElement>("[data-testid='service-comparison-proposal-toggle']")?.focus();
+      return;
+    }
+    if (!liveInputs || !livePreview) {
+      setFormError("یکی از ارزیابی‌ها ناسازگار است؛ مقدار اعلامی، وضعیت و دلیل را بررسی کن.");
+      document.querySelector<HTMLElement>("[data-testid='service-comparison-assessment-status']")?.focus();
+      return;
+    }
+    if (editingId) {
+      const result = onUpdate(editingId, draft);
+      if (!result) {
+        setFormError("نسخهٔ مقایسه ثبت نشد؛ پیشنهادهای جاری و ذخیره‌سازی محلی را دوباره بررسی کن.");
+        return;
+      }
+      setLiveMessage(result === "unchanged" ? "تغییر تازه‌ای برای ثبت وجود نداشت." : "نسخهٔ تازهٔ مقایسهٔ خدمت ثبت شد؛ تصمیم نسخهٔ قبل تاریخی باقی ماند.");
+      setEditorOpen(false);
+      setPreviewRevisionId(null);
+      window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+      return;
+    }
+    const createdId = onCreate(draft);
+    if (!createdId) {
+      setFormError("مقایسه ثبت نشد؛ پیشنهادهای جاری و ذخیره‌سازی محلی را دوباره بررسی کن.");
+      return;
+    }
+    setSelectedId(createdId);
+    setPreviewRevisionId(null);
+    setLiveMessage("ماتریس خصوصی و نسخه‌دار خدمت ثبت شد.");
+    setEditorOpen(false);
+    window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+  };
+
+  if (editorOpen) {
+    const selectedCount = draft.proposals.filter((item) => item.selected).length;
+    return (
+      <div className="chida-app project-proposals-view comparison-editor-view service-comparison-editor-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="service-comparison-editor">
+        <header className="project-workspace-header"><button className="icon-button" type="button" onClick={closeEditor} aria-label="بستن فرم مقایسهٔ خدمت" data-testid="service-comparison-editor-back"><ArrowRight size={21} /></button><span ref={editorHeadingRef} className="project-workspace-title" tabIndex={-1} data-testid="service-comparison-editor-title"><small>T7-B2 · خدمت</small><strong>{editingId ? "بازبینی ماتریس خدمت" : "ساخت ماتریس خدمت"}</strong></span><span className="project-workspace-header-spacer" aria-hidden="true" /></header>
+        <MobileScroll className="project-proposals-scroll"><form className="proposal-editor-content comparison-editor-content" onSubmit={saveComparison} noValidate>
+          <section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>مقایسهٔ کیفی مستقل خدمت</strong><small>پاسخ هر معیار، رونویسی تکمیلی شماست؛ ارزیابی نیز نظر شماست. مبلغ اعلامی فقط نمایش داده می‌شود و هیچ امتیاز، رتبه، گزینهٔ برتر، AI، شبکه یا اثر بیرونی ساخته نمی‌شود.</small></span></section>
+          <section className="proposal-form-section" aria-labelledby="service-comparison-target-title"><div className="proposal-section-heading"><span><small>اتصال دقیق</small><strong id="service-comparison-target-title">درخواست و پیشنهادهای جاری</strong></span></div>{editingId ? <div className="proposal-locked-grid"><div><small>درخواست خدمت</small><strong>{selectedComparison?.requestSnapshot.scope ?? "خدمت درخواستی"}</strong><span>نسخهٔ {selectedComparison?.target.requestVersion.toLocaleString("fa-IR")} · ثابت</span></div></div> : <label className="field-control" htmlFor="service-comparison-request-select"><span>درخواست دارای چند پیشنهاد</span><select id="service-comparison-request-select" value={draft.requestKey} onChange={(event) => changeGroup(event.target.value)} data-testid="service-comparison-request-select"><option value="">انتخاب درخواست خدمت</option>{eligibleGroups.map((group) => <option key={group.key} value={group.key}>{group.title} · {group.proposals.length.toLocaleString("fa-IR")} پیشنهاد</option>)}</select></label>}
+            {draft.proposals.length ? <div className="comparison-proposal-toggles">{draft.proposals.map((proposalDraft) => { const proposal = currentServiceProposals.find((item) => item.id === proposalDraft.proposalId); return proposal ? <button type="button" key={proposal.id} aria-pressed={proposalDraft.selected} onClick={() => updateProposalDraft(proposal.id, (current) => ({ ...current, selected: !current.selected }))} data-testid="service-comparison-proposal-toggle" data-proposal-id={proposal.id}><span>{proposalDraft.selected ? <Check size={14} /> : null}</span><strong>{proposal.supplierSnapshot.displayName}</strong><small>نسخهٔ {proposal.version.toLocaleString("fa-IR")}</small></button> : null; })}</div> : null}<p className="comparison-boundary-note">{selectedCount.toLocaleString("fa-IR")} پیشنهاد انتخاب شده؛ اصل پیشنهاد و store محصول دست‌نخورده می‌مانند.</p></section>
+          {draftGroup ? <section className="proposal-form-section service-comparison-matrix" aria-labelledby="service-comparison-matrix-title"><div className="proposal-section-heading"><span><small>نیاز ← رونویسی ← ارزیابی</small><strong id="service-comparison-matrix-title">ماتریس معیارهای خدمت</strong></span><em>خالی یا نامشخص = روشن‌سازی</em></div>{builderServiceProposalComparisonCriteriaV1.map((definition, criterionIndex) => { const requestValue = draftGroup.requestSnapshot[definition.requestField]; return <article className="service-comparison-criterion-editor" key={definition.id} data-testid="service-comparison-criterion-editor" data-criterion={definition.id}><div className="service-comparison-criterion-heading"><span><small>معیار {(criterionIndex + 1).toLocaleString("fa-IR")}</small><strong>{definition.label}</strong></span><em>{requestValue ?? "درخواست: نامشخص"}</em></div><div className="service-comparison-assessments">{draft.proposals.filter((item) => item.selected).map((proposalDraft, proposalIndex) => { const proposal = currentServiceProposals.find((item) => item.id === proposalDraft.proposalId); const criterion = proposalDraft.criteria.find((item) => item.criterionId === definition.id)!; if (!proposal) return null; const prefix = `service-comparison-${criterionIndex}-${proposalIndex}`; return <section className="service-comparison-proposal-assessment" key={proposal.id} data-testid="service-comparison-proposal-assessment" data-proposal-id={proposal.id}><strong>{proposal.supplierSnapshot.displayName}</strong><small>رونویسی و ارزیابی دستی شما · نه ادعای احرازشده</small><label className="field-control" htmlFor={`${prefix}-assessment`}><span>وضعیت انطباق</span><select id={`${prefix}-assessment`} aria-label={`وضعیت انطباق ${definition.label} برای ${proposal.supplierSnapshot.displayName}`} value={criterion.assessment} onChange={(event) => { const assessment = event.target.value as BuilderServiceProposalComparisonAssessment; updateCriterionDraft(proposal.id, definition.id, (current) => ({ ...current, assessment, declaredValue: assessment === "not-applicable" ? "" : current.declaredValue, rationale: "" })); }} data-testid="service-comparison-assessment-status"><option value="unknown">انطباق نامشخص</option><option value="aligned" disabled={requestValue === null}>هم‌راستا با نیاز</option><option value="partial" disabled={requestValue === null}>پوشش جزئی</option><option value="different" disabled={requestValue === null}>متفاوت</option><option value="not-applicable" disabled={requestValue !== null}>برای این نیاز نامرتبط</option></select></label>{criterion.assessment !== "not-applicable" ? <label className="field-control" htmlFor={`${prefix}-declared`}><span>مقدار اعلامی رونویسی‌شده <small>(برای نامشخص اختیاری)</small></span><KeyboardTextarea id={`${prefix}-declared`} aria-label={`مقدار اعلامی ${definition.label} برای ${proposal.supplierSnapshot.displayName}`} value={criterion.declaredValue} onChange={(event) => updateCriterionDraft(proposal.id, definition.id, (current) => ({ ...current, declaredValue: event.target.value }))} rows={2} placeholder="آنچه مجری بیرون از چیدا اعلام کرده…" data-testid="service-comparison-declared-value" /></label> : null}<label className="field-control" htmlFor={`${prefix}-rationale`}><span>{criterion.assessment === "unknown" ? "یادداشت یا سؤال روشن‌سازی (اختیاری)" : "دلیل ارزیابی شما"}</span><KeyboardTextarea id={`${prefix}-rationale`} aria-label={`دلیل ارزیابی ${definition.label} برای ${proposal.supplierSnapshot.displayName}`} value={criterion.rationale} onChange={(event) => updateCriterionDraft(proposal.id, definition.id, (current) => ({ ...current, rationale: event.target.value }))} rows={2} placeholder={criterion.assessment === "unknown" ? "چه چیزی هنوز روشن نیست؟" : "چرا این وضعیت را انتخاب کردی؟"} data-testid="service-comparison-assessment-rationale" /></label></section>; })}</div></article>; })}</section> : null}
+          {livePreview ? <section className={`comparison-recommendation-preview ${livePreview.summary.status === "needs-clarification" ? "insufficient-data" : ""}`} data-testid="service-comparison-coverage-preview"><CircleHelp size={20} /><span><small>پوشش ماتریس؛ نه امتیاز</small><strong>{livePreview.summary.status === "ready-for-human-decision" ? "آماده برای تصمیم انسانی" : `${livePreview.summary.unknownCount.toLocaleString("fa-IR")} معیار نیازمند روشن‌سازی`}</strong><p>{livePreview.summary.reason}</p></span></section> : null}
+          {formError ? <p className="proposal-form-error" role="alert" data-testid="service-comparison-form-error">{formError}</p> : null}<div className="proposal-editor-actions"><button className="secondary-button" type="button" onClick={closeEditor}>انصراف</button><button className="primary-button" type="submit" data-testid="service-comparison-save">{editingId ? "ثبت نسخهٔ تازه" : "ثبت ماتریس خدمت"}</button></div>
+        </form></MobileScroll>
+      </div>
+    );
+  }
+
+  if (selectedComparison && previewRevision) {
+    const currentPreview = previewRevision.id === selectedComparison.currentRevisionId;
+    const effectiveStatus = builderServiceProposalComparisonEffectiveStatus(selectedComparison, proposals, requests, approvals, contacts, previewRevision.id);
+    const decision = decisions.find((item) => item.target.comparisonId === selectedComparison.id && item.target.comparisonRevisionId === previewRevision.id) ?? null;
+    return (
+      <div className="chida-app project-proposals-view comparison-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="service-comparison-detail">
+        <header className="project-workspace-header"><button className="icon-button" type="button" onClick={() => { setSelectedId(null); setPreviewRevisionId(null); window.requestAnimationFrame(() => Array.from(document.querySelectorAll<HTMLElement>("[data-service-comparison-id]")).find((element) => element.dataset.serviceComparisonId === selectedComparison.id)?.focus()); }} aria-label="بازگشت به مقایسه‌های خدمت" data-testid="service-comparison-detail-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>T7-B2 · خدمت</small><strong>ماتریس و تصمیم</strong></span><span className="project-workspace-header-spacer" /></header>
+        <MobileScroll className="project-proposals-scroll"><main className="proposal-detail-content comparison-detail-content">
+          <section className="proposal-detail-hero comparison-detail-hero" tabIndex={-1} ref={detailHeadingRef} data-testid="service-comparison-detail-hero"><span className="proposal-detail-icon"><LayoutGrid size={24} /></span><span className={`proposal-status-badge ${effectiveStatus}`}>{effectiveStatus === "current" ? currentPreview ? "نسخهٔ جاری" : "نسخهٔ تاریخی مقایسه" : "تاریخی · نیازمند بازبینی"}</span><h1>{selectedComparison.requestSnapshot.scope ?? "خدمت درخواستی"}</h1><p>{previewRevision.inputs.length.toLocaleString("fa-IR")} پیشنهاد · نسخهٔ مقایسه {previewRevision.version.toLocaleString("fa-IR")}</p></section>
+          <section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>این خروجی رتبه‌بندی نیست</strong><small>ماتریس از رونویسی و ارزیابی دستی شما ساخته شده؛ مبلغ، صلاحیت و ضمانت احراز یا نرمال نشده‌اند و هیچ اقدام بیرونی رخ نداده است.</small></span></section>
+          {selectedComparison.revisions.length > 1 ? <label className="proposal-revision-picker" htmlFor="service-comparison-revision-select"><span>نمایش نسخه</span><select id="service-comparison-revision-select" value={previewRevision.id} onChange={(event) => setPreviewRevisionId(event.target.value)} data-testid="service-comparison-revision-select">{[...selectedComparison.revisions].reverse().map((revision) => <option key={revision.id} value={revision.id}>نسخهٔ {revision.version.toLocaleString("fa-IR")} · {revision.id === selectedComparison.currentRevisionId ? "جاری" : "تاریخی"}</option>)}</select></label> : null}
+          <section className={`comparison-recommendation-detail ${previewRevision.summary.status === "needs-clarification" ? "insufficient-data" : ""}`} data-testid="service-comparison-summary"><CircleHelp size={21} /><span><small>جمع‌بندی پوشش؛ نامزد خودکار ندارد</small><strong>{previewRevision.summary.status === "ready-for-human-decision" ? "آماده برای تصمیم انسانی" : `${previewRevision.summary.unknownCount.toLocaleString("fa-IR")} معیار نیازمند روشن‌سازی`}</strong><p>{previewRevision.summary.reason}</p></span></section>
+          <section className="proposal-detail-section"><div className="proposal-section-heading"><span><small>قیمت و شروط خام</small><strong>فقط نمایش اعلامی؛ خارج از نتیجه</strong></span></div><div className="comparison-results-list">{previewRevision.results.map((result) => <article className="comparison-result-card service-commercial-card" key={result.proposalId}><strong>{result.supplierDisplayName}</strong><dl className="proposal-detail-meta"><div><dt>وضعیت</dt><dd>{builderRecordedProposalLineStatusLabel(result.declaredCommercialSnapshot.status)}</dd></div><div><dt>قیمت کل</dt><dd>{formatBuilderProposalComparisonMoney(result.declaredCommercialSnapshot.totalPrice)}</dd></div><div><dt>موعد اعلامی</dt><dd>{result.declaredCommercialSnapshot.leadTime ?? "نامشخص"}</dd></div><div><dt>پرداخت اعلامی</dt><dd>{result.declaredCommercialSnapshot.paymentTerms ?? "نامشخص"}</dd></div><div><dt>اعتبار پیشنهاد</dt><dd>{result.declaredCommercialSnapshot.validity ?? "نامشخص"}</dd></div></dl><small>هیچ فرمول، نرخ، جمع یا رتبه‌ای از این داده ساخته نشده است.</small></article>)}</div></section>
+          <section className="proposal-detail-section"><div className="proposal-section-heading"><span><small>نیاز ← پاسخ ← ارزیابی</small><strong>معیارهای خدمت</strong></span></div><div className="service-comparison-criterion-results">{builderServiceProposalComparisonCriteriaV1.map((definition) => <article className="service-comparison-criterion-card" key={definition.id} data-testid="service-comparison-criterion-card" data-criterion={definition.id}><div className="service-comparison-criterion-heading"><span><small>نیاز ثبت‌شده</small><strong>{definition.label}</strong></span><em>{selectedComparison.requestSnapshot[definition.requestField] ?? "نامشخص"}</em></div><div className="service-comparison-assessments">{previewRevision.results.map((result) => { const criterion = result.criteria.find((item) => item.criterionId === definition.id)!; return <section className={`service-comparison-result-assessment ${criterion.assessment}`} key={result.proposalId} data-proposal-id={result.proposalId}><strong>{result.supplierDisplayName}</strong><span>{builderServiceProposalComparisonAssessmentLabel(criterion.assessment)}</span><dl><div><dt>رونویسی اعلامی</dt><dd>{criterion.declaredValue ?? "نامشخص"}</dd></div><div><dt>دلیل سازنده</dt><dd>{criterion.rationale ?? "ثبت نشده"}</dd></div></dl><small>{criterion.declaredSource} · {criterion.assessmentSource}</small></section>; })}</div></article>)}</div></section>
+          {decisionsStorageLocked ? <section className="proposal-storage-error" role="alert" data-testid="service-comparison-decision-storage-error"><CircleHelp size={19} /><span><strong>وضعیت تصمیم‌های محلی قابل تأیید نیست</strong><small>خواندن مخزن تصمیم کامل نشد؛ این وضعیت «تصمیم ثبت نشده» نیست و هر تغییر تا بازیابی موفق قفل می‌ماند.</small></span></section> : <ServiceProposalComparisonDecisionPanel key={`${selectedComparison.id}:${previewRevision.id}:${decision?.currentRevisionId ?? "none"}`} comparison={selectedComparison} revision={previewRevision} decision={decision} disabled={!currentPreview || effectiveStatus !== "current"} onSave={(nextDraft) => onUpsertDecision(selectedComparison.id, previewRevision.id, nextDraft)} />}
+          <section className="proposal-detail-section"><div className="proposal-section-heading"><span><small>تاریخچهٔ تغییرناپذیر</small><strong>نسخه‌های ماتریس</strong></span></div><ol className="proposal-history">{[...selectedComparison.history].reverse().map((event) => <li key={event.id}><span><Check size={13} /></span><div><strong>{event.type === "created" ? "ماتریس خدمت ساخته شد" : "ماتریس خدمت به‌روزرسانی شد"}</strong><small>نسخهٔ {event.version.toLocaleString("fa-IR")} · {formatProjectFileDate(event.at)}</small></div></li>)}</ol></section>
+          <button className="primary-button proposal-edit-button" type="button" onClick={openEdit} disabled={storageLocked || effectiveStatus !== "current" || !currentPreview} data-testid="service-comparison-edit">بازبینی و ثبت نسخهٔ تازه</button>
+        </main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span>
+      </div>
+    );
+  }
+
+  return <div className="chida-app project-proposals-view comparisons-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="service-proposal-comparisons-view"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="service-comparisons-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>مقایسه‌های خدمت</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><LayoutGrid size={24} /></span><div><small>T7-B2 · خصوصی · پروژهٔ {project.name}</small><h1>ماتریس خدمت و تصمیم</h1><p>تفاوت‌های دامنه، روش، زمان، صلاحیت، ضمانت و پرداخت را بدون رتبه‌بندی کنار هم ببین.</p></div></section><section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>این مسیر مستقل از فرمول محصول است</strong><small>همهٔ پاسخ‌های معیارها رونویسی دستی شما هستند؛ هیچ استخراج، امتیاز، بهترین، قیمت هم‌سطح، AI، شبکه یا اثر بیرونی وجود ندارد.</small></span></section>{storageLocked ? <section className="proposal-storage-error" role="alert" data-testid="service-comparison-storage-error"><CircleHelp size={19} /><span><strong>وضعیت مقایسه‌های خدمت قابل تأیید نیست</strong><small>خواندن مخزن کامل نشد؛ این وضعیت «مقایسه‌ای ثبت نشده» نیست و ساخت/ویرایش قفل می‌ماند.</small></span></section> : null}<div className="project-proposals-toolbar"><span><strong>{storageLocked ? "—" : orderedComparisons.length.toLocaleString("fa-IR")}</strong><small>ماتریس نسخه‌دار</small></span><button ref={addButtonRef} className="primary-button" type="button" onClick={openCreate} disabled={storageLocked || eligibleGroups.length === 0} data-testid="service-comparison-add"><Plus size={17} /> ساخت ماتریس</button></div>{!storageLocked && eligibleGroups.length === 0 ? <p className="proposal-prerequisite-note" data-testid="service-comparison-prerequisite-note">برای ساخت ماتریس، دست‌کم دو پیشنهاد خدمتِ جاری باید به همان نسخهٔ دقیق یک درخواست وصل باشند.</p> : null}{!storageLocked && orderedComparisons.length ? <div className="project-proposals-list comparison-list">{orderedComparisons.map((comparison) => { const revision = comparison.revisions.find((item) => item.id === comparison.currentRevisionId)!; const status = builderServiceProposalComparisonEffectiveStatus(comparison, proposals, requests, approvals, contacts); return <button className="proposal-card comparison-card" type="button" key={comparison.id} data-service-comparison-id={comparison.id} onClick={() => { setSelectedId(comparison.id); setPreviewRevisionId(comparison.currentRevisionId); setLiveMessage(""); window.requestAnimationFrame(() => detailHeadingRef.current?.focus()); }} data-testid="service-comparison-card"><span className="proposal-card-icon"><LayoutGrid size={20} /></span><span className="proposal-card-copy"><span><small>{status === "current" ? "نسخهٔ جاری" : "تاریخی · بازبینی"}</small><small>{formatProjectFileDate(comparison.updatedAt)}</small></span><strong>{comparison.requestSnapshot.scope ?? "خدمت درخواستی"}</strong><em>{revision.inputs.length.toLocaleString("fa-IR")} پیشنهاد · {revision.summary.status === "ready-for-human-decision" ? "آمادهٔ تصمیم انسانی" : "نیازمند روشن‌سازی"}</em><small>نسخهٔ مقایسه {revision.version.toLocaleString("fa-IR")}</small></span><ArrowRight size={17} /></button>; })}</div> : !storageLocked ? <section className="proposal-empty-state"><LayoutGrid size={26} /><h2>ماتریسی ثبت نشده</h2><p>پس از ثبت دو پیشنهاد جاری برای یک درخواست خدمت، پاسخ‌ها و ارزیابی خودت را معیاربه‌معیار ثبت کن.</p></section> : null}</main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span></div>;
+}
+
+function ProjectProposalsView({ project, proposals, comparisons, decisions, serviceComparisons, serviceDecisions, requests, approvals, contacts, files, storageLocked, comparisonsStorageLocked, decisionsStorageLocked, serviceComparisonsStorageLocked, serviceDecisionsStorageLocked, backLabel, onBack, onCreate, onUpdate, onCreateComparison, onUpdateComparison, onUpsertDecision, onCreateServiceComparison, onUpdateServiceComparison, onUpsertServiceDecision }: { project: BuilderProject; proposals: BuilderRecordedProposalRecord[]; comparisons: BuilderProposalComparisonRecord[]; decisions: BuilderProposalComparisonDecisionRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; serviceDecisions: BuilderServiceProposalComparisonDecisionRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; files: ProjectFileRecord[]; storageLocked: boolean; comparisonsStorageLocked: boolean; decisionsStorageLocked: boolean; serviceComparisonsStorageLocked: boolean; serviceDecisionsStorageLocked: boolean; backLabel: string; onBack: () => void; onCreate: (draft: BuilderRecordedProposalDraft) => string | null; onUpdate: (proposalId: string, draft: BuilderRecordedProposalDraft) => false | "unchanged" | "updated"; onCreateComparison: (draft: BuilderProposalComparisonDraft) => string | null; onUpdateComparison: (comparisonId: string, draft: BuilderProposalComparisonDraft) => false | "unchanged" | "updated"; onUpsertDecision: (comparisonId: string, revisionId: string, draft: BuilderProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated"; onCreateServiceComparison: (draft: BuilderServiceProposalComparisonDraft) => string | null; onUpdateServiceComparison: (comparisonId: string, draft: BuilderServiceProposalComparisonDraft) => false | "unchanged" | "updated"; onUpsertServiceDecision: (comparisonId: string, revisionId: string, draft: BuilderServiceProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated" }) {
+  const keyboard = useKeyboard();
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const productComparisonsButtonRef = useRef<HTMLButtonElement>(null);
+  const serviceComparisonsButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
   const editorHeadingRef = useRef<HTMLSpanElement>(null);
   const detailHeadingRef = useRef<HTMLElement>(null);
@@ -6679,7 +7711,7 @@ function ProjectProposalsView({ project, proposals, comparisons, decisions, requ
   const [draft, setDraft] = useState<BuilderRecordedProposalDraft>({ requestId: "", supplierContactId: "", projectFileId: "", declaredAt: "", transcript: "", notes: "", lines: [] });
   const [formError, setFormError] = useState("");
   const [liveMessage, setLiveMessage] = useState("");
-  const [comparisonsOpen, setComparisonsOpen] = useState(false);
+  const [comparisonMode, setComparisonMode] = useState<"product" | "service" | null>(null);
 
   const orderedProposals = useMemo(() => [...proposals].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), [proposals]);
   const selectedProposal = proposals.find((proposal) => proposal.id === selectedId) ?? null;
@@ -6789,8 +7821,12 @@ function ProjectProposalsView({ project, proposals, comparisons, decisions, requ
 
   const displayValue = (value: string | null, suffix = "") => value ? `${value}${suffix}` : "نامشخص";
 
-  if (comparisonsOpen) {
-    return <ProjectProposalComparisonsView project={project} proposals={proposals} comparisons={comparisons} decisions={decisions} requests={requests} approvals={approvals} contacts={contacts} storageLocked={comparisonsStorageLocked} decisionsStorageLocked={decisionsStorageLocked} onBack={() => { setComparisonsOpen(false); window.requestAnimationFrame(() => comparisonsButtonRef.current?.focus()); }} onCreate={onCreateComparison} onUpdate={onUpdateComparison} onUpsertDecision={onUpsertDecision} />;
+  if (comparisonMode === "product") {
+    return <ProjectProposalComparisonsView project={project} proposals={proposals} comparisons={comparisons} decisions={decisions} requests={requests} approvals={approvals} contacts={contacts} storageLocked={comparisonsStorageLocked} decisionsStorageLocked={decisionsStorageLocked} onBack={() => { setComparisonMode(null); window.requestAnimationFrame(() => productComparisonsButtonRef.current?.focus()); }} onCreate={onCreateComparison} onUpdate={onUpdateComparison} onUpsertDecision={onUpsertDecision} />;
+  }
+
+  if (comparisonMode === "service") {
+    return <ProjectServiceProposalComparisonsView project={project} proposals={proposals} comparisons={serviceComparisons} decisions={serviceDecisions} requests={requests} approvals={approvals} contacts={contacts} storageLocked={serviceComparisonsStorageLocked} decisionsStorageLocked={serviceDecisionsStorageLocked} onBack={() => { setComparisonMode(null); window.requestAnimationFrame(() => serviceComparisonsButtonRef.current?.focus()); }} onCreate={onCreateServiceComparison} onUpdate={onUpdateServiceComparison} onUpsertDecision={onUpsertServiceDecision} />;
   }
 
   if (editorOpen) {
@@ -6933,8 +7969,11 @@ function ProjectProposalsView({ project, proposals, comparisons, decisions, requ
       <MobileScroll className="project-proposals-scroll">
         <main className="project-proposals-content">
           <section className="project-proposals-heading"><span className="project-proposals-mark"><PackageCheck size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>پیشنهادهای ثبت‌شده توسط شما</h1><p>اصل یا مرجع، رونویسی خام و فیلدهای اعلامی را بدون ساختن ادعای پاسخ واقعی نگه‌دار.</p></div></section>
-          <section className="proposal-honesty-banner" data-testid="proposal-inbox-honesty"><ShieldCheck size={18} /><span><strong>این صندوق دستی است</strong><small>هیچ پیشنهاد واقعی از شبکهٔ چیدا دریافت نشده؛ مقایسهٔ محصول فقط روی رونویسی شما و بدون انتخاب برنده، سفارش یا ارسال بیرونی انجام می‌شود.</small></span></section>
-          <button ref={comparisonsButtonRef} className="project-files-entry proposal-comparisons-entry" type="button" onClick={() => setComparisonsOpen(true)} data-testid="proposal-comparisons-entry"><span className="project-files-entry-icon"><LayoutGrid size={22} /></span><span className="project-files-entry-copy"><strong>مقایسه‌های محصول و تصمیم</strong><small>{comparisonsStorageLocked ? "بازیابی محلی کامل نشد" : comparisons.length ? `${comparisons.length.toLocaleString("fa-IR")} مقایسهٔ نسخه‌دار` : "هنوز مقایسه‌ای ثبت نشده"}</small></span><ArrowRight size={18} /></button>
+          <section className="proposal-honesty-banner" data-testid="proposal-inbox-honesty"><ShieldCheck size={18} /><span><strong>این صندوق دستی است</strong><small>هیچ پیشنهاد واقعی از شبکهٔ چیدا دریافت نشده؛ مقایسهٔ محصول و ماتریس خدمت دو مسیر مستقل‌اند و هیچ انتخاب برنده، سفارش یا ارسال بیرونی نمی‌سازند.</small></span></section>
+          <div className="proposal-comparison-entries">
+            <button ref={productComparisonsButtonRef} className="project-files-entry proposal-comparisons-entry" type="button" onClick={() => setComparisonMode("product")} data-testid="proposal-comparisons-entry"><span className="project-files-entry-icon"><LayoutGrid size={22} /></span><span className="project-files-entry-copy"><strong>مقایسه‌های محصول و تصمیم</strong><small>{comparisonsStorageLocked ? "بازیابی محلی کامل نشد" : comparisons.length ? `${comparisons.length.toLocaleString("fa-IR")} مقایسهٔ نسخه‌دار` : "هنوز مقایسه‌ای ثبت نشده"}</small></span><ArrowRight size={18} /></button>
+            <button ref={serviceComparisonsButtonRef} className="project-files-entry proposal-comparisons-entry service-proposal-comparisons-entry" type="button" onClick={() => setComparisonMode("service")} data-testid="service-proposal-comparisons-entry"><span className="project-files-entry-icon"><LayoutGrid size={22} /></span><span className="project-files-entry-copy"><strong>مقایسه‌های خدمت و تصمیم</strong><small>{serviceComparisonsStorageLocked ? "بازیابی محلی کامل نشد" : serviceComparisons.length ? `${serviceComparisons.length.toLocaleString("fa-IR")} ماتریس نسخه‌دار` : "هنوز ماتریسی ثبت نشده"}</small></span><ArrowRight size={18} /></button>
+          </div>
           {storageLocked ? <section className="proposal-storage-error" role="alert" data-testid="proposal-storage-error"><CircleHelp size={19} /><span><strong>بازیابی دادهٔ محلی کامل نشد</strong><small>برای جلوگیری از بازنویسی دادهٔ ناخوانده، ثبت و ویرایش قفل شده است.</small></span></section> : null}
           <div className="project-proposals-toolbar"><span><strong>{orderedProposals.length.toLocaleString("fa-IR")}</strong><small>رکورد محلی</small></span><button ref={addButtonRef} className="primary-button" type="button" onClick={openCreate} disabled={storageLocked || eligibleRequests.length === 0} data-testid="proposal-add"><Plus size={17} /> ثبت دستی پیشنهاد</button></div>
           {!storageLocked && eligibleRequests.length === 0 ? <p className="proposal-prerequisite-note" data-testid="proposal-prerequisite-note">برای ثبت پیشنهاد تازه، ابتدا یک درخواست را «آمادهٔ بازبینی» کن و تأیید محتوای همان نسخه را ثبت کن. تأیید برنامهٔ ارسال لازم نیست.</p> : null}
