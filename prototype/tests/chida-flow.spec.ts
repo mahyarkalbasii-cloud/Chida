@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 
 const expectedProjectStages = [
   "طراحی و اخذ مجوز",
@@ -187,6 +187,66 @@ async function returnFromDispatchToHome(page: Page) {
   await expect(page.getByTestId("builder-home")).toBeVisible();
 }
 
+async function openProposalAdvancedMode(page: Page) {
+  const advancedMode = page.getByTestId("proposal-editor-mode-advanced");
+  if (await advancedMode.getAttribute("aria-pressed") !== "true") await advancedMode.click();
+  await expect(advancedMode).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("proposal-editor-advanced")).toBeVisible();
+}
+
+async function openProposalSecondaryActions(page: Page) {
+  const secondaryActions = page.getByTestId("proposal-secondary-actions");
+  if (await secondaryActions.getAttribute("open") === null) await secondaryActions.locator("summary").click();
+  await expect(secondaryActions).toHaveAttribute("open", "");
+}
+
+async function openProposalSecondaryView(page: Page, testId: "proposal-comparisons-entry" | "service-proposal-comparisons-entry" | "negotiation-drafts-entry") {
+  await openProposalSecondaryActions(page);
+  await page.getByTestId(testId).click();
+}
+
+async function openProposalDetailConditions(page: Page) {
+  const details = page.getByTestId("proposal-detail-conditions");
+  if (await details.getAttribute("open") === null) await details.locator("summary").click();
+  await expect(details).toHaveAttribute("open", "");
+}
+
+async function openProposalDetailReference(page: Page) {
+  const details = page.getByTestId("proposal-detail-reference-details");
+  if (await details.getAttribute("open") === null) await details.locator("summary").click();
+  await expect(details).toHaveAttribute("open", "");
+}
+
+async function openProposalDetailTechnical(page: Page) {
+  const details = page.getByTestId("proposal-detail-technical");
+  if (await details.getAttribute("open") === null) await details.locator("summary").click();
+  await expect(details).toHaveAttribute("open", "");
+}
+
+async function openProposalRevisionDiffTechnical(page: Page) {
+  const details = page.getByTestId("proposal-revision-diff-technical");
+  if (await details.getAttribute("open") === null) await details.locator("summary").click();
+  await expect(details).toHaveAttribute("open", "");
+}
+
+async function openAllProposalRevisionDiffUnchanged(page: Page) {
+  const disclosures = page.getByTestId("proposal-revision-diff-unchanged");
+  for (let index = 0; index < await disclosures.count(); index += 1) {
+    const disclosure = disclosures.nth(index);
+    if (await disclosure.getAttribute("open") === null) await disclosure.locator("summary").click();
+    await expect(disclosure).toHaveAttribute("open", "");
+  }
+}
+
+async function openDisclosure(details: Locator) {
+  if (await details.getAttribute("open") === null) await details.locator("summary").click();
+  await expect(details).toHaveAttribute("open", "");
+}
+
+async function openContainingDisclosure(content: Locator) {
+  await openDisclosure(content.locator("xpath=ancestor::details[1]"));
+}
+
 async function createTwoItemProductProposalPrerequisites(page: Page, contactName = "فولاد پیشنهاد دستی") {
   await enterBuilderHome(page);
   await page.getByTestId("quick-action-purchase-request").click();
@@ -295,10 +355,10 @@ async function createTwoCurrentServiceProposalsForComparison(page: Page) {
   const recordProposal = async (supplierName: string, values: { totalPrice: string; leadTime: string; paymentTerms: string; validity: string; transcript: string }) => {
     await page.getByTestId("proposal-add").click();
     await page.getByTestId("proposal-supplier-select").selectOption({ label: `${supplierName} · خدمت` });
+    await openProposalAdvancedMode(page);
     await page.getByTestId("proposal-transcript").fill(values.transcript);
     await page.getByTestId("proposal-line-status-0").selectOption("quoted");
     await page.getByTestId("proposal-line-total-price-0").fill(values.totalPrice);
-    await page.getByTestId("proposal-line-editor").locator("summary").click();
     await page.getByTestId("proposal-line-leadTime-0").fill(values.leadTime);
     await page.getByTestId("proposal-line-paymentTerms-0").fill(values.paymentTerms);
     await page.getByTestId("proposal-line-validity-0").fill(values.validity);
@@ -353,7 +413,7 @@ async function fillCompleteServiceComparisonMatrix(page: Page, firstSupplier: st
 
 async function createCompleteServiceComparisonWithDecision(page: Page) {
   const prerequisites = await createTwoCurrentServiceProposalsForComparison(page);
-  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
   await page.getByTestId("service-comparison-add").click();
   await fillCompleteServiceComparisonMatrix(page, prerequisites.firstSupplier, prerequisites.secondSupplier);
   await page.getByTestId("service-comparison-save").click();
@@ -369,6 +429,7 @@ async function createCompleteServiceComparisonWithDecision(page: Page) {
 const negotiationDraftStorageKey = "chida-prototype-builder-negotiation-drafts:v1";
 const manualNegotiationResponseStorageKey = "chida-prototype-builder-manual-negotiation-responses:v1";
 const manualNegotiationResponseReviewStorageKey = "chida-prototype-builder-manual-negotiation-response-reviews:v1";
+const manualNegotiationConditionImpactStorageKey = "chida-prototype-builder-manual-negotiation-condition-impacts:v1";
 
 async function commercialSourceStoreBytes(page: Page) {
   return page.evaluate(() => ({
@@ -388,6 +449,24 @@ function serviceNegotiationDraftStart(page: Page, criterionId: ServiceComparison
   return page.locator(`[data-testid="service-comparison-criterion-card"][data-criterion="${criterionId}"]`)
     .locator(`[data-proposal-id="${proposalId}"]`)
     .getByTestId("negotiation-draft-start");
+}
+
+async function openServiceComparisonCriterion(page: Page, criterionId: ServiceComparisonCriterionId) {
+  const details = page.locator(`[data-testid="service-comparison-criterion-card"][data-criterion="${criterionId}"]`);
+  if (await details.getAttribute("open") === null) await details.locator("summary").click();
+  await expect(details).toHaveAttribute("open", "");
+}
+
+function productNegotiationDraftStart(page: Page, proposalId: string, criterionId: string) {
+  return page.locator(`[data-testid="negotiation-draft-start"][data-comparison-kind="product"][data-proposal-id="${proposalId}"][data-criterion-id="${criterionId}"]`);
+}
+
+async function openProductComparisonLineForNegotiation(page: Page, proposalId: string, criterionId: string) {
+  const start = productNegotiationDraftStart(page, proposalId, criterionId);
+  const details = start.locator("xpath=ancestor::details[1]");
+  if (await details.getAttribute("open") === null) await details.locator("summary").click();
+  await expect(details).toHaveAttribute("open", "");
+  return start;
 }
 
 async function createExactServiceNegotiationDraft(page: Page, values: { purpose: string; message: string } = {
@@ -410,6 +489,7 @@ async function createExactServiceNegotiationDraft(page: Page, values: { purpose:
   };
   page.on("request", requestListener);
 
+  await openServiceComparisonCriterion(page, "timing");
   const start = serviceNegotiationDraftStart(page, "timing", proposal.id);
   await expect(start).toHaveAttribute("data-comparison-kind", "service");
   await expect(start).toHaveAttribute("data-proposal-id", proposal.id);
@@ -465,7 +545,7 @@ async function createExactManualNegotiationResponseReview(page: Page, values: { 
   reason: "از نظر من پاسخ زمان شروع را گفته، اما معلوم نکرده منظور روز کاری است یا تقویمی.",
 }) {
   const response = await createExactManualNegotiationResponse(page);
-  await expect(page.getByTestId("manual-response-review-add")).toHaveAccessibleName(`ثبت بازبینی دستی پاسخ برای مدت و زمان اجرا و ${response.firstSupplier}`);
+  await expect(page.getByTestId("manual-response-review-add")).toHaveAccessibleName(`ثبت نتیجهٔ پاسخ برای مدت و زمان اجرا و ${response.firstSupplier}`);
   await page.getByTestId("manual-response-review-add").click();
   await expect(page.getByTestId("manual-response-review-editor")).toBeVisible();
   await expect(page.getByTestId("manual-response-review-editor-title")).toBeFocused();
@@ -479,7 +559,44 @@ async function createExactManualNegotiationResponseReview(page: Page, values: { 
   return { ...response, reviewValues: values, reviewStore, reviewRecord };
 }
 
-async function createTwoCurrentProductProposalsForComparison(page: Page, overrides: { firstTotalPrice?: string } = {}) {
+async function createExactManualNegotiationConditionImpact(page: Page, values: {
+  changeSummary: string;
+  impactDomain: "cost" | "schedule" | "scope-or-specification" | "commercial-terms" | "multiple" | "unclear";
+  impactDirection: "favorable-to-builder" | "adverse-to-builder" | "mixed" | "no-material-impact" | "unclear";
+  reason: string;
+} = {
+  changeSummary: "شروع اجرای عایق از ده روز آینده به سه روز کاری پس از توافق تغییر کرده است.",
+  impactDomain: "schedule",
+  impactDirection: "favorable-to-builder",
+  reason: "از نظر من زمان شروع کوتاه‌تر می‌شود، اما هنوز این برداشت باید بیرون از چیدا تأیید شود.",
+}) {
+  const response = await createExactManualNegotiationResponse(page);
+  const responseRevision = response.responseRecord.revisions.find((item: { id: string }) => item.id === response.responseRecord.currentRevisionId);
+  const sourceStoresBeforeImpact = {
+    ...await commercialSourceStoreBytes(page),
+    negotiationDrafts: await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey),
+    manualResponses: await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey),
+    manualResponseReviews: await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey),
+  };
+
+  await expect(page.getByTestId("manual-condition-impact-add")).toHaveAccessibleName(`ثبت اثر پاسخ برای مدت و زمان اجرا و ${response.firstSupplier}`);
+  await page.getByTestId("manual-condition-impact-add").click();
+  await expect(page.getByTestId("manual-condition-impact-editor")).toBeVisible();
+  await expect(page.getByTestId("manual-condition-impact-editor-title")).toBeFocused();
+  expect(await page.getByTestId("manual-condition-impact-editor").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  await page.getByTestId("manual-condition-impact-change-summary").fill(values.changeSummary);
+  await page.getByTestId("manual-condition-impact-domain").selectOption(values.impactDomain);
+  await page.getByTestId("manual-condition-impact-direction").selectOption(values.impactDirection);
+  await page.getByTestId("manual-condition-impact-reason").fill(values.reason);
+  await page.getByTestId("manual-condition-impact-save").click();
+  await expect(page.getByTestId("manual-condition-impact-detail")).toBeVisible();
+  await expect(page.getByTestId("manual-condition-impact-detail-hero")).toBeFocused();
+  const impactStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey);
+  const impactRecord = JSON.parse(impactStore ?? "[]")[0];
+  return { ...response, responseRevision, impactValues: values, sourceStoresBeforeImpact, impactStore, impactRecord };
+}
+
+async function createTwoCurrentProductProposalsForComparison(page: Page, overrides: { firstTotalPrice?: string; firstSimpleDeclaredTotal?: boolean } = {}) {
   const firstSupplier = "فولاد مقایسه الف";
   const secondSupplier = "فولاد مقایسه ب";
   await openApprovedPurchaseRequestDispatch(page);
@@ -488,14 +605,23 @@ async function createTwoCurrentProductProposalsForComparison(page: Page, overrid
   await returnFromDispatchToHome(page);
   await page.getByTestId("quick-action-compare-offers").click();
 
-  const recordProposal = async (supplierName: string, values: { quantity: string; unit: string; unitPrice: string; totalPrice: string; transcript: string }) => {
+  const recordProposal = async (supplierName: string, values: { quantity: string; unit: string; unitPrice: string; totalPrice: string; transcript: string; simpleDeclaredTotal?: boolean }) => {
     await page.getByTestId("proposal-add").click();
     await page.getByTestId("proposal-supplier-select").selectOption({ label: `${supplierName} · محصول` });
-    await page.getByTestId("proposal-transcript").fill(values.transcript);
     await page.getByTestId("proposal-line-status-0").selectOption("quoted");
-    await page.getByTestId("proposal-line-quantity-0").fill(values.quantity);
-    await page.getByTestId("proposal-line-unit-0").fill(values.unit);
-    await page.getByTestId("proposal-line-unit-price-0").fill(values.unitPrice);
+    if (values.simpleDeclaredTotal) {
+      await expect(page.getByTestId("proposal-editor-mode-simple")).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByTestId("proposal-editor-advanced")).toBeHidden();
+      await page.getByTestId("proposal-line-use-request-quantity-0").check();
+      await expect(page.getByTestId("proposal-line-quantity-0")).toHaveValue(/^[۵5]$/);
+      await expect(page.getByTestId("proposal-line-unit-0")).toHaveValue(values.unit);
+    } else {
+      await openProposalAdvancedMode(page);
+      await page.getByTestId("proposal-transcript").fill(values.transcript);
+      await page.getByTestId("proposal-line-quantity-0").fill(values.quantity);
+      await page.getByTestId("proposal-line-unit-0").fill(values.unit);
+      await page.getByTestId("proposal-line-unit-price-0").fill(values.unitPrice);
+    }
     await page.getByTestId("proposal-line-total-price-0").fill(values.totalPrice);
     await page.getByTestId("proposal-save").click();
     await expect(page.getByTestId("proposal-detail")).toBeVisible();
@@ -508,6 +634,7 @@ async function createTwoCurrentProductProposalsForComparison(page: Page, overrid
     unitPrice: "4300000",
     totalPrice: overrides.firstTotalPrice ?? "21500000",
     transcript: "پنج تن میلگرد با قیمت کل بیست و یک میلیون و پانصد هزار تومان اعلام شد.",
+    simpleDeclaredTotal: overrides.firstSimpleDeclaredTotal,
   });
   await recordProposal(secondSupplier, {
     quantity: "۵۰۰۰",
@@ -529,7 +656,7 @@ async function createExactProductComparisonWithDecision(page: Page) {
   const proposals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
   const firstProposal = proposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === firstSupplier);
   const secondProposal = proposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === secondSupplier);
-  await page.getByTestId("proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "proposal-comparisons-entry");
   await page.getByTestId("comparison-add").click();
 
   const firstEditor = comparisonSupplierEditor(page, firstSupplier);
@@ -4653,11 +4780,12 @@ test("T7-A records a two-item product proposal with exact lineage, separated pro
   page.on("request", requestListener);
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("project-proposals-view")).toBeVisible();
-  await expect(page.getByTestId("proposal-inbox-honesty")).toContainText("صندوق دستی");
+  await expect(page.getByTestId("proposal-inbox-honesty")).toContainText("خصوصی و دستی");
   await page.getByTestId("proposal-add").click();
   await expect(page.getByTestId("proposal-editor-title")).toBeFocused();
   await expect(page.getByTestId("proposal-request-select")).not.toHaveValue("");
   await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد پیشنهاد دستی · محصول" });
+  await openProposalAdvancedMode(page);
   await expect(page.getByTestId("proposal-file-select").locator("option")).toHaveCount(2);
   await expect(page.getByTestId("proposal-file-select")).not.toContainText(overlongFileName);
   await page.getByTestId("proposal-file-select").selectOption({ label: "پیش‌فاکتور دستی.pdf · پیش‌فاکتور" });
@@ -4677,8 +4805,10 @@ test("T7-A records a two-item product proposal with exact lineage, separated pro
 
   await expect(page.getByTestId("proposal-detail")).toBeVisible();
   await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
-  await expect(page.getByTestId("proposal-effective-status")).toContainText("نسخهٔ جاری");
+  await expect(page.getByTestId("proposal-effective-status")).toHaveText("جاری");
+  await openProposalDetailReference(page);
   await expect(page.getByTestId("proposal-reference")).toContainText("فقط شناسنامهٔ محلی");
+  await openProposalDetailConditions(page);
   await expect(page.getByTestId("proposal-line-card")).toHaveCount(2);
   await expect(page.getByTestId("proposal-line-card").nth(1)).toContainText("نامشخص");
   expect(await page.getByTestId("proposal-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
@@ -4769,9 +4899,9 @@ test("T7-A keeps service proposals independent from product items and preserves 
   await page.getByTestId("quick-action-compare-offers").click();
   await page.getByTestId("proposal-add").click();
   await page.getByTestId("proposal-supplier-select").selectOption({ label: "مجری پیشنهاد دستی · خدمت" });
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-transcript").fill("مجری روش جایگزین و موعد ده روزه را اعلام کرد.");
   await page.getByTestId("proposal-line-status-0").selectOption("alternative");
-  await page.getByTestId("proposal-line-editor").locator("summary").click();
   await page.getByTestId("proposal-line-leadTime-0").fill("۱۰ روز کاری");
   await page.getByTestId("proposal-save").click();
   await expect(page.getByTestId("proposal-detail")).toContainText("خدمت");
@@ -4795,6 +4925,7 @@ test("T7-A treats unchanged edits as a no-op, versions real edits, and keeps an 
   await page.getByTestId("quick-action-compare-offers").click();
   await page.getByTestId("proposal-add").click();
   await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد تاریخچه پیشنهاد · محصول" });
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-transcript").fill("رونویسی نسخهٔ نخست");
   await page.getByTestId("proposal-line-status-0").selectOption("quoted");
   await page.getByTestId("proposal-line-unit-price-0").fill("4100000");
@@ -4809,6 +4940,7 @@ test("T7-A treats unchanged edits as a no-op, versions real edits, and keeps an 
 
   await page.getByTestId("proposal-edit").click();
   await expect(page.getByTestId("proposal-editor-title")).toBeFocused();
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-notes").fill("برای بازبینی شرایط پرداخت");
   await page.getByTestId("proposal-save").click();
   await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
@@ -4816,9 +4948,10 @@ test("T7-A treats unchanged edits as a no-op, versions real edits, and keeps an 
   expect(versioned.version).toBe(2);
   expect(versioned.revisions).toHaveLength(2);
   expect(versioned.history.map((event: { type: string }) => event.type)).toEqual(["created", "updated"]);
+  await openProposalDetailTechnical(page);
   await expect(page.getByTestId("proposal-revision-select")).toBeVisible();
   await page.getByTestId("proposal-revision-select").selectOption({ index: 1 });
-  await expect(page.getByTestId("proposal-detail")).toContainText("نسخهٔ رونویسی");
+  await expect(page.getByTestId("proposal-revision-select")).toContainText("نسخهٔ ۱ · تاریخی");
 
   await page.getByTestId("proposal-detail-back").click();
   await page.getByTestId("proposals-back").click();
@@ -4832,10 +4965,10 @@ test("T7-A treats unchanged edits as a no-op, versions real edits, and keeps an 
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await expect(page.getByTestId("proposal-card")).toContainText("تاریخی · بازبینی");
+  await expect(page.getByTestId("proposal-card")).toContainText("نیازمند بررسی");
   await page.getByTestId("proposal-card").click();
   await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
-  await expect(page.getByTestId("proposal-effective-status")).toContainText("نیازمند بازبینی");
+  await expect(page.getByTestId("proposal-effective-status")).toHaveText("نیازمند بررسی");
   expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]")[0])).toEqual(versioned);
 });
 
@@ -4845,6 +4978,7 @@ test("T7-A rejects a coordinated proposal claimed to be created after its suppli
   await page.getByTestId("quick-action-compare-offers").click();
   await page.getByTestId("proposal-add").click();
   await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد ترتیب تماس · محصول" });
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-transcript").fill("رونویسی معتبر پیش از آرشیو تماس");
   await page.getByTestId("proposal-save").click();
   await page.getByTestId("proposal-detail-back").click();
@@ -4873,7 +5007,7 @@ test("T7-A rejects a coordinated proposal claimed to be created after its suppli
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
   await expect(page.getByTestId("proposal-card")).toHaveCount(0);
-  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  await expect(page.getByTestId("proposal-add")).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(tamperedStore);
 });
 
@@ -4883,6 +5017,7 @@ test("T7-A rejects a coordinated proposal claimed to be created after its reques
   await page.getByTestId("quick-action-compare-offers").click();
   await page.getByTestId("proposal-add").click();
   await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد ترتیب درخواست · محصول" });
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-transcript").fill("رونویسی معتبر پیش از بازگشت درخواست");
   await page.getByTestId("proposal-save").click();
   await page.getByTestId("proposal-detail-back").click();
@@ -4909,7 +5044,7 @@ test("T7-A rejects a coordinated proposal claimed to be created after its reques
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
   await expect(page.getByTestId("proposal-card")).toHaveCount(0);
-  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  await expect(page.getByTestId("proposal-add")).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(tamperedStore);
 });
 
@@ -4919,6 +5054,7 @@ test("T7-A preserves exact decimal strings and rejects a coordinated repeated se
   await page.getByTestId("quick-action-compare-offers").click();
   await page.getByTestId("proposal-add").click();
   await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد اعداد دقیق · محصول" });
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-line-status-0").selectOption("quoted");
   await page.getByTestId("proposal-line-unit-price-0").fill("9007199254740993");
   await page.getByTestId("proposal-line-total-price-0").fill(".0000001");
@@ -4958,7 +5094,7 @@ test("T7-A preserves exact decimal strings and rejects a coordinated repeated se
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
   await expect(page.getByTestId("proposal-card")).toHaveCount(0);
-  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  await expect(page.getByTestId("proposal-add")).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(tamperedStore);
 });
 
@@ -4968,6 +5104,7 @@ test("T7-A fail-closes an otherwise well-formed unsupported supplier-contact upd
   await page.getByTestId("quick-action-compare-offers").click();
   await page.getByTestId("proposal-add").click();
   await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد تماس بدون revision · محصول" });
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-transcript").fill("رونویسی پیش از تغییر پشتیبانی‌نشدهٔ تماس");
   await page.getByTestId("proposal-save").click();
   const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
@@ -4992,7 +5129,7 @@ test("T7-A fail-closes an otherwise well-formed unsupported supplier-contact upd
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
   await expect(page.getByTestId("proposal-card")).toHaveCount(0);
-  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  await expect(page.getByTestId("proposal-add")).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1"))).toBe(contactStore);
 });
@@ -5003,6 +5140,7 @@ test("T7-A rolls back failed writes and fails closed on a tampered proposal reco
   await page.getByTestId("quick-action-compare-offers").click();
   await page.getByTestId("proposal-add").click();
   await page.getByTestId("proposal-supplier-select").selectOption({ label: "فولاد خطای ذخیره · محصول" });
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-transcript").fill("رونویسی برای آزمون شکست ذخیره");
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
@@ -5024,6 +5162,7 @@ test("T7-A rolls back failed writes and fails closed on a tampered proposal reco
   await expect(page.getByTestId("proposal-detail")).toBeVisible();
   const versionOneStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
   await page.getByTestId("proposal-edit").click();
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-notes").fill("ویرایش معنادار با شکست نوشتن");
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
@@ -5041,9 +5180,11 @@ test("T7-A rolls back failed writes and fails closed on a tampered proposal reco
     Storage.prototype.setItem = (window as Window & { __proposalNativeSetItem: typeof Storage.prototype.setItem }).__proposalNativeSetItem;
   });
   await page.getByTestId("proposal-editor-back").click();
-  await expect(page.getByTestId("proposal-detail")).toContainText("نسخهٔ رونویسی");
-  await expect(page.getByTestId("proposal-detail")).toContainText("۱ از ۱");
+  await expect(page.getByTestId("proposal-effective-status")).toHaveText("جاری");
+  await openProposalDetailTechnical(page);
+  await expect(page.getByTestId("proposal-history")).toContainText("نسخهٔ ۱");
   await page.getByTestId("proposal-edit").click();
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-notes").fill("ویرایش معنادار پس از بازیابی");
   await installBackwardBrowserClock(page);
   await page.getByTestId("proposal-save").click();
@@ -5065,7 +5206,7 @@ test("T7-A rolls back failed writes and fails closed on a tampered proposal reco
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
   await expect(page.getByTestId("proposal-card")).toHaveCount(0);
-  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  await expect(page.getByTestId("proposal-add")).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(tamperedStore);
 
   validVersionTwoRecords[0].supplierSnapshot.displayName = "نام دستکاری‌شدهٔ هماهنگ";
@@ -5078,7 +5219,7 @@ test("T7-A rolls back failed writes and fails closed on a tampered proposal reco
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
   await expect(page.getByTestId("proposal-card")).toHaveCount(0);
-  await expect(page.getByTestId("proposal-add")).toBeDisabled();
+  await expect(page.getByTestId("proposal-add")).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(supplierTamperedStore);
 });
 
@@ -5105,7 +5246,7 @@ test("T7-B1 builds an exact product comparison without mutating its sources and 
   };
   page.on("request", requestListener);
 
-  await page.getByTestId("proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "proposal-comparisons-entry");
   await expect(page.getByTestId("proposal-comparisons-view")).toBeVisible();
   await page.getByTestId("comparison-add").click();
   await expect(page.getByTestId("comparison-editor-title")).toBeFocused();
@@ -5265,7 +5406,7 @@ test("T7-B1 builds an exact product comparison without mutating its sources and 
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "proposal-comparisons-entry");
   await expect(page.getByTestId("comparison-card")).toHaveCount(1);
   await page.getByTestId("comparison-card").click();
   await expect(page.getByTestId("comparison-recommendation")).toContainText(secondSupplier);
@@ -5284,7 +5425,7 @@ test("T7-B1 canonicalizes a temporary 201-digit decimal coefficient before enfor
   const proposals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
   const firstProposal = proposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === firstSupplier);
 
-  await page.getByTestId("proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "proposal-comparisons-entry");
   await page.getByTestId("comparison-add").click();
   const firstEditor = comparisonSupplierEditor(page, firstSupplier);
   await firstEditor.getByTestId(/^comparison-tax-mode-/).selectOption("fixed");
@@ -5326,7 +5467,7 @@ test("T7-B1 keeps unknown comparison data incomplete and rolls back a failed com
     dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
   }));
 
-  await page.getByTestId("proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "proposal-comparisons-entry");
   await page.getByTestId("comparison-add").click();
   const secondEditor = comparisonSupplierEditor(page, secondSupplier);
   await secondEditor.getByTestId(/^comparison-basis-/).selectOption("unit-price-times-adjusted-quantity");
@@ -5413,7 +5554,7 @@ test("T7-B1 keeps no-op bytes stable, versions real comparison edits, and marks 
   const firstEditor = comparisonSupplierEditor(page, firstSupplier);
   await firstEditor.getByTestId(/^comparison-transport-value-/).fill("۱۵۰۰۰۰۰");
   await page.getByTestId("comparison-save").click();
-  await expect(page.getByTestId("comparison-detail-hero")).toContainText("نسخهٔ مقایسه ۲");
+  await expect(page.getByTestId("comparison-detail-hero")).toContainText("جاری");
 
   const comparisonV2Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
   const comparisonV2 = JSON.parse(comparisonV2Store ?? "[]")[0];
@@ -5429,9 +5570,10 @@ test("T7-B1 keeps no-op bytes stable, versions real comparison edits, and marks 
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
   await expect(page.getByTestId("comparison-decision-history")).toHaveCount(0);
 
+  await openDisclosure(page.getByTestId("comparison-technical-details"));
   await expect(page.getByTestId("comparison-revision-select")).toBeVisible();
   await page.getByTestId("comparison-revision-select").selectOption(comparisonV1.revisions[0].id);
-  await expect(page.getByTestId("comparison-detail-hero")).toContainText("نسخهٔ تاریخی مقایسه");
+  await expect(page.getByTestId("comparison-detail-hero")).toContainText("نسخه قدیمی · فقط مشاهده");
   await expect(page.getByTestId("comparison-decision-history")).toContainText("نسخهٔ نخست تصمیم برای ادامهٔ بررسی پیشنهاد ب");
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonV2Store);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
@@ -5440,15 +5582,16 @@ test("T7-B1 keeps no-op bytes stable, versions real comparison edits, and marks 
   await page.getByTestId("comparisons-back").click();
   await page.getByTestId("proposal-card").filter({ hasText: firstSupplier }).click();
   await page.getByTestId("proposal-edit").click();
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-notes").fill("نسخهٔ تازهٔ پیشنهاد پس از ثبت مقایسه");
   await page.getByTestId("proposal-save").click();
-  await expect(page.getByTestId("proposal-detail")).toContainText("نسخهٔ رونویسی");
+  await openProposalDetailTechnical(page);
   await expect(page.getByTestId("proposal-revision-select")).toContainText("نسخهٔ ۲ · جاری");
   await page.getByTestId("proposal-detail-back").click();
-  await page.getByTestId("proposal-comparisons-entry").click();
-  await expect(page.getByTestId("comparison-card")).toContainText("تاریخی · بازبینی");
+  await openProposalSecondaryView(page, "proposal-comparisons-entry");
+  await expect(page.getByTestId("comparison-card")).toContainText("نیازمند بازبینی");
   await page.getByTestId("comparison-card").click();
-  await expect(page.getByTestId("comparison-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("comparison-detail-hero")).toContainText("نیازمند بررسی");
   await expect(page.getByTestId("comparison-decision-save")).toBeDisabled();
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonV2Store);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
@@ -5481,7 +5624,7 @@ test("T7-B1 fail-closes tampered comparison results and distinguishes an unreada
   await page.getByTestId("proposal-detail-back").click();
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
 
-  await page.getByTestId("proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "proposal-comparisons-entry");
   await expect(page.getByTestId("comparison-storage-error")).toBeVisible();
   await expect(page.getByTestId("comparison-card")).toHaveCount(0);
   await expect(page.getByTestId("comparison-add")).toBeDisabled();
@@ -5503,7 +5646,7 @@ test("T7-B1 fail-closes tampered comparison results and distinguishes an unreada
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-card")).toHaveCount(2);
-  await page.getByTestId("proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "proposal-comparisons-entry");
   await expect(page.getByTestId("comparison-storage-error")).toHaveCount(0);
   await expect(page.getByTestId("comparison-card")).toHaveCount(1);
   await page.getByTestId("comparison-card").click();
@@ -5540,7 +5683,7 @@ test("T7-B2 stores a traceable qualitative service matrix and keeps the human de
   };
   page.on("request", requestListener);
 
-  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
   await expect(page.getByTestId("service-proposal-comparisons-view")).toBeVisible();
   await page.getByTestId("service-comparison-add").click();
   await expect(page.getByTestId("service-comparison-editor-title")).toBeFocused();
@@ -5675,10 +5818,11 @@ test("T7-B2 stores a traceable qualitative service matrix and keeps the human de
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
   await expect(page.getByTestId("service-comparison-card")).toHaveCount(1);
   await page.getByTestId("service-comparison-card").click();
   await expect(page.getByTestId("service-comparison-detail-hero")).toBeFocused();
+  await openServiceComparisonCriterion(page, "scope");
   await expect(page.locator('[data-testid="service-comparison-criterion-card"][data-criterion="scope"]')).toContainText(firstServiceComparisonAssessments.scope.declaredValue);
   await expect(page.locator('[data-testid="service-comparison-criterion-card"][data-criterion="scope"]')).toContainText(secondServiceComparisonAssessments.scope.declaredValue);
   await expect(page.getByTestId("service-comparison-decision-history")).toContainText("شرایط زمانی مجری ب مناسب تر است");
@@ -5712,7 +5856,7 @@ test("T7-B2 preserves a declared value with unknown assessment and rolls back a 
     if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
   });
 
-  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
   await page.getByTestId("service-comparison-add").click();
   const scopeEditor = serviceComparisonAssessmentEditor(page, "scope", firstSupplier);
   await expect(scopeEditor.getByTestId("service-comparison-assessment-status")).toHaveValue("unknown");
@@ -5796,7 +5940,7 @@ test("T7-B2 keeps no-op bytes stable, versions a real matrix edit, and invalidat
   await page.getByTestId("service-comparison-edit").click();
   await serviceComparisonAssessmentEditor(page, "scope", firstSupplier).getByTestId("service-comparison-declared-value").fill("آماده سازی ترمیم و اجرای کامل عایق دولایه");
   await page.getByTestId("service-comparison-save").click();
-  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخهٔ مقایسه ۲");
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("جاری");
   const comparisonV2Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"));
   const comparisonV2 = JSON.parse(comparisonV2Store ?? "[]")[0];
   expect(comparisonV2Store).not.toBe(comparisonV1Store);
@@ -5809,7 +5953,7 @@ test("T7-B2 keeps no-op bytes stable, versions a real matrix edit, and invalidat
   await expect(page.getByTestId("service-comparison-decision-history")).toHaveCount(0);
 
   await page.getByTestId("service-comparison-revision-select").selectOption(comparisonV1.revisions[0].id);
-  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخهٔ تاریخی مقایسه");
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخه قدیمی · فقط مشاهده");
   await expect(page.getByTestId("service-comparison-decision-history")).toContainText("نسخه نخست تصمیم برای ادامه بررسی مجری ب");
   await expect(page.getByTestId("service-comparison-decision-save")).toBeDisabled();
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonV2Store);
@@ -5819,14 +5963,16 @@ test("T7-B2 keeps no-op bytes stable, versions a real matrix edit, and invalidat
   await page.getByTestId("service-comparisons-back").click();
   await page.getByTestId("proposal-card").filter({ hasText: firstSupplier }).click();
   await page.getByTestId("proposal-edit").click();
+  await openProposalAdvancedMode(page);
   await page.getByTestId("proposal-notes").fill("نسخه تازه پیشنهاد خدمت پس از ثبت ماتریس");
   await page.getByTestId("proposal-save").click();
+  await openProposalDetailTechnical(page);
   await expect(page.getByTestId("proposal-revision-select")).toContainText("نسخهٔ ۲ · جاری");
   await page.getByTestId("proposal-detail-back").click();
-  await page.getByTestId("service-proposal-comparisons-entry").click();
-  await expect(page.getByTestId("service-comparison-card")).toContainText("تاریخی · بازبینی");
+  await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
+  await expect(page.getByTestId("service-comparison-card")).toContainText("نیازمند بازبینی");
   await page.getByTestId("service-comparison-card").click();
-  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نیازمند بررسی");
   await expect(page.getByTestId("service-comparison-decision-save")).toBeDisabled();
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonV2Store);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
@@ -5859,7 +6005,7 @@ test("T7-B2 fail-closes a tampered service matrix and distinguishes an unreadabl
   await page.getByTestId("proposal-detail-back").click();
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
 
-  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
   await expect(page.getByTestId("service-comparison-storage-error")).toBeVisible();
   await expect(page.getByTestId("service-comparison-card")).toHaveCount(0);
   await expect(page.getByTestId("service-comparison-add")).toBeDisabled();
@@ -5881,7 +6027,7 @@ test("T7-B2 fail-closes a tampered service matrix and distinguishes an unreadabl
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-card")).toHaveCount(2);
-  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
   await expect(page.getByTestId("service-comparison-storage-error")).toHaveCount(0);
   await expect(page.getByTestId("service-comparison-card")).toHaveCount(1);
   await page.getByTestId("service-comparison-card").click();
@@ -5903,12 +6049,13 @@ test("T8-A1 also pins a product-line question to the exact compared proposal rev
   const proposal = JSON.parse(sourceStoresBeforeDraft.proposals ?? "[]").find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
   const proposalRevision = proposal.revisions.find((revision: { id: string }) => revision.id === proposal.currentRevisionId);
   const line = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === proposal.id).lines[0];
-  const start = page.locator(`[data-testid="negotiation-draft-start"][data-comparison-kind="product"][data-proposal-id="${proposal.id}"][data-criterion-id="${line.requestItemId}"]`);
+  const start = await openProductComparisonLineForNegotiation(page, proposal.id, line.requestItemId);
   await expect(start).toHaveCount(1);
   await start.click();
   await expect(page.getByTestId("negotiation-draft-target")).toContainText(prerequisites.firstSupplier);
   await expect(page.getByTestId("negotiation-draft-target")).toContainText(line.requestLabel);
-  await expect(page.getByTestId("negotiation-draft-boundary")).toContainText("چیدا تأمین‌کننده را مطلع نکرده");
+  await openDisclosure(page.getByTestId("negotiation-draft-boundary"));
+  await expect(page.getByTestId("negotiation-draft-boundary")).toContainText("sendAuthorized=false");
   await page.getByTestId("negotiation-draft-purpose").fill("روشن شدن شرایط قلم محصول پیش از ادامه بررسی");
   await page.getByTestId("negotiation-draft-message").fill("لطفاً اعتبار قیمت و زمان آماده‌سازی همین قلم را دقیق اعلام کنید.");
   await page.getByTestId("negotiation-draft-save").click();
@@ -5938,11 +6085,12 @@ test("T8-A1 pins a private local question draft to one exact service comparison,
   const created = await createExactServiceNegotiationDraft(page);
   if (!created.projectId) throw new Error("Active project is unavailable for the T8-A1 isolation oracle");
 
+  await openDisclosure(page.getByTestId("negotiation-draft-boundary"));
   await expect(page.getByTestId("negotiation-draft-detail")).toContainText("پیش‌نویس محلی · ارسال نشده");
   await expect(page.getByTestId("negotiation-draft-detail")).toContainText("ثبت مستقیم سازنده");
   await expect(page.getByTestId("negotiation-draft-detail")).toContainText(created.values.purpose);
   await expect(page.getByTestId("negotiation-draft-detail")).toContainText(created.values.message);
-  await expect(page.getByTestId("negotiation-draft-boundary")).toContainText("هیچ ارسال، تحویل، API یا AI انجام نشده");
+  await expect(page.getByTestId("negotiation-draft-boundary")).toContainText("externalEffect=none");
   expect(await page.getByTestId("negotiation-draft-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 
@@ -6005,7 +6153,7 @@ test("T8-A1 pins a private local question draft to one exact service comparison,
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   expect(await page.getByTestId("negotiation-drafts-view").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
@@ -6024,7 +6172,7 @@ test("T8-A1 pins a private local question draft to one exact service comparison,
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
   await expect(page.getByTestId("negotiation-draft-empty-state")).toBeVisible();
   expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey) ?? "[]")).toHaveLength(1);
@@ -6034,7 +6182,7 @@ test("T8-A1 pins a private local question draft to one exact service comparison,
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
   expect(await commercialSourceStoreBytes(page)).toEqual(created.sourceStoresBeforeDraft);
@@ -6057,7 +6205,8 @@ test("T8-A1 keeps no-op bytes stable and versions only a semantic question edit 
   await page.getByTestId("negotiation-draft-edit").click();
   await page.getByTestId("negotiation-draft-message").fill(editedMessage);
   await page.getByTestId("negotiation-draft-save").click();
-  await expect(page.getByTestId("negotiation-draft-detail-hero")).toContainText("نسخهٔ ۲");
+  await expect(page.getByTestId("negotiation-draft-detail-hero")).toContainText("آمادهٔ پیگیری");
+  await openContainingDisclosure(page.getByTestId("negotiation-draft-history"));
   await expect(page.getByTestId("negotiation-draft-history")).toContainText(created.values.message);
   await expect(page.getByTestId("negotiation-draft-history")).toContainText(editedMessage);
 
@@ -6072,7 +6221,7 @@ test("T8-A1 keeps no-op bytes stable and versions only a semantic question edit 
   expect(v2.currentRevisionId).toBe(v2.revisions[1].id);
 
   await page.getByTestId("negotiation-draft-revision-select").selectOption(v1.revisions[0].id);
-  await expect(page.getByTestId("negotiation-draft-detail-hero")).toContainText("نسخهٔ تاریخی");
+  await expect(page.getByTestId("negotiation-draft-detail-hero")).toContainText("نسخهٔ قدیمی");
   await expect(page.getByTestId("negotiation-draft-detail")).toContainText(created.values.message);
   await expect(page.getByTestId("negotiation-draft-edit")).toBeDisabled();
   await page.getByTestId("negotiation-draft-revision-select").selectOption(v2.currentRevisionId);
@@ -6083,7 +6232,7 @@ test("T8-A1 keeps no-op bytes stable and versions only a semantic question edit 
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await page.getByTestId("negotiation-draft-card").click();
   await expect(page.getByTestId("negotiation-draft-detail")).toContainText(editedMessage);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(v2Store);
@@ -6103,10 +6252,12 @@ test("T8-A1 rolls back a failed question write and treats an unreadable draft st
   };
   page.on("request", requestListener);
 
+  await openServiceComparisonCriterion(page, "timing");
   const originAction = serviceNegotiationDraftStart(page, "timing", prerequisites.firstProposal.id);
   await originAction.click();
   await page.getByTestId("negotiation-draft-editor-back").click();
-  await expect(originAction).toBeFocused();
+  await openServiceComparisonCriterion(page, "timing");
+  await expect(originAction).toBeVisible();
   await originAction.click();
   await page.getByTestId("negotiation-draft-save").click();
   await expect(page.getByTestId("negotiation-draft-purpose")).toBeFocused();
@@ -6124,7 +6275,7 @@ test("T8-A1 rolls back a failed question write and treats an unreadable draft st
   }, negotiationDraftStorageKey);
   await page.getByTestId("negotiation-draft-save").click();
   await expect(page.getByTestId("negotiation-draft-editor")).toBeVisible();
-  await expect(page.getByTestId("negotiation-draft-form-error")).toContainText("پیش‌نویس ثبت نشد");
+  await expect(page.getByTestId("negotiation-draft-form-error")).toContainText("سؤال ثبت نشد");
   expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBeNull();
   expect(await commercialSourceStoreBytes(page)).toEqual(sourceStoresBeforeDraft);
 
@@ -6149,12 +6300,12 @@ test("T8-A1 rolls back a failed question write and treats an unreadable draft st
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-card")).toHaveCount(2);
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-storage-error")).toBeVisible();
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
   await expect(page.getByTestId("negotiation-draft-empty-state")).toHaveCount(0);
   await page.getByTestId("negotiation-drafts-back").click();
-  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
   await expect(page.getByTestId("service-comparison-card")).toHaveCount(1);
   await page.getByTestId("service-comparison-card").click();
   await expect(page.getByTestId("negotiation-draft-storage-error")).toBeVisible();
@@ -6179,7 +6330,7 @@ test("T8-A1 fail-closes non-canonical draft history without silently rewriting i
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-storage-error")).toBeVisible();
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
   await expect(page.getByTestId("negotiation-draft-empty-state")).toHaveCount(0);
@@ -6197,12 +6348,12 @@ test("T8-A1 invalidates stale dependencies and fail-closes a tampered target fin
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
   await page.getByTestId("service-comparison-card").click();
   await page.getByTestId("service-comparison-edit").click();
   await serviceComparisonAssessmentEditor(page, "timing", created.firstSupplier).getByTestId("service-comparison-declared-value").fill("شروع قطعی ظرف سه روز و اجرای شش روزه");
   await page.getByTestId("service-comparison-save").click();
-  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخهٔ مقایسه ۲");
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("جاری");
   const sourceStoresAfterInvalidation = await commercialSourceStoreBytes(page);
   expect(sourceStoresAfterInvalidation.proposals).toBe(created.sourceStoresBeforeDraft.proposals);
   expect(sourceStoresAfterInvalidation.requests).toBe(created.sourceStoresBeforeDraft.requests);
@@ -6210,10 +6361,10 @@ test("T8-A1 invalidates stale dependencies and fail-closes a tampered target fin
 
   await page.getByTestId("service-comparison-detail-back").click();
   await page.getByTestId("service-comparisons-back").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
-  await expect(page.getByTestId("negotiation-draft-card")).toContainText("تاریخی · نیازمند بازبینی");
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
+  await expect(page.getByTestId("negotiation-draft-card")).toContainText("نیازمند بررسی دوباره");
   await page.getByTestId("negotiation-draft-card").click();
-  await expect(page.getByTestId("negotiation-draft-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("negotiation-draft-detail-hero")).toContainText("نیازمند بررسی دوباره");
   await expect(page.getByTestId("negotiation-draft-detail")).toContainText(created.values.message);
   await expect(page.getByTestId("negotiation-draft-edit")).toBeDisabled();
 
@@ -6227,7 +6378,7 @@ test("T8-A1 invalidates stale dependencies and fail-closes a tampered target fin
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-storage-error")).toBeVisible();
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
   await expect(page.getByTestId("negotiation-draft-empty-state")).toHaveCount(0);
@@ -6236,7 +6387,7 @@ test("T8-A1 invalidates stale dependencies and fail-closes a tampered target fin
 
   await page.getByTestId("negotiation-drafts-back").click();
   await expect(page.getByTestId("proposal-card")).toHaveCount(2);
-  await page.getByTestId("service-proposal-comparisons-entry").click();
+  await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
   await expect(page.getByTestId("service-comparison-card")).toHaveCount(1);
   expect(await commercialSourceStoreBytes(page)).toEqual(sourceStoresAfterInvalidation);
   expect(created.externalRequests).toEqual([]);
@@ -6248,10 +6399,12 @@ test("T8-A2 pins one private builder transcription to the exact service question
   const created = await createExactManualNegotiationResponse(page);
   const questionRevision = created.record.revisions.find((item: { id: string }) => item.id === created.record.currentRevisionId);
 
-  await expect(page.getByTestId("manual-negotiation-response-detail")).toContainText("پاسخ احرازنشده · خارج از شبکهٔ چیدا");
   await expect(page.getByTestId("manual-negotiation-response-detail")).toContainText(created.responseText);
   await expect(page.getByTestId("manual-negotiation-response-message")).toHaveAttribute("dir", "auto");
+  await openContainingDisclosure(page.getByTestId("manual-negotiation-response-history"));
   await expect(page.getByTestId("manual-negotiation-response-history").locator(".negotiation-draft-history-message")).toHaveAttribute("dir", "auto");
+  await openDisclosure(page.getByTestId("manual-negotiation-response-boundary"));
+  await expect(page.getByTestId("manual-negotiation-response-boundary")).toContainText("تأیید نشده · خارج از شبکهٔ چیدا");
   await expect(page.getByTestId("manual-negotiation-response-boundary")).toContainText("questionSentThroughChida=false");
   await expect(page.getByTestId("manual-negotiation-response-boundary")).toContainText("receivedThroughChida=false");
   expect(await page.getByTestId("manual-negotiation-response-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
@@ -6302,7 +6455,7 @@ test("T8-A2 pins one private builder transcription to the exact service question
 
   await page.getByTestId("manual-negotiation-response-detail-back").click();
   await expect(page.getByTestId("manual-negotiation-response-open")).toBeFocused();
-  await expect(page.getByTestId("manual-negotiation-response-open")).toHaveAccessibleName(`بازکردن پاسخ دستی ثبت‌شده برای مدت و زمان اجرا و ${created.firstSupplier}`);
+  await expect(page.getByTestId("manual-negotiation-response-open")).toHaveAccessibleName(`بازکردن پاسخ ثبت‌شده برای مدت و زمان اجرا و ${created.firstSupplier}`);
   await page.getByTestId("manual-negotiation-response-open").click();
   await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toBeFocused();
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
@@ -6318,7 +6471,7 @@ test("T8-A2 supports the same exact-response contract for a product-line questio
   const comparisonRevision = comparison.revisions.find((revision: { id: string }) => revision.id === comparison.currentRevisionId);
   const proposal = JSON.parse(sourceStoresBeforeResponse.proposals ?? "[]").find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
   const line = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === proposal.id).lines[0];
-  const start = page.locator(`[data-testid="negotiation-draft-start"][data-comparison-kind="product"][data-proposal-id="${proposal.id}"][data-criterion-id="${line.requestItemId}"]`);
+  const start = await openProductComparisonLineForNegotiation(page, proposal.id, line.requestItemId);
   await start.click();
   await page.getByTestId("negotiation-draft-purpose").fill("ثبت پاسخ مرتبط با اعتبار قلم محصول");
   await page.getByTestId("negotiation-draft-message").fill("اعتبار قیمت این قلم تا چه تاریخی است؟");
@@ -6335,8 +6488,8 @@ test("T8-A2 supports the same exact-response contract for a product-line questio
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
-  await expect(page.getByTestId("negotiation-draft-card")).toContainText("پاسخ دستی ثبت شده");
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
+  await expect(page.getByTestId("negotiation-draft-card")).toContainText("پاسخ ثبت شده");
   await page.getByTestId("negotiation-draft-card").click();
   await page.getByTestId("manual-negotiation-response-open").click();
   await expect(page.getByTestId("manual-negotiation-response-detail")).toContainText("پایان هفته معتبر است");
@@ -6352,7 +6505,7 @@ test("T8-A2 supports the same exact-response contract for a product-line questio
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
   expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey) ?? "[]")).toHaveLength(1);
 
@@ -6361,7 +6514,7 @@ test("T8-A2 supports the same exact-response contract for a product-line questio
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(responseStore);
 });
@@ -6382,6 +6535,7 @@ test("T8-A2 keeps no-op bytes stable and versions only a semantic transcription 
   await page.getByTestId("manual-negotiation-response-text").fill(corrected);
   await page.getByTestId("manual-negotiation-response-save").click();
   await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(corrected);
+  await openContainingDisclosure(page.getByTestId("manual-negotiation-response-history"));
   await expect(page.getByTestId("manual-negotiation-response-history")).toContainText(created.responseText);
   const v2Store = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey);
   const v2 = JSON.parse(v2Store ?? "[]")[0];
@@ -6393,7 +6547,7 @@ test("T8-A2 keeps no-op bytes stable and versions only a semantic transcription 
   expect(v2.revisions[1]).toMatchObject({ version: 2, responseText: corrected });
 
   await page.getByTestId("manual-negotiation-response-revision-select").selectOption(v1.revisions[0].id);
-  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toContainText("نسخهٔ تاریخی رونویسی");
+  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toContainText("نسخهٔ قدیمی");
   await expect(page.getByTestId("manual-negotiation-response-edit")).toBeDisabled();
   await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(created.responseText);
   await page.getByTestId("manual-negotiation-response-revision-select").selectOption(v2.currentRevisionId);
@@ -6422,7 +6576,7 @@ test("T8-A2 rolls back failed writes and locks an unreadable response store with
   }, manualNegotiationResponseStorageKey);
   await page.getByTestId("manual-negotiation-response-save").click();
   await expect(page.getByTestId("manual-negotiation-response-editor")).toBeVisible();
-  await expect(page.getByTestId("manual-negotiation-response-form-error")).toContainText("رونویسی پاسخ ثبت نشد");
+  await expect(page.getByTestId("manual-negotiation-response-form-error")).toContainText("پاسخ ثبت نشد");
   await expect(page.getByTestId("manual-negotiation-response-text")).toHaveAttribute("aria-invalid", "false");
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBeNull();
   expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(question.draftStore);
@@ -6443,10 +6597,10 @@ test("T8-A2 rolls back failed writes and locks an unreadable response store with
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
-  await expect(page.getByTestId("negotiation-draft-card")).toContainText("وضعیت پاسخ دستی نامشخص");
-  await expect(page.getByTestId("negotiation-draft-card")).not.toContainText("بدون پاسخ دستی");
+  await expect(page.getByTestId("negotiation-draft-card")).toContainText("وضعیت پاسخ نامشخص");
+  await expect(page.getByTestId("negotiation-draft-card")).not.toContainText("منتظر ثبت پاسخ");
   await page.getByTestId("negotiation-draft-card").click();
   await expect(page.getByTestId("manual-negotiation-response-storage-error")).toBeVisible();
   await expect(page.getByTestId("manual-negotiation-response-add")).toHaveCount(0);
@@ -6473,7 +6627,7 @@ test("T8-A2 fail-closes tampered response lineage without hiding or rewriting th
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
   await page.getByTestId("negotiation-draft-card").click();
   await expect(page.getByTestId("negotiation-draft-detail")).toContainText(created.values.message);
@@ -6500,14 +6654,16 @@ test("T8-A2 keeps an old response historical after a question edit and creates a
   expect(questionV2.version).toBe(2);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
 
+  await openContainingDisclosure(page.getByTestId("negotiation-draft-revision-select"));
   await page.getByTestId("negotiation-draft-revision-select").selectOption(oldQuestionRevisionId);
   await expect(page.getByTestId("manual-negotiation-response-open")).toBeVisible();
   await page.getByTestId("manual-negotiation-response-open").click();
-  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toContainText("نیازمند بررسی دوباره");
   await expect(page.getByTestId("manual-negotiation-response-edit")).toBeDisabled();
   await page.getByTestId("manual-negotiation-response-detail-back").click();
   await expect(page.getByTestId("manual-negotiation-response-open")).toBeFocused();
 
+  await openContainingDisclosure(page.getByTestId("negotiation-draft-revision-select"));
   await page.getByTestId("negotiation-draft-revision-select").selectOption(questionV2.currentRevisionId);
   await expect(page.getByTestId("manual-negotiation-response-add")).toBeVisible();
   await page.getByTestId("manual-negotiation-response-add").click();
@@ -6535,19 +6691,19 @@ test("T8-A2 makes a response historical after an upstream comparison revision wi
   await page.getByTestId("service-comparison-edit").click();
   await serviceComparisonAssessmentEditor(page, "timing", created.firstSupplier).getByTestId("service-comparison-declared-value").fill("شروع قطعی ظرف چهار روز و اجرای شش روزه");
   await page.getByTestId("service-comparison-save").click();
-  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخهٔ مقایسه ۲");
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("جاری");
   const sourceStoresAfterInvalidation = await commercialSourceStoreBytes(page);
   expect(sourceStoresAfterInvalidation.serviceComparisons).not.toBe(created.sourceStoresBeforeDraft.serviceComparisons);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
 
   await page.getByTestId("service-comparison-detail-back").click();
   await page.getByTestId("service-comparisons-back").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
-  await expect(page.getByTestId("negotiation-draft-card")).toContainText("تاریخی · نیازمند بازبینی");
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
+  await expect(page.getByTestId("negotiation-draft-card")).toContainText("نیازمند بررسی دوباره");
   await page.getByTestId("negotiation-draft-card").click();
   await expect(page.getByTestId("manual-negotiation-response-open")).toBeVisible();
   await page.getByTestId("manual-negotiation-response-open").click();
-  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toContainText("نیازمند بررسی دوباره");
   await expect(page.getByTestId("manual-negotiation-response-edit")).toBeDisabled();
   await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(created.responseText);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
@@ -6561,10 +6717,11 @@ test("T8-A3 pins one explicit builder review to the exact service response revis
   const created = await createExactManualNegotiationResponseReview(page);
   const responseRevision = created.responseRecord.revisions.find((item: { id: string }) => item.id === created.responseRecord.currentRevisionId);
 
-  await expect(page.getByTestId("manual-response-review-detail")).toContainText("ارزیابی شما؛ نه تشخیص چیدا");
+  await expect(page.getByTestId("manual-response-review-detail")).toContainText("این نتیجه را شما ثبت کرده‌اید");
   await expect(page.getByTestId("manual-response-review-detail")).toContainText("از نظر شما نیازمند روشن‌سازی است");
   await expect(page.getByTestId("manual-response-review-reason-text")).toHaveText(created.reviewValues.reason);
   await expect(page.getByTestId("manual-response-review-reason-text")).toHaveAttribute("dir", "auto");
+  await openDisclosure(page.getByTestId("manual-response-review-boundary"));
   await expect(page.getByTestId("manual-response-review-boundary")).toContainText("automatedDetectionUsed=false");
   await expect(page.getByTestId("manual-response-review-boundary")).toContainText("aiUsed=false");
   await expect(page.getByTestId("manual-response-review-boundary")).toContainText("externalEffect=none");
@@ -6614,7 +6771,7 @@ test("T8-A3 pins one explicit builder review to the exact service response revis
 
   await page.getByTestId("manual-response-review-detail-back").click();
   await expect(page.getByTestId("manual-response-review-open")).toBeFocused();
-  await expect(page.getByTestId("manual-response-review-open")).toHaveAccessibleName(`بازکردن بازبینی دستی پاسخ برای مدت و زمان اجرا و ${created.firstSupplier}`);
+  await expect(page.getByTestId("manual-response-review-open")).toHaveAccessibleName(`بازکردن نتیجهٔ پاسخ برای مدت و زمان اجرا و ${created.firstSupplier}`);
   expect(created.externalRequests).toEqual([]);
   page.off("request", created.requestListener);
 });
@@ -6636,6 +6793,7 @@ test("T8-A3 keeps no-op bytes stable, versions semantic edits, and exposes histo
   await page.getByTestId("manual-response-review-save").click();
   await expect(page.getByTestId("manual-response-review-detail")).toContainText("از نظر شما تعارض احتمالی دارد");
   await expect(page.getByTestId("manual-response-review-reason-text")).toHaveText(reasonV2);
+  await openContainingDisclosure(page.getByTestId("manual-response-review-history"));
   const v2Store = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey);
   const v2 = JSON.parse(v2Store ?? "[]")[0];
   expect(v2.version).toBe(2);
@@ -6644,7 +6802,7 @@ test("T8-A3 keeps no-op bytes stable, versions semantic edits, and exposes histo
   expect(v2.revisions[0]).toEqual(created.reviewRecord.revisions[0]);
 
   await page.getByTestId("manual-response-review-revision-select").selectOption(created.reviewRecord.currentRevisionId);
-  await expect(page.getByTestId("manual-response-review-detail-hero")).toContainText("نسخهٔ تاریخی ارزیابی");
+  await expect(page.getByTestId("manual-response-review-detail-hero")).toContainText("نسخهٔ قدیمی");
   await expect(page.getByTestId("manual-response-review-edit")).toBeDisabled();
   await expect(page.getByTestId("manual-response-review-reason-text")).toHaveText(created.reviewValues.reason);
   await page.getByTestId("manual-response-review-revision-select").selectOption(v2.currentRevisionId);
@@ -6682,7 +6840,7 @@ test("T8-A3 validates explicit judgment, rolls back failed writes, and isolates 
   }, manualNegotiationResponseReviewStorageKey);
   await page.getByTestId("manual-response-review-save").click();
   await expect(page.getByTestId("manual-response-review-editor")).toBeVisible();
-  await expect(page.getByTestId("manual-response-review-form-error")).toContainText("بازبینی دستی ثبت نشد");
+  await expect(page.getByTestId("manual-response-review-form-error")).toContainText("ارزیابی پاسخ ثبت نشد");
   await expect(page.getByTestId("manual-response-review-reason")).toHaveAttribute("aria-invalid", "false");
   await expect(page.getByTestId("manual-response-review-reason")).not.toHaveAttribute("aria-describedby", "manual-response-review-form-error");
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBeNull();
@@ -6704,7 +6862,7 @@ test("T8-A3 validates explicit judgment, rolls back failed writes, and isolates 
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await page.getByTestId("negotiation-draft-card").click();
   await page.getByTestId("manual-negotiation-response-open").click();
   await expect(page.getByTestId("manual-response-review-storage-error")).toBeVisible();
@@ -6732,7 +6890,7 @@ test("T8-A3 fail-closes tampered review lineage without hiding or rewriting the 
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await page.getByTestId("negotiation-draft-card").click();
   await page.getByTestId("manual-negotiation-response-open").click();
   await expect(page.getByTestId("manual-response-review-storage-error")).toBeVisible();
@@ -6758,13 +6916,15 @@ test("T8-A3 keeps a review historical after a response correction and creates a 
   expect(responseV2.version).toBe(2);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBe(created.reviewStore);
 
+  await openContainingDisclosure(page.getByTestId("manual-negotiation-response-revision-select"));
   await page.getByTestId("manual-negotiation-response-revision-select").selectOption(oldResponseRevisionId);
   await expect(page.getByTestId("manual-response-review-open")).toBeVisible();
   await page.getByTestId("manual-response-review-open").click();
-  await expect(page.getByTestId("manual-response-review-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("manual-response-review-detail-hero")).toContainText("نیازمند بررسی دوباره");
   await expect(page.getByTestId("manual-response-review-edit")).toBeDisabled();
   await page.getByTestId("manual-response-review-detail-back").click();
 
+  await openContainingDisclosure(page.getByTestId("manual-negotiation-response-revision-select"));
   await page.getByTestId("manual-negotiation-response-revision-select").selectOption(responseV2.currentRevisionId);
   await expect(page.getByTestId("manual-response-review-add")).toBeVisible();
   await page.getByTestId("manual-response-review-add").click();
@@ -6790,17 +6950,17 @@ test("T8-A3 makes the review historical after an upstream comparison revision wi
   await page.getByTestId("service-comparison-edit").click();
   await serviceComparisonAssessmentEditor(page, "timing", created.firstSupplier).getByTestId("service-comparison-declared-value").fill("شروع قطعی ظرف پنج روز و اجرای هفت روزه");
   await page.getByTestId("service-comparison-save").click();
-  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخهٔ مقایسه ۲");
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("جاری");
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBe(created.reviewStore);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
 
   await page.getByTestId("service-comparison-detail-back").click();
   await page.getByTestId("service-comparisons-back").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await page.getByTestId("negotiation-draft-card").click();
   await page.getByTestId("manual-negotiation-response-open").click();
   await page.getByTestId("manual-response-review-open").click();
-  await expect(page.getByTestId("manual-response-review-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("manual-response-review-detail-hero")).toContainText("نیازمند بررسی دوباره");
   await expect(page.getByTestId("manual-response-review-edit")).toBeDisabled();
   await expect(page.getByTestId("manual-response-review-reason-text")).toHaveText(created.reviewValues.reason);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBe(created.reviewStore);
@@ -6817,7 +6977,7 @@ test("T8-A3 applies the same exact-review contract to a product response and kee
   const comparisonRevision = comparison.revisions.find((revision: { id: string }) => revision.id === comparison.currentRevisionId);
   const proposal = JSON.parse(sourceStoresBeforeReview.proposals ?? "[]").find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
   const line = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === proposal.id).lines[0];
-  await page.locator(`[data-testid="negotiation-draft-start"][data-comparison-kind="product"][data-proposal-id="${proposal.id}"][data-criterion-id="${line.requestItemId}"]`).click();
+  await (await openProductComparisonLineForNegotiation(page, proposal.id, line.requestItemId)).click();
   await page.getByTestId("negotiation-draft-purpose").fill("روشن‌سازی اعتبار قیمت قلم محصول");
   await page.getByTestId("negotiation-draft-message").fill("اعتبار این قیمت دقیقاً تا چه تاریخی است؟");
   await page.getByTestId("negotiation-draft-save").click();
@@ -6853,7 +7013,7 @@ test("T8-A3 applies the same exact-review contract to a product response and kee
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
   expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey) ?? "[]")).toHaveLength(1);
 
@@ -6862,7 +7022,1218 @@ test("T8-A3 applies the same exact-review contract to a product response and kee
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByTestId("quick-action-compare-offers").click();
-  await page.getByTestId("negotiation-drafts-entry").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey)).toBe(reviewStore);
+});
+
+test("T8-A4 records one manual qualitative service impact on the exact response revision without calculation or external effect", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationConditionImpact(page);
+
+  await expect(page.getByTestId("manual-condition-impact-detail")).toContainText("این نتیجه را شما ثبت کرده‌اید");
+  await expect(page.getByTestId("manual-condition-impact-summary-text")).toHaveText(created.impactValues.changeSummary);
+  await expect(page.getByTestId("manual-condition-impact-summary-text")).toHaveAttribute("dir", "auto");
+  await expect(page.getByTestId("manual-condition-impact-domain-text")).toContainText("زمان‌بندی");
+  await expect(page.getByTestId("manual-condition-impact-direction-text")).toContainText("به نفع سازنده");
+  await expect(page.getByTestId("manual-condition-impact-reason-text")).toHaveText(created.impactValues.reason);
+  await expect(page.getByTestId("manual-condition-impact-reason-text")).toHaveAttribute("dir", "auto");
+  await openDisclosure(page.getByTestId("manual-condition-impact-boundary"));
+  await expect(page.getByTestId("manual-condition-impact-boundary")).toContainText("automatedCalculationUsed=false");
+  await expect(page.getByTestId("manual-condition-impact-boundary")).toContainText("aiUsed=false");
+  await expect(page.getByTestId("manual-condition-impact-boundary")).toContainText("networkUsed=false");
+  await expect(page.getByTestId("manual-condition-impact-boundary")).toContainText("externalEffect=none");
+  expect(await page.getByTestId("manual-condition-impact-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+  expect(created.impactRecord).toMatchObject({
+    schemaVersion: 1,
+    projectId: created.projectId,
+    purpose: "record-local-builder-manual-negotiation-condition-impact",
+    status: "manual-impact-assessment",
+    target: {
+      manualNegotiationResponseId: created.responseRecord.id,
+      manualNegotiationResponseRevisionId: created.responseRevision.id,
+      manualNegotiationResponseRevisionVersion: created.responseRevision.version,
+      manualNegotiationResponseRevisionFingerprint: created.responseRevision.fingerprint,
+    },
+    source: "ارزیابی مستقیم سازنده",
+    assessmentMethod: "manual-qualitative",
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    automatedCalculationUsed: false,
+    automatedDetectionUsed: false,
+    aiUsed: false,
+    networkUsed: false,
+    authenticityVerified: false,
+    proposalMutated: false,
+    comparisonMutated: false,
+    externalEffect: "none",
+    sendAuthorized: false,
+    supplierNotified: false,
+    sharedWithSupplier: false,
+    externalActionAttempted: false,
+    version: 1,
+  });
+  expect(created.impactRecord.target).toEqual({
+    manualNegotiationResponseId: created.responseRecord.id,
+    manualNegotiationResponseRevisionId: created.responseRevision.id,
+    manualNegotiationResponseRevisionVersion: created.responseRevision.version,
+    manualNegotiationResponseRevisionFingerprint: created.responseRevision.fingerprint,
+  });
+  expect(created.impactRecord).not.toHaveProperty("responseSnapshot");
+  expect(created.impactRecord.revisions).toHaveLength(1);
+  expect(created.impactRecord.revisions[0]).toMatchObject({ version: 1, ...created.impactValues });
+  expect(created.impactRecord.revisions[0]).not.toHaveProperty("formula");
+  expect(created.impactRecord.revisions[0]).not.toHaveProperty("numericDelta");
+  expect(created.impactRecord.history.map((event: { type: string }) => event.type)).toEqual(["created"]);
+
+  expect({
+    ...await commercialSourceStoreBytes(page),
+    negotiationDrafts: await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey),
+    manualResponses: await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey),
+    manualResponseReviews: await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey),
+  }).toEqual(created.sourceStoresBeforeImpact);
+  await page.getByTestId("manual-condition-impact-detail-back").click();
+  await expect(page.getByTestId("manual-condition-impact-open")).toBeFocused();
+  await expect(page.getByTestId("manual-condition-impact-open")).toHaveAccessibleName(`بازکردن اثر پاسخ برای مدت و زمان اجرا و ${created.firstSupplier}`);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A4 applies the same exact-response contract to a product impact and keeps project isolation", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const prerequisites = await createExactProductComparisonWithDecision(page);
+  const commercialStoresBeforeImpact = await commercialSourceStoreBytes(page);
+  const comparison = JSON.parse(commercialStoresBeforeImpact.productComparisons ?? "[]")[0];
+  const comparisonRevision = comparison.revisions.find((revision: { id: string }) => revision.id === comparison.currentRevisionId);
+  const proposal = JSON.parse(commercialStoresBeforeImpact.proposals ?? "[]").find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
+  const line = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === proposal.id).lines[0];
+  await (await openProductComparisonLineForNegotiation(page, proposal.id, line.requestItemId)).click();
+  await page.getByTestId("negotiation-draft-purpose").fill("روشن‌سازی اثر تغییر اعتبار قیمت قلم محصول");
+  await page.getByTestId("negotiation-draft-message").fill("اگر اعتبار قیمت کوتاه‌تر شود چه اثری بر تصمیم فعلی من دارد؟");
+  await page.getByTestId("negotiation-draft-save").click();
+  await page.getByTestId("manual-negotiation-response-add").click();
+  await page.getByTestId("manual-negotiation-response-text").fill("در تماس بیرونی گفته شد قیمت فقط تا فردا معتبر است.");
+  await page.getByTestId("manual-negotiation-response-save").click();
+  const responseStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey);
+  const response = JSON.parse(responseStore ?? "[]")[0];
+  const responseRevision = response.revisions.find((revision: { id: string }) => revision.id === response.currentRevisionId);
+  const sourceStoresBeforeImpact = {
+    ...await commercialSourceStoreBytes(page),
+    negotiationDrafts: await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey),
+    manualResponses: responseStore,
+    manualResponseReviews: await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey),
+  };
+  const appOrigin = new URL(page.url()).origin;
+  const externalRequests: string[] = [];
+  const requestListener = (request: Request) => {
+    const url = new URL(request.url());
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
+  };
+  page.on("request", requestListener);
+
+  await expect(page.getByTestId("manual-condition-impact-add")).toHaveAccessibleName(`ثبت اثر پاسخ برای ${line.requestLabel} و ${prerequisites.firstSupplier}`);
+  await page.getByTestId("manual-condition-impact-add").click();
+  await page.getByTestId("manual-condition-impact-change-summary").fill("اعتبار اعلامی قیمت از بازهٔ هفتگی به پایان فردا محدود شده است.");
+  await page.getByTestId("manual-condition-impact-domain").selectOption("commercial-terms");
+  await page.getByTestId("manual-condition-impact-direction").selectOption("adverse-to-builder");
+  await page.getByTestId("manual-condition-impact-reason").fill("از نظر من فرصت بررسی و تأیید داخلی کمتر شده است؛ هیچ سفارش یا ارسال خودکاری انجام نمی‌شود.");
+  await page.getByTestId("manual-condition-impact-save").click();
+  await expect(page.getByTestId("manual-condition-impact-detail-hero")).toBeFocused();
+  expect(await page.getByTestId("manual-condition-impact-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  const impactStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey);
+  const impact = JSON.parse(impactStore ?? "[]")[0];
+  expect(impact.target).toEqual({
+    manualNegotiationResponseId: response.id,
+    manualNegotiationResponseRevisionId: responseRevision.id,
+    manualNegotiationResponseRevisionVersion: responseRevision.version,
+    manualNegotiationResponseRevisionFingerprint: responseRevision.fingerprint,
+  });
+  expect(response.questionSnapshot.negotiationTarget).toMatchObject({ comparisonKind: "product", proposalId: proposal.id, proposalLineId: line.proposalLineId, criterionKind: "product-line", criterionId: line.requestItemId });
+  expect(impact.revisions[0]).toMatchObject({ impactDomain: "commercial-terms", impactDirection: "adverse-to-builder" });
+  expect({
+    ...await commercialSourceStoreBytes(page),
+    negotiationDrafts: await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey),
+    manualResponses: await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey),
+    manualResponseReviews: await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey),
+  }).toEqual(sourceStoresBeforeImpact);
+
+  const firstProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!firstProjectId) throw new Error("Active project is unavailable for the T8-A4 isolation oracle");
+  await page.evaluate(() => {
+    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
+    projects.push({ id: "t8a4-isolation-project-b", name: "پروژه مستقل اثر شرایط", location: "منطقهٔ ۶", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
+    window.localStorage.setItem("chida-prototype-active-project", "t8a4-isolation-project-b");
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
+  await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
+  expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey) ?? "[]")).toHaveLength(1);
+
+  await page.evaluate((projectId) => window.localStorage.setItem("chida-prototype-active-project", projectId), firstProjectId);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
+  await page.getByTestId("negotiation-draft-card").click();
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await expect(page.getByTestId("manual-condition-impact-open")).toBeVisible();
+  await page.getByTestId("manual-condition-impact-open").click();
+  await expect(page.getByTestId("manual-condition-impact-detail")).toContainText("اعتبار اعلامی قیمت");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey)).toBe(impactStore);
+  expect(externalRequests).toEqual([]);
+  page.off("request", requestListener);
+});
+
+test("T8-A4 keeps no-op bytes stable, versions semantic edits, and stays current when the sibling T8-A3 review changes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationConditionImpact(page);
+
+  await page.getByTestId("manual-condition-impact-edit").click();
+  await expect(page.getByTestId("manual-condition-impact-editor-title")).toBeFocused();
+  await page.getByTestId("manual-condition-impact-save").click();
+  await expect(page.getByTestId("manual-condition-impact-detail")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey)).toBe(created.impactStore);
+
+  const summaryV2 = "زمان شروع نسبت به پیشنهاد ثبت‌شده کوتاه‌تر اعلام شده، اما شرط توافق کتبی به آن افزوده شده است.";
+  const reasonV2 = "از نظر من اثر زمان‌بندی مثبت و اثر شرط تجاری نامشخص است؛ نتیجه ترکیبی است.";
+  await page.getByTestId("manual-condition-impact-edit").click();
+  await page.getByTestId("manual-condition-impact-change-summary").fill(summaryV2);
+  await page.getByTestId("manual-condition-impact-domain").selectOption("multiple");
+  await page.getByTestId("manual-condition-impact-direction").selectOption("mixed");
+  await page.getByTestId("manual-condition-impact-reason").fill(reasonV2);
+  await page.getByTestId("manual-condition-impact-save").click();
+  await expect(page.getByTestId("manual-condition-impact-summary-text")).toHaveText(summaryV2);
+  await expect(page.getByTestId("manual-condition-impact-reason-text")).toHaveText(reasonV2);
+  await openContainingDisclosure(page.getByTestId("manual-condition-impact-history"));
+  const v2Store = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey);
+  const v2 = JSON.parse(v2Store ?? "[]")[0];
+  expect(v2.version).toBe(2);
+  expect(v2.revisions).toHaveLength(2);
+  expect(v2.history.map((event: { type: string }) => event.type)).toEqual(["created", "updated"]);
+  expect(v2.revisions[0]).toEqual(created.impactRecord.revisions[0]);
+  expect(v2.revisions[1]).toMatchObject({ version: 2, changeSummary: summaryV2, impactDomain: "multiple", impactDirection: "mixed", reason: reasonV2 });
+
+  await page.getByTestId("manual-condition-impact-revision-select").selectOption(created.impactRecord.currentRevisionId);
+  await expect(page.getByTestId("manual-condition-impact-detail-hero")).toContainText("نسخهٔ قدیمی");
+  await expect(page.getByTestId("manual-condition-impact-edit")).toBeDisabled();
+  await expect(page.getByTestId("manual-condition-impact-summary-text")).toHaveText(created.impactValues.changeSummary);
+  await page.getByTestId("manual-condition-impact-revision-select").selectOption(v2.currentRevisionId);
+  await expect(page.getByTestId("manual-condition-impact-edit")).toBeEnabled();
+
+  await page.getByTestId("manual-condition-impact-detail-back").click();
+  await page.getByTestId("manual-response-review-add").click();
+  await page.getByTestId("manual-response-review-outcome-needs-clarification").check();
+  await page.getByTestId("manual-response-review-reason").fill("این sibling review نباید وضعیت اثر ثبت‌شده روی همان پاسخ را تغییر دهد.");
+  await page.getByTestId("manual-response-review-save").click();
+  await page.getByTestId("manual-response-review-edit").click();
+  await page.getByTestId("manual-response-review-outcome-potential-conflict").check();
+  await page.getByTestId("manual-response-review-reason").fill("ویرایش ارزیابی T8-A3 همچنان dependency رکورد اثر نیست.");
+  await page.getByTestId("manual-response-review-save").click();
+  await page.getByTestId("manual-response-review-detail-back").click();
+  await expect(page.getByTestId("manual-condition-impact-open")).toBeVisible();
+  await page.getByTestId("manual-condition-impact-open").click();
+  await expect(page.getByTestId("manual-condition-impact-detail-hero")).toContainText("ارزیابی فعلی");
+  await expect(page.getByTestId("manual-condition-impact-edit")).toBeEnabled();
+  await expect(page.getByTestId("manual-condition-impact-summary-text")).toHaveText(summaryV2);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey)).toBe(v2Store);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A4 validates manual inputs, rolls back failed writes, and isolates an unreadable impact store from the healthy response", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const response = await createExactManualNegotiationResponse(page);
+  await page.getByTestId("manual-condition-impact-add").click();
+  await page.getByTestId("manual-condition-impact-save").click();
+  await expect(page.getByTestId("manual-condition-impact-change-summary")).toBeFocused();
+  await expect(page.getByTestId("manual-condition-impact-change-summary")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("manual-condition-impact-change-summary")).toHaveAttribute("aria-describedby", "manual-condition-impact-form-error");
+  await expect(page.getByTestId("manual-condition-impact-form-error")).toContainText("خلاصهٔ تغییر شرایط را بنویس");
+  await page.getByTestId("manual-condition-impact-change-summary").fill("زمان شروع به سه روز کاری پس از توافق تغییر کرده است.");
+  await page.getByTestId("manual-condition-impact-save").click();
+  await expect(page.getByTestId("manual-condition-impact-domain")).toBeFocused();
+  await expect(page.getByTestId("manual-condition-impact-domain")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("manual-condition-impact-form-error")).toContainText("حوزهٔ اثر را انتخاب کن");
+  await page.getByTestId("manual-condition-impact-domain").selectOption("schedule");
+  await page.getByTestId("manual-condition-impact-save").click();
+  await expect(page.getByTestId("manual-condition-impact-direction")).toBeFocused();
+  await expect(page.getByTestId("manual-condition-impact-direction")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("manual-condition-impact-form-error")).toContainText("جهت اثر را انتخاب کن");
+  await page.getByTestId("manual-condition-impact-direction").selectOption("favorable-to-builder");
+  await page.getByTestId("manual-condition-impact-save").click();
+  await expect(page.getByTestId("manual-condition-impact-reason")).toBeFocused();
+  await expect(page.getByTestId("manual-condition-impact-reason")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("manual-condition-impact-reason")).toHaveAttribute("aria-describedby", "manual-condition-impact-form-error");
+  await expect(page.getByTestId("manual-condition-impact-form-error")).toContainText("دلیل ارزیابی خودت را بنویس");
+  await page.getByTestId("manual-condition-impact-reason").fill("اثر فقط برداشت دستی من از همین پاسخ است.");
+  await page.evaluate((key) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__manualConditionImpactNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      if (this === window.localStorage && storageKey === key) throw new DOMException("Manual condition impact write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, storageKey, value);
+    };
+  }, manualNegotiationConditionImpactStorageKey);
+  await page.getByTestId("manual-condition-impact-save").click();
+  await expect(page.getByTestId("manual-condition-impact-editor")).toBeVisible();
+  await expect(page.getByTestId("manual-condition-impact-form-error")).toContainText("اثر تغییر شرایط ثبت نشد");
+  await expect(page.getByTestId("manual-condition-impact-reason")).toHaveAttribute("aria-invalid", "false");
+  await expect(page.getByTestId("manual-condition-impact-reason")).not.toHaveAttribute("aria-describedby", "manual-condition-impact-form-error");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(response.responseStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(response.draftStore);
+
+  await page.evaluate(() => { Storage.prototype.setItem = (window as Window & { __manualConditionImpactNativeSetItem: typeof Storage.prototype.setItem }).__manualConditionImpactNativeSetItem; });
+  await page.getByTestId("manual-condition-impact-save").click();
+  await expect(page.getByTestId("manual-condition-impact-detail")).toBeVisible();
+  const validImpactStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey);
+  await page.addInitScript((key) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Object.defineProperty(window, "__manualConditionImpactNativeGetItem", { value: nativeGetItem, configurable: true });
+    Storage.prototype.getItem = function getItem(storageKey: string) {
+      if (this === window.localStorage && storageKey === key) throw new DOMException("Manual condition impact read failed", "SecurityError");
+      return nativeGetItem.call(this, storageKey);
+    };
+  }, manualNegotiationConditionImpactStorageKey);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
+  await page.getByTestId("negotiation-draft-card").click();
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await expect(page.getByTestId("manual-condition-impact-storage-error")).toBeVisible();
+  await expect(page.getByTestId("manual-condition-impact-add")).toHaveCount(0);
+  await expect(page.getByTestId("manual-condition-impact-open")).toHaveCount(0);
+  await expect(page.getByTestId("manual-negotiation-response-edit")).toBeEnabled();
+  await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(response.responseText);
+  expect(await page.evaluate((key) => (window as Window & { __manualConditionImpactNativeGetItem: typeof Storage.prototype.getItem }).__manualConditionImpactNativeGetItem.call(window.localStorage, key), manualNegotiationConditionImpactStorageKey)).toBe(validImpactStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(response.responseStore);
+  expect(response.externalRequests).toEqual([]);
+  page.off("request", response.requestListener);
+});
+
+test("T8-A4 fail-closes a tampered impact fingerprint without hiding or rewriting the healthy response", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationConditionImpact(page);
+  const tamperedImpactStore = await page.evaluate((key) => {
+    const records = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    records[0].revisions[0].fingerprint = "fnv1a-deadbeef";
+    window.localStorage.setItem(key, JSON.stringify(records));
+    return window.localStorage.getItem(key);
+  }, manualNegotiationConditionImpactStorageKey);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
+  await page.getByTestId("negotiation-draft-card").click();
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await expect(page.getByTestId("manual-condition-impact-storage-error")).toBeVisible();
+  await expect(page.getByTestId("manual-condition-impact-add")).toHaveCount(0);
+  await expect(page.getByTestId("manual-condition-impact-open")).toHaveCount(0);
+  await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(created.responseText);
+  await expect(page.getByTestId("manual-negotiation-response-edit")).toBeEnabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey)).toBe(tamperedImpactStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
+  expect(await commercialSourceStoreBytes(page)).toEqual({
+    requests: created.sourceStoresBeforeImpact.requests,
+    approvals: created.sourceStoresBeforeImpact.approvals,
+    dispatch: created.sourceStoresBeforeImpact.dispatch,
+    contacts: created.sourceStoresBeforeImpact.contacts,
+    proposals: created.sourceStoresBeforeImpact.proposals,
+    productComparisons: created.sourceStoresBeforeImpact.productComparisons,
+    productDecisions: created.sourceStoresBeforeImpact.productDecisions,
+    serviceComparisons: created.sourceStoresBeforeImpact.serviceComparisons,
+    serviceDecisions: created.sourceStoresBeforeImpact.serviceDecisions,
+  });
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A4 keeps an old impact historical after a response correction and creates a separate impact for the new exact revision", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationConditionImpact(page);
+  const oldImpact = structuredClone(created.impactRecord);
+  const oldResponseRevisionId = created.responseRecord.currentRevisionId;
+  await page.getByTestId("manual-condition-impact-detail-back").click();
+  await page.getByTestId("manual-negotiation-response-edit").click();
+  const correctedResponse = "اصلاح رونویسی: شروع سه روز کاری پس از تأیید کتبی و تجهیز دو روزه اعلام شد.";
+  await page.getByTestId("manual-negotiation-response-text").fill(correctedResponse);
+  await page.getByTestId("manual-negotiation-response-save").click();
+  const responseV2 = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey) ?? "[]")[0];
+  expect(responseV2.version).toBe(2);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey)).toBe(created.impactStore);
+
+  await openContainingDisclosure(page.getByTestId("manual-negotiation-response-revision-select"));
+  await page.getByTestId("manual-negotiation-response-revision-select").selectOption(oldResponseRevisionId);
+  await expect(page.getByTestId("manual-condition-impact-open")).toBeVisible();
+  await page.getByTestId("manual-condition-impact-open").click();
+  await expect(page.getByTestId("manual-condition-impact-detail-hero")).toContainText("نیازمند بررسی دوباره");
+  await expect(page.getByTestId("manual-condition-impact-edit")).toBeDisabled();
+  await page.getByTestId("manual-condition-impact-detail-back").click();
+  await expect(page.getByTestId("manual-condition-impact-open")).toBeFocused();
+
+  await openContainingDisclosure(page.getByTestId("manual-negotiation-response-revision-select"));
+  await page.getByTestId("manual-negotiation-response-revision-select").selectOption(responseV2.currentRevisionId);
+  await expect(page.getByTestId("manual-condition-impact-add")).toBeVisible();
+  await page.getByTestId("manual-condition-impact-add").click();
+  await page.getByTestId("manual-condition-impact-change-summary").fill("پاسخ اصلاح‌شده علاوه بر شروع، مدت تجهیز را نیز روشن کرده است.");
+  await page.getByTestId("manual-condition-impact-domain").selectOption("multiple");
+  await page.getByTestId("manual-condition-impact-direction").selectOption("mixed");
+  await page.getByTestId("manual-condition-impact-reason").fill("از نظر من بخشی از ابهام زمان کم شده ولی شرط تأیید کتبی هنوز اثر تجاری دارد.");
+  await page.getByTestId("manual-condition-impact-save").click();
+  const impacts = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey) ?? "[]");
+  expect(impacts).toHaveLength(2);
+  expect(impacts[0]).toEqual(oldImpact);
+  expect(impacts[0].target.manualNegotiationResponseRevisionId).toBe(oldResponseRevisionId);
+  expect(impacts[1].target.manualNegotiationResponseRevisionId).toBe(responseV2.currentRevisionId);
+  expect(new Set(impacts.map((record: { target: { manualNegotiationResponseRevisionId: string } }) => record.target.manualNegotiationResponseRevisionId)).size).toBe(2);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
+  expect(await commercialSourceStoreBytes(page)).toEqual({
+    requests: created.sourceStoresBeforeImpact.requests,
+    approvals: created.sourceStoresBeforeImpact.approvals,
+    dispatch: created.sourceStoresBeforeImpact.dispatch,
+    contacts: created.sourceStoresBeforeImpact.contacts,
+    proposals: created.sourceStoresBeforeImpact.proposals,
+    productComparisons: created.sourceStoresBeforeImpact.productComparisons,
+    productDecisions: created.sourceStoresBeforeImpact.productDecisions,
+    serviceComparisons: created.sourceStoresBeforeImpact.serviceComparisons,
+    serviceDecisions: created.sourceStoresBeforeImpact.serviceDecisions,
+  });
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A4 makes the impact historical after an upstream comparison revision without rewriting impact or response bytes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationConditionImpact(page);
+  await page.getByTestId("manual-condition-impact-detail-back").click();
+  await page.getByTestId("manual-negotiation-response-detail-back").click();
+  await page.getByTestId("negotiation-draft-detail-back").click();
+  await page.getByTestId("service-comparison-edit").click();
+  await serviceComparisonAssessmentEditor(page, "timing", created.firstSupplier).getByTestId("service-comparison-declared-value").fill("شروع قطعی ظرف پنج روز و اجرای هفت روزه");
+  await page.getByTestId("service-comparison-save").click();
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("جاری");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey)).toBe(created.impactStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+
+  await page.getByTestId("service-comparison-detail-back").click();
+  await page.getByTestId("service-comparisons-back").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
+  await expect(page.getByTestId("negotiation-draft-card")).toContainText("نیازمند بررسی دوباره");
+  await page.getByTestId("negotiation-draft-card").click();
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await page.getByTestId("manual-condition-impact-open").click();
+  await expect(page.getByTestId("manual-condition-impact-detail-hero")).toContainText("نیازمند بررسی دوباره");
+  await expect(page.getByTestId("manual-condition-impact-edit")).toBeDisabled();
+  await expect(page.getByTestId("manual-condition-impact-summary-text")).toHaveText(created.impactValues.changeSummary);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey)).toBe(created.impactStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+async function allLocalStorageBytes(page: Page) {
+  return page.evaluate(() => Object.fromEntries(
+    Array.from({ length: window.localStorage.length }, (_item, index) => window.localStorage.key(index))
+      .filter((key): key is string => key !== null)
+      .sort()
+      .map((key) => [key, window.localStorage.getItem(key)]),
+  ));
+}
+
+async function createExactProductProposalRevisionPair(page: Page, supplierName = "فولاد نسخه‌های پیشنهاد") {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createTwoItemProductProposalPrerequisites(page, supplierName);
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-add").click();
+  await page.getByTestId("proposal-supplier-select").selectOption({ label: `${supplierName} · محصول` });
+  await openProposalAdvancedMode(page);
+  await page.getByTestId("proposal-declared-at").fill("۱۴۰۵/۰۶/۰۶");
+  await page.getByTestId("proposal-transcript").fill("نسخهٔ نخست رونویسی: قیمت سیمان اعلام شد و بلوک فعلاً ناموجود است.");
+  await page.getByTestId("proposal-line-status-0").selectOption("quoted");
+  await page.getByTestId("proposal-line-quantity-0").fill("۵");
+  await page.getByTestId("proposal-line-unit-0").fill("تن");
+  await page.getByTestId("proposal-line-unit-price-0").fill("9007199254740993");
+  await page.getByTestId("proposal-line-total-price-0").fill(".0000001");
+  await page.getByTestId("proposal-line-status-1").selectOption("unavailable");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail")).toBeVisible();
+
+  const versionOneStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  const versionOneRecord = JSON.parse(versionOneStore ?? "[]").find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === supplierName);
+  if (!versionOneRecord) throw new Error("T8-A5a version-one proposal fixture was not stored");
+
+  await page.getByTestId("proposal-edit").click();
+  await openProposalAdvancedMode(page);
+  await page.getByTestId("proposal-declared-at").fill("۱۴۰۵/۰۶/۰۷");
+  await page.getByTestId("proposal-transcript").fill("نسخهٔ دوم رونویسی: قیمت سیمان اصلاح شد و بلوک جایگزین پیشنهاد شد.");
+  await page.getByTestId("proposal-notes").fill("این فقط اصلاح رونویسی محلی سازنده است.");
+  await page.getByTestId("proposal-line-unit-price-0").fill("9007199254740994");
+  await page.getByTestId("proposal-line-total-price-0").fill("");
+  await page.getByTestId("proposal-line-tax-0").fill("نامشخص");
+  await page.getByTestId("proposal-line-validity-0").fill("تا پایان فردا");
+  await page.getByTestId("proposal-line-status-1").selectOption("alternative");
+  await page.getByTestId("proposal-line-leadTime-1").fill("سه روز کاری");
+  await page.getByTestId("proposal-line-notes-1").fill("گزینهٔ جایگزین سبک‌تر");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
+
+  const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  const proposal = JSON.parse(proposalStore ?? "[]").find((item: { supplierSnapshot: { displayName: string } }) => item.supplierSnapshot.displayName === supplierName);
+  if (!proposal || proposal.revisions.length !== 2) throw new Error("T8-A5a exact two-revision proposal fixture is unavailable");
+  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!projectId) throw new Error("T8-A5a active project fixture is unavailable");
+  return {
+    supplierName,
+    projectId,
+    versionOneStore,
+    versionOneRecord,
+    proposalStore,
+    proposal,
+    baseline: proposal.revisions[0],
+    candidate: proposal.revisions[1],
+    sourceBytes: await allLocalStorageBytes(page),
+  };
+}
+
+async function addThirdProductProposalRevision(page: Page, supplierName: string) {
+  await page.getByTestId("proposal-edit").click();
+  await openProposalAdvancedMode(page);
+  await page.getByTestId("proposal-transcript").fill("نسخهٔ سوم رونویسی برای بررسی pair تاریخی.");
+  await page.getByTestId("proposal-line-validity-0").fill("تا پایان هفته");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
+  const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  const proposal = JSON.parse(proposalStore ?? "[]").find((item: { supplierSnapshot: { displayName: string } }) => item.supplierSnapshot.displayName === supplierName);
+  if (!proposal || proposal.revisions.length !== 3) throw new Error("T8-A5a exact three-revision proposal fixture is unavailable");
+  return { proposalStore, proposal, sourceBytes: await allLocalStorageBytes(page) };
+}
+
+function proposalRevisionDiffLine(page: Page, lineId: string) {
+  return page.locator(`[data-testid="proposal-revision-diff-line"][data-line-id="${lineId}"]`);
+}
+
+function proposalRevisionDiffField(container: Locator, field: string) {
+  return container.locator(`[data-testid="proposal-revision-diff-field"][data-field="${field}"]`);
+}
+
+test("T8-A5a defaults to the exact previous and current product proposal revisions with traceable source identity", async ({ page }) => {
+  const created = await createExactProductProposalRevisionPair(page);
+  const open = page.getByTestId("proposal-revision-diff-open");
+  await expect(open).toBeVisible();
+  await expect(open).toHaveAccessibleName(new RegExp(created.supplierName));
+  await expect(open).toHaveAccessibleName(/نسخهٔ ۱ و ۲/);
+  await open.click();
+
+  await expect(page.getByTestId("proposal-revision-diff-view")).toBeVisible();
+  await expect(page.getByTestId("proposal-revision-diff-title")).toBeFocused();
+  await expect(page.getByTestId("proposal-revision-diff-baseline-select")).toHaveAccessibleName("نسخه قبلی");
+  await expect(page.getByTestId("proposal-revision-diff-candidate-select")).toHaveAccessibleName("نسخه جدیدتر");
+  await expect(page.getByTestId("proposal-revision-diff-baseline-select")).toHaveValue(created.baseline.id);
+  await expect(page.getByTestId("proposal-revision-diff-candidate-select")).toHaveValue(created.candidate.id);
+  await openProposalRevisionDiffTechnical(page);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.supplierName);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.baseline.id);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.baseline.fingerprint);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.candidate.id);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.candidate.fingerprint);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText("ثبت دستی سازنده");
+});
+
+test("T8-A5a shows exact product field and line differences with explicit unknowns and no arithmetic", async ({ page }) => {
+  const created = await createExactProductProposalRevisionPair(page, "فولاد تفاوت دقیق");
+  await page.getByTestId("proposal-revision-diff-open").click();
+  const view = page.getByTestId("proposal-revision-diff-view");
+  await expect(page.getByTestId("proposal-revision-diff-line")).toHaveCount(2);
+  await expect(page.getByTestId("proposal-revision-diff-field")).toHaveCount(29);
+  await expect(page.getByTestId("proposal-revision-diff-summary")).toContainText("۱۰ مورد عوض شده");
+  await expect(page.getByTestId("proposal-revision-diff-summary")).toContainText("۱۹ مورد ثابت");
+  await openAllProposalRevisionDiffUnchanged(page);
+
+  const rootNotes = proposalRevisionDiffField(view, "notes");
+  await expect(rootNotes).toHaveAttribute("data-changed", "true");
+  await expect(rootNotes.getByTestId("proposal-revision-diff-before")).toHaveText("نامشخص · ثبت نشده");
+  await expect(rootNotes.getByTestId("proposal-revision-diff-before")).toHaveAttribute("data-value-kind", "null");
+  await expect(rootNotes.getByTestId("proposal-revision-diff-after")).toHaveText("این فقط اصلاح رونویسی محلی سازنده است.");
+
+  const firstLine = proposalRevisionDiffLine(page, created.baseline.lines[0].id);
+  await expect(firstLine).toContainText(created.baseline.lines[0].requestLabel);
+  const unitPrice = proposalRevisionDiffField(firstLine, "unitPrice");
+  await expect(unitPrice).toHaveAttribute("data-changed", "true");
+  await expect(unitPrice.getByTestId("proposal-revision-diff-before")).toHaveText("9007199254740993");
+  await expect(unitPrice.getByTestId("proposal-revision-diff-after")).toHaveText("9007199254740994");
+  const totalPrice = proposalRevisionDiffField(firstLine, "totalPrice");
+  await expect(totalPrice.getByTestId("proposal-revision-diff-before")).toHaveText("0.0000001");
+  await expect(totalPrice.getByTestId("proposal-revision-diff-after")).toHaveText("نامشخص · ثبت نشده");
+  const tax = proposalRevisionDiffField(firstLine, "tax");
+  await expect(tax).toHaveAttribute("data-changed", "true");
+  await expect(tax.getByTestId("proposal-revision-diff-before")).toHaveText("نامشخص · ثبت نشده");
+  await expect(tax.getByTestId("proposal-revision-diff-before")).toHaveAttribute("data-value-kind", "null");
+  await expect(tax.getByTestId("proposal-revision-diff-after")).toHaveText("نامشخص");
+  await expect(tax.getByTestId("proposal-revision-diff-after")).toHaveAttribute("data-value-kind", "literal");
+  const validity = proposalRevisionDiffField(firstLine, "validity");
+  await expect(validity.getByTestId("proposal-revision-diff-before")).toHaveText("نامشخص · ثبت نشده");
+  await expect(validity.getByTestId("proposal-revision-diff-after")).toHaveText("تا پایان فردا");
+  const firstCurrency = proposalRevisionDiffField(firstLine, "currency");
+  await expect(firstCurrency).toHaveAttribute("data-changed", "false");
+  await expect(firstCurrency.getByTestId("proposal-revision-diff-before")).toHaveText("تومان");
+  await expect(firstCurrency.getByTestId("proposal-revision-diff-after")).toHaveText("تومان");
+
+  const secondLine = proposalRevisionDiffLine(page, created.baseline.lines[1].id);
+  const status = proposalRevisionDiffField(secondLine, "status");
+  await expect(status.getByTestId("proposal-revision-diff-before")).toHaveText("ناموجود اعلام شده");
+  await expect(status.getByTestId("proposal-revision-diff-after")).toHaveText("جایگزین پیشنهاد شده");
+  const unchangedQuantity = proposalRevisionDiffField(secondLine, "quantity");
+  await expect(unchangedQuantity).toHaveAttribute("data-changed", "false");
+  await expect(unchangedQuantity.getByTestId("proposal-revision-diff-before")).toHaveText("نامشخص · ثبت نشده");
+  await expect(unchangedQuantity.getByTestId("proposal-revision-diff-after")).toHaveText("نامشخص · ثبت نشده");
+  const secondCurrency = proposalRevisionDiffField(secondLine, "currency");
+  await expect(secondCurrency).toHaveAttribute("data-changed", "false");
+  await expect(secondCurrency.getByTestId("proposal-revision-diff-before")).toHaveText("تومان");
+  await expect(secondCurrency.getByTestId("proposal-revision-diff-after")).toHaveText("تومان");
+
+  await expect(page.getByTestId("proposal-revision-diff-boundary")).toContainText("ذخیره، ارسال یا تغییر نمی‌دهد");
+  await openProposalRevisionDiffTechnical(page);
+  const technical = page.getByTestId("proposal-revision-diff-technical");
+  await expect(technical).toContainText("derivedReadOnly=true");
+  await expect(technical).toContainText("persisted=false");
+  await expect(technical).toContainText("arithmeticUsed=false");
+  await expect(technical).toContainText("aiUsed=false");
+  await expect(technical).toContainText("networkUsed=false");
+  await expect(technical).toContainText("proposalMutated=false");
+  await expect(technical).toContainText("externalEffect=none");
+  await expect(view).toContainText("رونویسی");
+  await expect(view).not.toContainText("تفاوت عددی");
+  await expect(view).not.toContainText("درصد تغییر");
+});
+
+test("T8-A5a constrains revision pairs to baseline before candidate and fails closed without selector fallback", async ({ page }) => {
+  const created = await createExactProductProposalRevisionPair(page, "فولاد انتخاب نسخه");
+  const versionThree = await addThirdProductProposalRevision(page, created.supplierName);
+  const [revisionOne, revisionTwo, revisionThree] = versionThree.proposal.revisions;
+  const sourceBytes = versionThree.sourceBytes;
+  await page.getByTestId("proposal-revision-diff-open").click();
+  const baselineSelect = page.getByTestId("proposal-revision-diff-baseline-select");
+  const candidateSelect = page.getByTestId("proposal-revision-diff-candidate-select");
+  await expect(baselineSelect).toHaveValue(revisionTwo.id);
+  await expect(candidateSelect).toHaveValue(revisionThree.id);
+  await expect(page.getByTestId("proposal-revision-diff-pair-status")).toHaveText("نسخهٔ جاری");
+  await expect(page.getByTestId("proposal-revision-diff-historical-note")).toHaveCount(0);
+
+  await baselineSelect.selectOption(revisionOne.id);
+  await candidateSelect.selectOption(revisionTwo.id);
+  await expect(baselineSelect).toHaveValue(revisionOne.id);
+  await expect(candidateSelect).toHaveValue(revisionTwo.id);
+  await openProposalRevisionDiffTechnical(page);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(revisionOne.fingerprint);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(revisionTwo.fingerprint);
+  await expect(page.getByTestId("proposal-revision-diff-pair-status")).toHaveText("نسخهٔ قدیمی");
+  await expect(page.getByTestId("proposal-revision-diff-historical-note")).toContainText("نسخه قدیمی و فقط برای مشاهده");
+  const enabledInvalidBaseline = await baselineSelect.locator(`option[value="${revisionTwo.id}"]:not(:disabled)`).count();
+  const enabledInvalidCandidate = await candidateSelect.locator(`option[value="${revisionOne.id}"]:not(:disabled)`).count();
+  expect(enabledInvalidBaseline).toBe(0);
+  expect(enabledInvalidCandidate).toBe(0);
+
+  await candidateSelect.evaluate((element) => {
+    const select = element as HTMLSelectElement;
+    const invalidOption = document.createElement("option");
+    invalidOption.value = "foreign-revision-without-source";
+    invalidOption.textContent = "revision نامعتبر";
+    select.appendChild(invalidOption);
+    select.value = invalidOption.value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(page.getByTestId("proposal-revision-diff-unavailable")).toBeVisible();
+  await expect(page.getByTestId("proposal-revision-diff-unavailable")).toContainText("قابل مقایسه نیستند");
+  await expect(page.getByTestId("proposal-revision-diff-pair-status")).toHaveText("انتخاب نامعتبر");
+  await expect(page.getByTestId("proposal-revision-diff-historical-note")).toHaveCount(0);
+  expect(await allLocalStorageBytes(page)).toEqual(sourceBytes);
+});
+
+test("T8-A5a remains storage-free, preserves proposal version and history bytes, and makes zero external requests", async ({ page }) => {
+  const created = await createExactProductProposalRevisionPair(page, "فولاد بدون اثر");
+  const storageBefore = created.sourceBytes;
+  const proposalBefore = structuredClone(created.proposal);
+  const appOrigin = new URL(page.url()).origin;
+  const externalRequests: string[] = [];
+  const requestListener = (request: Request) => {
+    const url = new URL(request.url());
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
+  };
+  page.on("request", requestListener);
+
+  await page.getByTestId("proposal-revision-diff-open").click();
+  await expect(page.getByTestId("proposal-revision-diff-view")).toBeVisible();
+  await page.getByTestId("proposal-revision-diff-back").click();
+  await expect(page.getByTestId("proposal-revision-diff-open")).toBeFocused();
+
+  expect(await allLocalStorageBytes(page)).toEqual(storageBefore);
+  const proposalAfter = JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1")) ?? "[]")
+    .find((proposal: { id: string }) => proposal.id === proposalBefore.id);
+  expect(proposalAfter).toEqual(proposalBefore);
+  expect(proposalAfter.version).toBe(2);
+  expect(proposalAfter.history).toHaveLength(2);
+  expect(proposalAfter.revisions).toHaveLength(2);
+  expect(externalRequests).toEqual([]);
+  page.off("request", requestListener);
+});
+
+test("T8-A5a keeps a product revision comparison inside its active project", async ({ page }) => {
+  const created = await createExactProductProposalRevisionPair(page, "فولاد جداسازی پروژه");
+  await expect(page.getByTestId("proposal-revision-diff-open")).toBeVisible();
+  await page.evaluate(() => {
+    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
+    projects.push({ id: "t8a5a-isolation-project-b", name: "پروژه مستقل مقایسه نسخه", location: "منطقهٔ ۶", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
+    window.localStorage.setItem("chida-prototype-active-project", "t8a5a-isolation-project-b");
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-revision-diff-open")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(created.proposalStore);
+
+  await page.evaluate((projectId) => window.localStorage.setItem("chida-prototype-active-project", projectId), created.projectId);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-card").filter({ hasText: created.supplierName }).click();
+  await expect(page.getByTestId("proposal-revision-diff-open")).toBeVisible();
+  await page.getByTestId("proposal-revision-diff-open").click();
+  await openProposalRevisionDiffTechnical(page);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.proposal.id);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(created.proposalStore);
+});
+
+test("T8-A5a fails closed on tampered or unreadable proposal revisions without rewriting source bytes", async ({ page }) => {
+  const created = await createExactProductProposalRevisionPair(page, "فولاد اثر انگشت مخدوش");
+  const tamperedStore = await page.evaluate((proposalId) => {
+    const key = "chida-prototype-builder-recorded-proposals:v1";
+    const proposals = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    const proposal = proposals.find((item: { id: string }) => item.id === proposalId);
+    proposal.revisions[1].fingerprint = "fnv1a-deadbeef";
+    window.localStorage.setItem(key, JSON.stringify(proposals));
+    return window.localStorage.getItem(key);
+  }, created.proposal.id);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-revision-diff-open")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-revision-diff-view")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(tamperedStore);
+
+  await page.evaluate((validStore) => window.localStorage.setItem("chida-prototype-builder-recorded-proposals:v1", validStore!), created.proposalStore);
+  await page.addInitScript(() => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Object.defineProperty(window, "__t8a5aProposalNativeGetItem", { value: nativeGetItem, configurable: true });
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === "chida-prototype-builder-recorded-proposals:v1") throw new DOMException("Proposal revision diff read failed", "SecurityError");
+      return nativeGetItem.call(this, key);
+    };
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-revision-diff-open")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-revision-diff-unavailable")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as Window & { __t8a5aProposalNativeGetItem: typeof Storage.prototype.getItem }).__t8a5aProposalNativeGetItem.call(window.localStorage, "chida-prototype-builder-recorded-proposals:v1"))).toBe(created.proposalStore);
+});
+
+test("T8-A5a keeps a historical product diff read-only with focus, accessible labels, and zero mobile overflow", async ({ page }) => {
+  const created = await createExactProductProposalRevisionPair(page, "فولاد مقایسه تاریخی");
+  await page.getByTestId("proposal-detail-back").click();
+  await page.getByTestId("proposals-back").click();
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("purchase-request-card").click();
+  await page.getByTestId("purchase-request-open-dispatch").click();
+  await page.getByTestId("supplier-contact-card").filter({ hasText: created.supplierName }).getByTestId("supplier-contact-status").click();
+  await returnFromDispatchToHome(page);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-card").filter({ hasText: created.supplierName })).toContainText("نیازمند بررسی");
+  await page.getByTestId("proposal-card").filter({ hasText: created.supplierName }).click();
+  await expect(page.getByTestId("proposal-effective-status")).toHaveText("نیازمند بررسی");
+  const storageBeforeDiff = await allLocalStorageBytes(page);
+  const appOrigin = new URL(page.url()).origin;
+  const externalRequests: string[] = [];
+  const requestListener = (request: Request) => {
+    const url = new URL(request.url());
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
+  };
+  page.on("request", requestListener);
+
+  const open = page.getByTestId("proposal-revision-diff-open");
+  await expect(open).toHaveAccessibleName(new RegExp(created.supplierName));
+  await expect(open).toHaveAccessibleName(/نسخهٔ ۱ و ۲/);
+  await open.click();
+  const view = page.getByTestId("proposal-revision-diff-view");
+  await expect(page.getByTestId("proposal-revision-diff-title")).toBeFocused();
+  await expect(page.getByTestId("proposal-revision-diff-historical-note")).toBeVisible();
+  await expect(page.getByTestId("proposal-revision-diff-historical-note")).toContainText("نسخه قدیمی و فقط برای مشاهده");
+  await expect(page.getByTestId("proposal-revision-diff-baseline-select")).toHaveAccessibleName("نسخه قبلی");
+  await expect(page.getByTestId("proposal-revision-diff-candidate-select")).toHaveAccessibleName("نسخه جدیدتر");
+  expect(await view.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  const directionalValues = page.getByTestId("proposal-revision-diff-before").or(page.getByTestId("proposal-revision-diff-after"));
+  const directionalValueCount = await directionalValues.count();
+  expect(directionalValueCount).toBeGreaterThan(0);
+  for (let index = 0; index < directionalValueCount; index += 1) await expect(directionalValues.nth(index)).toHaveAttribute("dir", "auto");
+  await page.getByTestId("proposal-revision-diff-back").click();
+  await expect(open).toBeFocused();
+  expect(await allLocalStorageBytes(page)).toEqual(storageBeforeDiff);
+  expect(externalRequests).toEqual([]);
+  page.off("request", requestListener);
+});
+
+async function createExactServiceProposalRevisionPair(page: Page, supplierName = "مجری نسخه‌های پیشنهاد خدمت") {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createServiceProposalPrerequisites(page, supplierName);
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-add").click();
+  await page.getByTestId("proposal-supplier-select").selectOption({ label: `${supplierName} · خدمت` });
+  await openProposalAdvancedMode(page);
+  await page.getByTestId("proposal-declared-at").fill("۱۴۰۵/۰۶/۰۶");
+  await page.getByTestId("proposal-transcript").fill("نسخهٔ نخست رونویسی خدمت: مبلغ و زمان اولیه ثبت شد.");
+  await page.getByTestId("proposal-line-status-0").selectOption("quoted");
+  await page.getByTestId("proposal-line-quantity-0").fill("۸۵۰");
+  await page.getByTestId("proposal-line-unit-0").fill("مترمربع");
+  await page.getByTestId("proposal-line-unit-price-0").fill("9007199254740993");
+  await page.getByTestId("proposal-line-total-price-0").fill(".0000001");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail")).toBeVisible();
+
+  const versionOneStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  const versionOneRecord = JSON.parse(versionOneStore ?? "[]").find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === supplierName);
+  if (!versionOneRecord) throw new Error("T8-A5b version-one service proposal fixture was not stored");
+
+  await page.getByTestId("proposal-edit").click();
+  await openProposalAdvancedMode(page);
+  await page.getByTestId("proposal-declared-at").fill("۱۴۰۵/۰۶/۰۷");
+  await page.getByTestId("proposal-transcript").fill("نسخهٔ دوم رونویسی خدمت: مبلغ، زمان و پرداخت اصلاح شد.");
+  await page.getByTestId("proposal-notes").fill("این فقط اصلاح رونویسی محلی خدمت توسط سازنده است.");
+  await page.getByTestId("proposal-line-unit-price-0").fill("9007199254740994");
+  await page.getByTestId("proposal-line-total-price-0").fill("");
+  await page.getByTestId("proposal-line-tax-0").fill("نامشخص · ثبت نشده");
+  await page.getByTestId("proposal-line-leadTime-0").fill("سه روز کاری");
+  await page.getByTestId("proposal-line-validity-0").fill("تا پایان فردا");
+  await page.getByTestId("proposal-line-paymentTerms-0").fill("بیست درصد پیش‌پرداخت و مانده مرحله‌ای");
+  await page.getByTestId("proposal-line-notes-0").fill("زمان تجهیز کارگاه جداگانه اعلام شده است");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
+
+  const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  const proposal = JSON.parse(proposalStore ?? "[]").find((item: { supplierSnapshot: { displayName: string } }) => item.supplierSnapshot.displayName === supplierName);
+  if (!proposal || proposal.revisions.length !== 2 || proposal.target.requestKind !== "service") throw new Error("T8-A5b exact two-revision service proposal fixture is unavailable");
+  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!projectId) throw new Error("T8-A5b active project fixture is unavailable");
+  return {
+    supplierName,
+    projectId,
+    versionOneStore,
+    versionOneRecord,
+    proposalStore,
+    proposal,
+    baseline: proposal.revisions[0],
+    candidate: proposal.revisions[1],
+    sourceBytes: await allLocalStorageBytes(page),
+  };
+}
+
+async function addThirdServiceProposalRevision(page: Page, supplierName: string) {
+  await page.getByTestId("proposal-edit").click();
+  await openProposalAdvancedMode(page);
+  await page.getByTestId("proposal-transcript").fill("نسخهٔ سوم رونویسی خدمت برای بررسی جفت تاریخی.");
+  await page.getByTestId("proposal-line-validity-0").fill("تا پایان هفته");
+  await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
+  const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
+  const proposal = JSON.parse(proposalStore ?? "[]").find((item: { supplierSnapshot: { displayName: string } }) => item.supplierSnapshot.displayName === supplierName);
+  if (!proposal || proposal.revisions.length !== 3) throw new Error("T8-A5b exact three-revision service proposal fixture is unavailable");
+  return { proposalStore, proposal, sourceBytes: await allLocalStorageBytes(page) };
+}
+
+test("T8-A5b defaults to the exact previous and current service proposal revisions with service lineage", async ({ page }) => {
+  const created = await createExactServiceProposalRevisionPair(page);
+  const open = page.getByTestId("proposal-revision-diff-open");
+  await expect(open).toBeVisible();
+  await expect(open).toHaveAccessibleName(new RegExp(created.supplierName));
+  await expect(open).toHaveAccessibleName(/نسخهٔ ۱ و ۲/);
+  await open.click();
+
+  await expect(page.getByTestId("proposal-revision-diff-view")).toBeVisible();
+  await expect(page.getByTestId("proposal-revision-diff-title")).toBeFocused();
+  await expect(page.getByTestId("proposal-revision-diff-title")).toContainText("چه چیزی عوض شده؟");
+  await expect(page.getByTestId("proposal-revision-diff-title")).not.toContainText("T8-");
+  await expect(page.getByTestId("proposal-revision-diff-baseline-select")).toHaveAccessibleName("نسخه قبلی");
+  await expect(page.getByTestId("proposal-revision-diff-candidate-select")).toHaveAccessibleName("نسخه جدیدتر");
+  await expect(page.getByTestId("proposal-revision-diff-baseline-select")).toHaveValue(created.baseline.id);
+  await expect(page.getByTestId("proposal-revision-diff-candidate-select")).toHaveValue(created.candidate.id);
+  await openProposalRevisionDiffTechnical(page);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.proposal.id);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.proposal.target.requestId);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.supplierName);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.baseline.id);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.baseline.fingerprint);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.candidate.id);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.candidate.fingerprint);
+  const serviceLine = proposalRevisionDiffLine(page, created.baseline.lines[0].id);
+  await expect(serviceLine).toHaveAttribute("data-request-item-id", "null");
+  await expect(serviceLine).toHaveAttribute("data-service-spec-id", created.baseline.lines[0].serviceSpecId);
+});
+
+test("T8-A5b shows all exact service proposal fields with explicit unknowns and no product comparison arithmetic", async ({ page }) => {
+  const created = await createExactServiceProposalRevisionPair(page, "مجری تفاوت دقیق خدمت");
+  await page.getByTestId("proposal-revision-diff-open").click();
+  const view = page.getByTestId("proposal-revision-diff-view");
+  await expect(page.getByTestId("proposal-revision-diff-line")).toHaveCount(1);
+  await expect(page.getByTestId("proposal-revision-diff-field")).toHaveCount(16);
+  await expect(page.getByTestId("proposal-revision-diff-summary")).toContainText("۱۰ مورد عوض شده");
+  await expect(page.getByTestId("proposal-revision-diff-summary")).toContainText("۶ مورد ثابت");
+  await openAllProposalRevisionDiffUnchanged(page);
+  const keys = await page.getByTestId("proposal-revision-diff-field").evaluateAll((fields) => fields.map((field) => field.getAttribute("data-field")));
+  expect(keys).toEqual(expect.arrayContaining(["declaredAt", "transcript", "notes", "status", "quantity", "unit", "unitPrice", "totalPrice", "currency", "tax", "transport", "minimumOrder", "leadTime", "validity", "paymentTerms", "lineNotes"]));
+
+  const serviceLine = proposalRevisionDiffLine(page, created.baseline.lines[0].id);
+  const unitPrice = proposalRevisionDiffField(serviceLine, "unitPrice");
+  await expect(unitPrice.getByTestId("proposal-revision-diff-before")).toHaveText("9007199254740993");
+  await expect(unitPrice.getByTestId("proposal-revision-diff-after")).toHaveText("9007199254740994");
+  const totalPrice = proposalRevisionDiffField(serviceLine, "totalPrice");
+  await expect(totalPrice.getByTestId("proposal-revision-diff-before")).toHaveText("0.0000001");
+  await expect(totalPrice.getByTestId("proposal-revision-diff-after")).toHaveText("نامشخص · ثبت نشده");
+  await expect(totalPrice.getByTestId("proposal-revision-diff-after")).toHaveAttribute("data-value-kind", "null");
+  const tax = proposalRevisionDiffField(serviceLine, "tax");
+  await expect(tax.getByTestId("proposal-revision-diff-before")).toHaveText("نامشخص · ثبت نشده");
+  await expect(tax.getByTestId("proposal-revision-diff-before")).toHaveAttribute("data-value-kind", "null");
+  await expect(tax.getByTestId("proposal-revision-diff-after")).toHaveText("نامشخص · ثبت نشده");
+  await expect(tax.getByTestId("proposal-revision-diff-after")).toHaveAttribute("data-value-kind", "literal");
+  await expect(tax.getByTestId("proposal-revision-diff-before-origin")).toHaveText("ثبت‌نشده در این نسخه");
+  await expect(tax.getByTestId("proposal-revision-diff-after-origin")).toHaveText("متن ثبت‌شدهٔ سازنده");
+  await expect(tax.getByTestId("proposal-revision-diff-before-origin")).toBeVisible();
+  await expect(tax.getByTestId("proposal-revision-diff-after-origin")).toBeVisible();
+  await expect(proposalRevisionDiffField(serviceLine, "currency")).toHaveAttribute("data-changed", "false");
+  await expect(page.getByTestId("proposal-revision-diff-boundary")).toContainText("ذخیره، ارسال یا تغییر نمی‌دهد");
+  await openProposalRevisionDiffTechnical(page);
+  const technical = page.getByTestId("proposal-revision-diff-technical");
+  await expect(technical).toContainText("derivedReadOnly=true");
+  await expect(technical).toContainText("persisted=false");
+  await expect(technical).toContainText("arithmeticUsed=false");
+  await expect(technical).toContainText("aiUsed=false");
+  await expect(technical).toContainText("networkUsed=false");
+  await expect(technical).toContainText("proposalMutated=false");
+  await expect(technical).toContainText("comparisonMutated=false");
+  await expect(technical).toContainText("externalEffect=none");
+  await expect(view).toContainText("شرایطی که عوض شده");
+  await expect(view).not.toContainText("ماتریس معیارهای خدمت");
+  await expect(view).not.toContainText("تفاوت عددی");
+  await expect(view).not.toContainText("درصد تغییر");
+  await expect(view).not.toContainText("بهترین");
+});
+
+test("T8-A5b constrains service revision pairs and fails closed without selector fallback", async ({ page }) => {
+  const created = await createExactServiceProposalRevisionPair(page, "مجری انتخاب نسخه خدمت");
+  const versionThree = await addThirdServiceProposalRevision(page, created.supplierName);
+  const [revisionOne, revisionTwo, revisionThree] = versionThree.proposal.revisions;
+  const sourceBytes = versionThree.sourceBytes;
+  await page.getByTestId("proposal-revision-diff-open").click();
+  const baselineSelect = page.getByTestId("proposal-revision-diff-baseline-select");
+  const candidateSelect = page.getByTestId("proposal-revision-diff-candidate-select");
+  await expect(baselineSelect).toHaveValue(revisionTwo.id);
+  await expect(candidateSelect).toHaveValue(revisionThree.id);
+  await expect(page.getByTestId("proposal-revision-diff-pair-status")).toHaveText("نسخهٔ جاری");
+
+  await baselineSelect.selectOption(revisionOne.id);
+  await candidateSelect.selectOption(revisionTwo.id);
+  await expect(page.getByTestId("proposal-revision-diff-pair-status")).toHaveText("نسخهٔ قدیمی");
+  await openProposalRevisionDiffTechnical(page);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(revisionOne.fingerprint);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(revisionTwo.fingerprint);
+  expect(await baselineSelect.locator(`option[value="${revisionTwo.id}"]:not(:disabled)`).count()).toBe(0);
+  expect(await candidateSelect.locator(`option[value="${revisionOne.id}"]:not(:disabled)`).count()).toBe(0);
+
+  await candidateSelect.evaluate((element) => {
+    const select = element as HTMLSelectElement;
+    const invalidOption = document.createElement("option");
+    invalidOption.value = "foreign-service-revision-without-source";
+    invalidOption.textContent = "revision خدمت نامعتبر";
+    select.appendChild(invalidOption);
+    select.value = invalidOption.value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(page.getByTestId("proposal-revision-diff-unavailable")).toBeVisible();
+  await expect(page.getByTestId("proposal-revision-diff-pair-status")).toHaveText("انتخاب نامعتبر");
+  await expect(page.getByTestId("proposal-revision-diff-historical-note")).toHaveCount(0);
+  expect(await allLocalStorageBytes(page)).toEqual(sourceBytes);
+});
+
+test("T8-A5b remains storage-free, mutation-free, and makes zero external requests", async ({ page }) => {
+  const created = await createExactServiceProposalRevisionPair(page, "مجری خدمت بدون اثر");
+  const storageBefore = created.sourceBytes;
+  const proposalBefore = structuredClone(created.proposal);
+  const appOrigin = new URL(page.url()).origin;
+  const externalRequests: string[] = [];
+  const requestListener = (request: Request) => {
+    const url = new URL(request.url());
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
+  };
+  page.on("request", requestListener);
+
+  await page.getByTestId("proposal-revision-diff-open").click();
+  await expect(page.getByTestId("proposal-revision-diff-view")).toBeVisible();
+  await page.getByTestId("proposal-revision-diff-back").click();
+  await expect(page.getByTestId("proposal-revision-diff-open")).toBeFocused();
+  expect(await allLocalStorageBytes(page)).toEqual(storageBefore);
+  const proposalAfter = JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1")) ?? "[]")
+    .find((proposal: { id: string }) => proposal.id === proposalBefore.id);
+  expect(proposalAfter).toEqual(proposalBefore);
+  expect(proposalAfter.version).toBe(2);
+  expect(proposalAfter.history).toHaveLength(2);
+  expect(proposalAfter.revisions).toHaveLength(2);
+  expect(externalRequests).toEqual([]);
+  page.off("request", requestListener);
+});
+
+test("T8-A5b keeps a service revision comparison inside its active project", async ({ page }) => {
+  const created = await createExactServiceProposalRevisionPair(page, "مجری جداسازی پروژه خدمت");
+  await expect(page.getByTestId("proposal-revision-diff-open")).toBeVisible();
+  await page.evaluate(() => {
+    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
+    projects.push({ id: "t8a5b-isolation-project-b", name: "پروژه مستقل مقایسه نسخه خدمت", location: "منطقهٔ ۶", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
+    window.localStorage.setItem("chida-prototype-active-project", "t8a5b-isolation-project-b");
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-revision-diff-open")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(created.proposalStore);
+
+  await page.evaluate((projectId) => window.localStorage.setItem("chida-prototype-active-project", projectId), created.projectId);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("proposal-card").filter({ hasText: created.supplierName }).click();
+  await expect(page.getByTestId("proposal-revision-diff-open")).toBeVisible();
+  await page.getByTestId("proposal-revision-diff-open").click();
+  await openProposalRevisionDiffTechnical(page);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.proposal.id);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(created.proposalStore);
+});
+
+test("T8-A5b fails closed on tampered or unreadable service proposal revisions without rewriting source bytes", async ({ page }) => {
+  const created = await createExactServiceProposalRevisionPair(page, "مجری اثر انگشت مخدوش خدمت");
+  const tamperedStore = await page.evaluate((proposalId) => {
+    const key = "chida-prototype-builder-recorded-proposals:v1";
+    const proposals = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    const validProposal = proposals.find((item: { id: string }) => item.id === proposalId);
+    const tamperedProposal = structuredClone(validProposal);
+    tamperedProposal.id = `${validProposal.id}-tampered-sibling`;
+    tamperedProposal.revisions[1].fingerprint = "fnv1a-deadbeef";
+    window.localStorage.setItem(key, JSON.stringify([validProposal, tamperedProposal]));
+    return window.localStorage.getItem(key);
+  }, created.proposal.id);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-revision-diff-open")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-empty-state")).toHaveCount(0);
+  await expect(page.getByTestId("project-proposals-toolbar")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-comparisons-entry")).toHaveCount(0);
+  await expect(page.getByTestId("service-proposal-comparisons-entry")).toHaveCount(0);
+  await expect(page.getByTestId("negotiation-drafts-entry")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(tamperedStore);
+
+  await page.evaluate((validStore) => window.localStorage.setItem("chida-prototype-builder-recorded-proposals:v1", validStore!), created.proposalStore);
+  await page.addInitScript(() => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Object.defineProperty(window, "__t8a5bProposalNativeGetItem", { value: nativeGetItem, configurable: true });
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === "chida-prototype-builder-recorded-proposals:v1") throw new DOMException("Service proposal revision diff read failed", "SecurityError");
+      return nativeGetItem.call(this, key);
+    };
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
+  await expect(page.getByTestId("proposal-card")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-revision-diff-open")).toHaveCount(0);
+  await expect(page.getByTestId("proposal-empty-state")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as Window & { __t8a5bProposalNativeGetItem: typeof Storage.prototype.getItem }).__t8a5bProposalNativeGetItem.call(window.localStorage, "chida-prototype-builder-recorded-proposals:v1"))).toBe(created.proposalStore);
+});
+
+test("T8-A5b keeps a historical service diff read-only with focus, exact lineage, and zero mobile overflow", async ({ page }) => {
+  const created = await createExactServiceProposalRevisionPair(page, "مجری مقایسه تاریخی خدمت");
+  await page.getByTestId("proposal-detail-back").click();
+  await page.getByTestId("proposals-back").click();
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("purchase-request-card").click();
+  await page.getByTestId("purchase-request-open-dispatch").click();
+  await page.getByTestId("supplier-contact-card").filter({ hasText: created.supplierName }).getByTestId("supplier-contact-status").click();
+  await returnFromDispatchToHome(page);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await expect(page.getByTestId("proposal-card").filter({ hasText: created.supplierName })).toContainText("نیازمند بررسی");
+  await page.getByTestId("proposal-card").filter({ hasText: created.supplierName }).click();
+  await expect(page.getByTestId("proposal-effective-status")).toHaveText("نیازمند بررسی");
+  const storageBeforeDiff = await allLocalStorageBytes(page);
+  const appOrigin = new URL(page.url()).origin;
+  const externalRequests: string[] = [];
+  const requestListener = (request: Request) => {
+    const url = new URL(request.url());
+    if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
+  };
+  page.on("request", requestListener);
+
+  const open = page.getByTestId("proposal-revision-diff-open");
+  await expect(open).toHaveAccessibleName(new RegExp(created.supplierName));
+  await open.click();
+  const view = page.getByTestId("proposal-revision-diff-view");
+  await expect(page.getByTestId("proposal-revision-diff-title")).toBeFocused();
+  await expect(page.getByTestId("proposal-revision-diff-historical-note")).toContainText("نسخه قدیمی و فقط برای مشاهده");
+  await openProposalRevisionDiffTechnical(page);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.baseline.id);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.baseline.fingerprint);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.candidate.id);
+  await expect(page.getByTestId("proposal-revision-diff-source")).toContainText(created.candidate.fingerprint);
+  await expect(proposalRevisionDiffLine(page, created.baseline.lines[0].id)).toHaveAttribute("data-service-spec-id", created.baseline.lines[0].serviceSpecId);
+  await expect(page.getByTestId("proposal-revision-diff-baseline-select")).toHaveAccessibleName("نسخه قبلی");
+  await expect(page.getByTestId("proposal-revision-diff-candidate-select")).toHaveAccessibleName("نسخه جدیدتر");
+  expect(await view.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  const directionalValues = page.getByTestId("proposal-revision-diff-before").or(page.getByTestId("proposal-revision-diff-after"));
+  const directionalValueCount = await directionalValues.count();
+  expect(directionalValueCount).toBeGreaterThan(0);
+  for (let index = 0; index < directionalValueCount; index += 1) await expect(directionalValues.nth(index)).toHaveAttribute("dir", "auto");
+  await page.getByTestId("proposal-revision-diff-back").click();
+  await expect(open).toBeFocused();
+  expect(await allLocalStorageBytes(page)).toEqual(storageBeforeDiff);
+  expect(externalRequests).toEqual([]);
+  page.off("request", requestListener);
+});
+
+test("T8-UX1 keeps exact request quantity and declared-total comparison available in simple proposal mode", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { firstSupplier } = await createTwoCurrentProductProposalsForComparison(page, { firstSimpleDeclaredTotal: true });
+  const source = await page.evaluate((supplierName) => {
+    const proposals = JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]");
+    const requests = JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]");
+    const proposal = proposals.find((item: { supplierSnapshot: { displayName: string } }) => item.supplierSnapshot.displayName === supplierName);
+    const request = requests.find((item: { id: string }) => item.id === proposal.target.requestId);
+    const revision = proposal.revisions.find((item: { id: string }) => item.id === proposal.currentRevisionId);
+    return { proposal, request, revision };
+  }, firstSupplier);
+
+  expect(source.revision.lines[0]).toMatchObject({
+    status: "quoted",
+    quantity: source.request.items[0].quantity,
+    unit: source.request.items[0].unit,
+    totalPrice: "21500000",
+    unitPrice: null,
+  });
+
+  await openProposalSecondaryView(page, "proposal-comparisons-entry");
+  await page.getByTestId("comparison-add").click();
+  const firstEditor = comparisonSupplierEditor(page, firstSupplier);
+  await expect(firstEditor.getByTestId(/^comparison-basis-/)).toHaveValue("declared-total");
+  await page.getByTestId("comparison-save").click();
+  await expect(page.getByTestId("comparison-detail")).toBeVisible();
+
+  const comparison = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1") ?? "[]")[0]);
+  const comparisonRevision = comparison.revisions.find((item: { id: string }) => item.id === comparison.currentRevisionId);
+  const input = comparisonRevision.inputs.find((item: { proposalId: string }) => item.proposalId === source.proposal.id);
+  const result = comparisonRevision.results.find((item: { proposalId: string }) => item.proposalId === source.proposal.id);
+  expect(input.lineAdjustments[0]).toMatchObject({
+    basis: "declared-total",
+    adjustedQuantity: null,
+    adjustedQuantityUnit: null,
+    assumption: null,
+  });
+  expect(result.lines[0].calculation).toMatchObject({
+    formula: "قیمت کل اعلامی 21500000 تومان",
+    basisAmount: "21500000",
+    normalizedLineTotal: "21500000",
+    status: "complete",
+  });
+});
+
+test("T8-UX1 keeps the proposal journey calm by default and preserves every advanced value", async ({ page }) => {
+  const created = await createExactServiceProposalRevisionPair(page, "مجری تجربه ساده پیشنهاد");
+  const sourceBytes = await allLocalStorageBytes(page);
+
+  await expect(page.getByTestId("proposal-summary")).toBeVisible();
+  await expect(page.getByTestId("proposal-detail-technical")).not.toHaveAttribute("open", "");
+  await expect(page.getByText(created.proposal.target.reviewRevisionId, { exact: true })).toBeHidden();
+
+  await page.getByTestId("proposal-edit").click();
+  await expect(page.getByTestId("proposal-editor-mode-simple")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("proposal-editor-advanced")).toBeHidden();
+  await page.getByTestId("proposal-line-total-price-0").fill("۱۲۳۴۵۶");
+  await page.getByTestId("proposal-editor-mode-advanced").click();
+  await expect(page.getByTestId("proposal-editor-advanced")).toBeVisible();
+  await expect(page.getByTestId("proposal-line-total-price-0")).toHaveValue("۱۲۳۴۵۶");
+  await page.getByTestId("proposal-editor-mode-simple").click();
+  await expect(page.getByTestId("proposal-editor-advanced")).toBeHidden();
+  await expect(page.getByTestId("proposal-line-total-price-0")).toHaveValue("۱۲۳۴۵۶");
+  await page.getByTestId("proposal-editor-back").click();
+
+  await page.getByTestId("proposal-revision-diff-open").click();
+  await expect(page.getByTestId("proposal-revision-diff-title")).toContainText("چه چیزی عوض شده؟");
+  await expect(page.getByTestId("proposal-revision-diff-title")).not.toContainText("T8-");
+  await expect(page.locator('[data-testid="proposal-revision-diff-field"]:visible')).toHaveCount(10);
+  await expect(page.getByTestId("proposal-revision-diff-technical")).not.toHaveAttribute("open", "");
+  await expect(page.getByText(created.proposal.id, { exact: true })).toBeHidden();
+  await page.getByTestId("proposal-revision-diff-technical").locator("summary").click();
+  await expect(page.getByText(created.proposal.id, { exact: true })).toBeVisible();
+  const unchangedDisclosures = page.getByTestId("proposal-revision-diff-unchanged");
+  for (let index = 0; index < await unchangedDisclosures.count(); index += 1) {
+    await unchangedDisclosures.nth(index).locator("summary").click();
+  }
+  await expect(page.locator('[data-testid="proposal-revision-diff-field"]:visible')).toHaveCount(16);
+  await page.getByTestId("proposal-revision-diff-back").click();
+  await page.getByTestId("proposal-detail-back").click();
+
+  await expect(page.getByRole("heading", { name: "پیشنهادها" })).toBeVisible();
+  await expect(page.getByTestId("proposal-main-action")).toBeVisible();
+  await expect(page.locator('.project-proposals-content .primary-button:visible')).toHaveCount(1);
+  await expect(page.getByTestId("proposal-secondary-actions")).not.toHaveAttribute("open", "");
+  await expect(page.getByTestId("proposal-comparisons-entry")).toBeHidden();
+  await expect(page.getByTestId("service-proposal-comparisons-entry")).toBeHidden();
+  await expect(page.getByTestId("negotiation-drafts-entry")).toBeHidden();
+
+  expect(await allLocalStorageBytes(page)).toEqual(sourceBytes);
 });

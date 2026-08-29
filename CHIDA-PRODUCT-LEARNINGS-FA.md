@@ -1076,7 +1076,7 @@
 ## T8-A3 — ارزیابی خصوصی تناقض و ابهام سؤال/پاسخ
 
 - **تاریخ شروع:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
-- **وضعیت:** قرارداد، پیاده‌سازی، هفت regression متمرکز، suite کامل، QA مرورگر داخلی `390 × 844` و بازبینی مستقل کامل و توسط ماهیار تأیید شد؛ release کد با commit `8b7b85a2c6aa5a388df0a87d09f18ff0f1776e6d` در GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۱۸ موفق و هم‌منبع شد و commit مستندی receipt اکنون در حال بسته‌شدن است.
+- **وضعیت:** قرارداد، پیاده‌سازی، هفت regression متمرکز، suite کامل، QA مرورگر داخلی `390 × 844` و بازبینی مستقل کامل و توسط ماهیار تأیید شد؛ release کد با commit `8b7b85a2c6aa5a388df0a87d09f18ff0f1776e6d` و receipt مستندی نهایی `0b8810683dd5c35819397cea95c7ff01e3ce9c95` در GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۱۹ هم‌منبع منتشر و بسته شدند.
 - **تجربهٔ مشاهده‌شده:** در جزئیات revision دقیق پاسخ T8-A2، سازنده یک child-flow تمام‌صفحه برای ثبت یا بازکردن بازبینی دستی دارد. سه قضاوت «از نظر شما پاسخ به پرسش می‌پردازد»، «از نظر شما نیازمند روشن‌سازی است» و «از نظر شما تعارض احتمالی دارد» همراه دلیل اجباری، منشأ و تاریخچه نمایش داده می‌شوند. editor/detail در viewport واقعی بدون overflow افقی بودند، focus روی heading/خطای مرتبط/رکورد/CTA بازگشت درست جابه‌جا شد و console خطا یا هشدار مرتبط نداشت.
 - **بازخورد و تصمیم ماهیار:** نسخهٔ مشاهده‌شده تأیید شد؛ مجوز فقط انتشار same-source همین برش و ثبت receipt آن است. درخواست ساخت گفت‌وگوی تازه با هنداف کامل پس از پایان انتشار نیز ثبت شد؛ این تأیید مجوز شروع برش بعدی، مدل محلی یا مسیر تأمین‌کننده نیست.
 - **قرارداد داده و شکست:** `BuilderManualNegotiationResponseReviewRecord` به `id/version/fingerprint` دقیق revision پاسخ pin می‌شود؛ lineage سؤال T8-A1 از snapshot تغییرناپذیر همان پاسخ به ارث می‌رسد و pin موازی دوم ساخته نمی‌شود. هر response revision رکورد مستقل دارد؛ تغییر پاسخ یا dependency بالادستی رکورد قبلی را تاریخی و فقط‌خواندنی می‌کند، نه اینکه آن را rebind کند. exact-key parser، fingerprint محلی، سقف رکورد/نسخه، project isolation، no-op byte stability، write-before-state/rollback و read-error lock مستقل پوشش داده شده‌اند؛ خرابی store بازبینی، پاسخ سالم T8-A2 را قفل یا پنهان نمی‌کند.
@@ -1086,9 +1086,176 @@
 - **پیشنهاد اصلاح سند مادر:** در بازنگری بعدی، «بازبینی دستی سازنده» از «تشخیص مدل/منبع» جدا تعریف شود و target دقیق پاسخ، reason اجباری، version/history، currentness مشتق‌شده، historical/no-rebind و نبود اثر خودکار برای هر outcome تصریح شوند.
 - **شواهد کیفیت محلی:** `T8-A3` متمرکز ۷/۷، `test:app` برابر ۱۳۲/۱۳۲، `test:runtime` برابر ۱۴۰/۱۴۰، `test:sites` برابر ۴/۴، build/TypeScript، `check:runtime` برای ۲۸ فایل، `npx tsc --noEmit` و `git diff --check` پاس شدند. دو finding دسترس‌پذیری P2 دربارهٔ focus خنثیِ outcome و `aria-describedby` نامرتبط پیش از تحویل اصلاح و با regression بسته شدند؛ بازبینی نهایی finding باز P0/P1/P2 ندارد.
 
-### release کد T8-A3 و receipt پیش از commit مستندی نهایی
+### release کد و receipt نهایی T8-A3
 
 - commit کد `8b7b85a2c6aa5a388df0a87d09f18ff0f1776e6d` روی local/GitHub `main` هم‌تراز شد و prototype tree آن `f341b95df9dcaf4b6e8bcdffd3300fbbf18750c8` است.
 - Cloudflare Pages deployment `c26edc36-769d-4a13-9a3d-599401b58223` پس از push شاخهٔ `main` منتشر شد. canonical `https://chida-prototype.pages.dev` و immutable `https://c26edc36.chida-prototype.pages.dev` هر دو پاسخ ۲۰۰ و hash دقیق build محلی داشتند: HTML `c3f1bdc00d2c4d3b72955d693a4567538f191833ae149683b91983ac3acc5ea2`، JavaScript `d71326d6ff6640f3af7e4fbd7fb19bbb6c0a311b27809bf357eb959e8afafcd8` و CSS `74d8c2c111a5fff44b77278ea6109d298bc7b7b5ebcdc5e6bd680a20deebaddd`.
 - ChatGPT Sites نسخهٔ ۱۸ با source commit همین SHA، ۱۸ فایل و archive hash `sha256:518b2be3a9fa2895965e6ed827a9f6d5f3db2a602d8c5155a888c08616992c42` ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_32761ebf98c08191b06b180887273315` و deployment خصوصی `appgdep_6a92c98b5f6c81919151a8a2a1962975` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی owner-only/custom با یک مالک و بدون گروه یا مهمان بیرونی حفظ شد.
-- commit مستندی جاری فقط receipt و وضعیت T8-A3 را ثبت می‌کند و prototype tree آن با `8b7b85a` یکسان می‌ماند. SHA نهایی پس از commit تعیین و همان source دوباره روی GitHub، Cloudflare و Sites هم‌تراز می‌شود؛ شناسه‌های نهایی آن در هنداف گفت‌وگوی تازه ثبت می‌شوند و در نخستین commit مجاز بعدی backfill خواهند شد.
+- commit مستندی receipt نهایی `0b8810683dd5c35819397cea95c7ff01e3ce9c95` روی local/GitHub `main` هم‌تراز شد؛ prototype tree آن با commit کد `8b7b85a2c6aa5a388df0a87d09f18ff0f1776e6d` یکسان و برابر `f341b95df9dcaf4b6e8bcdffd3300fbbf18750c8` ماند.
+- Cloudflare Pages deployment نهایی `e2fb901e-bc10-49b7-b041-5d25606af0ed` از `main` و source commit نهایی به وضعیت `success` رسید. canonical و immutable هر دو ۲۰۰ و با build محلی یکسان ماندند: HTML `c3f1bdc00d2c4d3b72955d693a4567538f191833ae149683b91983ac3acc5ea2`، JavaScript `d71326d6ff6640f3af7e4fbd7fb19bbb6c0a311b27809bf357eb959e8afafcd8` و CSS `74d8c2c111a5fff44b77278ea6109d298bc7b7b5ebcdc5e6bd680a20deebaddd`.
+- ChatGPT Sites نسخهٔ ۱۹ با version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_d1ee6e9c0774819196ded43a64197ff0`، source commit نهایی، ۱۸ فایل و archive hash `sha256:518b2be3a9fa2895965e6ed827a9f6d5f3db2a602d8c5155a888c08616992c42` ذخیره و با deployment `appgdep_6a92cb1191ac8191b655a8b73774b039` در وضعیت `succeeded` منتشر شد. دسترسی owner-only/custom با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
+
+## T8-A4 — ثبت دستی و کیفی اثر تغییر شرایط مذاکره
+
+- **تاریخ شروع:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
+- **وضعیت:** قرارداد، پیاده‌سازی، هفت regression متمرکز، suite کامل، build/TypeScript، integrity runtime، QA مرورگر داخلی `390 × 844` و بازبینی مستقل کامل شدند و ماهیار پس از مشاهدهٔ نسخهٔ لوکال آن را با پیام «ادامه بده تسک بعدی خوبه» تأیید کرد. snapshot همچنان فقط در working tree اصلی است؛ این بازخورد مجوز commit، push یا deploy نیست.
+- **دامنه:** ثبت یک ارزیابی کیفی و دستی سازنده دربارهٔ تغییر یا روشن‌شدن شرط در revision دقیق پاسخ T8-A2؛ شامل خلاصهٔ تغییر، حوزهٔ اثر، جهت اثر از دید سازنده و دلیل. این برش محاسبهٔ عددی، تحلیل پاسخ، amendment پیشنهاد یا مقایسهٔ revision تازه نیست.
+
+### تجربهٔ مشاهده‌شده
+
+- entry مستقل T8-A4 در جزئیات هر revision پاسخ، بدون وابستگی به وجود یا نسخهٔ بازبینی T8-A3، سازنده را به editor/detail تمام‌صفحه می‌برد. متن‌های honesty، روش `manual-qualitative` و اتصال دقیق به پاسخ در context و detail آشکارند.
+- در QA واقعی `390 × 844`، editor و detail بدون overflow افقی بودند؛ focus ورود روی heading، پس از ذخیره روی detail و پس از بازگشت روی CTA همان revision نشست. accessible name معیار و تماس را نگه داشت و console هیچ warning/error مرتبطی نداشت.
+- تغییر صرفِ outcome یا دلیل بازبینی T8-A3 نباید ارزیابی اثر را stale کند؛ منشأ اثر خود revision پاسخ است. اصلاح پاسخ یا هر dependency بالادستی، رکورد قبلی را تاریخی و فقط‌خواندنی می‌کند و برای response revision تازه رکورد مستقل می‌سازد.
+
+### شکاف/ابهام سند مادر
+
+- سند مادر «محاسبهٔ اثر تغییر شرایط» را می‌خواهد، اما قرارداد داده، تفاوت محاسبهٔ عددی محصول با ارزیابی کیفی خدمت، baseline دقیق، فرمول، واحد، unknown، provenance و رفتار historical/no-rebind را تعریف نمی‌کند.
+- روشن نیست «روشن‌شدن مقدار قبلاً نامشخص» همان amendment قطعی است یا فقط برداشت سازنده از پاسخ. همچنین معلوم نیست چند تغییر در یک پاسخ باید `items[]` مستقل داشته باشند یا یک خلاصهٔ چندحوزه‌ای برای برش پایه کافی است.
+
+### بازخورد و تصمیم تأییدشدهٔ ماهیار
+
+- تجربهٔ لوکال T8-A4 تأیید شد و ماهیار شروع یک برش کوچک بعدی سمت سازنده را خواست. دامنهٔ همین تأیید به انتشار T8-A4، مدل محلی، مسیر تأمین‌کننده، پاسخ واقعی طرف دوم، شبکه یا اثر بیرونی گسترش ندارد.
+- قرارداد دستی و کیفی زیر به‌عنوان تصمیم پروتوتایپ T8-A4 حفظ می‌شود؛ محاسبهٔ عددی/فرمول‌دار همچنان یک شکاف جدا و حل‌نشدهٔ سند مادر است.
+
+- `BuilderManualNegotiationConditionImpactRecord` یک رکورد مستقل، خصوصی، پروژه‌محور و one-per-exact-response-revision است. target فقط `id/version/fingerprint` همان response revision را pin می‌کند و lineage سؤال/مقایسه/پیشنهاد را از snapshot تغییرناپذیر داخل response T8-A2 به ارث می‌برد؛ snapshot موازی و rebind خاموش ساخته نمی‌شود.
+- revision شامل `changeSummary`، `impactDomain`، `impactDirection` و `reason` اجباری است. دامنه و جهت صرفاً برچسب‌های ثبت‌شدهٔ سازنده‌اند؛ `automatedCalculationUsed=false`، `automatedDetectionUsed=false`، `aiUsed=false`، `networkUsed=false`، `authenticityVerified=false`، `proposalMutated=false`، `comparisonMutated=false` و `externalEffect=none` ثابت‌اند.
+- no-op بایت/version/history را تغییر نمی‌دهد؛ تغییر معنادار revision/event تازه می‌سازد. exact-key parser، fingerprint، chronology، سقف ۱۰۰ revision، ۱۰۰ رکورد در پروژه و ۱۰۰۰ رکورد کل، write-before-state، rollback، tamper/read-error fail-close و project isolation اجرا می‌شوند. خرابی store اثر، پاسخ و بازبینی سالم را پنهان یا قفل نمی‌کند.
+- این برش هیچ proposal/comparison/request/contact را تغییر نمی‌دهد، سؤال یا task پیگیری نمی‌سازد، پیام/اعلان/ارسال/مجوز/تبادل تماس ندارد و نتیجهٔ آن تأیید طرف مقابل یا محاسبهٔ چیدا نیست.
+
+### پیشنهاد برای تکمیل سند مادر
+
+- «ارزیابی کیفی دستی سازنده» از «محاسبهٔ deterministic چیدا» و «تحلیل مدل/منبع» جدا تعریف شود. برای هرکدام target، baseline، واحد/فرمول، provenance، unknown، history، currentness و اثر مجاز صریح شود.
+- نسبت تغییر شرط با response revision، review sibling، amendment/fresh proposal revision و چند تغییر هم‌زمان مشخص شود؛ هیچ outcome بدون اقدام جدا و تأیید انسانی نباید proposal، comparison، task یا پیام را mutate کند.
+
+### شواهد کیفیت محلی
+
+- regression متمرکز T8-A4 برابر ۷/۷، `test:app` برابر ۱۳۹/۱۳۹، `test:runtime` برابر ۱۴۷/۱۴۷ و `test:sites` برابر ۴/۴ پاس شدند. build شامل TypeScript و آماده‌سازی Sites، `npx tsc --noEmit`، `check:runtime` برای ۲۸ فایل و `git diff --check` نیز پاس شدند؛ فقط هشدار شناخته‌شدهٔ chunk جاوااسکریپت بزرگ‌تر از 500kB باقی است.
+- هفت regression مسیر خدمت و محصول، exact response pin، source-byte/no-network، project isolation، no-op/version/history، استقلال از تغییر T8-A3، validation/focus/overflow، rollback/read-error، tamper fingerprint، response-revision historical/no-rebind و invalidation بالادستی را پوشش می‌دهند.
+- بازبینی مستقل برای source/tests/CSS finding باز P0/P1/P2 نداشت. finding مستندی P2 دربارهٔ عقب‌بودن Learnings/Handoff/Backlog با همین ثبت و هم‌ترازی اسناد بسته شد.
+
+### خارج از T8-A4
+
+- محاسبهٔ عددی یا فرمول اثر، تشخیص خودکار تغییر، تحلیل AI، مقایسهٔ revision تازهٔ پیشنهاد، amendment ساختاریافته، چند آیتم تفصیلی، deadline/follow-up، پاسخ واقعی/مشترک طرف دوم، پیام، شبکه، اعلان، sync/backend و هر اثر بیرونی همچنان ساخته نشده‌اند.
+
+## T8-A5a — مقایسهٔ فقط‌خواندنی revisionهای رونویسی محلی پیشنهاد محصول
+
+- **تاریخ شروع:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
+- **وضعیت:** ماهیار پس از تأیید لوکال T8-A4 شروع برش بعدی را خواست. T8-A5a فقط در working tree اصلی پیاده‌سازی، آزمون متمرکز و QA موبایل شد و ماهیار پس از مشاهدهٔ نسخهٔ لوکال آن را با پیام «برو تسک بعدی» تأیید کرد. شکست زمان‌بندی runtime زیر بار سنگین CPU محیط نیز پس از آزادشدن CPU با بازاجرای isolated همان تست و نتیجهٔ ۱/۱ بسته شد، بدون تغییر runtime؛ commit، push یا deploy مجاز نشده‌اند.
+- **دامنه:** نمایش یک diff مشتق‌شده و فقط‌خواندنی میان دو revision دقیق و متفاوت از همان `BuilderRecordedProposalRecord` محصول. baseline باید قدیمی‌تر از candidate باشد؛ پیش‌فرض، revision جاری و نسخهٔ بلافاصله قبل از آن است.
+
+### شکاف و مرز صداقت
+
+- سند مادر «مقایسهٔ نسخه‌های جدید پیشنهاد» را می‌خواهد، اما proposal revision فعلی پروتوتایپ فقط ویرایش نسخه‌دار رونویسی دستی سازنده است؛ دریافت amendment رسمی، هویت/اصالت تأمین‌کننده، نوع تغییر و قرارداد shared-case هنوز وجود ندارند.
+- بنابراین T8-A5a «پیشنهاد تازهٔ تأمین‌کننده» یا amendment را ادعا نمی‌کند. فقط مقادیر declared در دو snapshot تغییرناپذیر محلی را با id/version/fingerprint دقیق کنار هم می‌گذارد.
+
+### تصمیم کاری و معیار پذیرش
+
+- entry فقط برای پیشنهاد محصول دارای حداقل دو revision معتبر ظاهر می‌شود. هر دو revision باید از همان proposal و پروژه باشند و `baseline.version < candidate.version`؛ انتخاب نامعتبر نباید به revision دیگری fallback خاموش کند.
+- `declaredAt`، `transcript`، `notes` و همهٔ فیلدهای هر قلم با هویت دقیق line/request item مقایسه می‌شوند. خروجی فقط `changed / unchanged` و مقدار قبل/بعد است؛ `null` صریحاً نامشخص می‌ماند و رشته‌های عددی بدون تبدیل به `Number` حفظ می‌شوند.
+- view هیچ store، رکورد، version یا history تازه نمی‌سازد. `derivedReadOnly=true`، `persisted=false`، `aiUsed=false`، `networkUsed=false` و `externalEffect=none` مرز ثابت‌اند؛ arithmetic، delta درصدی، score، recommendation، mutation پیشنهاد/مقایسه و اقدام تجاری وجود ندارند.
+- parser و project isolation موجود منبع حقیقت revisionهاست؛ tamper یا read-error پیشنهاد fail-close می‌شود و empty state دروغین نمی‌سازد. proposal تاریخی برای مالک قابل مشاهده است، اما diff آن باید «تاریخی · فقط‌خواندنی» برچسب بخورد.
+
+### تجربهٔ مشاهده‌شده در پیاده‌سازی
+
+- CTA فقط در جزئیات پیشنهاد محصول دارای دست‌کم دو revision معتبر ظاهر می‌شود. نما به‌طور پیش‌فرض revision جاری و نزدیک‌ترین revision پیشین را باز می‌کند و برای هر دو، id/version/fingerprint دقیق را پیش از delta نشان می‌دهد.
+- diff بدون storage تازه از snapshotهای موجود مشتق می‌شود: سه فیلد سطح پیشنهاد و سیزده فیلد هر قلم، از جمله `currency`، با مقدار قبل/بعد و وضعیت تغییرکرده/بدون‌تغییر دیده می‌شوند. رشتهٔ عددی همان متن ثبت‌شده باقی می‌ماند و هیچ arithmetic انجام نمی‌شود.
+- مقدار `null` با متن «نامشخص · ثبت نشده» و `data-value-kind=null` از literal آزاد کاربر با `data-value-kind=literal` جداست. جفت نامعتبر به‌جای برچسب جاری/تاریخی، صریحاً «جفت نامعتبر» و alert fail-close نشان می‌دهد و هیچ fallback ندارد.
+- در QA واقعی `390 × 844`، منبع دقیق، selectorهای دسترس‌پذیر، مقدارهای قبل/بعد، badge جاری، focus آغاز و بازگشت، overflow صفر، نبود dialog/overlay باز و console بدون error تأیید شدند. تب محلی روی همین نمای مقایسه برای مشاهدهٔ ماهیار باز مانده است.
+
+### بازخورد و تصمیم تأییدشدهٔ ماهیار
+
+- ماهیار نسخهٔ لوکال T8-A5a را پذیرفت و شروع یک برش کوچک بعدی سمت سازنده را خواست. این تأیید، قرارداد diff فقط‌خواندنی محصول را تثبیت می‌کند اما به انتشار snapshot، amendment رسمی یا shared، محاسبهٔ عددی، مدل محلی، شبکه یا مسیر تأمین‌کننده مجوز نمی‌دهد.
+- تنها gate باز قبلی، تست زمان‌بندی محافظت‌شدهٔ Carousel بود. پس از پایان فشار CPU بیرونی، همان تست با فرمان متمرکز و بدون تغییر هیچ فایل runtime با ۱/۱ پاس شد؛ اجرای کامل runtime برای snapshot یکپارچهٔ برش بعدی دوباره انجام می‌شود.
+
+### آزمون و بازبینی تا این snapshot
+
+- red baseline متمرکز پیش از wiring روی نبود `proposal-revision-diff-open` شکست خورد. پس از پیاده‌سازی و اصلاح findings، هفت regression T8-A5a همگی پاس شدند؛ پوشش شامل lineage دقیق، ۲۹ فیلد fixture دو‌قلمی، تمایز null/literal، انتخاب جفت تاریخی، invalid-pair fail-close، بدون‌ذخیره/بدون‌شبکه، project isolation، tamper/read-error، historical/no-rebind، focus/a11y و overflow است.
+- `test:app` روی کد ثابت نهایی با ۱۴۶/۱۴۶ پاس شد؛ به‌علت اجرای هم‌زمان یک پردازش بیرونی با مصرف حدود ۴۰۰ تا ۵۰۰ درصد CPU، timeout فقط برای این اجرای شاهد به ۶۰ ثانیه افزایش یافت و تست‌های بدون تغییرِ قدیمی که در ۲۰ ثانیه timeout می‌شدند تا ۲۶ ثانیه زمان بردند و سالم پاس شدند. `test:sites` برابر ۴/۴، build شامل TypeScript و آماده‌سازی Sites، `npx tsc --noEmit`، `check:runtime` برای ۲۸ فایل و `git diff --check` نیز پاس شدند.
+- اجرای کامل `test:runtime` در snapshot اولیهٔ T8-A5a، زیر بار CPU بیرونی ۱۵۳/۱۵۴ پاس داشت. تنها تست محافظت‌شدهٔ `Carousel preserves momentum and edge rubber-banding` روی انتظارهای wall-clock ثابت ۱۲۰/۹۰۰ میلی‌ثانیه شکست خورده بود؛ پس از آزادشدن CPU، همان تست با `npx playwright test tests/mobile-runtime.spec.ts -g "Carousel preserves momentum and edge rubber-banding" --workers=1` و نتیجهٔ ۱/۱ پاس شد. هیچ فایل runtime تغییر نکرد و integrity هر ۲۸ فایل پاس ماند؛ سپس روی snapshot یکپارچهٔ T8-A5b اجرای کامل runtime با ۱۶۱/۱۶۱ پاس شد و این gate محیطی بسته شد.
+- بازبینی مستقل اولیه دو finding P1 دربارهٔ تمایز null/literal و حذف currency و یک P2 دربارهٔ جفت تاریخی یافت؛ هر سه رفع و بازبینی مجدد شدند. یک P2 بعدی دربارهٔ badge متناقض جفت نامعتبر نیز با وضعیت مستقل `unavailable` و regression صریح بسته شد.
+
+### خارج از T8-A5a
+
+- مقایسهٔ revision خدمت، amendment رسمی یا shared، محاسبهٔ عددی اثر، ساخت یا ویرایش proposal، ذخیرهٔ نتیجهٔ diff، تصمیم/رتبه‌بندی، deadline/follow-up، پیام، مدل، شبکه، اعلان، sync/backend و هر اثر بیرونی ساخته نمی‌شوند.
+
+## T8-A5b — مقایسهٔ فقط‌خواندنی revisionهای رونویسی محلی پیشنهاد خدمت
+
+- **تاریخ شروع:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
+- **وضعیت:** ماهیار پس از تأیید لوکال T8-A5a با پیام «برو تسک بعدی» شروع یک برش کوچک بعدی را مجاز کرد. T8-A5b در همان working tree اصلی پیاده‌سازی، آزمون و در viewport واقعی `390 × 844` QA شد. پیام بعدی ماهیار در ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰ انتشار کل snapshot تمام‌شده را برای مشاهده از خانه صریحاً مجاز کرد؛ این مجوز انتشار به معنی تأیید تجربهٔ T8-A5b نیست و بازبینی آن همچنان باز می‌ماند.
+- **دامنه:** نمایش یک diff مشتق‌شده و فقط‌خواندنی میان دو revision دقیق و متفاوت از همان `BuilderRecordedProposalRecord` خدمت. پیش‌فرض candidate جاری و نزدیک‌ترین baseline قبلی است؛ هر جفت تاریخی فقط با شرط `baseline.version < candidate.version` مجاز است و جفت نامعتبر بدون fallback fail-close می‌شود.
+
+### شکاف سند مادر و مرز صداقت
+
+- سند مادر مقایسهٔ «نسخه‌های جدید پیشنهاد» را می‌خواهد، اما revision proposal خدمت در پروتوتایپ فعلی فقط رونویسی خصوصی و نسخه‌دار سازنده است. amendment رسمی/shared، دریافت شبکه‌ای پاسخ، هویت/اصالت طرف دوم یا پیشنهاد تازهٔ احرازشده هنوز قرارداد و مسیر اجرایی ندارند.
+- proposal خدمت یک line خام مشترک با proposal محصول دارد؛ schema ده‌معیارهٔ دامنه، محل، حجم، صلاحیت، زمان، روش، داخل/خارج کار، ضمانت و پرداخت متعلق به لایهٔ مستقل مقایسهٔ T7-B2 و شامل رونویسی تکمیلی و ارزیابی سازنده است. این معیارها نباید به‌عنوان مقادیر اعلامی proposal revision وارد diff T8-A5b شوند.
+
+### تصمیم کاری و معیار پذیرش
+
+- entry فقط برای proposal معتبر خدمت با حداقل دو revision ظاهر می‌شود. `requestSnapshot.requestKind` و target باید خدمت باشند؛ هر revision دقیقاً یک line با id ثابت، `requestItemId=null`، `serviceSpecId` غیرnull و برابر id خدمت در snapshot درخواست، label ثابت و currency ثابت دارد.
+- سه فیلد سطح revision یعنی `declaredAt`، `transcript` و `notes` و سیزده فیلد line یعنی status، quantity، unit، unitPrice، totalPrice، currency، tax، transport، minimumOrder، leadTime، validity، paymentTerms و line notes مقایسه می‌شوند. هویت‌ها جداگانه نمایش و اعتبارسنجی می‌شوند و در شمار delta نیستند.
+- مقایسه فقط exact string و تمایز صریح null/literal است؛ `Number`، محاسبهٔ اختلاف/درصد، normalization، score، ranking یا recommendation ندارد. ثابت‌های مرزی شامل `derivedReadOnly=true`، `persisted=false`، `arithmeticUsed=false`، `aiUsed=false`، `networkUsed=false`، `proposalMutated=false`، `comparisonMutated=false` و `externalEffect=none` هستند.
+- بازکردن، انتخاب جفت و بازگشت هیچ byte از storage، نسخه/history proposal یا مقایسهٔ خدمت را تغییر نمی‌دهد. project isolation، historical/no-rebind و tamper/read-error fail-close حفظ می‌شوند.
+
+### تجربهٔ مشاهده‌شده پیش از بازآرایی T8-UX1
+
+- در snapshot اولیهٔ پیش از T8-UX1، CTA در جزئیات proposal خدمت دو نسخه‌ای با برچسب صریح T8-A5b دیده می‌شد. نما proposal/request، revision id/version/fingerprint و `serviceSpecId` دقیق را پیش از ۱۶ فیلد diff نشان می‌داد؛ T8-UX1 بعداً این نام داخلی و اولویت فنی را از نمای پیش‌فرض به disclosure حسابرسی منتقل کرد، بدون تغییر قرارداد زیرین.
+- null و literal حتی اگر متن نمایشی یکسان «نامشخص · ثبت نشده» داشته باشند، با badge دیداری و قابل‌دسترسیِ «ثبت‌نشده در این نسخه» و «متن ثبت‌شدهٔ سازنده» از هم جدا می‌مانند. اگر proposal store بخشی سالم و بخشی مخدوش باشد، inbox هیچ فهرست ناقص، count، CTA یا empty state دروغین نشان نمی‌دهد و مسیرهای وابسته تا خواندن موفق قفل می‌شوند.
+- در QA مرورگر داخلی `390 × 844` روی build نهایی، نسخهٔ جاری و قبلی، تغییر قیمت کل/اعتبار/متن و line note، lineage دقیق، ۱۶ فیلد، یک line خدمت، ۳۲ badge origin قابل‌دیدن، title focus، نام‌های دسترس‌پذیر، نبود dialog/overlay، overflow افقی صفر و console پاک تأیید شدند. تب پیش‌نمایش روی همین نمای خدمت برای مشاهدهٔ ماهیار باز مانده است.
+
+### پیشنهاد اصلاح سند مادر
+
+- در بازنگری بعدی، «revision رونویسی محلی سازنده» از «amendment رسمی/shared یا proposal تازهٔ احرازشده» جدا تعریف شود و identity، provenance، currentness، baseline/candidate، historical/no-rebind و رفتار invalid pair برای هرکدام صریح شود.
+- فیلدهای خام مشترک proposal خدمت از معیارهای تکمیلی مقایسهٔ خدمت جدا بمانند؛ ورود هر معیار تازه به proposal revision به schema، منشأ و migration صریح نیاز دارد و نباید از UI فعلی T7-B2 استنباط شود.
+
+### شواهد کیفیت محلی
+
+- red baseline متمرکز پیش از wiring، نبود CTA خدمت را ثابت کرد. پس از پیاده‌سازی، هفت regression T8-A5b و مجموعهٔ ترکیبی T8-A5a/T8-A5b با ۷/۷ و ۱۴/۱۴ پاس شدند؛ پوشش شامل lineage و line identity دقیق، همهٔ ۱۶ فیلد، null/literal، بدون arithmetic، جفت تاریخی/نامعتبر، no-storage/no-network، project isolation، tamper/read-error، historical/no-rebind، focus/a11y و overflow است.
+- `test:app` برابر ۱۵۳/۱۵۳، `test:runtime` برابر ۱۶۱/۱۶۱ و `test:sites` برابر ۴/۴ پاس شدند. build شامل TypeScript و آماده‌سازی Sites، `npx tsc --noEmit`، `check:runtime` برای ۲۸ فایل و `git diff --check` نیز پاس شدند؛ هشدار شناخته‌شدهٔ chunk جاوااسکریپت بزرگ‌تر از 500kB باقی است.
+- ممیزی مستقل قرارداد و برنامهٔ آزمون، جدایی line خام proposal خدمت از schema ده‌معیارهٔ T7-B2 و همین مرز ۱۶ فیلدی را تأیید کردند. بازبینی مستقل نهایی دو P2 مربوط به نمایش فهرست ناقص در read-error و برخورد دیداری null/literal یافت؛ هر دو در source و regression رفع شدند و بازبینی دوباره هیچ finding باز P0/P1/P2 نداشت.
+
+### خارج از T8-A5b
+
+- amendment رسمی یا shared، پاسخ واقعی/احرازشدهٔ طرف دوم، mutation مقایسهٔ خدمت، محاسبه یا normalization عددی، تصمیم/رتبه‌بندی، deadline/follow-up، پیام، AI، مدل محلی، شبکه، اعلان، sync/backend، مسیر تأمین‌کننده و هر اثر بیرونی ساخته نشده‌اند.
+
+## T8-UX1 — ساده‌سازی سراسری تجربهٔ پیشنهاد سازنده
+
+- **تاریخ بازخورد:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
+- **وضعیت:** بازخورد صریح ماهیار ثبت و بازطراحی UI-only در working tree اصلی پیاده‌سازی، آزمون و در viewport واقعی `390 × 844` QA شد. ماهیار در ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰ گفت «وقتی تموم شد همه جا منتشر کن من از خونه میبینم»؛ بنابراین commit، push و انتشار همین snapshot آزموده در GitHub، Cloudflare Pages و ChatGPT Sites مجاز شد، اما تأیید تجربهٔ UX تا مشاهدهٔ نسخهٔ منتشرشده باز می‌ماند.
+- **دامنه:** ساده‌سازی صندوق پیشنهاد، ثبت/ویرایش، خلاصهٔ جزئیات و diff نسخه با افشای تدریجی؛ بدون تغییر schema، parser، fingerprint، version/history، lineage، project isolation، fail-close، AI/شبکه یا اثر بیرونی.
+
+### تجربهٔ مشاهده‌شده و بازخورد کاربر
+
+- ممیزی واقعی `390 × 844` نشان داد صندوق پیش از خود پیشنهادها سه ورودی بزرگ هم‌وزن برای مقایسهٔ محصول، مقایسهٔ خدمت و پیش‌نویس/پاسخ، یک بنر بلند، شمارنده و CTA ثبت را هم‌زمان نشان می‌دهد.
+- جزئیات پیشنهاد پیش از مبلغ، زمان و اعتبار، شناسهٔ revision، snapshot، منشأ، تاریخچه و همهٔ شروط را نمایش می‌دهد. diff نیز نام داخلی برش، flagهای خام، id/fingerprint و همهٔ فیلدهای تغییرکرده و بدون تغییر را یک‌جا باز می‌کند.
+- ماهیار صریحاً گفت این پیچیدگی برای سازنده ترسناک است و خواست کل فرایند پیشنهاد ساده، قابل‌فهم، کم‌متن و کم‌دکمه شود تا کاربر از محصول فرار نکند.
+
+### شکاف سند مادر
+
+- سند مادر اصل افشای تدریجی، یک اقدام روشن، پنهان‌ماندن پیچیدگی پشت صحنه و نمایش منبع/مجوز/تاریخچه در «سطح مناسب» را مقرر می‌کند، اما برای پیشنهاد مشخص نکرده کدام اطلاعات تصمیم‌ساز باید در نمای اول باشد و lineage فنی در کدام سطح باز شود.
+- ثبت‌های T7/T8 برای اثبات قرارداد، نمایش دقیق id/version/fingerprint و flagها را در UI معیار پذیرش کرده بودند؛ این معیار با بازخورد تازهٔ کاربر باید از «نمای پیش‌فرض» به «جزئیات فنی قابل‌بازکردن» منتقل شود، نه اینکه از داده یا اعتبارسنجی حذف شود.
+
+### تصمیم صریح و معیار کاری
+
+- **[تصمیم کاربر، پیاده‌سازی‌شدهٔ محلی؛ در انتظار تأیید]** صندوق در حالت عادی فقط یک CTA اصلی «ثبت پیشنهاد» دارد؛ مقایسه و پیگیری به سطح ثانویه می‌روند و نوع محصول/خدمت در لحظهٔ نیاز انتخاب می‌شود.
+- **[تصمیم کاربر، پیاده‌سازی‌شدهٔ محلی؛ در انتظار تأیید]** کارت و جزئیات با نام تأمین‌کننده، درخواست، وضعیت، مبلغ/زمان/اعتبار و اقدام بعدی آغاز می‌شوند. شروط کامل، مرجع و رونویسی، تاریخچه و lineage فنی بسته‌اند.
+- **[تصمیم کاربر، پیاده‌سازی‌شدهٔ محلی؛ در انتظار تأیید]** فرم در حالت ساده فقط فیلدهای روزمره را نشان می‌دهد و جزئیات تکمیلی بدون پاک‌کردن draft باز می‌شوند.
+- **[تصمیم کاربر، پیاده‌سازی‌شدهٔ محلی؛ در انتظار تأیید]** diff با «چه چیزی عوض شده؟»، «قبل/حالا» و فقط موارد تغییرکرده آغاز می‌شود؛ موارد بدون تغییر و id/fingerprint/flagها در disclosure جدا می‌مانند.
+- خطای خواندن، وضعیت تاریخی/نیازمند بازبینی و مرز کوتاه «ثبت دستی شما · خصوصی پروژه · بدون ارسال» در سطح اصلی باقی می‌مانند. هیچ قرارداد داده، storage، mutation یا اعتماد به‌خاطر سادگی حذف نمی‌شود.
+
+### نتیجهٔ پیاده‌سازی و مشاهده
+
+- صندوق پیشنهاد با یک اقدام اصلی، کارت‌های کوتاه و مسیرهای ثانویهٔ جمع‌شده شروع می‌شود. فرم ثبت در حالت ساده فقط درخواست/تأمین‌کننده، وضعیت، مبلغ کل و زمان را نشان می‌دهد؛ حالت پیشرفته تمام داده‌های قبلی را بدون پاک‌شدن حفظ می‌کند و برای محصول، مبنای «همین مبلغ برای کل مقدار درخواست است» در همان حالت ساده قابل‌ثبت است.
+- جزئیات پیشنهاد با خلاصهٔ قیمت، زمان، اعتبار و پرداخت آغاز می‌شود؛ شرط‌ها، مرجع، تاریخچه و رسید فنی بسته اما قابل‌بازیابی‌اند. revision تاریخی صریحاً «فقط مشاهده» است و ویرایش ندارد. diff موارد تغییرکرده را پیش از موارد ثابت نشان می‌دهد و مقایسهٔ محصول/خدمت، سؤال، پاسخ، بازبینی و اثر شرط با زبان طبیعی و افشای تدریجی بازآرایی شده‌اند.
+- بازگشت از سؤال یا پاسخ به همان قلم محصول یا معیار خدمت، disclosure درست را باز و focus را به منشأ برمی‌گرداند. ممیزی مستقل پس از بازگرداندن همهٔ اطلاعات حسابرسی در سطح فنی، finding باز P0/P1/P2 ندارد.
+- دو regression تازهٔ T8-UX1، app ۱۵۵/۱۵۵، runtime ۱۶۳/۱۶۳، Sites ۴/۴، build/TypeScript، integrity بیست‌وهشت فایل و `git diff --check` پاس شدند. QA مرورگر داخلی در `390 × 844` روی صندوق، فرم ساده/پیشرفته، جزئیات، diff، مقایسه و مذاکره overflow افقی صفر، نمای پیش‌فرض آرام، نبود نام‌های داخلی T7/T8 و حفظ دسترسی به audit detail را تأیید کرد. یک oracle قدیمی gesture که drag را از روی خود input آغاز می‌کرد، فقط در تست اصلاح شد؛ نقطهٔ شروع غیرتعاملی جدید در اجرای پرفشار موازی ۵۰/۵۰ پاس شد و هیچ فایل runtime محافظت‌شده تغییر نکرد.
+
+### مجوز انتشار و مرز آن
+
+- مجوز تازه فقط برای commit/push و انتشار same-source همین snapshot آزموده و receipt مستندی آن مصرف می‌شود. اتصال مدل محلی، مسیر تأمین‌کننده، پاسخ واقعی طرف دوم، ارسال بیرونی یا برش محصولی بعدی مجاز نشده است.
+- پیش از commit، `HEAD`، `main` و `origin/main` روی baseline نهایی T8-A3 برابر `0b8810683dd5c35819397cea95c7ff01e3ce9c95` هم‌تراز بودند؛ working tree فقط نه فایل مستند/پروتوتایپ/تست مربوط به T8-A4/T8-A5a/T8-A5b/T8-UX1 داشت و `git diff --check` پاس بود. build نهایی همان assetهای HTML/JavaScript/CSS با هش‌های `64fbb6549ce602f8897203b2715d2da29fc00c1e71e1fb0fab4854177fc7d640`، `c40ea8cacfac4cbb37f6a62157db45b88b7c604c188746d955567d439b2d05f8` و `0399cb629d6ade85a55c300812929100a0013a5ee5503b28b9dc0d84ae47415a` را ساخت.
+- ChatGPT Sites پیش از انتشار همچنان `custom`/owner-only با دقیقاً یک مالک، بدون گروه و بدون مهمان بیرونی بود؛ همین دسترسی باید حفظ شود. شناسه‌های commit/deployment/version/archive در commit مستندی receipt پس از موفقیت مقصدها backfill می‌شوند تا حلقهٔ self-reference ساخته نشود.
+
+### پیشنهاد برای تکمیل سند مادر
+
+- برای اشیای پیشنهاد/مقایسه/مذاکره یک قرارداد ارائهٔ دو‌سطحی تعریف شود: سطح تصمیم‌ساز با زبان طبیعی و یک اقدام اصلی؛ سطح حسابرسی با provenance، نسخه، history، فرض، فرمول و شناسه‌های دقیق.
+- معیار تجربه اضافه شود که مسیر عادی هیچ نام برش داخلی، fingerprint یا boolean خام نشان ندهد و diff در حالت پیش‌فرض changed-first باشد، در حالی که همهٔ جزئیات برای ممیزی قابل‌بازیابی می‌مانند.

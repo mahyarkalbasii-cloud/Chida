@@ -1,10 +1,17 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-async function drag(page: Page, locator: Locator, deltaX: number, deltaY: number, steps = 8) {
+async function drag(
+  page: Page,
+  locator: Locator,
+  deltaX: number,
+  deltaY: number,
+  steps = 8,
+  origin = { x: 0.5, y: 0.5 },
+) {
   const box = await locator.boundingBox();
   if (!box) throw new Error("Drag target has no bounding box");
-  const startX = box.x + box.width / 2;
-  const startY = box.y + box.height / 2;
+  const startX = box.x + box.width * origin.x;
+  const startY = box.y + box.height * origin.y;
 
   await page.mouse.move(startX, startY);
   await page.mouse.down();
@@ -105,7 +112,8 @@ test("keyboard and its attached footer dismiss on the same transition", async ({
 
   await input.click();
   await expect(keyboard).toHaveAttribute("data-visible", "true");
-  await drag(page, footer, 0, 120, 5);
+  await page.waitForTimeout(300);
+  await drag(page, footer, 0, 120, 5, { x: 0.5, y: 0.08 });
   await expect(keyboard).toHaveAttribute("data-visible", "false");
 
   await page.waitForTimeout(100);
