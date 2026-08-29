@@ -2,7 +2,7 @@
 
 **تاریخ تهیه:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
 **مسیر پروژه:** `/Users/mahyarkl/Desktop/ChatGPT/CHIDA`
-**نقطهٔ ادامه:** T7-B1، یعنی هم‌سطح‌سازی و مقایسهٔ نسخه‌دارِ پیشنهادهای **محصول** و تصمیم مستقل سازنده، در checkout اصلی `main` پیاده‌سازی، بازبینی و در `390 × 844` QA شد و ماهیار انتشار همه‌جا را صریحاً تأیید کرد. commit/push/deploy همین snapshot اکنون در حال انجام است؛ baseline پیش از آن `57bbf6560e40a7b2ef9bb0a369af253c1b063d82` بود. فقط پس از موفقیت و same-source شدن سه مقصد، T7-B2 مقایسهٔ خدمت آغاز می‌شود. اتصال مدل محلی و مسیر تأمین‌کننده شروع نشده‌اند.
+**نقطهٔ ادامه:** T7-B1، یعنی هم‌سطح‌سازی و مقایسهٔ نسخه‌دارِ پیشنهادهای **محصول** و تصمیم مستقل سازنده، در checkout اصلی `main` پیاده‌سازی، بازبینی، در `390 × 844` QA و با commit کد `59405e2b2ffc501aef8287ae6139972b1a142963` روی GitHub، Cloudflare Pages و ChatGPT Sites منتشر شد. ماهیار پس از مشاهده، انتشار همه‌جا و سپس آغاز T7-B2 را صریحاً تأیید کرد. این commit مستندی receipt انتشار را ثبت می‌کند و prototype tree آن با commit کد یکسان می‌ماند؛ پس از same-source شدن همین receipt در سه مقصد، T7-B2 مقایسهٔ خدمت آغاز می‌شود. اتصال مدل محلی و مسیر تأمین‌کننده شروع نشده‌اند.
 
 ## مأموریت گفت‌وگوی بعدی
 
@@ -25,8 +25,8 @@
 3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007، C-008، C-009، C-010 و T6-A/T6-B/T6-B2/T6-C/T6-D/T7-A/T7-B1، بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه فقط C-010 است.
 4. `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را بررسی کن.
 5. پیش‌نمایش محلی را در viewport واقعی `390 × 844` باز کن؛ فقط Mobile و Dark در دامنه است.
-6. T7-B1 لوکال را در `390 × 844` مشاهده کن و baseline منتشرشده و receipt سه مقصد را با بخش Git همین هنداف تطبیق بده؛ پیش از تأیید ماهیار commit/push/deploy نکن.
-7. پیش از تأیید صریح T7-B1 و انتشار موفق same-source آن، T7-B2 یا تسک دیگری را شروع نکن؛ پاسخ واقعی تأمین‌کننده، اتصال مدل محلی، شبکه و هر اثر بیرونی نیز همچنان خارج از این نقطه‌اند.
+6. receipt نهایی T7-B1 و هم‌ترازی GitHub، Cloudflare و Sites را با بخش Git همین هنداف تطبیق بده.
+7. T7-B2 فقط پس از موفقیت انتشار same-source receipt نهایی آغاز می‌شود؛ پاسخ واقعی تأمین‌کننده، اتصال مدل محلی، شبکه و هر اثر بیرونی نیز همچنان خارج از این نقطه‌اند.
 
 ## سلسله‌مراتب تصمیم
 
@@ -39,10 +39,10 @@
 
 وضعیت تحویل لوکال T7-B1 در ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹:
 
-- پیش از شروع، `HEAD`، `main` و `origin/main` روی `57bbf6560e40a7b2ef9bb0a369af253c1b063d82` و working tree تمیز بودند. تغییرهای T7-B1 اکنون فقط در working tree همان checkout اصلی `main` هستند و هنوز commit/push/deploy نشده‌اند.
-- receipt نهاییِ تحویلی برای baseline منتشرشده: Cloudflare Pages deployment `d2162e8b-8ff3-4fa6-9b38-6f5bd4d38bc7` با وضعیت `success` روی `https://chida-prototype.pages.dev` و SHA نهایی؛ ChatGPT Sites نسخهٔ ۹ با source commit نهایی و deployment `appgdep_6a91fdd4e5108191a463c45298665152` با وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site`.
-- receiptهای قدیمی‌تر C-010 در ادامه برای تاریخچه حفظ شده‌اند. آن‌ها baseline نهایی این هنداف نیستند.
-- پس از مشاهده و تأیید ماهیار، باید همین snapshot T7-B1 یک بار تست نهایی، commit، push و روی Cloudflare/Sites منتشر شود و هم‌ترازی source commit هر سه مقصد دوباره اثبات شود.
+- پیش از شروع، `HEAD`، `main` و `origin/main` روی `57bbf6560e40a7b2ef9bb0a369af253c1b063d82` و working tree تمیز بودند. snapshot آزمودهٔ T7-B1 با commit کد `59405e2b2ffc501aef8287ae6139972b1a142963` روی `main` و GitHub منتشر شد.
+- Cloudflare Pages deployment تولید `23abfa5d-d88c-4405-becc-742509ce1ced` با trigger برابر `github:push`، شاخهٔ `main`، `commit_dirty=false` و source commit همین SHA به وضعیت `success` رسید. canonical `https://chida-prototype.pages.dev` و immutable `https://23abfa5d.chida-prototype.pages.dev` با build محلی hash یکسان داشتند: HTML برابر `f946d6231fde96219277c83888113d8251287dbef03000fa885c7b35ae32c890`، JavaScript برابر `64f52f2032eae8783109cc9fa5c08d3cd500e549e28080f62cddde09064987d8` و CSS برابر `83c9bbc44b7f4e2de6aea67986afb2e955c684c6859e03a170a170f3c14ab2e3`.
+- ChatGPT Sites نسخهٔ ۱۰ با ۱۸ فایل، source commit همین SHA و archive hash برابر `sha256:b1d683bb5d8f2d1a84eb43ddd5f4b70471deecc5f5d23cf93ebc792cefe7a327` ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_8cb2973796a88191ad66b7fa6894e975` و deployment خصوصی `appgdep_6a926918d91c81919d2ca7f2b012de8b` با وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی owner-only/custom با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
+- این commit مستندی فقط receipt و وضعیت را ثبت می‌کند و prototype tree آن با `59405e2` یکسان است. SHA نهایی receipt پس از commit با `git rev-parse HEAD` تعیین و همان source در GitHub، Cloudflare و Sites منتشر می‌شود؛ receiptهای قدیمی‌تر برای تاریخچه حفظ شده‌اند.
 
 release کد بازخوردی C-010 در ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹ منتشر و راستی‌آزمایی شد؛ commit مستندی بعدی baseline نهایی را به `57bbf656` رساند:
 
