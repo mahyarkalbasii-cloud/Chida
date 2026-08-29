@@ -1016,7 +1016,7 @@
 ## T8-A2 — رونویسی خصوصی پاسخ مرتبط توسط سازنده
 
 - **تاریخ:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
-- **وضعیت:** قرارداد، پیاده‌سازی، هفت regression متمرکز، suite کامل، QA موبایل و بازبینی مستقل در working tree اصلی کامل شد؛ ماهیار پس از مشاهده آن را تأیید کرد و مجوز commit، push و انتشار همین snapshot آزموده در همهٔ مقصدها را داد؛ receipt نهایی هنوز ثبت نشده است
+- **وضعیت:** قرارداد، پیاده‌سازی، regression، suite کامل، QA موبایل و بازبینی مستقل کامل و توسط ماهیار تأیید شد؛ release کد با commit `f5d68b6e757c0763a6770a46c5c3a211825713d3` در GitHub، Cloudflare و ChatGPT Sites نسخهٔ ۱۶ موفق و هم‌منبع شد؛ commit مستندی receipt هنوز در حال بسته‌شدن است
 - **دامنه:** یک متن پاسخ که خود سازنده دستی رونویسی می‌کند و به revision دقیق سؤال T8-A1 متصل است؛ بدون ارسال سؤال از چیدا، دریافت پاسخ در چیدا، هویت/اصالت/زمان/کانال تأییدشده، پیام مشترک، شبکه، AI، اعلان یا اثر بیرونی.
 
 ### تجربهٔ مشاهده‌شده
@@ -1056,6 +1056,12 @@
 - QA مرورگر داخلی در viewport واقعی `390 × 844` مسیر ماتریس خدمت ← revision نیازمند روشن‌سازی ← سؤال ارسال‌نشده ← پاسخ دستی را طی کرد. validation خالی، متن مختلط RTL/LTR، focus بازگشت/بازکردن، persistence پس از reload، label کارت، `dir=auto`، overflow افقی صفر در document/view، overlay صفر و console warning/error صفر تأیید شدند.
 - بازبینی مستقل ابتدا نمایش نادرست empty در read-error، معنای `aria-invalid`، جهت متن و نبود regression dependency بالادستی را یافت؛ همه اصلاح و دوباره بازبینی شدند و finding باز P0/P1/P2 باقی نماند.
 - **[وضعیت تاریخی پیش از انتشار]** snapshot تا لحظهٔ این تأیید فقط در working tree اصلی بود و هیچ commit، push، Cloudflare deploy یا ChatGPT Sites version برای T8-A2 نداشت؛ مجوز تازهٔ ماهیار اکنون فقط برای انتشار همین snapshot آزموده و receipt آن مصرف می‌شود.
+
+### release کد T8-A2 و receipt پیش از commit مستندی نهایی
+
+- commit کد `f5d68b6e757c0763a6770a46c5c3a211825713d3` روی local/GitHub `main` هم‌تراز شد. Cloudflare Pages deployment `11eb968e-8348-455a-abcf-6187221f897b` با `github:push`، شاخهٔ `main`، `commit_dirty=false` و همین source به وضعیت `success` رسید؛ canonical `https://chida-prototype.pages.dev` و immutable `https://11eb968e.chida-prototype.pages.dev` با build محلی hash یکسان داشتند: HTML برابر `e1d80ca062a1736bb6c1c1814b6920160f255c80b4362db4a80736fb4561f616`، JavaScript برابر `d9a5af99b514e38fe7106d9bc13d70a4b786d51e14ffa0f59fa20f8b6470246e` و CSS برابر `a8cc77e688cfdf669d53be72c248434f4f4122b2ddf6ace2f8f56bd141a5d444`.
+- ChatGPT Sites نسخهٔ ۱۶ با ۱۸ فایل، source commit همین SHA و archive hash `sha256:9790a1b4054451e1192669dfea8ecb8a2a9f4e2086d54cfa13d8452d4bdce76e` ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_1c2eb22ab4c48191823c95adc6f00677` و deployment خصوصی `appgdep_6a92b4ea95748191be4cd9f8eed39bf8` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. access owner-only/custom با یک مالک و بدون گروه یا مهمان بیرونی حفظ شد.
+- commit مستندی جاری فقط receipt و وضعیت را ثبت می‌کند و prototype tree آن با `f5d68b6` یکسان می‌ماند. SHA نهایی پس از commit تعیین و همان source دوباره در GitHub، Cloudflare و Sites هم‌تراز می‌شود؛ receipt نهایی آن پیش از آغاز پیاده‌سازی T8-A3 در working tree ثبت خواهد شد.
 
 ### خارج از T8-A2
 
