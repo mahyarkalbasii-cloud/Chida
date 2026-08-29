@@ -964,7 +964,7 @@
 ## T8-A1 — پیش‌نویس خصوصی و نسخه‌دار سؤال مذاکره پس از پیشنهاد
 
 - **تاریخ:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
-- **وضعیت:** پیاده‌سازی، regression، QA موبایل و بازبینی مستقل کامل شد؛ ماهیار پس از مشاهده T8-A1 را تأیید کرد و برای commit، push و انتشار same-source در GitHub، Cloudflare Pages و ChatGPT Sites و سپس شروع T8-A2 مجوز صریح داد
+- **وضعیت:** پیاده‌سازی، regression، QA موبایل و بازبینی مستقل کامل شد؛ ماهیار T8-A1 را تأیید کرد و commit کد `1d6721da9bfbadc04f4ecdd4c5bbb94de4c6c8e1` در GitHub، Cloudflare Pages و ChatGPT Sites منتشر شد. commit مستندی جاری receipt را نهایی می‌کند و سپس T8-A2 فقط در لوکال آغاز می‌شود
 - **دامنه:** فقط ثبت دستیِ هدف و متن یک سؤال خصوصی و ارسال‌نشده، pin‌شده به یک قلم محصول یا معیار واجدشرایط خدمت در revision دقیق مقایسه و پیشنهاد؛ بدون پاسخ تأمین‌کننده، پیام، شبکه، AI، زمان‌بندی، تبادل تماس، مجوز ارسال یا اثر بیرونی.
 
 ### تجربهٔ مشاهده‌شده
@@ -1004,4 +1004,6 @@
 - بازبینی مستقل نهایی هیچ P0/P1/P2 یا blocker پیدا نکرد؛ دامنه و flags بدون اثر بیرونی، project isolation، exact lineage/fingerprint، canonical parser، no-op/version/rollback/read-lock، duplicate/open-existing، origin focus، eligibility مشترک، a11y و اسناد هم‌خوان گزارش شدند.
 - store مستقل `chida-prototype-builder-negotiation-drafts:v1` با سقف ۱۰۰ رکورد در پروژه، ۱۰۰ revision در رکورد و ۱۰۰۰ رکورد کل ساخته شده است. read-error از empty جداست، mutation را قفل می‌کند و دادهٔ منبعِ درخواست/پیشنهاد/مقایسه/تماس را تغییر نمی‌دهد.
 - پاسخ، کشف تناقض، اثر تغییر شرایط، مقایسهٔ نسخهٔ تازهٔ پیشنهاد، پیگیری موعد و هر مسیر مشترک/ارسالی هنوز ساخته نشده‌اند؛ بنابراین کل T8-A تکمیل اعلام نمی‌شود.
-- این snapshot در زمان ثبت بازخورد هنوز محلی و uncommitted است، اما با تأیید صریح تازهٔ ماهیار مجوز انتشار same-source دارد. receipt نهایی GitHub/Cloudflare/Sites پس از موفقیت هر سه مقصد در همین دفتر و هنداف ثبت می‌شود؛ سپس T8-A2 فقط در لوکال آغاز خواهد شد.
+- commit کد `1d6721da9bfbadc04f4ecdd4c5bbb94de4c6c8e1` روی local/GitHub `main` هم‌تراز شد. Cloudflare Pages deployment `fd8a2414-20c4-48d3-8100-fdbabf5db5df` با `github:push`، شاخهٔ `main`، `commit_dirty=false` و همین source به وضعیت `success` رسید؛ canonical و immutable با build محلی یکسان بودند: HTML برابر `4c352a2abd9d6a6cfd9637204b5e3999302e7c5f4e81003f51b5ba53c82f8f4d`، JavaScript برابر `90638efafed40660cb7ea90f2682abab4d88ba82fba1576c3bd9a882e3b5785f` و CSS برابر `0451b6a6e27e74bc3ef941262c0b921d43e96c35c745e314e65ea2e8b4583838`.
+- ChatGPT Sites نسخهٔ ۱۴ با ۱۸ فایل، source commit همین SHA و archive hash `sha256:20e03c011543ef61b61b34ccda06ddb55c9acd091e70e69d61110d2a8b1176c0` ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_d87834b9652881919ce7e421b183f3d0` و deployment خصوصی `appgdep_6a9294c72bf88191ac00717221609da7` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی owner-only/custom با یک مالک و بدون گروه یا مهمان بیرونی حفظ شد.
+- commit مستندی جاری فقط receipt و وضعیت را ثبت می‌کند و prototype tree آن با `1d6721d` یکسان است. SHA نهایی پس از commit تعیین و همان source دوباره در GitHub، Cloudflare و Sites هم‌تراز می‌شود؛ پس از موفقیت آن T8-A2 فقط در لوکال آغاز خواهد شد.
