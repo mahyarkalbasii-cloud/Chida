@@ -917,7 +917,7 @@
 ## T7-B2 — مقایسهٔ کیفی پیشنهادهای خدمت و تصمیم مستقل سازنده
 
 - **تاریخ:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
-- **وضعیت:** پیاده‌سازی، regression و QA موبایل کامل؛ ماهیار پس از مشاهده آن را تأیید کرد؛ commit کد `0d633e0dbf3d9291d6bba963f64855143b5cf1ef` روی GitHub، Cloudflare Pages و ChatGPT Sites منتشر شده و commit مستندی جاری receipt نهایی را بدون تغییر prototype tree هم‌تراز می‌کند
+- **وضعیت:** پیاده‌سازی، regression و QA موبایل کامل و توسط ماهیار تأیید شد؛ receipt نهایی same-source با SHA `ef21c022ae28a772bbd710bc09c8f61a18db74ad` در GitHub، Cloudflare Pages و ChatGPT Sites منتشر و بسته شده است
 - **دامنه:** مقایسهٔ کیفیِ معیارمحورِ حداقل دو پیشنهاد خدمتِ جاری برای همان `projectId` و همان target/revision دقیق، همراه با تصمیم انسانی جدا؛ بدون امتیازدهی، رتبه‌بندی، نرمال‌سازی قیمت، AI، شبکه، پیام، ارسال، خرید یا هر اثر بیرونی.
 
 ### تجربهٔ مشاهده‌شده
@@ -958,4 +958,50 @@
 - QA مرورگر داخلی در viewport واقعی `390 × 844` مسیر صندوق پیشنهادها ← ماتریس خدمت ← تصمیم مستقل را با دو پیشنهاد و ده معیار طی کرد. نام‌های screen reader بر پایهٔ «کنترل + معیار + مجری» قابل تشخیص بودند، جمع‌بندی همیشه بدون نامزد خودکار ماند، تصمیم محلی ثبت شد، console خطا/هشدار مرتبط نداشت و overflow افقی editor، detail و document صفر بود.
 - commit کد T7-B2 برابر `0d633e0dbf3d9291d6bba963f64855143b5cf1ef` روی local/GitHub `main` هم‌تراز شد. Cloudflare Pages deployment `20cfc7ac-0984-4102-a394-6d2605eb7158` با `github:push`، شاخهٔ `main`، `commit_dirty=false` و همین SHA به وضعیت `success` رسید؛ hashهای local/canonical/immutable برای HTML، JavaScript و CSS به‌ترتیب `5fa8b8a4ad0ce83907303ca74c086115117208ee20b62bdcf94991815a23a2cd`، `80dc42150e9e44b4d4eb46924f2458c2b959065c414f674ddc71ab81aa768093` و `01be34119cc0b87cb2f85c0af2942f0f0d9a7e87ddae1ca8c64ebaf730badfee` یکسان بودند.
 - ChatGPT Sites نسخهٔ ۱۲ با ۱۸ فایل، source commit همین SHA و archive hash `sha256:86daac1e62c11b0f26fbfe4ae6020d3cafecf21c3cd45a068fee4453fec17e3d` ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_31ac1fcd9cec8191b00f8f2096f2f7e9` و deployment خصوصی `appgdep_6a927bee77808191812616e41360858c` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی owner-only/custom با یک مالک و بدون گروه یا مهمان بیرونی حفظ شد.
-- commit مستندی جاری فقط receipt و وضعیت را ثبت می‌کند و prototype tree آن با `0d633e0` یکسان می‌ماند؛ همان source نهایی باید دوباره در GitHub، Cloudflare و Sites هم‌تراز شود و سپس T8-A آغاز گردد.
+- commit مستندی نهایی با SHA `ef21c022ae28a772bbd710bc09c8f61a18db74ad` روی local/GitHub `main` هم‌تراز شد و prototype tree آن با commit کد `0d633e0dbf3d9291d6bba963f64855143b5cf1ef` یکسان ماند. Cloudflare Pages deployment نهایی `4396280e-95e7-4ceb-bdf2-da720de51170` با `github:push`، شاخهٔ `main`، `commit_dirty=false` و source commit نهایی به وضعیت `success` رسید؛ canonical و immutable همچنان همان hashهای HTML، JavaScript و CSS ثبت‌شده در بالا را داشتند.
+- ChatGPT Sites نسخهٔ ۱۳ با همان ۱۸ فایل و archive hash، source commit نهایی را ذخیره کرد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_5dd91d43d590819199143a7fa48ff09d` و deployment خصوصی `appgdep_6a927e3aaec881918dc255bde7e18ba4` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی owner-only/custom با یک مالک و بدون گروه یا مهمان بیرونی حفظ شد؛ T7-B2 با این receipt بسته و T8-A1 فقط در لوکال آغاز شد.
+
+## T8-A1 — پیش‌نویس خصوصی و نسخه‌دار سؤال مذاکره پس از پیشنهاد
+
+- **تاریخ:** ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹
+- **وضعیت:** پیاده‌سازی، regression، QA موبایل و بازبینی مستقل کامل شد؛ ماهیار پس از مشاهده T8-A1 را تأیید کرد و برای commit، push و انتشار same-source در GitHub، Cloudflare Pages و ChatGPT Sites و سپس شروع T8-A2 مجوز صریح داد
+- **دامنه:** فقط ثبت دستیِ هدف و متن یک سؤال خصوصی و ارسال‌نشده، pin‌شده به یک قلم محصول یا معیار واجدشرایط خدمت در revision دقیق مقایسه و پیشنهاد؛ بدون پاسخ تأمین‌کننده، پیام، شبکه، AI، زمان‌بندی، تبادل تماس، مجوز ارسال یا اثر بیرونی.
+
+### تجربهٔ مشاهده‌شده
+
+- پس از مقایسه، سازنده برای روشن‌کردن یک ابهام به مسیری نیاز دارد که همان پیشنهاد، revision، قلم/معیار و snapshot تأمین‌کننده را نگه دارد؛ یک یادداشت آزاد یا پیام چت این lineage را از بین می‌برد.
+- ثبت هدف و متن با بیان مستقیم سازنده، بدون ادعای ارسال، یک برش ماندگار و صادقانه برای فاز قبل از وجود سمت تأمین‌کننده است. پیش‌نویس موجود باید از همان CTA دوباره باز شود و کاربر نباید پس از نوشتن با خطای duplicate غافلگیر شود.
+- بازگشت از ثبت یا جزئیات باید کاربر را به همان revision و معیار منشأ برگرداند. دادهٔ stale تاریخی و فقط‌خواندنی می‌ماند و به dependency تازه rebind نمی‌شود.
+
+### شکاف سند مادر
+
+- سند مادر «پیش‌نویس سؤال و پاسخ» و تأیید پیش از ارسال را می‌خواهد، اما شیء مستقل پیش‌نویس خصوصی، target دقیق، version/history/fingerprint، رفتار duplicate و invalidation وابستگی را تعریف نمی‌کند.
+- مرز رسمی میان یادداشت خصوصی سازنده، پیام مشترک آینده و پاسخ دستی/واقعی تأمین‌کننده مشخص نیست. همچنین قرارداد read-error، rollback، no-op و retention این شیء هنوز در سند مادر وجود ندارد.
+- وضعیت‌های معیار خدمت که واقعاً سؤال تکمیلی می‌طلبند و نسبت آن‌ها با معیارهای هم‌راستا یا نامرتبط باید صریح شود تا UI و parser یک قرارداد واحد داشته باشند.
+
+### تصمیم‌های تأییدشده پس از مشاهدهٔ ماهیار
+
+- **[تصمیم کاری T8-A1؛ تأییدشده توسط کاربر]** `PrivateNegotiationDraft` یک رکورد مستقل، پروژه‌محور، خصوصی و نسخه‌دار است که فقط با ثبت مستقیم سازنده ساخته می‌شود و به revision/fingerprint دقیق مقایسه، درخواست، پیشنهاد، قلم/معیار و snapshot تماس pin می‌شود.
+- **[تصمیم کاری T8-A1؛ تأییدشده توسط کاربر]** هدف و متن هر دو اجباری‌اند؛ no-op بایت و نسخه را تغییر نمی‌دهد، تغییر معنادار revision/history تازه می‌سازد و شکست نوشتن نسخهٔ قبلی را حفظ می‌کند. هر target فقط یک پیش‌نویس دارد و CTA هدف موجود همان رکورد را باز می‌کند.
+- **[تصمیم کاری T8-A1؛ تأییدشده توسط کاربر]** در خدمت فقط وضعیت‌های نسبی، متفاوت یا نامشخص واجد شروع سؤال‌اند؛ معیار هم‌راستا یا نامرتبط هدف سؤال تکمیلی نیست. قلم محصول می‌تواند یک سؤال اختیاری سازنده داشته باشد و کامل‌بودن محاسبه به‌تنهایی «نیاز به روشن‌سازی» ادعا نمی‌کند.
+- **[مرز اثر بیرونی T8-A1؛ تأییدشده توسط کاربر]** رکورد همواره `status=draft`، `externalEffect=none`، `networkUsed=false`، `aiUsed=false`، `sendAuthorized=false`، `supplierNotified=false`، `sharedWithSupplier=false` و `externalActionAttempted=false` دارد؛ هیچ دکمه یا رسید ارسال ساخته نمی‌شود.
+
+### بازخورد پس از مشاهده
+
+- ماهیار T8-A1 را مناسب ارزیابی کرد و صریحاً خواست به تسک بعدی برویم. مطابق ریتم ثابت پروژه، این تأیید مجوز commit، push و انتشار همین snapshot آزموده در هر سه مقصد است؛ T8-A2 فقط پس از موفقیت و راستی‌آزمایی same-source آن آغاز می‌شود. مجوز انتشار T8-A1 به commit یا انتشار آیندهٔ T8-A2 تعمیم ندارد.
+
+### پیشنهاد برای تکمیل سند مادر
+
+- `PrivateNegotiationDraft` از `SharedNegotiationMessage` و پاسخ طرف دوم جدا تعریف شود؛ target/version/fingerprint، یک‌به‌یک‌بودن target، history تغییرناپذیر، no-op، invalidation بدون rebind و وضعیت خصوصی/ارسال‌نشده قرارداد رسمی داشته باشند.
+- تبدیل احتمالی پیش‌نویس خصوصی به پیام مشترک آینده باید یک اقدام جدا با snapshot مقصد/محتوا/نسخه و Approval مستقل باشد؛ این تبدیل نباید تاریخچهٔ پیش‌نویس را بازنویسی کند.
+- سقف رکورد/نسخه، write-before-state، rollback، parser fail-closed، تمایز read-error از empty و قفل mutation تا load موفق برای این شیء نیز invariant رسمی شوند.
+
+### وضعیت شواهد و تحویل محلی
+
+- شش regression متمرکز مسیر قلم محصول و معیار خدمت، target و source-byteهای دقیق، بازگشت/focus به منشأ، duplicate target، no-op/version/history، rollback/read-error، canonical tamper و invalidation/fingerprint را پوشش می‌دهند. اجرای متمرکز نهایی ۶/۶، `test:app` کامل ۱۱۸/۱۱۸ و `test:runtime` کامل ۱۲۶/۱۲۶ پاس شدند.
+- `check:runtime` برای ۲۸ فایل محافظت‌شده، build شامل TypeScript و آماده‌سازی Sites، `test:sites` چهار از چهار، `npx tsc --noEmit` و `git diff --check` پاس شدند؛ فقط هشدار شناخته‌شدهٔ chunk جاوااسکریپت بزرگ‌تر از 500kB باقی است.
+- QA مرورگر داخلی در viewport واقعی `390 × 844` مسیر ماتریس خدمت ← CTA معیار «مدت و زمان اجرا» ← editor ← detail ← بازگشت به همان معیار ← بازکردن رکورد موجود ← فهرست پیش‌نویس‌ها را طی کرد. focus ورود روی عنوان و خطای هدف روی همان field بود، نام دسترس‌پذیر «معیار + مجری» حفظ شد، CTA معیار هم‌راستا غیرفعال و partial/different فعال بود، editor/detail/list و document overflow افقی صفر داشتند و console warning/error و error overlay صفر بودند.
+- بازبینی مستقل نهایی هیچ P0/P1/P2 یا blocker پیدا نکرد؛ دامنه و flags بدون اثر بیرونی، project isolation، exact lineage/fingerprint، canonical parser، no-op/version/rollback/read-lock، duplicate/open-existing، origin focus، eligibility مشترک، a11y و اسناد هم‌خوان گزارش شدند.
+- store مستقل `chida-prototype-builder-negotiation-drafts:v1` با سقف ۱۰۰ رکورد در پروژه، ۱۰۰ revision در رکورد و ۱۰۰۰ رکورد کل ساخته شده است. read-error از empty جداست، mutation را قفل می‌کند و دادهٔ منبعِ درخواست/پیشنهاد/مقایسه/تماس را تغییر نمی‌دهد.
+- پاسخ، کشف تناقض، اثر تغییر شرایط، مقایسهٔ نسخهٔ تازهٔ پیشنهاد، پیگیری موعد و هر مسیر مشترک/ارسالی هنوز ساخته نشده‌اند؛ بنابراین کل T8-A تکمیل اعلام نمی‌شود.
+- این snapshot در زمان ثبت بازخورد هنوز محلی و uncommitted است، اما با تأیید صریح تازهٔ ماهیار مجوز انتشار same-source دارد. receipt نهایی GitHub/Cloudflare/Sites پس از موفقیت هر سه مقصد در همین دفتر و هنداف ثبت می‌شود؛ سپس T8-A2 فقط در لوکال آغاز خواهد شد.

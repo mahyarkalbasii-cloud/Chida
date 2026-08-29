@@ -3930,6 +3930,54 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 .service-comparison-result-assessment dt { color: var(--text-soft); font-size: 8px; }
 .service-comparison-result-assessment dd { min-width: 0; margin: 0; color: var(--text); font-size: 9px; line-height: 1.75; overflow-wrap: anywhere; }
 
+.negotiation-draft-start-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  color: var(--copper-strong);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 760;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  background: var(--copper-soft);
+  border: 1px solid color-mix(in srgb, var(--copper) 38%, var(--line));
+  border-radius: 13px;
+  cursor: pointer;
+}
+
+.negotiation-draft-start-button:disabled {
+  color: var(--text-soft);
+  background: var(--surface-muted);
+  border-color: var(--line);
+  cursor: not-allowed;
+  opacity: 0.64;
+}
+
+.comparison-result-line > .negotiation-draft-start-button { margin: 10px; width: calc(100% - 20px); }
+.negotiation-draft-editor-content,
+.negotiation-draft-detail-content,
+.negotiation-drafts-list-view .project-proposals-content { min-width: 0; }
+.negotiation-draft-editor-content .proposal-locked-grid { grid-template-columns: 1fr; }
+.negotiation-draft-editor-actions { grid-template-columns: 1fr; }
+.negotiation-draft-message,
+.negotiation-draft-history-message {
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.negotiation-draft-history-message { color: var(--text-soft); font-size: 9px; }
+
 @media (max-width: 360px) {
   .proposal-form-grid,
   .proposal-line-main-grid,
