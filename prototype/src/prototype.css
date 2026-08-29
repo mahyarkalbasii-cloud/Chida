@@ -3978,6 +3978,43 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 }
 .negotiation-draft-history-message { color: var(--text-soft); font-size: 9px; }
 
+.manual-negotiation-response-editor-content,
+.manual-negotiation-response-detail-content,
+.manual-negotiation-response-entry,
+.manual-negotiation-response-detail-hero { min-width: 0; }
+
+.manual-negotiation-response-entry {
+  display: grid;
+  gap: 12px;
+}
+
+.manual-negotiation-response-entry > p,
+.manual-negotiation-question-copy,
+.manual-negotiation-response-message {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 10px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.manual-negotiation-response-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  overflow-wrap: anywhere;
+}
+
+.manual-negotiation-response-detail-hero h1,
+.manual-negotiation-response-detail-hero p { max-width: 100%; overflow-wrap: anywhere; }
+.manual-negotiation-response-message { color: var(--text); font-size: 11px; line-height: 2; }
+
 @media (max-width: 360px) {
   .proposal-form-grid,
   .proposal-line-main-grid,

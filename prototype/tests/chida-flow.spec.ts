@@ -367,6 +367,7 @@ async function createCompleteServiceComparisonWithDecision(page: Page) {
 }
 
 const negotiationDraftStorageKey = "chida-prototype-builder-negotiation-drafts:v1";
+const manualNegotiationResponseStorageKey = "chida-prototype-builder-manual-negotiation-responses:v1";
 
 async function commercialSourceStoreBytes(page: Page) {
   return page.evaluate(() => ({
@@ -442,6 +443,20 @@ async function createExactServiceNegotiationDraft(page: Page, values: { purpose:
     requestListener,
     values,
   };
+}
+
+async function createExactManualNegotiationResponse(page: Page, responseText = "مجری در تماس بیرون از چیدا گفت تجهیز کارگاه سه روز پس از توافق انجام می‌شود.") {
+  const question = await createExactServiceNegotiationDraft(page);
+  await page.getByTestId("manual-negotiation-response-add").click();
+  await expect(page.getByTestId("manual-negotiation-response-editor")).toBeVisible();
+  await expect(page.getByTestId("manual-negotiation-response-editor-title")).toBeFocused();
+  await page.getByTestId("manual-negotiation-response-text").fill(responseText);
+  await page.getByTestId("manual-negotiation-response-save").click();
+  await expect(page.getByTestId("manual-negotiation-response-detail")).toBeVisible();
+  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toBeFocused();
+  const responseStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey);
+  const responseRecord = JSON.parse(responseStore ?? "[]")[0];
+  return { ...question, responseText, responseStore, responseRecord };
 }
 
 async function createTwoCurrentProductProposalsForComparison(page: Page, overrides: { firstTotalPrice?: string } = {}) {
@@ -5873,6 +5888,7 @@ test("T8-A1 also pins a product-line question to the exact compared proposal rev
   await start.click();
   await expect(page.getByTestId("negotiation-draft-target")).toContainText(prerequisites.firstSupplier);
   await expect(page.getByTestId("negotiation-draft-target")).toContainText(line.requestLabel);
+  await expect(page.getByTestId("negotiation-draft-boundary")).toContainText("چیدا تأمین‌کننده را مطلع نکرده");
   await page.getByTestId("negotiation-draft-purpose").fill("روشن شدن شرایط قلم محصول پیش از ادامه بررسی");
   await page.getByTestId("negotiation-draft-message").fill("لطفاً اعتبار قیمت و زمان آماده‌سازی همین قلم را دقیق اعلام کنید.");
   await page.getByTestId("negotiation-draft-save").click();
@@ -6203,6 +6219,319 @@ test("T8-A1 invalidates stale dependencies and fail-closes a tampered target fin
   await page.getByTestId("service-proposal-comparisons-entry").click();
   await expect(page.getByTestId("service-comparison-card")).toHaveCount(1);
   expect(await commercialSourceStoreBytes(page)).toEqual(sourceStoresAfterInvalidation);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A2 pins one private builder transcription to the exact service question revision without external effect", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationResponse(page);
+  const questionRevision = created.record.revisions.find((item: { id: string }) => item.id === created.record.currentRevisionId);
+
+  await expect(page.getByTestId("manual-negotiation-response-detail")).toContainText("پاسخ احرازنشده · خارج از شبکهٔ چیدا");
+  await expect(page.getByTestId("manual-negotiation-response-detail")).toContainText(created.responseText);
+  await expect(page.getByTestId("manual-negotiation-response-message")).toHaveAttribute("dir", "auto");
+  await expect(page.getByTestId("manual-negotiation-response-history").locator(".negotiation-draft-history-message")).toHaveAttribute("dir", "auto");
+  await expect(page.getByTestId("manual-negotiation-response-boundary")).toContainText("questionSentThroughChida=false");
+  await expect(page.getByTestId("manual-negotiation-response-boundary")).toContainText("receivedThroughChida=false");
+  expect(await page.getByTestId("manual-negotiation-response-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+  expect(created.responseRecord).toMatchObject({
+    schemaVersion: 1,
+    projectId: created.projectId,
+    purpose: "record-local-builder-transcribed-negotiation-response",
+    status: "local-transcription",
+    target: {
+      negotiationDraftId: created.record.id,
+      negotiationDraftRevisionId: questionRevision.id,
+      negotiationDraftRevisionVersion: questionRevision.version,
+      negotiationDraftRevisionFingerprint: questionRevision.fingerprint,
+    },
+    questionSnapshot: {
+      purpose: questionRevision.purpose,
+      message: questionRevision.message,
+      createdAt: questionRevision.createdAt,
+      negotiationTarget: created.record.target,
+    },
+    source: "ثبت دستی سازنده",
+    networkStatus: "خارج از شبکه چیدا",
+    supplierAuthenticated: false,
+    authenticityVerified: false,
+    questionSentThroughChida: false,
+    receivedThroughChida: false,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    externalEffect: "none",
+    networkUsed: false,
+    aiUsed: false,
+    sendAuthorized: false,
+    supplierNotified: false,
+    sharedWithSupplier: false,
+    externalActionAttempted: false,
+    version: 1,
+  });
+  expect(created.responseRecord.revisions).toHaveLength(1);
+  expect(created.responseRecord.revisions[0]).toMatchObject({ version: 1, responseText: created.responseText });
+  expect(created.responseRecord.history.map((event: { type: string }) => event.type)).toEqual(["created"]);
+  expect(created.responseRecord).not.toHaveProperty("receivedAt");
+  expect(created.responseRecord).not.toHaveProperty("senderId");
+  expect(created.responseRecord).not.toHaveProperty("messageId");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
+  expect(await commercialSourceStoreBytes(page)).toEqual(created.sourceStoresBeforeDraft);
+
+  await page.getByTestId("manual-negotiation-response-detail-back").click();
+  await expect(page.getByTestId("manual-negotiation-response-open")).toBeFocused();
+  await expect(page.getByTestId("manual-negotiation-response-open")).toHaveAccessibleName(`بازکردن پاسخ دستی ثبت‌شده برای مدت و زمان اجرا و ${created.firstSupplier}`);
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toBeFocused();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A2 supports the same exact-response contract for a product-line question and keeps project isolation", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const prerequisites = await createExactProductComparisonWithDecision(page);
+  const sourceStoresBeforeResponse = await commercialSourceStoreBytes(page);
+  const comparison = JSON.parse(sourceStoresBeforeResponse.productComparisons ?? "[]")[0];
+  const comparisonRevision = comparison.revisions.find((revision: { id: string }) => revision.id === comparison.currentRevisionId);
+  const proposal = JSON.parse(sourceStoresBeforeResponse.proposals ?? "[]").find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
+  const line = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === proposal.id).lines[0];
+  const start = page.locator(`[data-testid="negotiation-draft-start"][data-comparison-kind="product"][data-proposal-id="${proposal.id}"][data-criterion-id="${line.requestItemId}"]`);
+  await start.click();
+  await page.getByTestId("negotiation-draft-purpose").fill("ثبت پاسخ مرتبط با اعتبار قلم محصول");
+  await page.getByTestId("negotiation-draft-message").fill("اعتبار قیمت این قلم تا چه تاریخی است؟");
+  await page.getByTestId("negotiation-draft-save").click();
+  await page.getByTestId("manual-negotiation-response-add").click();
+  await page.getByTestId("manual-negotiation-response-text").fill("در تماس بیرونی گفته شد قیمت تا پایان هفته معتبر است.");
+  await page.getByTestId("manual-negotiation-response-save").click();
+  const responseStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey);
+  const response = JSON.parse(responseStore ?? "[]")[0];
+  expect(response.questionSnapshot.negotiationTarget).toMatchObject({ comparisonKind: "product", proposalId: proposal.id, proposalLineId: line.proposalLineId, criterionKind: "product-line", criterionId: line.requestItemId, criterionLabel: line.requestLabel });
+  expect(await commercialSourceStoreBytes(page)).toEqual(sourceStoresBeforeResponse);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await expect(page.getByTestId("negotiation-draft-card")).toContainText("پاسخ دستی ثبت شده");
+  await page.getByTestId("negotiation-draft-card").click();
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await expect(page.getByTestId("manual-negotiation-response-detail")).toContainText("پایان هفته معتبر است");
+
+  const firstProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  await page.evaluate(() => {
+    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
+    projects.push({ id: "t8a2-isolation-project-b", name: "پروژه مستقل پاسخ", location: "منطقهٔ ۴", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
+    window.localStorage.setItem("chida-prototype-active-project", "t8a2-isolation-project-b");
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
+  expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey) ?? "[]")).toHaveLength(1);
+
+  await page.evaluate((projectId) => window.localStorage.setItem("chida-prototype-active-project", projectId!), firstProjectId);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(responseStore);
+});
+
+test("T8-A2 keeps no-op bytes stable and versions only a semantic transcription correction", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationResponse(page);
+  const v1 = created.responseRecord;
+
+  await page.getByTestId("manual-negotiation-response-edit").click();
+  await expect(page.getByTestId("manual-negotiation-response-editor-title")).toBeFocused();
+  await page.getByTestId("manual-negotiation-response-save").click();
+  await expect(page.getByTestId("manual-negotiation-response-detail")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+
+  const corrected = "اصلاح رونویسی: مجری گفت تجهیز کارگاه سه روز کاری پس از توافق انجام می‌شود.";
+  await page.getByTestId("manual-negotiation-response-edit").click();
+  await page.getByTestId("manual-negotiation-response-text").fill(corrected);
+  await page.getByTestId("manual-negotiation-response-save").click();
+  await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(corrected);
+  await expect(page.getByTestId("manual-negotiation-response-history")).toContainText(created.responseText);
+  const v2Store = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey);
+  const v2 = JSON.parse(v2Store ?? "[]")[0];
+  expect(v2Store).not.toBe(created.responseStore);
+  expect(v2.version).toBe(2);
+  expect(v2.history.map((event: { type: string }) => event.type)).toEqual(["created", "updated"]);
+  expect(v2.revisions).toHaveLength(2);
+  expect(v2.revisions[0]).toEqual(v1.revisions[0]);
+  expect(v2.revisions[1]).toMatchObject({ version: 2, responseText: corrected });
+
+  await page.getByTestId("manual-negotiation-response-revision-select").selectOption(v1.revisions[0].id);
+  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toContainText("نسخهٔ تاریخی رونویسی");
+  await expect(page.getByTestId("manual-negotiation-response-edit")).toBeDisabled();
+  await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(created.responseText);
+  await page.getByTestId("manual-negotiation-response-revision-select").selectOption(v2.currentRevisionId);
+  await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(corrected);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
+  expect(await commercialSourceStoreBytes(page)).toEqual(created.sourceStoresBeforeDraft);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A2 rolls back failed writes and locks an unreadable response store without locking a healthy question", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const question = await createExactServiceNegotiationDraft(page);
+  await page.getByTestId("manual-negotiation-response-add").click();
+  await page.getByTestId("manual-negotiation-response-save").click();
+  await expect(page.getByTestId("manual-negotiation-response-text")).toBeFocused();
+  await expect(page.getByTestId("manual-negotiation-response-text")).toHaveAttribute("aria-invalid", "true");
+  await page.getByTestId("manual-negotiation-response-text").fill("پاسخ رونویسی‌شده برای آزمون شکست ذخیره");
+  await page.evaluate((key) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__manualResponseNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      if (this === window.localStorage && storageKey === key) throw new DOMException("Manual response write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, storageKey, value);
+    };
+  }, manualNegotiationResponseStorageKey);
+  await page.getByTestId("manual-negotiation-response-save").click();
+  await expect(page.getByTestId("manual-negotiation-response-editor")).toBeVisible();
+  await expect(page.getByTestId("manual-negotiation-response-form-error")).toContainText("رونویسی پاسخ ثبت نشد");
+  await expect(page.getByTestId("manual-negotiation-response-text")).toHaveAttribute("aria-invalid", "false");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(question.draftStore);
+
+  await page.evaluate(() => { Storage.prototype.setItem = (window as Window & { __manualResponseNativeSetItem: typeof Storage.prototype.setItem }).__manualResponseNativeSetItem; });
+  await page.getByTestId("manual-negotiation-response-save").click();
+  await expect(page.getByTestId("manual-negotiation-response-detail")).toBeVisible();
+  const validResponseStore = await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey);
+  await page.addInitScript((key) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Object.defineProperty(window, "__manualResponseNativeGetItem", { value: nativeGetItem, configurable: true });
+    Storage.prototype.getItem = function getItem(storageKey: string) {
+      if (this === window.localStorage && storageKey === key) throw new DOMException("Manual response read failed", "SecurityError");
+      return nativeGetItem.call(this, storageKey);
+    };
+  }, manualNegotiationResponseStorageKey);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
+  await expect(page.getByTestId("negotiation-draft-card")).toContainText("وضعیت پاسخ دستی نامشخص");
+  await expect(page.getByTestId("negotiation-draft-card")).not.toContainText("بدون پاسخ دستی");
+  await page.getByTestId("negotiation-draft-card").click();
+  await expect(page.getByTestId("manual-negotiation-response-storage-error")).toBeVisible();
+  await expect(page.getByTestId("manual-negotiation-response-add")).toHaveCount(0);
+  await expect(page.getByTestId("manual-negotiation-response-open")).toHaveCount(0);
+  await expect(page.getByTestId("negotiation-draft-edit")).toBeEnabled();
+  expect(await page.evaluate((key) => (window as Window & { __manualResponseNativeGetItem: typeof Storage.prototype.getItem }).__manualResponseNativeGetItem.call(window.localStorage, key), manualNegotiationResponseStorageKey)).toBe(validResponseStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(question.draftStore);
+  expect(await commercialSourceStoreBytes(page)).toEqual(question.sourceStoresBeforeDraft);
+  expect(question.externalRequests).toEqual([]);
+  page.off("request", question.requestListener);
+});
+
+test("T8-A2 fail-closes tampered response lineage without hiding or rewriting the healthy question", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationResponse(page);
+  const tamperedResponseStore = await page.evaluate((key) => {
+    const records = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    records[0].questionSnapshot.message = `${records[0].questionSnapshot.message} دست‌کاری`;
+    window.localStorage.setItem(key, JSON.stringify(records));
+    return window.localStorage.getItem(key);
+  }, manualNegotiationResponseStorageKey);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-compare-offers").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
+  await page.getByTestId("negotiation-draft-card").click();
+  await expect(page.getByTestId("negotiation-draft-detail")).toContainText(created.values.message);
+  await expect(page.getByTestId("manual-negotiation-response-storage-error")).toBeVisible();
+  await expect(page.getByTestId("negotiation-draft-edit")).toBeEnabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(tamperedResponseStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
+  expect(await commercialSourceStoreBytes(page)).toEqual(created.sourceStoresBeforeDraft);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A2 keeps an old response historical after a question edit and creates a separate response for the new revision", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationResponse(page);
+  const oldResponse = structuredClone(created.responseRecord);
+  const oldQuestionRevisionId = created.record.currentRevisionId;
+  await page.getByTestId("manual-negotiation-response-detail-back").click();
+  await page.getByTestId("negotiation-draft-edit").click();
+  const newQuestion = "لطفاً علاوه بر تاریخ شروع، مدت تجهیز کارگاه را هم جداگانه اعلام کنید.";
+  await page.getByTestId("negotiation-draft-message").fill(newQuestion);
+  await page.getByTestId("negotiation-draft-save").click();
+  const questionV2 = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey) ?? "[]")[0];
+  expect(questionV2.version).toBe(2);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+
+  await page.getByTestId("negotiation-draft-revision-select").selectOption(oldQuestionRevisionId);
+  await expect(page.getByTestId("manual-negotiation-response-open")).toBeVisible();
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("manual-negotiation-response-edit")).toBeDisabled();
+  await page.getByTestId("manual-negotiation-response-detail-back").click();
+  await expect(page.getByTestId("manual-negotiation-response-open")).toBeFocused();
+
+  await page.getByTestId("negotiation-draft-revision-select").selectOption(questionV2.currentRevisionId);
+  await expect(page.getByTestId("manual-negotiation-response-add")).toBeVisible();
+  await page.getByTestId("manual-negotiation-response-add").click();
+  await page.getByTestId("manual-negotiation-response-text").fill("برای سؤال جدید، بیرون از چیدا مدت تجهیز دو روز کاری اعلام شد.");
+  await page.getByTestId("manual-negotiation-response-save").click();
+  const responses = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey) ?? "[]");
+  expect(responses).toHaveLength(2);
+  expect(responses[0]).toEqual(oldResponse);
+  expect(responses[0].target.negotiationDraftRevisionId).toBe(oldQuestionRevisionId);
+  expect(responses[1].target.negotiationDraftRevisionId).toBe(questionV2.currentRevisionId);
+  expect(new Set(responses.map((record: { target: { negotiationDraftRevisionId: string } }) => record.target.negotiationDraftRevisionId)).size).toBe(2);
+  expect(await commercialSourceStoreBytes(page)).toEqual(created.sourceStoresBeforeDraft);
+  expect(created.externalRequests).toEqual([]);
+  page.off("request", created.requestListener);
+});
+
+test("T8-A2 makes a response historical after an upstream comparison revision without rewriting its bytes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const created = await createExactManualNegotiationResponse(page, "Builder ETA = 3 working days; ثبت دستی و تأییدنشده.");
+  await expect(page.getByTestId("manual-negotiation-response-message")).toHaveAttribute("dir", "auto");
+
+  await page.getByTestId("manual-negotiation-response-detail-back").click();
+  await page.getByTestId("negotiation-draft-detail-back").click();
+  await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
+  await page.getByTestId("service-comparison-edit").click();
+  await serviceComparisonAssessmentEditor(page, "timing", created.firstSupplier).getByTestId("service-comparison-declared-value").fill("شروع قطعی ظرف چهار روز و اجرای شش روزه");
+  await page.getByTestId("service-comparison-save").click();
+  await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخهٔ مقایسه ۲");
+  const sourceStoresAfterInvalidation = await commercialSourceStoreBytes(page);
+  expect(sourceStoresAfterInvalidation.serviceComparisons).not.toBe(created.sourceStoresBeforeDraft.serviceComparisons);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+
+  await page.getByTestId("service-comparison-detail-back").click();
+  await page.getByTestId("service-comparisons-back").click();
+  await page.getByTestId("negotiation-drafts-entry").click();
+  await expect(page.getByTestId("negotiation-draft-card")).toContainText("تاریخی · نیازمند بازبینی");
+  await page.getByTestId("negotiation-draft-card").click();
+  await expect(page.getByTestId("manual-negotiation-response-open")).toBeVisible();
+  await page.getByTestId("manual-negotiation-response-open").click();
+  await expect(page.getByTestId("manual-negotiation-response-detail-hero")).toContainText("تاریخی · نیازمند بازبینی");
+  await expect(page.getByTestId("manual-negotiation-response-edit")).toBeDisabled();
+  await expect(page.getByTestId("manual-negotiation-response-message")).toHaveText(created.responseText);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
   expect(created.externalRequests).toEqual([]);
   page.off("request", created.requestListener);
 });
