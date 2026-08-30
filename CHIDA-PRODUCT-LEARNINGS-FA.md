@@ -1321,7 +1321,7 @@
 ## T8-UX3 — پولیش خانهٔ سازنده، نشان CHIDA و Quick Action کامل
 
 - **تاریخ بازخورد:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
-- **وضعیت:** بازخورد صریح ماهیار در checkout اصلی پیاده‌سازی، در viewport واقعی `390 × 844` QA و با commit کد `3e4b35fe08b02918e4be814d5d796da14bfa54ca` در GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۲۴ same-source منتشر شده است. commit مستندی receipt در ادامه همین release ثبت می‌شود؛ تأیید تجربه پس از مشاهده باز می‌ماند.
+- **وضعیت:** بازخورد صریح ماهیار در checkout اصلی پیاده‌سازی، در viewport واقعی `390 × 844` QA و با commit کد `3e4b35fe08b02918e4be814d5d796da14bfa54ca` و commit مستندی receipt برابر `3bbd870ca021339d89abc09528f57fc690deec50` در GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۲۵ same-source منتشر شده است؛ تأیید تجربه پس از مشاهده باز می‌ماند.
 - **دامنه:** خلوت‌سازی خانهٔ Chat-first، روشن‌ترکردن affordance پروژه، تبدیل Quick Action از grid به rail افقی dragپذیر، کامل‌کردن میان‌برهای صادقانهٔ قابلیت‌های ساخته‌شده، افزایش خوانایی و جایگزینی نشان عمومی با دارایی تصویری اختصاصی CHIDA؛ بدون تغییر schema، storage، runtime محافظت‌شده، مدل، شبکه یا اثر بیرونی.
 
 ### تجربهٔ مشاهده‌شده و بازخورد کاربر
@@ -1351,15 +1351,55 @@
 - QA مرورگر داخلی در `390 × 844` مقدار `rootOverflow=0`، overflow داخلی rail برابر ۹۱۸ پیکسل، شروع RTL در offset نهایی، فونت ۱۵px نام پروژه، ۱۴px متن راهنما، ۱۲px chip، border روشن کنترل پروژه، بارگذاری کامل نشان و console بدون warning/error را تأیید کرد. نشان نهایی برای slot کوچک خانه از ۱۲۵۴px/حدود ۴۸۶KB به ۲۵۶px/حدود ۳۶KB بهینه شد و alpha حفظ شد.
 - مقایسهٔ مرجع و پیاده‌سازی در یک ورودی دیداری انجام و نتیجه در `design-qa.md` با وضعیت `passed` ثبت شد. بازبینی مستقل پس از رفع وزن دارایی و دو تعارض مستندی، هیچ finding باز P0/P1/P2 نداشت.
 
-### release کد و receipt پیش از commit مستندی نهایی
+### release کد و receipt مستندی نهایی
 
 - commit کد `3e4b35fe08b02918e4be814d5d796da14bfa54ca` روی local/GitHub `main` هم‌تراز شد و prototype tree آن `4297309252e2e6f9d80c184be7aad1e795c80279` است.
 - Cloudflare Pages deployment تولید `9b78e089-e0f5-427b-b788-9221b908ef7d` از شاخهٔ `main` و source `3e4b35f` فعال شد. canonical `https://chida-prototype.pages.dev` و immutable `https://9b78e089.chida-prototype.pages.dev` هر دو برای HTML، JavaScript، CSS و نشان ۲۰۰ بودند و هش‌های build محلی را داشتند: HTML `2872325a9536c3c30933c0bf4e05c921c5c57841b2050565d4b4c0e4456ca2ce`، JavaScript `5b5b5cef51c427d108b02983213d14e6e27e403ec99fd27e7c7a75cd5e15ef1b`، CSS `94283e31ad8830896c0e44498a248d96f392b1de83912d9783a2e02867be81df` و نشان `44cc69c64df0f51d8603ce8157e3f3d7eb753ac4908eddf80b9e773ef1231cad`.
 - ChatGPT Sites نسخهٔ ۲۴ با version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_86ea0b7d394c8191aef34c83a2ae0e2f`، source commit دقیق کد، ۱۹ فایل و archive hash `sha256:316dbe635d0483a16eb3480c288898d8c14a1af97f2b1882187c6baf05da18f5` ذخیره و با deployment خصوصی `appgdep_6a940cbe06d48191912661b9e4ec4615` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` منتشر شد. access `custom`/owner-only با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
-- commit مستندی بعدی همین receipt را ثبت می‌کند و باید prototype tree را تغییر ندهد. شناسه‌های انتشار خود commit مستندی به‌دلیل حلقهٔ self-reference عمداً در نخستین commit مجاز بعدی backfill می‌شوند.
+- commit مستندی receipt نهایی `3bbd870ca021339d89abc09528f57fc690deec50` روی local/GitHub `main` هم‌تراز شد و prototype tree آن با commit کد یکسان و برابر `4297309252e2e6f9d80c184be7aad1e795c80279` ماند. Cloudflare deployment `f665580f-26c9-4363-9793-d4baaae5e644` از همین source موفق شد؛ canonical و immutable hashهای release کد را حفظ کردند. ChatGPT Sites نسخهٔ ۲۵ با version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_4fd3dab34a8481918949ad5a947d6942` و deployment `appgdep_6a941bdda88881918951b8508e2c2eec` در وضعیت `succeeded` منتشر و owner-only/custom حفظ شد. شناسه‌های انتشار خود هنداف Sol به‌دلیل حلقهٔ self-reference در پیام تحویل ثبت می‌شوند.
 
 ### پیشنهاد برای تکمیل سند مادر
 
 - برای خانهٔ Chat-first، قرارداد Quick Action به‌صورت rail افقی با فهرست نسخه‌دارِ «قابلیت واقعی» و تمایز صریح «مقصد» از «شروع‌کنندهٔ گفتگو» ثبت شود.
 - قاعدهٔ نمایش زمینهٔ پروژه اجازه دهد نام پروژه به‌تنهایی، در صورت affordance و accessible name روشن، جای متن‌های تکراری «پروژه فعال/فضای پروژه» را بگیرد.
 - برای هویت بصری CHIDA یک دارایی مرجع، اندازه‌های کاربرد و معیار کنتراست/خوانایی تعریف شود تا نشان موقت یا عمومی دوباره وارد صفحهٔ اصلی نشود.
+
+## H1 — توقف برای بازبینی Sol و قرارداد Memory/Harness
+
+- **تاریخ تصمیم:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
+- **وضعیت:** snapshot فعلی کامل آزموده و منتشر شد؛ هنداف مستقل `CHIDA-SOL-HANDOFF-FA.md` تهیه شد و ادامهٔ پیاده‌سازی تا بازبینی Sol و انتخاب صریح ماهیار متوقف است.
+- **دامنه:** جمع‌بندی آنچه واقعاً در prototype سازنده ساخته یا شبیه‌سازی شده، مسیر باقی‌ماندهٔ سازنده و نظر معماری پیشنهادی دربارهٔ Memory، Harness و Build؛ بدون ساخت سند معماری مرجع، تغییر سند مادر، اتصال مدل، backend، شبکه یا مسیر تأمین‌کننده.
+
+### تجربه و پرسش کاربر
+
+- ماهیار پرسید حافظهٔ CHIDA چگونه باید یاد بگیرد و به یاد بیاورد و ارزش افزودهٔ Harness همراه مدل چیست. سپس تأکید کرد هنوز زمان ساخت اسناد معماری مرجع نیست و ابتدا باید prototype سازنده کامل شود.
+- درخواست نهایی این مرحله این بود که snapshot موجود کامل منتشر، یک هنداف مفصل شامل نظر معماری تهیه و برای Sol در گفت‌وگوی موجود CHIDA ارسال شود؛ سپس پروژه تا بررسی Sol متوقف بماند.
+
+### شکاف و مشاهده
+
+- سند مادر دامنه‌های حافظه، لزوم منبع/تاریخ/کنترل و حلقهٔ عمومی Harness را تعریف می‌کند، اما `MemoryRecord` نسخه‌دار، taxonomy اعتبار، retention، tombstone/hard-delete، `ContextManifest`، interface اجرایی Harness، failure union، idempotency، بودجهٔ اجرا و permission envelope هنوز قرارداد اجرایی ندارند.
+- prototype فعلی فقط حافظهٔ دستی project-scoped و retrieval قطعی metadata دارد. `useInContext` ترجیح محلی است و هیچ حافظه، فایل یا تاریخچه‌ای به مدل وارد نمی‌شود.
+- ادامهٔ shared negotiation پیش از وجود طرف دوم و backend خطر ساخت تجربهٔ نمایشی و اعتماد کاذب دارد؛ در مقابل، عمق مدیریت پروژه، Brief/Report، دامنه‌های حافظه و lifecycle Build پایهٔ ارزش سازنده و Harness آینده‌اند.
+
+### تصمیم و مرز جاری
+
+- **[تصمیم کاربر]** ابتدا snapshot موجود در GitHub، Cloudflare و ChatGPT Sites کامل منتشر شود، سپس هنداف Sol تهیه و پروژه متوقف شود.
+- **[تصمیم کاربر]** فعلاً سند معماری مرجع Memory/Harness ساخته یا سند مادر بازنویسی نمی‌شود؛ Sol ابتدا مسیر را بازبینی می‌کند.
+- **[مرز صریح]** این مرحله مجوز شروع برش بعدی، مدل محلی، provider، backend، shared case، شبکه یا مسیر تأمین‌کننده نیست.
+- **[صداقت محصول]** مدل نباید صاحب حافظه تلقی شود؛ در پیشنهاد معماری هنداف، داده/حافظه متعلق به محصول است و Harness فقط context محدود، مرتبط، تازه و مجاز را به مدل قابل‌تعویض می‌دهد.
+
+### نظر معماری پیشنهادی برای بازبینی Sol
+
+- منبع حقیقت از اشیای دامنهٔ ساختاریافته و نسخه‌دار آغاز شود؛ فایل/SourceRecord و حافظهٔ صریح یا تأییدشده در رتبه‌های بعد باشند و chat history منبع حقیقت نباشد.
+- دامنه‌های `personal / project / case-private / case-shared / procedural` مستقل و دارای owner، source، date، truth/inference، version، permission، freshness، retention و audit باشند.
+- خروجی استنباطی مدل فقط `MemoryCandidate` باشد و بدون تأیید کاربر به حافظهٔ پایدار تبدیل نشود؛ دادهٔ حساس یا اختلافی هرگز بی‌صدا ذخیره نشود.
+- Harness به‌صورت orchestrator مستقل از UI و مدل، با `ContextManifest`، ModelGateway provider-neutral، registry ابزار محدود، permission envelope، state machine، validation، approval، idempotency، cancel/timeout/retry/recovery، audit و eval تعریف شود.
+- برش اثبات معماری پس از پایان رسمی سازنده باید ثبت صریح حافظه در پروژهٔ A، retrieval دلیل‌دار، مشاهدهٔ context، منع استفاده/حذف مؤثر، جداسازی پروژهٔ B، نمایش تعارض و تعویض‌پذیری مدل را در یک vertical slice پوشش دهد.
+- پیشنهاد اجرایی برای نظر Sol این است که shared negotiation وابسته به طرف دوم defer و برش کوچک بعدی، در صورت تأیید ماهیار، از T9-A و اتصال نقطهٔ عطف/تصمیم/کار پروژه انتخاب شود.
+
+### رسید کیفیت و انتشار مبنا
+
+- commit کد T8-UX3 `3e4b35fe08b02918e4be814d5d796da14bfa54ca` و receipt مستندی `3bbd870ca021339d89abc09528f57fc690deec50` با prototype tree یکسان `4297309252e2e6f9d80c184be7aad1e795c80279` در GitHub منتشر شدند.
+- Cloudflare deployment نهایی `f665580f-26c9-4363-9793-d4baaae5e644` از source commit مستندی فعال است و canonical/immutable برای HTML، JavaScript، CSS و نشان دقیقاً hashهای build محلی را دارند.
+- ChatGPT Sites نسخهٔ ۲۵ با version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_4fd3dab34a8481918949ad5a947d6942` و deployment `appgdep_6a941bdda88881918951b8508e2c2eec` در وضعیت `succeeded` منتشر شد؛ owner-only/custom حفظ است.
+- اجرای تازهٔ `check:runtime`، build، app `159/159`، runtime `167/167` و Sites `4/4` همگی پاس شدند. commit و شناسه‌های انتشار خود هنداف به‌دلیل self-reference در پیام تحویل ثبت می‌شوند.
