@@ -1,6 +1,7 @@
 import {
   Archive,
   ArrowUp,
+  ArrowUpRight,
   ArrowRight,
   Bell,
   Bot,
@@ -97,7 +98,7 @@ type ProjectFileRecord = {
   version: 1;
   projectStage: string;
   visibility: "خصوصی پروژه";
-  storageMode: "metadata-only" | "browser-image";
+  storageMode: "metadata-only" | "browser-image" | "browser-file";
   sourceModifiedAt: string | null;
   createdAt: string;
 };
@@ -1173,8 +1174,9 @@ type FilesReturnView = "chat" | "project" | "search";
 type MemoryReturnView = "project" | "search";
 type PurchaseRequestsReturnView = "chat" | "project";
 type ProposalsReturnView = "chat" | "project";
-type ProjectTasksLaunch = { filter: ProjectTaskFilter; approvalId: string | null; returnToPurchaseRequestId: string | null };
+type ProjectTasksLaunch = { filter: ProjectTaskFilter; approvalId: string | null; dispatchPlanApprovalId: string | null; returnToPurchaseRequestId: string | null };
 type StoredProjectImage = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
+type StoredProjectFile = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
 type LocalRecordsReadResult<RecordType> = { records: RecordType[]; readError: boolean };
 
 const defaultInvite = "CHD-4K9P";
@@ -1204,6 +1206,8 @@ const projectBuilderManualNegotiationResponseReviewsStorageKey = "chida-prototyp
 const projectBuilderManualNegotiationConditionImpactsStorageKey = "chida-prototype-builder-manual-negotiation-condition-impacts:v1";
 const projectImagesDatabaseName = "chida-prototype-project-images:v1";
 const projectImagesStoreName = "images";
+const projectFilesDatabaseName = "chida-prototype-project-file-content:v1";
+const projectFilesStoreName = "files";
 const projectStages = [
   "طراحی و اخذ مجوز",
   "تخریب و گودبرداری",
@@ -1229,6 +1233,7 @@ const legacyProjectStageAliases: Readonly<Record<string, ProjectStage>> = {
 };
 const projectUsages = ["مسکونی", "تجاری", "اداری", "مختلط", "سایر"] as const;
 const projectFileCategories: readonly ProjectFileCategory[] = ["نقشه", "پیش‌فاکتور", "فاکتور", "قرارداد", "صورت‌جلسه", "صفحه‌گسترده", "عکس", "سایر"];
+const projectDocumentCategories: readonly ProjectFileCategory[] = projectFileCategories.filter((category) => category !== "عکس");
 const projectMemoryKinds: readonly ProjectMemoryKind[] = ["یادداشت سازنده", "واقعیت تأییدشده توسط سازنده"];
 const purchaseRequestUnits: readonly PurchaseRequestUnit[] = ["عدد", "کیلوگرم", "تن", "متر", "مترمربع", "مترمکعب", "بسته", "دستگاه"];
 const purchaseRequestAlternativeLabels = ["نامشخص", "مجاز", "غیرمجاز", "فقط با تأیید من"] as const;
@@ -1257,8 +1262,16 @@ const builderServiceProposalComparisonCriteriaV1: readonly { id: BuilderServiceP
 ];
 const projectFileExtensionPattern = /\.(?:pdf|png|jpe?g|webp|heic|heif|xls|xlsx|csv|doc|docx)$/i;
 const projectImageExtensionPattern = /\.(?:png|jpe?g|webp|heic|heif)$/i;
-const projectFileAccept = ".pdf,.png,.jpg,.jpeg,.webp,.heic,.heif,.xls,.xlsx,.csv,.doc,.docx";
+const projectFileAccept = ".pdf,.xls,.xlsx,.csv,.doc,.docx";
 const projectImageAccept = "image/png,image/jpeg,image/webp,.heic,.heif";
+const projectDocumentMimeContracts = {
+  pdf: { canonical: "application/pdf", accepted: ["application/pdf"] },
+  xls: { canonical: "application/vnd.ms-excel", accepted: ["application/vnd.ms-excel"] },
+  xlsx: { canonical: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", accepted: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] },
+  csv: { canonical: "text/csv", accepted: ["text/csv", "application/csv", "application/vnd.ms-excel"] },
+  doc: { canonical: "application/msword", accepted: ["application/msword"] },
+  docx: { canonical: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", accepted: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"] },
+} as const;
 const emptyProjectProfile = {
   usage: "",
   landArea: "",
@@ -1358,7 +1371,7 @@ const projectTaskFilters: readonly { id: ProjectTaskFilter; label: string }[] = 
   { id: "monitor", label: "پایش‌ها" },
 ];
 const projectTaskEmptyCopy: Readonly<Record<ProjectTaskFilter, { title: string; description: string }>> = {
-  active: { title: "هنوز کار در حال انجامی ثبت نشده", description: "یک وظیفهٔ داخلی برای همین پروژه ثبت کن تا بیرون از تاریخچهٔ گفتگو قابل پیگیری بماند." },
+  active: { title: "هنوز کار در حال انجامی ثبت نشده", description: "اولین کار پروژه را ثبت کن." },
   approval: { title: "نسخه‌ای منتظر تأیید نیست", description: "وقتی یک درخواست آمادهٔ بازبینی را صریحاً برای تأیید ثبت کنی، همان نسخه اینجا ظاهر می‌شود." },
   completed: { title: "هنوز کار یا تصمیمی تمام نشده", description: "کارهای تکمیل‌شده و تصمیم‌های ثبت‌شده با نسخه و تاریخچهٔ واقعی در این بخش می‌مانند." },
   failed: { title: "کار ناموفقی ثبت نشده", description: "خطا و تلاش دوباره فقط برای اجرای واقعی ثبت می‌شوند؛ شکست مصنوعی نمایش داده نمی‌شود." },
@@ -1494,13 +1507,13 @@ function normalizeOptionalPurchaseRequestText(value: string) {
 }
 
 function projectApprovalStatusLabel(status: ProjectApprovalStatus) {
-  if (status === "approved") return "نسخهٔ درخواست تأیید شد";
+  if (status === "approved") return "اطلاعات درخواست تأیید شد";
   if (status === "changes-requested") return "نیاز به اصلاح";
   return "منتظر تأیید";
 }
 
 function projectApprovalEventLabel(type: ProjectApprovalEventType) {
-  if (type === "approved") return "نسخهٔ درخواست تأیید شد";
+  if (type === "approved") return "اطلاعات درخواست تأیید شد";
   if (type === "changes-requested") return "نیاز به اصلاح ثبت شد";
   return "برای تأیید ثبت شد";
 }
@@ -3237,12 +3250,14 @@ function readStoredProjectFiles(): LocalRecordsReadResult<ProjectFileRecord> {
       ) return [];
       seenIds.add(id);
       const isImage = isProjectImage({ mimeType, originalName });
+      const documentMimeCompatible = Boolean(projectDocumentExtension(originalName)) && hasCompatibleProjectDocumentMime(originalName, mimeType);
+      const storedMimeType = !isImage && documentMimeCompatible ? projectDocumentCanonicalMime(originalName) : mimeType;
       return [{
         id,
         projectId,
         displayName,
         originalName,
-        mimeType,
+        mimeType: storedMimeType,
         size: file.size,
         category: file.category as ProjectFileCategory,
         source: file.source,
@@ -3250,7 +3265,11 @@ function readStoredProjectFiles(): LocalRecordsReadResult<ProjectFileRecord> {
         version: 1,
         projectStage: normalizeStoredProjectStage(file.projectStage),
         visibility: "خصوصی پروژه",
-        storageMode: isImage && file.storageMode === "browser-image" ? "browser-image" : "metadata-only",
+        storageMode: isImage && file.storageMode === "browser-image"
+          ? "browser-image"
+          : !isImage && documentMimeCompatible && file.storageMode === "browser-file"
+            ? "browser-file"
+            : "metadata-only",
         sourceModifiedAt: typeof file.sourceModifiedAt === "string" && isValidProjectFileDate(file.sourceModifiedAt.trim()) ? file.sourceModifiedAt.trim() : null,
         createdAt,
       }];
@@ -4558,7 +4577,7 @@ function parseBuilderRecordedProposal(
   if (referenceKind === "unattached" && projectFileId === null && value?.reference?.fileSnapshot === null) {
     reference = { kind: "unattached", projectFileId: null, fileSnapshot: null, contentPersisted: false, extractionPerformed: false };
   } else if (referenceKind === "project-file-metadata" && projectFileId) {
-    const file = files.records.find((item) => item.id === projectFileId && item.projectId === projectId && item.storageMode === "metadata-only");
+    const file = files.records.find((item) => item.id === projectFileId && item.projectId === projectId && !isProjectImage(item));
     const snapshot = value?.reference?.fileSnapshot;
     const displayName = typeof snapshot?.displayName === "string" ? snapshot.displayName.trim() : "";
     if (
@@ -6042,8 +6061,36 @@ function isSupportedProjectFileName(fileName: string) {
   return projectFileExtensionPattern.test(fileName);
 }
 
-function isSupportedProjectFile(file: File) {
-  return isSupportedProjectFileName(file.name);
+function isSupportedProjectDocument(file: File) {
+  return Boolean(projectDocumentExtension(file.name)) && hasCompatibleProjectDocumentMime(file.name, file.type);
+}
+
+function projectDocumentExtension(fileName: string) {
+  const match = fileName.toLocaleLowerCase("en").match(/\.(pdf|xls|xlsx|csv|doc|docx)$/);
+  return match?.[1] as keyof typeof projectDocumentMimeContracts | undefined;
+}
+
+function normalizeProjectFileMime(mimeType: string) {
+  return mimeType.split(";", 1)[0]?.trim().toLocaleLowerCase("en") ?? "";
+}
+
+function projectDocumentCanonicalMime(fileName: string) {
+  const extension = projectDocumentExtension(fileName);
+  return extension ? projectDocumentMimeContracts[extension].canonical : "";
+}
+
+function hasCompatibleProjectDocumentMime(fileName: string, mimeType: string) {
+  const extension = projectDocumentExtension(fileName);
+  if (!extension) return false;
+  const normalizedMime = normalizeProjectFileMime(mimeType);
+  if (!normalizedMime || normalizedMime === "application/octet-stream") return true;
+  return (projectDocumentMimeContracts[extension].accepted as readonly string[]).includes(normalizedMime);
+}
+
+function createSafeProjectDocumentBlob(fileName: string, blob: Blob) {
+  const canonicalMime = projectDocumentCanonicalMime(fileName);
+  if (!canonicalMime) return null;
+  return new Blob([blob], { type: canonicalMime });
 }
 
 function projectImageExtension(fileName: string) {
@@ -6116,6 +6163,63 @@ async function readProjectImage(file: ProjectFileRecord) {
         resolve(stored?.projectId === file.projectId && stored.blob instanceof Blob ? stored.blob : null);
       };
       request.onerror = () => reject(request.error ?? new Error("Project image could not be read"));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+function openProjectFilesDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = window.indexedDB.open(projectFilesDatabaseName, 1);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(projectFilesStoreName)) database.createObjectStore(projectFilesStoreName, { keyPath: "id" });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Project file database could not be opened"));
+    request.onblocked = () => reject(new Error("Project file database is blocked"));
+  });
+}
+
+async function writeProjectFile(record: ProjectFileRecord, blob: Blob) {
+  const safeBlob = createSafeProjectDocumentBlob(record.originalName, blob);
+  const canonicalMime = projectDocumentCanonicalMime(record.originalName);
+  if (!safeBlob || !canonicalMime) throw new Error("Unsupported project document");
+  const database = await openProjectFilesDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(projectFilesStoreName, "readwrite");
+      transaction.objectStore(projectFilesStoreName).put({ id: record.id, projectId: record.projectId, originalName: record.originalName, mimeType: canonicalMime, blob: safeBlob } satisfies StoredProjectFile);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error("Project file could not be stored"));
+      transaction.onabort = () => reject(transaction.error ?? new Error("Project file storage was aborted"));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function readProjectFile(file: ProjectFileRecord) {
+  if (file.storageMode !== "browser-file") return null;
+  const database = await openProjectFilesDatabase();
+  try {
+    return await new Promise<Blob | null>((resolve, reject) => {
+      const transaction = database.transaction(projectFilesStoreName, "readonly");
+      const request = transaction.objectStore(projectFilesStoreName).get(file.id);
+      request.onsuccess = () => {
+        const stored = request.result as StoredProjectFile | undefined;
+        if (
+          stored?.projectId !== file.projectId
+          || stored.originalName !== file.originalName
+          || !(stored.blob instanceof Blob)
+        ) {
+          resolve(null);
+          return;
+        }
+        resolve(createSafeProjectDocumentBlob(file.originalName, stored.blob));
+      };
+      request.onerror = () => reject(request.error ?? new Error("Project file could not be read"));
     });
   } finally {
     database.close();
@@ -6716,7 +6820,7 @@ function SuccessScreen({ project, onContinue, onSave }: { project: BuilderProjec
         <div className="success-icon"><Check size={34} strokeWidth={1.8} /></div>
         <span className="eyebrow">ورود موفق</span>
         <h1>خوش آمدی، سازنده</h1>
-        <p>پروژه‌ات در همین مرورگر نگه‌داری شده و زمینهٔ فعال چیداست.</p>
+        <p>پروژه آماده است و به‌عنوان زمینهٔ فعال چیدا انتخاب شد.</p>
         <div className="saved-project-summary" data-testid="saved-project-summary">
           <span><Building2 size={21} /></span>
           <div><strong>{project.name}</strong><small>{projectMeta(project)}</small></div>
@@ -6778,7 +6882,6 @@ function SuccessScreen({ project, onContinue, onSave }: { project: BuilderProjec
         </div>
 
         <button className="primary-button" type="submit" data-testid="project-create-button">ساخت پروژه و ورود</button>
-        <p className="project-storage-note"><ShieldCheck size={15} /> این پروژه فعلاً فقط داخل همین مرورگر شبیه‌سازی و نگه‌داری می‌شود.</p>
       </form>
     </section>
   );
@@ -6797,7 +6900,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [proposalsReturnView, setProposalsReturnView] = useState<ProposalsReturnView>("chat");
   const [startPurchaseRequestEditor, setStartPurchaseRequestEditor] = useState(false);
   const [initialPurchaseRequestId, setInitialPurchaseRequestId] = useState<string | null>(null);
-  const [projectTasksLaunch, setProjectTasksLaunch] = useState<ProjectTasksLaunch>({ filter: "active", approvalId: null, returnToPurchaseRequestId: null });
+  const [projectTasksLaunch, setProjectTasksLaunch] = useState<ProjectTasksLaunch>({ filter: "active", approvalId: null, dispatchPlanApprovalId: null, returnToPurchaseRequestId: null });
   const [focusedFileId, setFocusedFileId] = useState<string | null>(null);
   const [focusedMemoryId, setFocusedMemoryId] = useState<string | null>(null);
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
@@ -6893,11 +6996,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
 
   useEffect(() => {
     let disposed = false;
-    const reconcileMissingImages = async () => {
-      const candidates = projectFiles.filter((file) => file.storageMode === "browser-image");
+    const reconcileMissingFileContent = async () => {
+      const candidates = projectFiles.filter((file) => file.storageMode === "browser-image" || file.storageMode === "browser-file");
       const missingIds = new Set((await Promise.all(candidates.map(async (file) => {
         try {
-          return await readProjectImage(file) ? "" : file.id;
+          const blob = file.storageMode === "browser-image" ? await readProjectImage(file) : await readProjectFile(file);
+          return blob ? "" : file.id;
         } catch {
           return "";
         }
@@ -6914,7 +7018,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         return reconciledFiles;
       });
     };
-    void reconcileMissingImages();
+    void reconcileMissingFileContent();
     return () => { disposed = true; };
   }, [projectFiles]);
 
@@ -6941,6 +7045,10 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   );
   const activeProjectImages = useMemo(
     () => activeProjectFiles.filter(isProjectImage),
+    [activeProjectFiles],
+  );
+  const activeProjectDocuments = useMemo(
+    () => activeProjectFiles.filter((file) => !isProjectImage(file)),
     [activeProjectFiles],
   );
   const activeProjectMemories = useMemo(
@@ -7082,7 +7190,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     keyboard.hide();
     onOpenSheet(null);
     setDrawerOpen(false);
-    setProjectTasksLaunch({ filter: "active", approvalId: null, returnToPurchaseRequestId: null });
+    setProjectTasksLaunch({ filter: "active", approvalId: null, dispatchPlanApprovalId: null, returnToPurchaseRequestId: null });
     setView("tasks");
   };
 
@@ -7090,7 +7198,15 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     keyboard.hide();
     onOpenSheet(null);
     setDrawerOpen(false);
-    setProjectTasksLaunch({ filter: "approval", approvalId, returnToPurchaseRequestId });
+    setProjectTasksLaunch({ filter: "approval", approvalId, dispatchPlanApprovalId: null, returnToPurchaseRequestId });
+    setView("tasks");
+  };
+
+  const openProjectDispatchPlanApproval = (dispatchPlanApprovalId: string, returnToPurchaseRequestId: string | null) => {
+    keyboard.hide();
+    onOpenSheet(null);
+    setDrawerOpen(false);
+    setProjectTasksLaunch({ filter: "approval", approvalId: null, dispatchPlanApprovalId, returnToPurchaseRequestId });
     setView("tasks");
   };
 
@@ -7143,13 +7259,16 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
 
   const registerProjectFile = async (pendingFile: PendingProjectFile) => {
     if (projectFilesReadError) return false;
+    const isImage = isProjectImage(pendingFile);
+    const canonicalDocumentMime = isImage ? "" : projectDocumentCanonicalMime(pendingFile.originalName);
+    if (!isImage && (!canonicalDocumentMime || !hasCompatibleProjectDocumentMime(pendingFile.originalName, pendingFile.mimeType))) return false;
     const createdAt = new Date().toISOString();
     const record = {
       id: `file-${window.crypto.randomUUID()}`,
       projectId: activeProject.id,
       displayName: pendingFile.displayName.trim() || pendingFile.originalName,
       originalName: pendingFile.originalName,
-      mimeType: pendingFile.mimeType,
+      mimeType: canonicalDocumentMime || pendingFile.mimeType,
       size: pendingFile.size,
       category: pendingFile.category,
       source: pendingFile.source,
@@ -7157,7 +7276,9 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       version: 1,
       projectStage: activeProject.stage,
       visibility: "خصوصی پروژه",
-      storageMode: pendingFile.blob && isProjectImage(pendingFile) ? "browser-image" : "metadata-only",
+      storageMode: pendingFile.blob
+        ? isImage ? "browser-image" : "browser-file"
+        : "metadata-only",
       sourceModifiedAt: pendingFile.sourceModifiedAt,
       createdAt,
     } satisfies ProjectFileRecord;
@@ -7173,7 +7294,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
 
     if (pendingFile.blob) {
       try {
-        await writeProjectImage(record, pendingFile.blob);
+        if (record.storageMode === "browser-image") await writeProjectImage(record, pendingFile.blob);
+        else if (record.storageMode === "browser-file") await writeProjectFile(record, pendingFile.blob);
       } catch {
         try {
           if (previousMetadata === null) window.localStorage.removeItem(projectFilesStorageKey);
@@ -7185,6 +7307,48 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       }
     }
 
+    setProjectFiles(nextFiles);
+    return true;
+  };
+
+  const restoreProjectFileContent = async (fileId: string, file: File) => {
+    if (projectFilesReadError) return false;
+    const currentRecord = projectFiles.find((record) => record.id === fileId && record.projectId === activeProject.id);
+    if (
+      !currentRecord
+      || currentRecord.storageMode !== "metadata-only"
+      || isProjectImage(currentRecord)
+      || file.name !== currentRecord.originalName
+      || file.size !== currentRecord.size
+      || !isSupportedProjectDocument(file)
+    ) return false;
+    const canonicalMime = projectDocumentCanonicalMime(file.name);
+    if (!canonicalMime) return false;
+    const restoredRecord = {
+      ...currentRecord,
+      mimeType: canonicalMime,
+      storageMode: "browser-file",
+      sourceModifiedAt: file.lastModified ? new Date(file.lastModified).toISOString() : currentRecord.sourceModifiedAt,
+    } satisfies ProjectFileRecord;
+    const nextFiles = projectFiles.map((record) => record.id === currentRecord.id ? restoredRecord : record);
+    let previousMetadata: string | null;
+    try {
+      previousMetadata = window.localStorage.getItem(projectFilesStorageKey);
+    } catch {
+      return false;
+    }
+    if (!writeProjectFilesMetadata(nextFiles)) return false;
+    try {
+      await writeProjectFile(restoredRecord, file);
+    } catch {
+      try {
+        if (previousMetadata === null) window.localStorage.removeItem(projectFilesStorageKey);
+        else window.localStorage.setItem(projectFilesStorageKey, previousMetadata);
+      } catch {
+        // Keep the in-memory metadata unchanged; reconciliation will fail closed on the next load.
+      }
+      return false;
+    }
     setProjectFiles(nextFiles);
     return true;
   };
@@ -7570,6 +7734,85 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return persistProjectApprovals([...projectApprovals, record]) ? approvalId : null;
   };
 
+  const confirmProjectPurchaseRequestForRecipients = (requestId: string) => {
+    if (projectApprovalsReadError || projectPurchaseRequestsReadError) return null;
+    const request = projectPurchaseRequests.find((item) => item.id === requestId && item.projectId === activeProject.id);
+    if (!request || request.status !== "draft" || purchaseRequestMissingFields(request).length > 0) return null;
+    const timestamp = new Date().toISOString();
+    const requestVersion = request.version + 1;
+    const readyRequest: ProjectPurchaseRequestRecord = {
+      ...request,
+      status: "ready-for-review",
+      version: requestVersion,
+      updatedAt: timestamp,
+      readyAt: timestamp,
+      history: [...request.history, { id: `purchase-event-${window.crypto.randomUUID()}`, type: "marked-ready-for-review", actor: "شما", at: timestamp, version: requestVersion }],
+    };
+    const snapshot = purchaseRequestApprovalSnapshot(readyRequest);
+    const shareableFields = purchaseRequestApprovalShareableFields(readyRequest);
+    const reviewRevision = { id: `purchase-review-${window.crypto.randomUUID()}`, requestVersion, createdAt: timestamp, snapshot, shareableFields, fingerprint: purchaseRequestRevisionFingerprint(snapshot, shareableFields) };
+    readyRequest.reviewRevisions = [...request.reviewRevisions, reviewRevision];
+
+    const approvalId = `approval-${window.crypto.randomUUID()}`;
+    const approvalRecord = {
+      schemaVersion: 2,
+      id: approvalId,
+      projectId: activeProject.id,
+      purpose: "review-purchase-request-version",
+      target: { type: "purchase-request", id: readyRequest.id, version: readyRequest.version, updatedAt: readyRequest.updatedAt, revisionId: reviewRevision.id },
+      dedupeKey: purchaseRequestApprovalDedupeKey(activeProject.id, readyRequest.id, readyRequest.version),
+      snapshot: structuredClone(reviewRevision.snapshot),
+      privacySnapshot: {
+        shareableFields: [...reviewRevision.shareableFields],
+        projectNameShared: false,
+        exactAddressShared: false,
+        budgetShared: false,
+        filesShared: false,
+        memoryShared: false,
+      },
+      externalEffect: "none",
+      destination: null,
+      sendAuthorized: false,
+      status: "approved",
+      visibility: "خصوصی پروژه",
+      localStatus: "ثبت محلی",
+      requestedBy: "شما",
+      decidedBy: "شما",
+      requestedAt: timestamp,
+      updatedAt: timestamp,
+      decidedAt: timestamp,
+      version: 2,
+      history: [
+        { id: `approval-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 },
+        { id: `approval-event-${window.crypto.randomUUID()}`, type: "approved", actor: "شما", at: timestamp, version: 2 },
+      ],
+    } satisfies ProjectApprovalRecord;
+
+    const nextRequests = projectPurchaseRequests.map((item) => item.id === readyRequest.id ? readyRequest : item);
+    const nextApprovals = [...projectApprovals, approvalRecord];
+    let previousRequests: string | null = null;
+    let previousApprovals: string | null = null;
+    try {
+      previousRequests = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+      previousApprovals = window.localStorage.getItem(projectApprovalsStorageKey);
+      window.localStorage.setItem(projectPurchaseRequestsStorageKey, JSON.stringify(nextRequests));
+      window.localStorage.setItem(projectApprovalsStorageKey, JSON.stringify(nextApprovals));
+    } catch {
+      try {
+        if (previousRequests === null) window.localStorage.removeItem(projectPurchaseRequestsStorageKey);
+        else window.localStorage.setItem(projectPurchaseRequestsStorageKey, previousRequests);
+        if (previousApprovals === null) window.localStorage.removeItem(projectApprovalsStorageKey);
+        else window.localStorage.setItem(projectApprovalsStorageKey, previousApprovals);
+      } catch {
+        // In-memory state remains unchanged, so the UI never reports a successful confirmation.
+      }
+      return null;
+    }
+    setProjectPurchaseRequests(nextRequests);
+    setProjectApprovals(nextApprovals);
+    return approvalId;
+  };
+
   const decideProjectApproval = (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => {
     if (projectApprovalsReadError || projectPurchaseRequestsReadError) return false;
     const timestamp = new Date().toISOString();
@@ -7891,7 +8134,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     } satisfies BuilderRecordedProposalSupplierSnapshot;
     let reference: BuilderRecordedProposalReference = { kind: "unattached", projectFileId: null, fileSnapshot: null, contentPersisted: false, extractionPerformed: false };
     if (draft.projectFileId) {
-      const file = projectFiles.find((item) => item.id === draft.projectFileId && item.projectId === activeProject.id && item.storageMode === "metadata-only");
+      const file = projectFiles.find((item) => item.id === draft.projectFileId && item.projectId === activeProject.id && !isProjectImage(item));
       const displayName = file?.displayName.trim() ?? "";
       if (!file || !hasVisibleProjectTaskText(displayName) || displayName.length > 140) return null;
       reference = {
@@ -8737,7 +8980,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return (
       <ProjectWorkspace
         project={activeProject}
-        fileCount={activeProjectFiles.length}
+        fileCount={activeProjectDocuments.length}
         imageCount={activeProjectImages.length}
         memoryCount={activeProjectMemories.length}
         purchaseRequestCount={activeProjectPurchaseRequests.length}
@@ -8771,11 +9014,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return (
       <ProjectFilesView
         project={activeProject}
-        files={activeProjectFiles}
+        files={activeProjectDocuments}
         storageLocked={projectFilesReadError}
         initialSelectedId={focusedFileId}
         onBack={() => { setFocusedFileId(null); setView(filesReturnView); }}
         onRegister={registerProjectFile}
+        onRestoreContent={restoreProjectFileContent}
         onRename={renameProjectFile}
       />
     );
@@ -8815,7 +9059,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <ProjectSourceSearchView
         project={activeProject}
         memories={activeProjectMemories}
-        files={activeProjectFiles}
+        files={activeProjectDocuments}
         query={projectSearchQuery}
         readError={projectFilesReadError || projectMemoriesReadError}
         onQueryChange={setProjectSearchQuery}
@@ -8832,17 +9076,24 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         project={activeProject}
         tasks={activeProjectTasks}
         approvals={activeProjectApprovals}
+        dispatchPlanApprovals={activeProjectDispatchPlanApprovals}
+        dispatchDrafts={activeProjectDispatchDrafts}
+        requests={activeProjectPurchaseRequests}
+        contacts={activeProjectSupplierContacts}
         initialFilter={projectTasksLaunch.filter}
         initialApprovalId={projectTasksLaunch.approvalId}
+        initialDispatchPlanApprovalId={projectTasksLaunch.dispatchPlanApprovalId}
         returnToPurchaseRequestId={projectTasksLaunch.returnToPurchaseRequestId}
         tasksStorageLocked={projectTasksReadError}
         approvalsStorageLocked={projectApprovalsReadError || projectPurchaseRequestsReadError}
+        dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError}
         onBack={() => { keyboard.hide(); setView("chat"); }}
         onReturnToPurchaseRequest={returnToProjectPurchaseRequest}
         onCreate={createProjectTask}
         onUpdate={updateProjectTask}
         onStatusChange={changeProjectTaskStatus}
         onApprovalDecision={decideProjectApproval}
+        onDispatchPlanApprovalDecision={changeProjectDispatchPlanApproval}
       />
     );
   }
@@ -8868,6 +9119,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         onCreate={createProjectPurchaseRequest}
         onUpdate={updateProjectPurchaseRequest}
         onMarkReady={markProjectPurchaseRequestReady}
+        onConfirmForRecipients={confirmProjectPurchaseRequestForRecipients}
         onReturnToDraft={returnProjectPurchaseRequestToDraft}
         onCreateApproval={createProjectApproval}
         onOpenApproval={openProjectApproval}
@@ -8876,6 +9128,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         onUpsertDispatchDraft={upsertProjectDispatchDraft}
         onCreateDispatchPlanApproval={createProjectDispatchPlanApproval}
         onChangeDispatchPlanApproval={changeProjectDispatchPlanApproval}
+        onOpenDispatchPlanApproval={openProjectDispatchPlanApproval}
       />
     );
   }
@@ -8896,7 +9149,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         requests={activeProjectPurchaseRequests}
         approvals={activeProjectApprovals}
         contacts={activeProjectSupplierContacts}
-        files={activeProjectFiles.filter((file) => file.storageMode === "metadata-only" && hasVisibleProjectTaskText(file.displayName.trim()) && file.displayName.trim().length <= 140)}
+        files={activeProjectDocuments.filter((file) => hasVisibleProjectTaskText(file.displayName.trim()) && file.displayName.trim().length <= 140)}
         storageLocked={builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError}
         comparisonsStorageLocked={builderProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError}
         decisionsStorageLocked={builderProposalComparisonDecisionsReadError || builderProposalComparisonsReadError}
@@ -9182,7 +9435,6 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, purchas
             <ArrowRight size={18} aria-hidden="true" />
           </button>
 
-          <p className="project-workspace-note"><ShieldCheck size={16} /> اطلاعات این فضا فعلاً فقط داخل همین مرورگر نگه‌داری می‌شود.</p>
           <button className="primary-button project-continue-button" type="button" onClick={onContinue} data-testid="project-space-continue"><MessageSquare size={18} /> ادامهٔ گفتگو در این پروژه</button>
         </main>
       </MobileScroll>
@@ -10184,7 +10436,7 @@ function ProjectNegotiationDraftsView({ project, drafts, manualResponses, manual
         <MobileScroll className="project-proposals-scroll"><form className="proposal-editor-content negotiation-draft-editor-content" onSubmit={saveDraft} noValidate>
           <section className="proposal-trust-note"><ShieldCheck size={18} /><span><strong>این سؤال ارسال نمی‌شود</strong><small>فقط برای پیگیری خودتان در همین پروژه ذخیره می‌شود.</small></span></section>
           <section className="proposal-form-section" data-testid="negotiation-draft-target"><div className="proposal-section-heading"><span><small>سؤال برای</small><strong>{formTarget.supplierLabel}</strong></span><em>{formTarget.target.criterionLabel}</em></div><p className="proposal-quiet-state">از مقایسهٔ «{formTarget.comparisonLabel}» · وضعیت فعلی: {formTarget.criterionState}</p><details className="proposal-disclosure proposal-technical-disclosure"><summary><span><strong>جزئیات منبع</strong><small>نسخه و اتصال دقیق مقایسه</small></span><ChevronDown size={18} /></summary><div className="proposal-disclosure-body"><dl className="proposal-detail-meta"><div><dt>نوع</dt><dd>{formTarget.target.comparisonKind === "product" ? "مقایسهٔ محصول" : "مقایسهٔ خدمت"}</dd></div><div><dt>نسخهٔ مقایسه</dt><dd>{formTarget.target.comparisonVersion.toLocaleString("fa-IR")} · <span dir="ltr">{formTarget.target.comparisonRevisionId}</span></dd></div><div><dt>نسخهٔ تأمین‌کننده</dt><dd>{formTarget.target.supplierSnapshot.supplierContactVersion.toLocaleString("fa-IR")}</dd></div><div><dt>منشأ</dt><dd>مقایسهٔ ثبت‌شدهٔ شما</dd></div></dl></div></details></section>
-          <section className="proposal-form-section"><label className="field-control" htmlFor="negotiation-draft-purpose"><span>هدف سؤال</span><KeyboardTextarea id="negotiation-draft-purpose" data-testid="negotiation-draft-purpose" value={form.purpose} maxLength={300} rows={2} placeholder="مثلاً روشن‌شدن زمان قطعی شروع پیش از ادامهٔ بررسی" onChange={(event) => { setForm((current) => ({ ...current, purpose: event.target.value })); setFormError(""); }} aria-invalid={formError === "هدف سؤال را بنویس."} aria-describedby={formError === "هدف سؤال را بنویس." ? "negotiation-draft-form-error" : undefined} /></label><label className="field-control" htmlFor="negotiation-draft-message"><span>متن سؤال شما</span><KeyboardTextarea id="negotiation-draft-message" data-testid="negotiation-draft-message" value={form.message} maxLength={800} rows={6} placeholder="سؤال را دقیق و بدون ادعای ارسال بنویس…" onChange={(event) => { setForm((current) => ({ ...current, message: event.target.value })); setFormError(""); }} aria-invalid={formError === "متن سؤال را با بیان مستقیم خودت بنویس."} aria-describedby={formError === "متن سؤال را با بیان مستقیم خودت بنویس." ? "negotiation-draft-form-error" : "negotiation-draft-boundary-note"} /><small id="negotiation-draft-boundary-note">این متن فقط در مرورگر شما و داخل همین پروژه ثبت می‌شود.</small></label></section>
+          <section className="proposal-form-section"><label className="field-control" htmlFor="negotiation-draft-purpose"><span>هدف سؤال</span><KeyboardTextarea id="negotiation-draft-purpose" data-testid="negotiation-draft-purpose" value={form.purpose} maxLength={300} rows={2} placeholder="مثلاً روشن‌شدن زمان قطعی شروع پیش از ادامهٔ بررسی" onChange={(event) => { setForm((current) => ({ ...current, purpose: event.target.value })); setFormError(""); }} aria-invalid={formError === "هدف سؤال را بنویس."} aria-describedby={formError === "هدف سؤال را بنویس." ? "negotiation-draft-form-error" : undefined} /></label><label className="field-control" htmlFor="negotiation-draft-message"><span>متن سؤال شما</span><KeyboardTextarea id="negotiation-draft-message" data-testid="negotiation-draft-message" value={form.message} maxLength={800} rows={6} placeholder="سؤال را دقیق و بدون ادعای ارسال بنویس…" onChange={(event) => { setForm((current) => ({ ...current, message: event.target.value })); setFormError(""); }} aria-invalid={formError === "متن سؤال را با بیان مستقیم خودت بنویس."} aria-describedby={formError === "متن سؤال را با بیان مستقیم خودت بنویس." ? "negotiation-draft-form-error" : "negotiation-draft-boundary-note"} /><small id="negotiation-draft-boundary-note">هنوز ارسال نشده است.</small></label></section>
           <details className="proposal-disclosure proposal-technical-disclosure" data-testid="negotiation-draft-boundary"><summary><span><strong>رسید فنی</strong><small>مرزهای این پیش‌نویس</small></span><ChevronDown size={18} /></summary><div className="proposal-disclosure-body"><p className="proposal-quiet-state">هیچ ارسال، دریافت یا اقدامی بیرون از این مرورگر انجام نشده است.</p><p className="proposal-technical-flags">sendAuthorized=false · networkUsed=false · aiUsed=false · externalEffect=none</p></div></details>
           {formError ? <p id="negotiation-draft-form-error" className="proposal-form-error" role="alert" data-testid="negotiation-draft-form-error">{formError}</p> : null}
           <div className="proposal-editor-actions negotiation-draft-editor-actions"><button className="secondary-button" type="button" onClick={closeEditor}>انصراف</button><button className="primary-button" type="submit" data-testid="negotiation-draft-save">{editingId ? "ذخیرهٔ نسخهٔ جدید" : "ذخیرهٔ پیش‌نویس محلی"}</button></div>
@@ -10569,7 +10821,7 @@ function ProjectProposalsView({ project, proposals, comparisons, decisions, serv
 
             <details className="proposal-disclosure" data-testid="proposal-detail-reference-details">
               <summary><span><strong>مرجع و متن اصلی</strong><small>{selectedProposal.reference.kind === "project-file-metadata" ? selectedProposal.reference.fileSnapshot!.displayName : "بدون فایل مرجع"}</small></span><ChevronDown size={18} /></summary>
-              <div className="proposal-disclosure-body">{selectedProposal.reference.kind === "project-file-metadata" ? <div className="proposal-reference-card" data-testid="proposal-reference"><FileText size={20} /><span><strong>{selectedProposal.reference.fileSnapshot!.displayName}</strong><small>{selectedProposal.reference.fileSnapshot!.category} · {formatProjectFileSize(selectedProposal.reference.fileSnapshot!.size)}</small><em>فقط شناسنامهٔ محلی فایل نگه‌داری شده است.</em></span></div> : <div className="proposal-reference-card empty" data-testid="proposal-reference"><FileText size={20} /><span><strong>بدون فایل مرجع</strong><em>این پیشنهاد را خودتان وارد کرده‌اید.</em></span></div>}<div className="proposal-transcript-card"><small>متن اصلی ثبت‌شده</small><p dir="auto">{previewRevision.transcript ?? "ثبت نشده"}</p></div></div>
+              <div className="proposal-disclosure-body">{selectedProposal.reference.kind === "project-file-metadata" ? <div className="proposal-reference-card" data-testid="proposal-reference"><FileText size={20} /><span><strong>{selectedProposal.reference.fileSnapshot!.displayName}</strong><small>{selectedProposal.reference.fileSnapshot!.category} · {formatProjectFileSize(selectedProposal.reference.fileSnapshot!.size)}</small><em>نام و مشخصات این فایل به پیشنهاد متصل است.</em></span></div> : <div className="proposal-reference-card empty" data-testid="proposal-reference"><FileText size={20} /><span><strong>بدون فایل مرجع</strong><em>این پیشنهاد را خودتان وارد کرده‌اید.</em></span></div>}<div className="proposal-transcript-card"><small>متن اصلی ثبت‌شده</small><p dir="auto">{previewRevision.transcript ?? "ثبت نشده"}</p></div></div>
             </details>
 
             <details className="proposal-disclosure proposal-technical-disclosure" data-testid="proposal-detail-technical">
@@ -10628,7 +10880,7 @@ function PurchaseRequestModeSwitch({ mode, onChange, testIdPrefix, label }: { mo
   );
 }
 
-function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, dispatchDrafts, dispatchPlanApprovals, storageLocked, approvalsStorageLocked, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, initialSelectedId, startWithEditor, backLabel, onBack, onCreate, onUpdate, onMarkReady, onReturnToDraft, onCreateApproval, onOpenApproval, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval }: { project: BuilderProject; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; dispatchDrafts: DispatchDraftRecord[]; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; storageLocked: boolean; approvalsStorageLocked: boolean; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; initialSelectedId: string | null; startWithEditor: boolean; backLabel: string; onBack: () => void; onCreate: (draft: PurchaseRequestDraft) => string | null; onUpdate: (requestId: string, draft: PurchaseRequestDraft) => boolean; onMarkReady: (requestId: string) => boolean; onReturnToDraft: (requestId: string) => boolean; onCreateApproval: (requestId: string) => string | null; onOpenApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void; onCreateContact: (draft: SupplierContactDraft) => string | null; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null; onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean }) {
+function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, dispatchDrafts, dispatchPlanApprovals, storageLocked, approvalsStorageLocked, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, initialSelectedId, startWithEditor, backLabel, onBack, onCreate, onUpdate, onMarkReady, onConfirmForRecipients, onReturnToDraft, onCreateApproval, onOpenApproval, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval, onOpenDispatchPlanApproval }: { project: BuilderProject; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; dispatchDrafts: DispatchDraftRecord[]; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; storageLocked: boolean; approvalsStorageLocked: boolean; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; initialSelectedId: string | null; startWithEditor: boolean; backLabel: string; onBack: () => void; onCreate: (draft: PurchaseRequestDraft) => string | null; onUpdate: (requestId: string, draft: PurchaseRequestDraft) => boolean; onMarkReady: (requestId: string) => boolean; onConfirmForRecipients: (requestId: string) => string | null; onReturnToDraft: (requestId: string) => boolean; onCreateApproval: (requestId: string) => string | null; onOpenApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void; onCreateContact: (draft: SupplierContactDraft) => string | null; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null; onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean; onOpenDispatchPlanApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void }) {
   const keyboard = useKeyboard();
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
@@ -10735,18 +10987,27 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   };
 
   const saveRequest = () => {
-    const rawNeed = requestDraft.rawNeed.trim();
+    const explicitRawNeed = requestDraft.rawNeed.trim();
+    const derivedRawNeed = requestDraft.requestKind === "product"
+      ? requestDraft.items
+        .map((item) => [item.itemName.trim(), item.quantity.trim(), item.unit].filter(Boolean).join(" "))
+        .filter(Boolean)
+        .join("، ")
+      : requestDraft.serviceScope.trim();
+    const rawNeed = explicitRawNeed || derivedRawNeed;
     const normalizedQuantities = requestDraft.items.map((item) => item.quantity.trim() ? normalizeProjectNumber(item.quantity, false) : "");
     const invalidQuantityIndex = requestDraft.requestKind === "product" ? normalizedQuantities.findIndex((quantity) => quantity === null || Boolean(quantity && Number(quantity) <= 0)) : -1;
     const nextErrors = {
       ...emptyPurchaseRequestFieldErrors,
-      rawNeed: hasVisibleProjectTaskText(rawNeed) ? "" : "نیازت را بنویس تا یک پیش‌نویس محلی ساخته شود.",
+      rawNeed: hasVisibleProjectTaskText(rawNeed) ? "" : requestDraft.requestKind === "product" ? "نام قلم را وارد کن." : "شرح خدمت را وارد کن.",
       quantity: invalidQuantityIndex >= 0 ? "مقدار باید یک عدد بیشتر از صفر باشد." : "",
       quantityIndex: invalidQuantityIndex >= 0 ? invalidQuantityIndex : null,
     } satisfies PurchaseRequestFieldErrors;
     setFieldErrors(nextErrors);
     if (nextErrors.rawNeed || nextErrors.quantity) {
-      const invalidId = nextErrors.rawNeed ? "purchase-request-raw" : invalidQuantityIndex <= 0 ? "purchase-request-quantity" : `purchase-request-quantity-${invalidQuantityIndex}`;
+      const invalidId = nextErrors.rawNeed
+        ? requestDraft.requestKind === "product" ? "purchase-request-item" : "purchase-request-service-scope"
+        : invalidQuantityIndex <= 0 ? "purchase-request-quantity" : `purchase-request-quantity-${invalidQuantityIndex}`;
       window.requestAnimationFrame(() => document.getElementById(invalidId)?.focus());
       return;
     }
@@ -10784,6 +11045,17 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
     }
     setStorageError("");
     window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+  };
+
+  const confirmForRecipients = () => {
+    if (!selectedRequest || missingFields.length > 0) return;
+    const approvalId = onConfirmForRecipients(selectedRequest.id);
+    if (!approvalId) {
+      setStorageError("تأیید اطلاعات ذخیره نشد. هیچ مرحله‌ای جلو نرفت؛ دوباره تلاش کن.");
+      return;
+    }
+    setStorageError("");
+    setDispatchPlannerRequestId(selectedRequest.id);
   };
 
   const returnToDraft = () => {
@@ -10824,7 +11096,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   };
 
   const editorSheet = (
-    <BottomSheet key={editingId ? `purchase-editor-${editingId}` : "purchase-editor-create"} open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }} title={editingId ? "ویرایش پیش‌نویس" : "پیش‌نویس درخواست پروژه"} description={`محصول چندقلمی یا خدمت مستقل برای ${project.name}؛ بدون ارسال بیرونی.`} snap={0.94}>
+    <BottomSheet key={editingId ? `purchase-editor-${editingId}` : "purchase-editor-create"} open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }} title={editingId ? "ویرایش درخواست" : "درخواست خرید"} description="نیاز و زمان تحویل را ثبت کن." snap={0.94}>
       <form className="purchase-request-editor-sheet" dir="rtl" data-testid="purchase-request-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveRequest(); }}>
         <fieldset className="purchase-request-kind-picker" disabled={Boolean(editingId)}>
           <legend>نوع درخواست</legend>
@@ -10833,12 +11105,11 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
           {editingId ? <small>نوع درخواست بعد از ثبت ثابت می‌ماند.</small> : null}
         </fieldset>
         <PurchaseRequestModeSwitch mode={editorMode} onChange={setEditorMode} testIdPrefix="purchase-request-mode" label="سطح جزئیات فرم درخواست" />
-        <p className="purchase-request-mode-note">در حالت ساده فقط موارد اصلی را می‌بینی؛ رفت‌وبرگشت بین دو حالت چیزی از پیش‌نویس پاک نمی‌کند.</p>
-        <label className="field-control" htmlFor="purchase-request-raw">
-          <span>نیاز اولیه</span>
-          <KeyboardTextarea id="purchase-request-raw" data-testid="purchase-request-raw-input" value={requestDraft.rawNeed} maxLength={800} rows={4} placeholder="مثلاً ۲۰ تن سیمان تیپ ۲ برای هفتهٔ آینده لازم داریم" onChange={(event) => changeDraft("rawNeed", event.target.value)} aria-invalid={Boolean(fieldErrors.rawNeed)} aria-describedby={fieldErrors.rawNeed ? "purchase-request-raw-error" : "purchase-request-raw-note"} />
-          {fieldErrors.rawNeed ? <small className="field-error" id="purchase-request-raw-error" data-testid="purchase-request-raw-error">{fieldErrors.rawNeed}</small> : <small id="purchase-request-raw-note">متن دقیق خودت ثبت می‌شود؛ این نسخه استخراج هوشمند ندارد.</small>}
+        <label className="field-control purchase-request-extra-note" htmlFor="purchase-request-raw">
+          <span>توضیح بیشتر <small>(اختیاری)</small></span>
+          <KeyboardTextarea id="purchase-request-raw" data-testid="purchase-request-raw-input" value={requestDraft.rawNeed} maxLength={800} rows={2} placeholder="اگر نکتهٔ دیگری داری بنویس" onChange={(event) => changeDraft("rawNeed", event.target.value)} />
         </label>
+        {fieldErrors.rawNeed ? <p className="field-error purchase-request-main-error" id="purchase-request-raw-error" data-testid="purchase-request-raw-error">{fieldErrors.rawNeed}</p> : null}
 
         {requestDraft.requestKind === "product" ? (
           <>
@@ -10897,15 +11168,8 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
           </>
         )}
 
-        <dl className="purchase-request-meta">
-          <div><dt>پروژهٔ مالک</dt><dd>{project.name}</dd></div>
-          <div><dt>نوع درخواست</dt><dd>{requestDraft.requestKind === "product" ? "محصول" : "خدمت"}</dd></div>
-          <div><dt>دسترسی</dt><dd>خصوصی پروژه</dd></div>
-          <div><dt>وضعیت نخست</dt><dd>پیش‌نویس · نسخهٔ ۱</dd></div>
-        </dl>
-        <p className="purchase-request-boundary"><ShieldCheck size={16} /><span>ثبت این فرم فقط یک پیش‌نویس محلی می‌سازد؛ فایل و استخراج خودکار در این مسیر فعال نیست و هیچ تأیید، قیمت یا ارسال بیرونی ایجاد نمی‌شود.</span></p>
         {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-storage-error">{storageError}</p> : null}
-        <button className="primary-button" type="submit" data-testid="purchase-request-save">{editingId ? "ذخیرهٔ نسخهٔ جدید" : "ثبت پیش‌نویس محلی"}</button>
+        <button className="primary-button" type="submit" data-testid="purchase-request-save">{editingId ? "ذخیرهٔ تغییرات" : "ادامه"}</button>
       </form>
     </BottomSheet>
   );
@@ -10928,6 +11192,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
         onUpsertDispatchDraft={onUpsertDispatchDraft}
         onCreateDispatchPlanApproval={onCreateDispatchPlanApproval}
         onChangeDispatchPlanApproval={onChangeDispatchPlanApproval}
+        onOpenDispatchPlanApproval={(approvalId) => onOpenDispatchPlanApproval(approvalId, dispatchPlannerRequest.id)}
       />
     );
   }
@@ -10945,33 +11210,31 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
           <main className="project-purchase-request-detail-content">
             <section ref={detailHeadingRef} className="purchase-request-detail-heading" tabIndex={-1} aria-live="polite" data-testid="purchase-request-detail-heading">
               <span><ShoppingCart size={24} strokeWidth={1.65} /></span>
-              <div><small>{purchaseRequestStatusLabel(selectedRequest.status)} · نسخهٔ {selectedRequest.version.toLocaleString("fa-IR")}</small><h1>{purchaseRequestDisplayTitle(selectedRequest)}</h1><p>{selectedRequest.rawNeed.text}</p></div>
+              <div><small>{selectedRequest.status === "draft" ? "در حال تکمیل" : "آمادهٔ ادامه"}</small><h1>{purchaseRequestDisplayTitle(selectedRequest)}</h1><p>{selectedRequest.rawNeed.text}</p></div>
             </section>
 
             <PurchaseRequestModeSwitch mode={detailMode} onChange={setDetailMode} testIdPrefix="purchase-request-detail-mode" label="سطح جزئیات درخواست" />
-            {detailMode === "simple" ? <p className="purchase-request-mode-note">خلاصهٔ تصمیم‌گیری را می‌بینی؛ شناسنامه، شرایط، روشن‌سازی‌ها و تاریخچه در نمای پیشرفته باقی مانده‌اند.</p> : null}
-            <p className="purchase-request-share-status"><ShieldCheck size={15} /><span>وضعیت اقدام بیرونی: <strong>{selectedRequest.sharingStatus}</strong></span></p>
 
             {selectedRequest.requestKind === "product" ? (
-              <section className="purchase-request-records" aria-label="اقلام نسخهٔ درخواست" data-testid="purchase-request-product-items">
+              <section className="purchase-request-records" aria-label="اقلام درخواست" data-testid="purchase-request-product-items">
                 <div className="purchase-request-section-title"><strong>اقلام محصول</strong><span>{selectedRequest.items.length.toLocaleString("fa-IR")}</span></div>
                 {selectedRequest.items.map((item, index) => (
                   <article className="purchase-request-record-card" key={item.id} data-testid="purchase-request-product-item">
                     <div><strong>{item.name ?? `قلم ${index + 1}`}</strong><span className={item.completionStatus === "complete" ? "is-complete" : "is-incomplete"}>{item.completionStatus === "complete" ? "کامل" : "ناقص"}</span></div>
                     <dl>
                       <div><dt>مقدار و واحد</dt><dd>{item.quantity && item.unit ? `${Number(item.quantity).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} ${item.unit}` : "ثبت نشده"}</dd></div>
-                      {detailMode === "advanced" ? <><div><dt>برند یا گرید</dt><dd>{item.brandOrGrade ?? "نامشخص"}</dd></div><div><dt>مشخصات</dt><dd>{item.specification ?? "نامشخص"}</dd></div><div><dt>جایگزین</dt><dd>{purchaseRequestAlternativesLabel(item.alternatives)}</dd></div><div><dt>منشأ</dt><dd>{item.source}</dd></div><div><dt>نسخه و تاریخچه</dt><dd>نسخهٔ {item.version.toLocaleString("fa-IR")} · {item.history.length.toLocaleString("fa-IR")} رویداد</dd></div></> : null}
+                      {detailMode === "advanced" ? <><div><dt>برند یا گرید</dt><dd>{item.brandOrGrade ?? "نامشخص"}</dd></div><div><dt>مشخصات</dt><dd>{item.specification ?? "نامشخص"}</dd></div><div><dt>جایگزین</dt><dd>{purchaseRequestAlternativesLabel(item.alternatives)}</dd></div></> : null}
                     </dl>
                   </article>
                 ))}
-                <dl className="purchase-request-meta"><div><dt>موعد موردنیاز</dt><dd>{selectedRequest.delivery.neededBy ?? "نامشخص"}</dd></div><div><dt>تحویل</dt><dd>تهران · {selectedRequest.delivery.area}</dd></div>{detailMode === "advanced" ? <div><dt>ثبت و اشتراک</dt><dd>{selectedRequest.localStatus} · {selectedRequest.sharingStatus}</dd></div> : null}</dl>
+                <dl className="purchase-request-meta"><div><dt>موعد موردنیاز</dt><dd>{selectedRequest.delivery.neededBy ?? "نامشخص"}</dd></div><div><dt>تحویل</dt><dd>تهران · {selectedRequest.delivery.area}</dd></div></dl>
               </section>
             ) : selectedRequest.service ? (
               <section className="purchase-request-records" aria-label="شناسنامهٔ خدمت" data-testid="purchase-request-service-record">
                 <div className="purchase-request-section-title"><strong>خدمت مستقل</strong><span className={selectedRequest.service.completionStatus === "complete" ? "is-complete" : "is-incomplete"}>{selectedRequest.service.completionStatus === "complete" ? "کامل" : "ناقص"}</span></div>
                 <dl className="purchase-request-meta">
                   <div><dt>دامنه</dt><dd>{selectedRequest.service.scope ?? "نامشخص"}</dd></div><div><dt>موقعیت مجاز</dt><dd>{selectedRequest.service.location ?? "نامشخص"}</dd></div><div><dt>اندازه یا حجم</dt><dd>{selectedRequest.service.sizeOrVolume ?? "نامشخص"}</dd></div><div><dt>زمان</dt><dd>{selectedRequest.service.timing ?? "نامشخص"}</dd></div>
-                  {detailMode === "advanced" ? <><div><dt>سطح مکان</dt><dd>فقط محدوده یا بخش پروژه · بدون آدرس دقیق</dd></div><div><dt>صلاحیت</dt><dd>{selectedRequest.service.qualification ?? "نامشخص"}</dd></div><div><dt>روش</dt><dd>{selectedRequest.service.method ?? "نامشخص"}</dd></div><div><dt>داخل دامنه</dt><dd>{selectedRequest.service.inScope ?? "نامشخص"}</dd></div><div><dt>خارج از دامنه</dt><dd>{selectedRequest.service.outOfScope ?? "نامشخص"}</dd></div><div><dt>ضمانت اعلامی</dt><dd>{selectedRequest.service.warranty ?? "نامشخص"}</dd></div><div><dt>پرداخت</dt><dd>{selectedRequest.service.paymentTerms ?? "نامشخص"}</dd></div><div><dt>منشأ</dt><dd>{selectedRequest.service.source}</dd></div><div><dt>نسخه و تاریخچه</dt><dd>نسخهٔ {selectedRequest.service.version.toLocaleString("fa-IR")} · {selectedRequest.service.history.length.toLocaleString("fa-IR")} رویداد</dd></div></> : null}
+                  {detailMode === "advanced" ? <><div><dt>صلاحیت</dt><dd>{selectedRequest.service.qualification ?? "نامشخص"}</dd></div><div><dt>روش</dt><dd>{selectedRequest.service.method ?? "نامشخص"}</dd></div><div><dt>داخل دامنه</dt><dd>{selectedRequest.service.inScope ?? "نامشخص"}</dd></div><div><dt>خارج از دامنه</dt><dd>{selectedRequest.service.outOfScope ?? "نامشخص"}</dd></div><div><dt>ضمانت اعلامی</dt><dd>{selectedRequest.service.warranty ?? "نامشخص"}</dd></div><div><dt>پرداخت</dt><dd>{selectedRequest.service.paymentTerms ?? "نامشخص"}</dd></div></> : null}
                 </dl>
               </section>
             ) : null}
@@ -10985,49 +11248,13 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
 
             {detailMode === "advanced" && selectedRequest.requestKind === "product" ? <section className="purchase-request-terms" aria-labelledby="purchase-request-terms-title" data-testid="purchase-request-terms"><div className="purchase-request-section-title"><strong id="purchase-request-terms-title">شرایط تجاری</strong><span>۳</span></div><dl><div><dt>حمل</dt><dd>{selectedRequest.unresolvedTerms.transport === "unknown" ? "نامشخص" : selectedRequest.unresolvedTerms.transport}</dd></div><div><dt>مالیات</dt><dd>{selectedRequest.unresolvedTerms.tax === "unknown" ? "نامشخص" : selectedRequest.unresolvedTerms.tax}</dd></div><div><dt>شرایط پرداخت</dt><dd>{selectedRequest.unresolvedTerms.paymentTerms === "unknown" ? "نامشخص" : selectedRequest.unresolvedTerms.paymentTerms}</dd></div></dl></section> : null}
 
-            {detailMode === "advanced" ? <section className="purchase-request-clarifications" aria-label="روشن‌سازی‌های قطعی درخواست" data-testid="purchase-request-clarifications">
-              <div className="purchase-request-section-title"><strong>روشن‌سازی‌های قطعی</strong><span>{selectedRequest.clarificationAnswers.length.toLocaleString("fa-IR")}</span></div>
-              <p>هر سؤال وقتی ساخته شده که فیلد اثرگذار نامشخص بوده؛ پاسخ‌های بعدی برای تاریخچه نگه داشته می‌شوند و confidence برای این قواعد کاربرد ندارد.</p>
-              <ol>{selectedRequest.clarificationAnswers.map((answer) => <li key={answer.id} data-testid="purchase-request-clarification"><div><strong>{answer.question}</strong><span className={answer.status === "answered" ? "is-complete" : "is-incomplete"}>{answer.status === "answered" ? "پاسخ ثبت‌شده" : answer.status === "needs-confirmation" ? "نیازمند تأیید پس از مهاجرت" : "نامشخص صریح"}</span></div><p>{answer.answer ?? "نامشخص"}</p><small>منشأ: {answer.source} · confidence: کاربرد ندارد · نسخهٔ {answer.version.toLocaleString("fa-IR")} · {answer.history.length.toLocaleString("fa-IR")} رویداد</small></li>)}</ol>
-            </section> : null}
-
-            {detailMode === "advanced" ? <aside className="purchase-request-privacy">
-              <div><ShieldCheck size={18} /><span><strong>پیش‌نمایش حریم داده</strong><small>هیچ داده‌ای در این تسک ارسال نمی‌شود.</small></span></div>
-              <dl><div><dt>قابل‌اشتراک در آینده</dt><dd>{selectedRequest.requestKind === "product" ? "همهٔ اقلام و شرایط ثبت‌شدهٔ همین نسخه" : "دامنه و شرایط ثبت‌شدهٔ همین خدمت"}</dd></div><div><dt>خصوصی می‌ماند</dt><dd>نام پروژه، حافظه، فایل‌ها، بودجه و آدرس دقیق</dd></div></dl>
-            </aside> : null}
-
-            <section className="purchase-request-approval-status" id="purchase-request-approval-status" data-testid="purchase-request-approval-status" aria-live="polite">
-              <div className="purchase-request-section-title"><strong>وضعیت بازبینی نسخه</strong><span>{selectedRequest.version.toLocaleString("fa-IR")}</span></div>
-              {approvalsStorageLocked ? (
-                <p role="alert"><ShieldCheck size={16} /><span><strong>تأییدهای محلی کامل خوانده نشد.</strong> تا بازیابی موفق، ثبت تأیید و بازگشت این نسخه به ویرایش غیرفعال است.</span></p>
-              ) : selectedRequestApproval ? (
-                <div className={`purchase-request-approval-summary is-${selectedRequestApproval.status}`}>
-                  <ClipboardCheck size={18} />
-                  <span>
-                    <strong>{selectedRequestApproval.status === "approved" ? `نسخهٔ ${selectedRequest.version.toLocaleString("fa-IR")} تأیید شده` : projectApprovalStatusLabel(selectedRequestApproval.status)}</strong>
-                    <small>{selectedRequestApproval.status === "pending" ? "منتظر تصمیم صریح شما؛ هنوز ارسال نشده است." : selectedRequestApproval.status === "approved" ? "فقط همین نسخه برای ادامهٔ فرایند پذیرفته شده؛ هنوز ارسال نشده است." : "این نسخه نیاز به اصلاح دارد؛ هیچ ارسالی انجام نشده است."}</small>
-                  </span>
-                </div>
-              ) : (
-                <p><CircleHelp size={16} /><span><strong>هنوز در صف تأیید ثبت نشده.</strong> آماده‌شدن درخواست به‌تنهایی تأیید یا مجوز ارسال نمی‌سازد.</span></p>
-              )}
-            </section>
+            {selectedRequest.status !== "draft" ? <section className="purchase-request-approval-status" id="purchase-request-approval-status" data-testid="purchase-request-approval-status" aria-live="polite">{approvalsStorageLocked ? <p role="alert"><ShieldCheck size={16} /><span><strong>وضعیت تأیید کامل خوانده نشد.</strong></span></p> : <div className={`purchase-request-approval-summary is-${selectedRequestApproval?.status ?? "pending"}`}><ClipboardCheck size={18} /><span><strong>{selectedRequestApproval?.status === "approved" ? "اطلاعات درخواست تأیید شده" : selectedRequestApproval?.status === "changes-requested" ? "نیاز به اصلاح" : "منتظر تأیید"}</strong><small>{selectedRequestApproval?.status === "approved" ? "حالا تأمین‌کننده‌های ثبت‌شده را انتخاب کن." : "این تصمیم در کارها انجام می‌شود."}</small></span></div>}</section> : null}
 
             {selectedRequestApproval?.status === "approved" && isApprovalEligibleForDispatch(selectedRequestApproval, selectedRequest, project.id) ? (
               <section className="purchase-request-dispatch-entry" data-testid="purchase-request-dispatch-entry">
-                <div><Users size={18} /><span><strong>نسخهٔ جاری آمادهٔ انتخاب گیرنده است</strong><small>فقط گیرنده‌های محلی ثبت‌شده توسط شما؛ پیش‌نمایش و Draft بدون ارسال بیرونی.</small></span></div>
-                <button className="primary-button" type="button" onClick={() => { setStorageError(""); setDispatchPlannerRequestId(selectedRequest.id); }} data-testid="purchase-request-open-dispatch"><Users size={17} /> انتخاب گیرنده و پیش‌نمایش اشتراک</button>
+                <button className="primary-button" type="button" onClick={() => { setStorageError(""); setDispatchPlannerRequestId(selectedRequest.id); }} data-testid="purchase-request-open-dispatch"><Users size={17} /> انتخاب تأمین‌کننده‌ها</button>
               </section>
-            ) : selectedRequest.status === "ready-for-review" ? (
-              <p className="purchase-request-dispatch-locked" data-testid="purchase-request-dispatch-locked"><ShieldCheck size={16} /><span><strong>انتخاب گیرنده هنوز قفل است.</strong> فقط بعد از تأیید صریح همین نسخهٔ جاری فعال می‌شود.</span></p>
             ) : null}
-
-            {detailMode === "advanced" ? <section className="purchase-request-history" aria-label="تاریخچهٔ نسخه‌های درخواست" data-testid="purchase-request-history">
-              <div className="purchase-request-section-title"><strong>تاریخچه</strong><span>{selectedRequest.history.length.toLocaleString("fa-IR")}</span></div>
-              <ol>{[...selectedRequest.history].reverse().map((event) => <li key={event.id} data-testid="purchase-request-history-event"><span><Check size={14} /></span><div><strong>{purchaseRequestEventLabel(event.type)}</strong><small>توسط {event.actor} · نسخهٔ {event.version.toLocaleString("fa-IR")} · {formatProjectFileDate(event.at)}</small></div></li>)}</ol>
-            </section> : null}
-
-            <p className="purchase-request-boundary"><ShieldCheck size={17} /><span><strong>{selectedRequest.status === "ready-for-review" ? "این وضعیت تأیید یا مجوز ارسال نیست." : "فقط پیش‌نویس خصوصی و محلی است."}</strong> درخواست به هیچ تأمین‌کننده‌ای نرفته و قیمت، سفارش یا تعهد خریدی ایجاد نشده است.</span></p>
             {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-storage-error">{storageError}</p> : null}
             <div className="purchase-request-detail-actions">
               {selectedRequest.status === "draft" ? (
@@ -11036,11 +11263,12 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
                 <button type="button" onClick={returnToDraft} disabled={storageLocked || approvalsStorageLocked || selectedRequestApproval?.status === "pending"} aria-describedby="purchase-request-approval-status" data-testid="purchase-request-return-draft"><PencilLine size={17} /> بازگشت به ویرایش</button>
               )}
               {selectedRequest.status === "draft" ? (
-                <button className="primary-button" type="button" onClick={markReady} disabled={storageLocked || missingFields.length > 0} aria-describedby={missingFields.length > 0 ? "purchase-request-missing-fields" : undefined} data-testid="purchase-request-ready"><ClipboardCheck size={18} /> آماده‌کردن برای بازبینی</button>
+                <button className="primary-button" type="button" onClick={confirmForRecipients} disabled={storageLocked || approvalsStorageLocked || missingFields.length > 0} aria-describedby={missingFields.length > 0 ? "purchase-request-missing-fields" : undefined} data-testid="purchase-request-ready"><Users size={18} /> تأیید اطلاعات و انتخاب تأمین‌کننده‌ها</button>
               ) : (
-                <button ref={approvalButtonRef} className="primary-button" type="button" onClick={requestApproval} disabled={storageLocked || approvalsStorageLocked} data-testid="purchase-request-request-approval"><ClipboardCheck size={18} /> {selectedRequestApproval ? `مشاهدهٔ تأیید نسخهٔ ${selectedRequest.version.toLocaleString("fa-IR")}` : `ثبت نسخهٔ ${selectedRequest.version.toLocaleString("fa-IR")} برای تأیید`}</button>
+                selectedRequestApproval?.status === "approved" ? null : <button ref={approvalButtonRef} className="primary-button" type="button" onClick={requestApproval} disabled={storageLocked || approvalsStorageLocked} data-testid="purchase-request-request-approval"><ClipboardCheck size={18} /> مشاهده در کارها</button>
               )}
             </div>
+            {selectedRequest.status === "draft" ? <details className="purchase-request-more-actions" data-testid="purchase-request-more-actions"><summary>گزینه‌های بیشتر</summary><button type="button" onClick={markReady} disabled={storageLocked || missingFields.length > 0} data-testid="purchase-request-mark-ready-legacy">بازبینی جداگانه در کارها</button></details> : null}
           </main>
         </MobileScroll>
         {editorSheet}
@@ -11060,21 +11288,19 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
         <main className="project-purchase-requests-content">
           <section className="project-purchase-requests-heading">
             <span className="project-purchase-requests-mark"><ShoppingCart size={24} strokeWidth={1.65} /></span>
-            <div><span className="eyebrow">محصول چندقلمی یا خدمت مستقل</span><h1>درخواست‌های خرید {project.name}</h1><p>از نیاز خام تا نسخه و بازبینی داخلی؛ پیش از انتخاب مقصد یا هر ارسال</p></div>
+            <div><span className="eyebrow">خرید پروژه</span><h1>درخواست‌های خرید</h1><p>نیازت را سریع ثبت و برای تأمین‌کننده‌ها آماده کن.</p></div>
           </section>
 
-          <button ref={addButtonRef} className="primary-button purchase-request-add" type="button" onClick={openCreateEditor} disabled={storageLocked} data-testid="purchase-request-add"><Plus size={18} /> پیش‌نویس جدید</button>
+          <button ref={addButtonRef} className="primary-button purchase-request-add" type="button" onClick={openCreateEditor} disabled={storageLocked} data-testid="purchase-request-add"><Plus size={18} /> درخواست جدید</button>
 
           {storageLocked ? <p className="project-storage-recovery-alert" role="alert" data-testid="purchase-request-read-error"><ShieldCheck size={17} /><span><strong>درخواست‌های محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، ثبت و تغییر وضعیت تا بارگذاری موفق بعدی غیرفعال است.</span></p> : null}
 
-          <aside className="purchase-request-boundary"><ShieldCheck size={17} /><span><strong>رکورد خصوصی و محلی</strong> تأیید داخلی هر نسخه ممکن است، اما AI، تأمین‌کننده، قیمت، مجوز ارسال و ارسال بیرونی هنوز وصل نیست. شرایط حمل، مالیات و پرداخت نیز تا ثبت واقعی نامشخص می‌مانند.</span></aside>
-
           {storageLocked ? null : orderedRequests.length === 0 ? (
-            <section className="purchase-request-empty" data-testid="purchase-request-empty"><span><ShoppingCart size={25} strokeWidth={1.65} /></span><h2>هنوز درخواست خریدی ثبت نشده</h2><p>یک محصول چندقلمی یا خدمت مستقل را دستی و فقط برای همین پروژه ثبت کن.</p></section>
+            <section className="purchase-request-empty" data-testid="purchase-request-empty"><span><ShoppingCart size={25} strokeWidth={1.65} /></span><h2>هنوز درخواستی ثبت نشده</h2><p>اولین نیاز خرید یا خدمت پروژه را ثبت کن.</p></section>
           ) : (
             <section className="purchase-request-list" aria-label="درخواست‌های ثبت‌شدهٔ پروژه">
               <div className="purchase-request-section-title"><strong>درخواست‌های ثبت‌شده</strong><span>{orderedRequests.length.toLocaleString("fa-IR")}</span></div>
-              {orderedRequests.map((request) => <button className="purchase-request-card" type="button" key={request.id} data-request-id={request.id} onClick={() => { setStorageError(""); setDetailMode("simple"); setSelectedId(request.id); }} data-testid="purchase-request-card"><span className="purchase-request-card-icon"><ShoppingCart size={20} strokeWidth={1.65} /></span><span className="purchase-request-card-copy"><span><small>{purchaseRequestStatusLabel(request.status)}</small><small>{formatProjectFileDate(request.updatedAt)}</small></span><strong>{purchaseRequestDisplayTitle(request)}</strong><em>{request.requestKind === "service" ? `خدمت · ${request.service?.completionStatus === "complete" ? "شناسنامه کامل" : "نیازمند تکمیل"}` : `${request.items.length.toLocaleString("fa-IR")} قلم · ${request.items.filter((item) => item.completionStatus === "complete").length.toLocaleString("fa-IR")} کامل`}</em><small>نسخهٔ {request.version.toLocaleString("fa-IR")} · {request.sharingStatus}</small></span><ArrowRight size={17} aria-hidden="true" /></button>)}
+              {orderedRequests.map((request) => <button className="purchase-request-card" type="button" key={request.id} data-request-id={request.id} onClick={() => { setStorageError(""); setDetailMode("simple"); setSelectedId(request.id); }} data-testid="purchase-request-card"><span className="purchase-request-card-icon"><ShoppingCart size={20} strokeWidth={1.65} /></span><span className="purchase-request-card-copy"><span><small>{request.status === "draft" ? "در حال تکمیل" : "آمادهٔ ادامه"}</small><small>{formatProjectFileDate(request.updatedAt)}</small></span><strong>{purchaseRequestDisplayTitle(request)}</strong><em>{request.requestKind === "service" ? "خدمت" : `${request.items.length.toLocaleString("fa-IR")} قلم`}</em></span><ArrowRight size={17} aria-hidden="true" /></button>)}
             </section>
           )}
         </main>
@@ -11084,7 +11310,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   );
 }
 
-function ProjectDispatchPlannerView({ project, request, approval, contacts, dispatchDraft, dispatchPlanApprovals, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval }: { project: BuilderProject; request: ProjectPurchaseRequestRecord; approval: ProjectApprovalRecord; contacts: SupplierContactRecord[]; dispatchDraft: DispatchDraftRecord | null; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; onBack: () => void; onCreateContact: (draft: SupplierContactDraft) => string | null; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null; onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean }) {
+function ProjectDispatchPlannerView({ project, request, approval, contacts, dispatchDraft, dispatchPlanApprovals, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval, onOpenDispatchPlanApproval }: { project: BuilderProject; request: ProjectPurchaseRequestRecord; approval: ProjectApprovalRecord; contacts: SupplierContactRecord[]; dispatchDraft: DispatchDraftRecord | null; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; onBack: () => void; onCreateContact: (draft: SupplierContactDraft) => string | null; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null; onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean; onOpenDispatchPlanApproval: (approvalId: string) => void }) {
   const keyboard = useKeyboard();
   const addContactButtonRef = useRef<HTMLButtonElement>(null);
   const dispatchPlanStatusRef = useRef<HTMLElement>(null);
@@ -11096,6 +11322,7 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
   const [dispatchPlanReviewOpen, setDispatchPlanReviewOpen] = useState(false);
   const [dispatchPlanAcknowledged, setDispatchPlanAcknowledged] = useState(false);
   const [dispatchPlanStorageError, setDispatchPlanStorageError] = useState("");
+  const [queueForTasks, setQueueForTasks] = useState(false);
   const currentRevision = dispatchDraft?.revisions.find((revision) => revision.id === dispatchDraft.currentRevisionId) ?? null;
   const [previewRevisionId, setPreviewRevisionId] = useState<string | null>(currentRevision?.id ?? null);
   const previewRevision = dispatchDraft?.revisions.find((revision) => revision.id === previewRevisionId) ?? currentRevision;
@@ -11131,6 +11358,19 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
     setDispatchPlanAcknowledged(false);
     setDispatchPlanStorageError("");
   }, [currentRevision?.id, request.id]);
+
+  useEffect(() => {
+    if (!queueForTasks || !dispatchDraft || !currentRevision || !selectionMatchesCurrentRevision) return;
+    const approvalId = onCreateDispatchPlanApproval(dispatchDraft.id);
+    if (!approvalId) {
+      setQueueForTasks(false);
+      setDispatchPlanStorageError("ثبت در کارها انجام نشد. هیچ مرحله‌ای جلو نرفت؛ دوباره تلاش کن.");
+      return;
+    }
+    setQueueForTasks(false);
+    setDispatchPlanStorageError("");
+    onOpenDispatchPlanApproval(approvalId);
+  }, [currentRevision?.id, dispatchDraft?.id, queueForTasks, selectionMatchesCurrentRevision]);
 
   const closeContactSheet = () => {
     keyboard.hide();
@@ -11206,6 +11446,27 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
     setSaveAnnouncement(selectionMatchesCurrent ? "همین انتخاب از قبل در Draft جاری ثبت بود؛ نسخهٔ اضافه‌ای ساخته نشد." : "نسخهٔ جدید Draft محلی ذخیره شد؛ هیچ اثر بیرونی ندارد.");
   };
 
+  const submitDispatchPlanToTasks = () => {
+    if (dispatchStorageLocked || dispatchPlanApprovalsStorageLocked || selectedRecipientIds.length === 0) return;
+    if (currentRevision && selectionMatchesCurrentRevision) {
+      const approvalId = onCreateDispatchPlanApproval(dispatchDraft!.id);
+      if (!approvalId) {
+        setDispatchPlanStorageError("ثبت در کارها انجام نشد. هیچ مرحله‌ای جلو نرفت؛ دوباره تلاش کن.");
+        return;
+      }
+      onOpenDispatchPlanApproval(approvalId);
+      return;
+    }
+    const dispatchId = onUpsertDispatchDraft(request.id, approval.id, selectedRecipientIds);
+    if (!dispatchId) {
+      setStorageError("انتخاب تأمین‌کننده‌ها ذخیره نشد. دوباره تلاش کن.");
+      return;
+    }
+    setStorageError("");
+    setDispatchPlanStorageError("");
+    setQueueForTasks(true);
+  };
+
   const createDispatchPlanApproval = () => {
     if (!dispatchDraft || !currentRevision || !selectionMatchesCurrentRevision || !dispatchPlanAcknowledged || dispatchPlanApprovalsStorageLocked) return;
     const approvalId = onCreateDispatchPlanApproval(dispatchDraft.id);
@@ -11229,18 +11490,17 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
   };
 
   const contactSheet = (
-    <BottomSheet open={contactSheetOpen} onOpenChange={(open) => { if (!open) closeContactSheet(); }} title="ثبت گیرندهٔ محلی" description={`رکورد خصوصی ${project.name}؛ نه حساب شبکه و نه تأمین‌کنندهٔ تأییدشده.`} snap={0.92}>
+    <BottomSheet open={contactSheetOpen} onOpenChange={(open) => { if (!open) closeContactSheet(); }} title="افزودن تأمین‌کننده" description="نام، دسته و محدودهٔ فعالیت را ثبت کن." snap={0.92}>
       <form className="supplier-contact-editor-sheet" dir="rtl" data-testid="supplier-contact-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveContact(); }}>
         <label className="field-control" htmlFor="supplier-contact-displayName"><span>نام یا عنوان گیرنده</span><KeyboardInput id="supplier-contact-displayName" data-testid="supplier-contact-name-input" value={contactDraft.displayName} maxLength={100} placeholder="مثلاً مصالح نمونهٔ تهران" onChange={(event) => changeContactDraft("displayName", event.target.value)} aria-invalid={Boolean(contactErrors.displayName)} aria-describedby={contactErrors.displayName ? "supplier-contact-displayName-error" : undefined} />{contactErrors.displayName ? <small className="field-error" id="supplier-contact-displayName-error">{contactErrors.displayName}</small> : null}</label>
-        <label className="field-control" htmlFor="supplier-contact-category"><span>دستهٔ اعلامی</span><KeyboardInput id="supplier-contact-category" data-testid="supplier-contact-category-input" value={contactDraft.category} maxLength={100} placeholder="مثلاً سیمان و مصالح پایه" onChange={(event) => changeContactDraft("category", event.target.value)} aria-invalid={Boolean(contactErrors.category)} aria-describedby={contactErrors.category ? "supplier-contact-category-error" : "supplier-contact-category-note"} />{contactErrors.category ? <small className="field-error" id="supplier-contact-category-error">{contactErrors.category}</small> : <small id="supplier-contact-category-note">این دسته را شما ثبت می‌کنید؛ تطبیق یا رتبه‌بندی هوشمند نیست.</small>}</label>
+        <label className="field-control" htmlFor="supplier-contact-category"><span>دسته</span><KeyboardInput id="supplier-contact-category" data-testid="supplier-contact-category-input" value={contactDraft.category} maxLength={100} placeholder="مثلاً سیمان و مصالح پایه" onChange={(event) => changeContactDraft("category", event.target.value)} aria-invalid={Boolean(contactErrors.category)} aria-describedby={contactErrors.category ? "supplier-contact-category-error" : undefined} />{contactErrors.category ? <small className="field-error" id="supplier-contact-category-error">{contactErrors.category}</small> : null}</label>
         <label className="field-control" htmlFor="supplier-contact-tehranCoverage"><span>پوشش تهران</span><KeyboardInput id="supplier-contact-tehranCoverage" data-testid="supplier-contact-coverage-input" value={contactDraft.tehranCoverage} maxLength={120} placeholder="مثلاً مناطق ۱ تا ۵ و شمیرانات" onChange={(event) => changeContactDraft("tehranCoverage", event.target.value)} aria-invalid={Boolean(contactErrors.tehranCoverage)} aria-describedby={contactErrors.tehranCoverage ? "supplier-contact-tehranCoverage-error" : undefined} />{contactErrors.tehranCoverage ? <small className="field-error" id="supplier-contact-tehranCoverage-error">{contactErrors.tehranCoverage}</small> : null}</label>
         <fieldset className="supplier-contact-capability-picker">
-          <legend>توان پاسخ اعلامی</legend>
+          <legend>نوع همکاری</legend>
           {supplierContactResponseCapabilities.map((capability) => <button type="button" key={capability.id} aria-pressed={contactDraft.responseCapability === capability.id} onClick={() => changeContactDraft("responseCapability", capability.id)} data-testid={`supplier-contact-capability-${capability.id}`}>{capability.label}</button>)}
         </fieldset>
-        <aside className="supplier-contact-boundary"><ShieldCheck size={17} /><span><strong>ثبت مستقیم سازنده</strong><small>این رکورد حساب شبکه، عضویت، احراز هویت، تضمین کیفیت یا پیشنهاد «بهترین» نیست و هیچ پیام یا دعوتی نمی‌فرستد.</small></span></aside>
         {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="supplier-contact-storage-error">{storageError}</p> : null}
-        <button className="primary-button" type="submit" disabled={contactsStorageLocked} data-testid="supplier-contact-save"><UserPlus size={18} /> ثبت رکورد محلی</button>
+        <button className="primary-button" type="submit" disabled={contactsStorageLocked} data-testid="supplier-contact-save"><UserPlus size={18} /> ذخیره</button>
       </form>
     </BottomSheet>
   );
@@ -11249,26 +11509,26 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
     <div className="chida-app project-dispatch-planner-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-dispatch-planner-view">
       <header className="project-workspace-header">
         <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label="بازگشت به جزئیات درخواست" data-testid="dispatch-planner-back"><ArrowRight size={21} /></button>
-        <span className="project-workspace-title"><small>انتخاب گیرنده و پیش‌نمایش</small><strong>{project.name}</strong></span>
+        <span className="project-workspace-title"><small>انتخاب تأمین‌کننده‌ها</small><strong>{project.name}</strong></span>
         <span className="project-workspace-header-spacer" aria-hidden="true" />
       </header>
 
       <MobileScroll className="project-dispatch-planner-scroll">
         <main className="project-dispatch-planner-content">
-          <aside className="dispatch-preview-banner" data-testid="dispatch-preview-banner"><ShieldCheck size={19} /><span><strong>پیش‌نمایش محلی — هیچ دعوت یا درخواستی ارسال نشده است.</strong><small>نسخهٔ {request.version.toLocaleString("fa-IR")} با تأیید صریح همین revision؛ مجوز ارسال وجود ندارد.</small></span></aside>
+          <aside className="dispatch-preview-banner" data-testid="dispatch-preview-banner"><ShieldCheck size={19} /><span><strong>تا تأیید نهایی در «کارها» چیزی ارسال نمی‌شود.</strong></span></aside>
 
           <section className="dispatch-request-summary">
             <span><ClipboardCheck size={22} /></span>
-            <div><small>{request.requestKind === "product" ? "درخواست محصول" : "درخواست خدمت"} · تأیید شده</small><h1>{purchaseRequestDisplayTitle(request)}</h1><p>نسخهٔ درخواست {request.version.toLocaleString("fa-IR")} · نسخهٔ تأیید {approval.version.toLocaleString("fa-IR")} · مقصد بیرونی: ندارد</p></div>
+            <div><small>{request.requestKind === "product" ? "درخواست خرید" : "درخواست خدمت"}</small><h1>{purchaseRequestDisplayTitle(request)}</h1><p>{request.requestKind === "product" ? `${request.items.length.toLocaleString("fa-IR")} قلم · تحویل ${request.delivery.area}` : request.service?.location ?? "محدوده ثبت نشده"}</p></div>
           </section>
 
           {contactsStorageLocked ? <p className="project-storage-recovery-alert" role="alert" data-testid="supplier-contact-read-error"><ShieldCheck size={17} /><span><strong>گیرنده‌های محلی کامل خوانده نشدند.</strong> انتخاب، ثبت و تغییر وضعیت تا بازیابی موفق غیرفعال است.</span></p> : null}
           {dispatchStorageLocked ? <p className="project-storage-recovery-alert" role="alert" data-testid="dispatch-draft-read-error"><ShieldCheck size={17} /><span><strong>وابستگی‌های Draft کامل خوانده نشدند.</strong> برای جلوگیری از بازنویسی ناقص، ذخیرهٔ Draft قفل است.</span></p> : null}
 
           <section className="supplier-contact-section" aria-labelledby="supplier-contact-title">
-            <div className="dispatch-section-heading"><span><strong id="supplier-contact-title">گیرنده‌های ثبت‌شده توسط شما</strong><small>انتخاب دستی؛ بدون شبکه، match یا رتبه‌بندی</small></span><em>{orderedContacts.filter((contact) => contact.status === "active").length.toLocaleString("fa-IR")} فعال</em></div>
-            <button ref={addContactButtonRef} className="supplier-contact-add" type="button" onClick={() => { setStorageError(""); setContactSheetOpen(true); }} disabled={contactsStorageLocked} data-testid="supplier-contact-add"><UserPlus size={18} /> ثبت گیرندهٔ محلی</button>
-            {!contactsStorageLocked && orderedContacts.length === 0 ? <div className="supplier-contact-empty" data-testid="supplier-contact-empty"><Store size={23} /><strong>هنوز گیرنده‌ای ثبت نشده</strong><p>برای همین پروژه یک رکورد محلی بساز؛ اطلاعات تماس بیرونی در این نسخه نگه‌داری نمی‌شود.</p></div> : null}
+            <div className="dispatch-section-heading"><span><strong id="supplier-contact-title">تأمین‌کننده‌ها</strong><small>برای ادامه یک یا چند مورد را انتخاب کن.</small></span><em>{orderedContacts.filter((contact) => contact.status === "active").length.toLocaleString("fa-IR")}</em></div>
+            <button ref={addContactButtonRef} className="supplier-contact-add" type="button" onClick={() => { setStorageError(""); setContactSheetOpen(true); }} disabled={contactsStorageLocked} data-testid="supplier-contact-add"><UserPlus size={18} /> افزودن تأمین‌کننده</button>
+            {!contactsStorageLocked && orderedContacts.length === 0 ? <div className="supplier-contact-empty" data-testid="supplier-contact-empty"><Store size={23} /><strong>هنوز تأمین‌کننده‌ای ثبت نشده</strong><p>اولین مورد را اضافه کن.</p></div> : null}
             <div className="supplier-contact-list">
               {orderedContacts.map((contact) => {
                 const selectable = supplierContactCanRespond(contact, request.requestKind);
@@ -11276,17 +11536,30 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
                 return (
                   <article className={`supplier-contact-card ${contact.status === "archived" ? "is-archived" : ""} ${selected ? "is-selected" : ""}`} key={contact.id} data-testid="supplier-contact-card">
                     <button className="supplier-contact-select" type="button" aria-pressed={selected} aria-label={`${selected ? "حذف" : "انتخاب"} گیرنده ${contact.displayName}`} onClick={() => toggleRecipient(contact)} disabled={!selectable || contactsStorageLocked} data-testid="supplier-contact-select"><span className="supplier-contact-check"><Check size={15} /></span><span><strong>{contact.displayName}</strong><small>{contact.category} · {contact.tehranCoverage}</small></span></button>
-                    <dl><div><dt>توان پاسخ</dt><dd>{supplierContactResponseCapabilityLabel(contact.responseCapability)}</dd></div><div><dt>منشأ و وضعیت</dt><dd>{contact.source} · {contact.localStatus}</dd></div><div><dt>شبکه</dt><dd>{contact.networkStatus}</dd></div><div><dt>نسخه</dt><dd>{contact.version.toLocaleString("fa-IR")} · {formatProjectFileDate(contact.updatedAt)}</dd></div></dl>
-                    <p className={selectable ? "is-compatible" : "is-incompatible"}>{contact.status === "archived" ? "این رکورد آرشیو است و برای انتخاب جدید فعال نیست؛ سابقهٔ Draftهای قبلی حفظ می‌شود." : supplierContactMatchReason(contact, request.requestKind)}</p>
-                    <button className="supplier-contact-status" type="button" onClick={() => changeContactStatus(contact)} disabled={contactsStorageLocked} aria-label={`${contact.status === "active" ? "آرشیو رکورد" : "بازگرداندن به فعال"} ${contact.displayName}`} data-testid="supplier-contact-status">{contact.status === "active" ? <Archive size={16} /> : <RotateCcw size={16} />}{contact.status === "active" ? "آرشیو رکورد" : "بازگرداندن به فعال"}</button>
+                    {!selectable ? <p className="is-incompatible">برای این نوع درخواست قابل انتخاب نیست.</p> : null}
+                    <details className="supplier-contact-more"><summary>بیشتر</summary><div><span>{supplierContactResponseCapabilityLabel(contact.responseCapability)}</span><button className="supplier-contact-status" type="button" onClick={() => changeContactStatus(contact)} disabled={contactsStorageLocked} aria-label={`${contact.status === "active" ? "آرشیو" : "بازگرداندن"} ${contact.displayName}`} data-testid="supplier-contact-status">{contact.status === "active" ? <Archive size={16} /> : <RotateCcw size={16} />}{contact.status === "active" ? "آرشیو" : "بازگرداندن"}</button></div></details>
                   </article>
                 );
               })}
             </div>
           </section>
 
-          <section className="dispatch-selection-summary" aria-live="polite" data-testid="dispatch-selected-count"><span><Users size={18} /><strong>{selectedRecipientIds.length.toLocaleString("fa-IR")} گیرنده انتخاب شده</strong></span><small>فقط شناسه و snapshot رکوردهای محلیِ انتخاب‌شده وارد Draft می‌شود.</small></section>
+          <section className="dispatch-selection-summary" aria-live="polite" data-testid="dispatch-selected-count"><span><Users size={18} /><strong>{selectedRecipientIds.length.toLocaleString("fa-IR")} تأمین‌کننده انتخاب شده</strong></span></section>
 
+          <section className="dispatch-human-share-summary" aria-labelledby="dispatch-human-share-summary-title" data-testid="dispatch-human-share-summary">
+            <div className="dispatch-section-heading"><span><strong id="dispatch-human-share-summary-title">خلاصهٔ درخواست</strong><small>همین اطلاعات برای تأمین‌کننده‌های انتخاب‌شده آماده می‌شود.</small></span></div>
+            {request.requestKind === "product" ? <ul>{request.items.map((item) => <li key={item.id}><strong>{item.name ?? "قلم بدون نام"}</strong><span>{item.quantity && item.unit ? `${Number(item.quantity).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} ${item.unit}` : "مقدار ثبت نشده"}</span></li>)}</ul> : <p><strong>{request.service?.scope ?? "خدمت بدون شرح"}</strong><span>{request.service?.timing ?? "زمان ثبت نشده"}</span></p>}
+            <dl><div><dt>تحویل</dt><dd>{request.requestKind === "product" ? `تهران · ${request.delivery.area}` : request.service?.location ?? "ثبت نشده"}</dd></div><div><dt>موعد</dt><dd>{request.requestKind === "product" ? request.delivery.neededBy ?? "ثبت نشده" : request.service?.timing ?? "ثبت نشده"}</dd></div></dl>
+            {selectedRecipientIds.length > 0 ? <div className="dispatch-human-recipients"><span>برای</span><strong>{selectedRecipientIds.map((recipientId) => contacts.find((contact) => contact.id === recipientId)?.displayName).filter(Boolean).join("، ")}</strong></div> : null}
+          </section>
+
+          {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="dispatch-storage-error">{storageError}</p> : null}
+          {dispatchPlanStorageError ? <p className="purchase-request-storage-error" role="alert" data-testid="dispatch-plan-approval-storage-error">{dispatchPlanStorageError}</p> : null}
+          <button className="primary-button dispatch-submit-to-tasks" type="button" onClick={submitDispatchPlanToTasks} disabled={dispatchStorageLocked || dispatchPlanApprovalsStorageLocked || selectedRecipientIds.length === 0 || queueForTasks} data-testid="dispatch-submit-to-tasks"><ClipboardCheck size={18} /> ثبت در کارها برای تأیید نهایی</button>
+
+          <details className="dispatch-technical-details" data-testid="dispatch-technical-details">
+            <summary>جزئیات بیشتر</summary>
+            <div className="dispatch-technical-details-content">
           <section className="dispatch-exact-preview" aria-labelledby="dispatch-exact-preview-title">
             <div className="dispatch-section-heading"><span><strong id="dispatch-exact-preview-title">دادهٔ دقیق قابل‌اشتراک</strong><small>مستقل از متن خام و فقط از revision تأییدشده</small></span><em>{dispatchPayloadRows(dispatchPayloadFromSnapshot(approval.snapshot)).length.toLocaleString("fa-IR")} فیلد</em></div>
             <dl className="dispatch-payload-rows" data-testid="dispatch-payload-preview">{dispatchPayloadRows(dispatchPayloadFromSnapshot(approval.snapshot)).map(([field, value]) => <div key={field} data-testid="dispatch-payload-row"><dt dir="ltr">{field}</dt><dd>{value ?? "نامشخص"}</dd></div>)}</dl>
@@ -11305,7 +11578,6 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
             </section>
           ) : <p className="dispatch-draft-empty" data-testid="dispatch-draft-empty"><FileText size={17} /><span><strong>هنوز Draft اشتراکی ثبت نشده.</strong> انتخاب‌ها را بازبینی و فقط پیش‌نویس محلی را ذخیره کن.</span></p>}
 
-          {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="dispatch-storage-error">{storageError}</p> : null}
           {saveAnnouncement ? <p className="dispatch-save-announcement" role="status" data-testid="dispatch-save-announcement"><CheckCircle2 size={17} />{saveAnnouncement}</p> : null}
           <button className="primary-button dispatch-draft-save" type="button" onClick={saveDispatchDraft} disabled={dispatchStorageLocked || selectedRecipientIds.length === 0} data-testid="dispatch-draft-save"><FileText size={18} /> ذخیرهٔ Draft اشتراک محلی</button>
 
@@ -11349,12 +11621,12 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
                       <button className="primary-button" type="button" onClick={createDispatchPlanApproval} disabled={!dispatchPlanAcknowledged || dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-create">ساخت درخواست تأیید محلی</button>
                     </div>
                   ) : null}
-                  {dispatchPlanStorageError ? <p className="purchase-request-storage-error" role="alert" data-testid="dispatch-plan-approval-storage-error">{dispatchPlanStorageError}</p> : null}
                 </div>
               ) : null}
             </section>
           ) : null}
-          <p className="dispatch-final-boundary"><ShieldCheck size={17} /><span><strong>این دکمه ارسال، درخواست قیمت یا مجوز اقدام نیست.</strong> هیچ حساب تأمین‌کننده، مقصد شبکه، پیام، قیمت یا تعهدی ساخته نمی‌شود.</span></p>
+            </div>
+          </details>
         </main>
       </MobileScroll>
       {contactSheet}
@@ -11373,15 +11645,17 @@ function projectTaskEventLabel(type: ProjectTaskEventType) {
   return "کار ثبت شد";
 }
 
-function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApprovalId, returnToPurchaseRequestId, tasksStorageLocked, approvalsStorageLocked, onBack, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onApprovalDecision }: { project: BuilderProject; tasks: ProjectTaskRecord[]; approvals: ProjectApprovalRecord[]; initialFilter: ProjectTaskFilter; initialApprovalId: string | null; returnToPurchaseRequestId: string | null; tasksStorageLocked: boolean; approvalsStorageLocked: boolean; onBack: () => void; onReturnToPurchaseRequest: (requestId: string) => void; onCreate: (draft: ProjectTaskDraft) => boolean; onUpdate: (taskId: string, draft: ProjectTaskDraft) => boolean; onStatusChange: (taskId: string, status: ProjectTaskStatus) => boolean; onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => boolean }) {
+function ProjectTasksView({ project, tasks, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onApprovalDecision, onDispatchPlanApprovalDecision }: { project: BuilderProject; tasks: ProjectTaskRecord[]; approvals: ProjectApprovalRecord[]; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; dispatchDrafts: DispatchDraftRecord[]; requests: ProjectPurchaseRequestRecord[]; contacts: SupplierContactRecord[]; initialFilter: ProjectTaskFilter; initialApprovalId: string | null; initialDispatchPlanApprovalId: string | null; returnToPurchaseRequestId: string | null; tasksStorageLocked: boolean; approvalsStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; onBack: () => void; onReturnToPurchaseRequest: (requestId: string) => void; onCreate: (draft: ProjectTaskDraft) => boolean; onUpdate: (taskId: string, draft: ProjectTaskDraft) => boolean; onStatusChange: (taskId: string, status: ProjectTaskStatus) => boolean; onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => boolean; onDispatchPlanApprovalDecision: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean }) {
   const keyboard = useKeyboard();
   const taskAddButtonRef = useRef<HTMLButtonElement>(null);
   const taskEditButtonRef = useRef<HTMLButtonElement>(null);
   const approvalHeadingRef = useRef<HTMLElement>(null);
+  const dispatchPlanHeadingRef = useRef<HTMLElement>(null);
   const pendingApprovalCardFocus = useRef<string | null>(null);
   const [filter, setFilter] = useState<ProjectTaskFilter>(initialFilter);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(initialApprovalId);
+  const [selectedDispatchPlanApprovalId, setSelectedDispatchPlanApprovalId] = useState<string | null>(initialDispatchPlanApprovalId);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [taskDraft, setTaskDraft] = useState<ProjectTaskDraft>({ title: "", currentStep: "", dueDate: "" });
@@ -11389,6 +11663,13 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
   const [storageError, setStorageError] = useState("");
   const selectedTask = selectedId ? tasks.find((task) => task.id === selectedId) ?? null : null;
   const selectedApproval = selectedApprovalId ? approvals.find((approval) => approval.id === selectedApprovalId) ?? null : null;
+  const selectedDispatchPlanApproval = selectedDispatchPlanApprovalId ? dispatchPlanApprovals.find((approval) => approval.id === selectedDispatchPlanApprovalId) ?? null : null;
+  const selectedDispatchDraft = selectedDispatchPlanApproval ? dispatchDrafts.find((draft) => draft.id === selectedDispatchPlanApproval.target.dispatchDraftId) ?? null : null;
+  const selectedDispatchRequest = selectedDispatchPlanApproval ? requests.find((request) => request.id === selectedDispatchPlanApproval.target.requestId) ?? null : null;
+  const selectedDispatchContentApproval = selectedDispatchPlanApproval ? approvals.find((approval) => approval.id === selectedDispatchPlanApproval.target.contentApprovalId) ?? null : null;
+  const selectedDispatchEffectiveStatus = selectedDispatchPlanApproval && selectedDispatchRequest && selectedDispatchContentApproval
+    ? dispatchPlanApprovalEffectiveStatus(selectedDispatchPlanApproval, selectedDispatchDraft, selectedDispatchRequest, selectedDispatchContentApproval, contacts)
+    : selectedDispatchPlanApproval ? "invalidated" as const : null;
   const orderedTasks = useMemo(
     () => [...tasks].sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
     [tasks],
@@ -11397,10 +11678,20 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
     () => [...approvals].sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
     [approvals],
   );
+  const orderedDispatchPlanApprovals = useMemo(
+    () => [...dispatchPlanApprovals].sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
+    [dispatchPlanApprovals],
+  );
   const activeCount = tasks.filter((task) => task.status === "in-progress").length;
   const completedCount = tasks.filter((task) => task.status === "completed").length;
-  const pendingApprovalCount = approvals.filter((approval) => approval.status === "pending").length;
-  const decidedApprovalCount = approvals.filter((approval) => approval.status !== "pending").length;
+  const dispatchPlanStatus = (record: DispatchPlanApprovalRecord) => {
+    const draft = dispatchDrafts.find((item) => item.id === record.target.dispatchDraftId) ?? null;
+    const request = requests.find((item) => item.id === record.target.requestId);
+    const contentApproval = approvals.find((item) => item.id === record.target.contentApprovalId);
+    return request && contentApproval ? dispatchPlanApprovalEffectiveStatus(record, draft, request, contentApproval, contacts) : "invalidated";
+  };
+  const pendingApprovalCount = approvals.filter((approval) => approval.status === "pending").length + dispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) === "pending").length;
+  const decidedApprovalCount = approvals.filter((approval) => approval.status !== "pending").length + dispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) !== "pending").length;
   const filterCounts: Record<ProjectTaskFilter, number> = { active: activeCount, approval: pendingApprovalCount, completed: completedCount + decidedApprovalCount, failed: 0, monitor: 0 };
   const filteredTasks = tasksStorageLocked
     ? []
@@ -11416,14 +11707,21 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
       : filter === "completed"
         ? orderedApprovals.filter((approval) => approval.status !== "pending")
         : [];
+  const filteredDispatchPlanApprovals = dispatchPlanApprovalsStorageLocked
+    ? []
+    : filter === "approval"
+      ? orderedDispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) === "pending")
+      : filter === "completed"
+        ? orderedDispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) !== "pending")
+        : [];
   const filterReadError = filter === "approval"
-    ? approvalsStorageLocked
+    ? approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
     : filter === "completed"
-      ? tasksStorageLocked || approvalsStorageLocked
+      ? tasksStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
       : filter === "active"
         ? tasksStorageLocked
         : false;
-  const resultCount = filteredTasks.length + filteredApprovals.length;
+  const resultCount = filteredTasks.length + filteredApprovals.length + filteredDispatchPlanApprovals.length;
 
   useEffect(() => {
     if (selectedId && !selectedTask) setSelectedId(null);
@@ -11433,10 +11731,19 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
     if (selectedApprovalId && !selectedApproval) setSelectedApprovalId(null);
   }, [selectedApproval, selectedApprovalId]);
 
+  useEffect(() => {
+    if (selectedDispatchPlanApprovalId && !selectedDispatchPlanApproval) setSelectedDispatchPlanApprovalId(null);
+  }, [selectedDispatchPlanApproval, selectedDispatchPlanApprovalId]);
+
   useLayoutEffect(() => {
     if (!selectedApprovalId) return;
     approvalHeadingRef.current?.focus();
   }, [selectedApprovalId]);
+
+  useLayoutEffect(() => {
+    if (!selectedDispatchPlanApprovalId) return;
+    dispatchPlanHeadingRef.current?.focus();
+  }, [selectedDispatchPlanApprovalId]);
 
   useLayoutEffect(() => {
     const approvalId = pendingApprovalCardFocus.current;
@@ -11522,6 +11829,30 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
     window.requestAnimationFrame(() => approvalHeadingRef.current?.focus());
   };
 
+  const approveDispatchPlan = () => {
+    if (!selectedDispatchPlanApproval || selectedDispatchEffectiveStatus !== "pending") return;
+    if (!onDispatchPlanApprovalDecision(selectedDispatchPlanApproval.id, "approve")) {
+      setStorageError("تأیید نهایی ذخیره نشد؛ دوباره تلاش کن.");
+      return;
+    }
+    setStorageError("");
+    window.requestAnimationFrame(() => dispatchPlanHeadingRef.current?.focus());
+  };
+
+  const returnDispatchPlanToList = () => {
+    keyboard.hide();
+    setStorageError("");
+    setFilter(selectedDispatchEffectiveStatus === "pending" ? "approval" : "completed");
+    setSelectedDispatchPlanApprovalId(null);
+  };
+
+  const editDispatchPlanRequest = () => {
+    if (!selectedDispatchPlanApproval) return;
+    keyboard.hide();
+    setStorageError("");
+    onReturnToPurchaseRequest(selectedDispatchPlanApproval.target.requestId);
+  };
+
   const returnApprovalToList = () => {
     if (!selectedApproval) return;
     if (returnToPurchaseRequestId) {
@@ -11556,28 +11887,79 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
         <label className="field-control" htmlFor="project-task-due">
           <span>موعد اتمام <small>(اختیاری)</small></span>
           <KeyboardInput id="project-task-due" data-testid="project-task-due-input" value={taskDraft.dueDate} maxLength={40} inputMode="numeric" dir="ltr" placeholder="مثلاً ۱۴۰۵/۰۶/۱۵" onChange={(event) => changeDraft("dueDate", event.target.value)} />
-          <small>این موعد فقط ثبت محلی است و هنوز یادآوری یا اعلان ایجاد نمی‌کند.</small>
         </label>
 
-        <dl className="project-task-meta">
-          <div><dt>پروژهٔ مالک</dt><dd>{project.name}</dd></div>
-          <div><dt>منشأ</dt><dd>ثبت مستقیم شما</dd></div>
-          <div><dt>{editingTaskId ? "اثر ویرایش" : "وضعیت نخست"}</dt><dd>{editingTaskId ? `نسخهٔ تازه · وضعیت ${selectedTask ? projectTaskStatusLabel(selectedTask.status) : "فعلی"}` : "در حال انجام · نسخهٔ ۱"}</dd></div>
-          <div><dt>دسترسی</dt><dd>خصوصی پروژه</dd></div>
-        </dl>
-        <p className="project-task-boundary"><CircleHelp size={16} /><span>{editingTaskId ? "ویرایش موفق در تاریخچهٔ نسخه‌دار ثبت می‌شود و وضعیت کار را تغییر نمی‌دهد." : "ثبت این کار هیچ اجرا، اعلان، تأیید یا ارسال بیرونی ایجاد نمی‌کند."}</span></p>
         {storageError ? <p className="project-task-storage-error" role="alert" data-testid="project-task-storage-error">{storageError}</p> : null}
         <button className="primary-button" type="submit" data-testid="project-task-save">{editingTaskId ? "ذخیرهٔ ویرایش" : "ثبت در مرکز کارها"}</button>
       </form>
     </BottomSheet>
   );
 
+  if (selectedDispatchPlanApproval) {
+    const payload = selectedDispatchPlanApproval.snapshot.payload;
+    const statusLabel = selectedDispatchEffectiveStatus === "pending"
+      ? "منتظر تأیید نهایی"
+      : selectedDispatchEffectiveStatus === "approved"
+        ? "تأیید نهایی ثبت شد"
+        : selectedDispatchEffectiveStatus === "withdrawn"
+          ? "از صف تأیید خارج شد"
+          : "نیازمند بازبینی دوباره";
+    const requestTitle = selectedDispatchContentApproval
+      ? purchaseRequestSnapshotTitle(selectedDispatchContentApproval.snapshot)
+      : selectedDispatchRequest ? purchaseRequestDisplayTitle(selectedDispatchRequest) : "درخواست خرید";
+    return (
+      <div className="chida-app project-dispatch-plan-approval-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-dispatch-plan-approval-detail-view">
+        <header className="project-workspace-header">
+          <button className="icon-button" type="button" onClick={returnDispatchPlanToList} aria-label="بازگشت به کارها" data-testid="project-dispatch-plan-approval-back"><ArrowRight size={21} /></button>
+          <span className="project-workspace-title"><small>تأیید نهایی درخواست</small><strong>{project.name}</strong></span>
+          <span className="project-workspace-header-spacer" aria-hidden="true" />
+        </header>
+
+        <MobileScroll className="project-approval-detail-scroll">
+          <main className="project-approval-detail-content project-dispatch-plan-detail">
+            <section ref={dispatchPlanHeadingRef} className="project-approval-detail-heading" tabIndex={-1} aria-live="polite" data-testid="project-dispatch-plan-approval-heading">
+              <span><ClipboardCheck size={24} strokeWidth={1.65} /></span>
+              <div><small>{statusLabel}</small><h1>{requestTitle}</h1><p>{selectedDispatchPlanApproval.snapshot.recipientCount.toLocaleString("fa-IR")} تأمین‌کننده انتخاب شده</p></div>
+            </section>
+
+            <section className="project-dispatch-plan-summary" aria-label="خلاصهٔ درخواست آمادهٔ تأیید">
+              {payload.requestKind === "product" ? <ul>{payload.items.map((item, index) => <li key={`${item.name}-${index}`}><strong>{item.name ?? "قلم بدون نام"}</strong><span>{item.quantity && item.unit ? `${Number(item.quantity).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} ${item.unit}` : "مقدار ثبت نشده"}</span></li>)}</ul> : payload.service ? <p><strong>{payload.service.scope ?? "خدمت بدون شرح"}</strong><span>{payload.service.timing ?? "زمان ثبت نشده"}</span></p> : null}
+              <dl><div><dt>تحویل</dt><dd>{payload.requestKind === "product" ? `تهران · ${payload.delivery?.area ?? "ثبت نشده"}` : payload.service?.location ?? "ثبت نشده"}</dd></div><div><dt>موعد</dt><dd>{payload.requestKind === "product" ? payload.delivery?.neededBy ?? "ثبت نشده" : payload.service?.timing ?? "ثبت نشده"}</dd></div></dl>
+            </section>
+
+            <section className="project-dispatch-plan-recipients" aria-labelledby="project-dispatch-plan-recipients-title">
+              <strong id="project-dispatch-plan-recipients-title">تأمین‌کننده‌ها</strong>
+              <ul>{selectedDispatchPlanApproval.snapshot.recipients.map((recipient) => <li key={recipient.supplierContactId}><Store size={17} /><span><strong>{recipient.destination.displayName}</strong><small>{recipient.destination.category} · {recipient.destination.tehranCoverage}</small></span></li>)}</ul>
+            </section>
+
+            <aside className={`project-dispatch-plan-status is-${selectedDispatchEffectiveStatus}`} data-testid="dispatch-plan-approval-status" aria-live="polite">
+              <ShieldCheck size={18} />
+              <span><strong>{statusLabel}</strong><small>{selectedDispatchEffectiveStatus === "pending" ? "تا تأیید شما چیزی ارسال نمی‌شود." : selectedDispatchEffectiveStatus === "approved" ? "در این نمونه چیزی ارسال نشد." : selectedDispatchEffectiveStatus === "invalidated" ? "اطلاعات درخواست یا تأمین‌کننده‌ها تغییر کرده است." : "برای ادامه باید دوباره آن را به صف برگردانی."}</small></span>
+            </aside>
+
+            <details className="project-dispatch-plan-technical" data-testid="project-dispatch-plan-approval-technical">
+              <summary>جزئیات فنی</summary>
+              <div>
+                <dl><div><dt>درخواست</dt><dd dir="ltr">{selectedDispatchPlanApproval.target.requestRevisionId}</dd></div><div><dt>انتخاب مقصد</dt><dd dir="ltr">{selectedDispatchPlanApproval.target.dispatchRevisionId}</dd></div><div><dt>اثر بیرونی</dt><dd><code>{selectedDispatchPlanApproval.externalEffect}</code></dd></div><div><dt>مجوز ارسال</dt><dd><code>{String(selectedDispatchPlanApproval.sendAuthorized)}</code></dd></div></dl>
+                <ol data-testid="dispatch-plan-approval-events">{selectedDispatchPlanApproval.history.map((event) => <li key={event.id}>{event.type} · {formatProjectFileDate(event.at)}</li>)}</ol>
+                {selectedDispatchPlanApproval.actionRecord ? <p data-testid="dispatch-plan-approval-action-record">{selectedDispatchPlanApproval.actionRecord.label}</p> : null}
+              </div>
+            </details>
+
+            {storageError ? <p className="project-task-storage-error" role="alert" data-testid="dispatch-plan-approval-storage-error">{storageError}</p> : null}
+            {selectedDispatchEffectiveStatus === "pending" ? <div className="project-dispatch-plan-actions"><button type="button" onClick={editDispatchPlanRequest} data-testid="project-dispatch-plan-edit"><PencilLine size={17} /> اصلاح</button><button className="primary-button" type="button" onClick={approveDispatchPlan} disabled={dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-approve"><ClipboardCheck size={18} /> تأیید نهایی</button></div> : null}
+          </main>
+        </MobileScroll>
+      </div>
+    );
+  }
+
   if (selectedApproval) {
     return (
       <div className="chida-app project-approval-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-approval-detail-view">
         <header className="project-workspace-header">
           <button className="icon-button" type="button" onClick={returnApprovalToList} aria-label={returnToPurchaseRequestId ? "بازگشت به جزئیات درخواست خرید" : "بازگشت به مرکز کارها"} data-testid="project-approval-detail-back"><ArrowRight size={21} /></button>
-          <span className="project-workspace-title"><small>بازبینی نسخهٔ درخواست</small><strong>{project.name}</strong></span>
+          <span className="project-workspace-title"><small>بررسی درخواست</small><strong>{project.name}</strong></span>
           <span className="project-workspace-header-spacer" aria-hidden="true" />
         </header>
 
@@ -11585,24 +11967,29 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
           <main className="project-approval-detail-content">
             <section ref={approvalHeadingRef} className="project-approval-detail-heading" tabIndex={-1} aria-live="polite" data-testid="project-approval-detail-heading">
               <span><ClipboardCheck size={24} strokeWidth={1.65} /></span>
-              <div><small>{projectApprovalStatusLabel(selectedApproval.status)} · نسخهٔ درخواست {selectedApproval.target.version.toLocaleString("fa-IR")}</small><h1>{purchaseRequestSnapshotTitle(selectedApproval.snapshot)}</h1><p>{selectedApproval.snapshot.rawNeed}</p></div>
+              <div><small>{projectApprovalStatusLabel(selectedApproval.status)}</small><h1>{purchaseRequestSnapshotTitle(selectedApproval.snapshot)}</h1><p>{selectedApproval.snapshot.rawNeed}</p></div>
             </section>
 
             <aside className="project-approval-boundary" id="project-approval-boundary" data-testid="project-approval-status">
               <ShieldCheck size={18} />
-              <span><strong>{selectedApproval.status === "pending" ? "منتظر تصمیم صریح شما" : selectedApproval.status === "approved" ? "نسخهٔ درخواست تأیید شد" : "نیاز به اصلاح ثبت شد"}</strong>{selectedApproval.status === "pending" ? " این تأیید فقط محتوای همین نسخه را برای ادامهٔ مسیر می‌پذیرد؛ هیچ مقصد بیرونی انتخاب نشده و مجوز ارسال نیست." : selectedApproval.status === "approved" ? ` نسخهٔ ${selectedApproval.target.version.toLocaleString("fa-IR")} فقط برای ادامهٔ فرایند پذیرفته شد؛ درخواست هنوز ارسال نشده است.` : ` نسخهٔ ${selectedApproval.target.version.toLocaleString("fa-IR")} برای اصلاح علامت خورد؛ درخواست هنوز ارسال نشده است.`}</span>
+              <span><strong>{selectedApproval.status === "pending" ? "منتظر تصمیم شما" : selectedApproval.status === "approved" ? "درخواست تأیید شد" : "نیاز به اصلاح ثبت شد"}</strong><small>{selectedApproval.status === "pending" ? "اطلاعات را بررسی کن و ادامه بده." : selectedApproval.status === "approved" ? "حالا می‌توانی تأمین‌کننده‌ها را انتخاب کنی." : "برای اصلاح به درخواست برگرد."}</small></span>
             </aside>
 
             {selectedApproval.snapshot.requestKind === "product" ? (
-              <section className="project-approval-records" aria-label="همهٔ اقلام snapshot تأیید" data-testid="project-approval-product-items">
-                <div className="project-task-section-title"><strong>اقلام همین revision</strong><span>{selectedApproval.snapshot.items.length.toLocaleString("fa-IR")}</span></div>
-                {selectedApproval.snapshot.items.map((item) => <article className="purchase-request-record-card" key={item.id}><div><strong>{item.name}</strong><span>{item.completionStatus === "complete" ? "کامل" : "ناقص"}</span></div><dl><div><dt>مقدار و واحد</dt><dd>{Number(item.quantity).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} {item.unit}</dd></div><div><dt>برند یا گرید</dt><dd>{item.brandOrGrade ?? "نامشخص"}</dd></div><div><dt>مشخصات</dt><dd>{item.specification ?? "نامشخص"}</dd></div><div><dt>جایگزین</dt><dd>{purchaseRequestAlternativesLabel(item.alternatives)}</dd></div><div><dt>نسخهٔ قلم</dt><dd>{item.version.toLocaleString("fa-IR")}</dd></div></dl></article>)}
-                <dl className="project-approval-meta"><div><dt>زمان موردنیاز</dt><dd>{selectedApproval.snapshot.delivery.neededBy ?? "نامشخص"}</dd></div><div><dt>تحویل</dt><dd>تهران · {selectedApproval.snapshot.delivery.area}</dd></div><div><dt>نسخهٔ درخواست</dt><dd>{selectedApproval.target.version.toLocaleString("fa-IR")} · {formatProjectFileDate(selectedApproval.target.updatedAt)}</dd></div><div><dt>شناسهٔ revision</dt><dd>{selectedApproval.target.revisionId}</dd></div><div><dt>ثبت و اشتراک</dt><dd>{selectedApproval.localStatus} · {selectedApproval.snapshot.sharingStatus}</dd></div></dl>
+              <section className="project-approval-records" aria-label="اقلام درخواست" data-testid="project-approval-product-items">
+                <div className="project-task-section-title"><strong>اقلام درخواست</strong><span>{selectedApproval.snapshot.items.length.toLocaleString("fa-IR")}</span></div>
+                {selectedApproval.snapshot.items.map((item) => <article className="purchase-request-record-card" key={item.id}><div><strong>{item.name}</strong></div><dl><div><dt>مقدار و واحد</dt><dd>{Number(item.quantity).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} {item.unit}</dd></div></dl></article>)}
+                <dl className="project-approval-meta"><div><dt>موعد</dt><dd>{selectedApproval.snapshot.delivery.neededBy ?? "نامشخص"}</dd></div><div><dt>تحویل</dt><dd>تهران · {selectedApproval.snapshot.delivery.area}</dd></div></dl>
               </section>
             ) : selectedApproval.snapshot.service ? (
-              <section className="project-approval-records" data-testid="project-approval-service"><div className="project-task-section-title"><strong>خدمت همین revision</strong><span>نسخهٔ {selectedApproval.snapshot.service.version.toLocaleString("fa-IR")}</span></div><dl className="project-approval-meta"><div><dt>دامنه</dt><dd>{selectedApproval.snapshot.service.scope}</dd></div><div><dt>موقعیت مجاز</dt><dd>{selectedApproval.snapshot.service.location}</dd></div><div><dt>سطح مکان</dt><dd>فقط محدوده یا بخش پروژه · بدون آدرس دقیق</dd></div><div><dt>اندازه یا حجم</dt><dd>{selectedApproval.snapshot.service.sizeOrVolume ?? "نامشخص"}</dd></div><div><dt>صلاحیت</dt><dd>{selectedApproval.snapshot.service.qualification ?? "نامشخص"}</dd></div><div><dt>زمان</dt><dd>{selectedApproval.snapshot.service.timing ?? "نامشخص"}</dd></div><div><dt>روش</dt><dd>{selectedApproval.snapshot.service.method ?? "نامشخص"}</dd></div><div><dt>داخل دامنه</dt><dd>{selectedApproval.snapshot.service.inScope ?? "نامشخص"}</dd></div><div><dt>خارج از دامنه</dt><dd>{selectedApproval.snapshot.service.outOfScope ?? "نامشخص"}</dd></div><div><dt>ضمانت اعلامی</dt><dd>{selectedApproval.snapshot.service.warranty ?? "نامشخص"}</dd></div><div><dt>پرداخت</dt><dd>{selectedApproval.snapshot.service.paymentTerms ?? "نامشخص"}</dd></div><div><dt>شناسهٔ revision</dt><dd>{selectedApproval.target.revisionId}</dd></div></dl></section>
+              <section className="project-approval-records" data-testid="project-approval-service"><div className="project-task-section-title"><strong>خدمت</strong></div><dl className="project-approval-meta"><div><dt>شرح</dt><dd>{selectedApproval.snapshot.service.scope}</dd></div><div><dt>محدوده</dt><dd>{selectedApproval.snapshot.service.location}</dd></div><div><dt>زمان</dt><dd>{selectedApproval.snapshot.service.timing ?? "نامشخص"}</dd></div></dl></section>
             ) : null}
 
+            <details className="project-approval-technical-details" data-testid="project-approval-technical-details">
+              <summary>جزئیات بیشتر</summary>
+              <div>
+            {selectedApproval.snapshot.requestKind === "product" ? <section className="project-approval-records"><div className="project-task-section-title"><strong>مشخصات تکمیلی اقلام</strong></div>{selectedApproval.snapshot.items.map((item) => <article className="purchase-request-record-card" key={`technical-${item.id}`}><strong>{item.name}</strong><dl><div><dt>برند یا گرید</dt><dd>{item.brandOrGrade ?? "نامشخص"}</dd></div><div><dt>مشخصات</dt><dd>{item.specification ?? "نامشخص"}</dd></div><div><dt>جایگزین</dt><dd>{purchaseRequestAlternativesLabel(item.alternatives)}</dd></div><div><dt>نسخهٔ قلم</dt><dd>{item.version.toLocaleString("fa-IR")}</dd></div></dl></article>)}</section> : null}
+            <dl className="project-approval-meta"><div><dt>نسخهٔ درخواست</dt><dd>{selectedApproval.target.version.toLocaleString("fa-IR")} · {formatProjectFileDate(selectedApproval.target.updatedAt)}</dd></div><div><dt>شناسهٔ revision</dt><dd dir="ltr">{selectedApproval.target.revisionId}</dd></div><div><dt>ثبت و اشتراک</dt><dd>{selectedApproval.localStatus} · {selectedApproval.snapshot.sharingStatus}</dd></div></dl>
             {selectedApproval.snapshot.requestKind === "product" ? <section className="project-approval-terms" aria-label="شرایط نسخهٔ درخواست"><div className="project-task-section-title"><strong>شرایط تجاری</strong><span>۳</span></div><dl><div><dt>حمل</dt><dd>{selectedApproval.snapshot.unresolvedTerms.transport === "unknown" ? "نامشخص" : selectedApproval.snapshot.unresolvedTerms.transport}</dd></div><div><dt>مالیات</dt><dd>{selectedApproval.snapshot.unresolvedTerms.tax === "unknown" ? "نامشخص" : selectedApproval.snapshot.unresolvedTerms.tax}</dd></div><div><dt>شرایط پرداخت</dt><dd>{selectedApproval.snapshot.unresolvedTerms.paymentTerms === "unknown" ? "نامشخص" : selectedApproval.snapshot.unresolvedTerms.paymentTerms}</dd></div></dl></section> : null}
 
             <section className="project-approval-clarifications" aria-label="پاسخ‌های روشن‌سازی snapshot"><div className="project-task-section-title"><strong>روشن‌سازی‌های همین revision</strong><span>{selectedApproval.snapshot.clarificationAnswers.length.toLocaleString("fa-IR")}</span></div><ol>{selectedApproval.snapshot.clarificationAnswers.map((answer) => <li key={answer.id}><strong>{answer.question}</strong><span>{answer.answer ?? "نامشخص صریح"}</span><small>{answer.source} · confidence: کاربرد ندارد · نسخهٔ {answer.version.toLocaleString("fa-IR")}</small></li>)}</ol></section>
@@ -11616,12 +12003,14 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
               <div className="project-task-section-title"><strong>تاریخچهٔ تصمیم</strong><span>{selectedApproval.history.length.toLocaleString("fa-IR")}</span></div>
               <ol>{[...selectedApproval.history].reverse().map((event) => <li key={event.id} data-testid="project-approval-history-event"><span><Check size={14} /></span><div><strong>{projectApprovalEventLabel(event.type)}</strong><small>توسط {event.actor} · نسخهٔ رکورد {event.version.toLocaleString("fa-IR")} · {formatProjectFileDate(event.at)}</small></div></li>)}</ol>
             </section>
+              </div>
+            </details>
 
             {storageError ? <p className="project-task-storage-error" role="alert" tabIndex={-1} data-testid="project-approval-storage-error">{storageError}</p> : null}
             {selectedApproval.status === "pending" ? (
               <div className="project-approval-actions">
                 <button type="button" onClick={() => decideApproval("changes-requested")} disabled={approvalsStorageLocked} aria-describedby="project-approval-boundary" data-testid="project-approval-needs-changes"><PencilLine size={17} /> نیاز به اصلاح</button>
-                <button className="primary-button" type="button" onClick={() => decideApproval("approved")} disabled={approvalsStorageLocked} aria-describedby="project-approval-boundary" data-testid="project-approval-approve"><ClipboardCheck size={18} /> تأیید نسخهٔ {selectedApproval.target.version.toLocaleString("fa-IR")}</button>
+                <button className="primary-button" type="button" onClick={() => decideApproval("approved")} disabled={approvalsStorageLocked} aria-describedby="project-approval-boundary" data-testid="project-approval-approve"><ClipboardCheck size={18} /> تأیید و ادامه</button>
               </div>
             ) : null}
           </main>
@@ -11647,11 +12036,6 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
             </section>
 
             <dl className="project-task-meta">
-              <div><dt>پروژهٔ مالک</dt><dd>{project.name}</dd></div>
-              <div><dt>منشأ</dt><dd>{selectedTask.source}</dd></div>
-              <div><dt>دسترسی</dt><dd>{selectedTask.visibility}</dd></div>
-              <div><dt>وضعیت محلی</dt><dd>{selectedTask.localStatus}</dd></div>
-              <div><dt>وضعیت و نسخه</dt><dd>{projectTaskStatusLabel(selectedTask.status)} · نسخهٔ {selectedTask.version.toLocaleString("fa-IR")}</dd></div>
               <div><dt>موعد اتمام</dt><dd>{selectedTask.dueDate ?? "تعیین نشده"}</dd></div>
               <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(selectedTask.createdAt)}</dd></div>
               <div><dt>آخرین تغییر</dt><dd>{formatProjectFileDate(selectedTask.updatedAt)}</dd></div>
@@ -11662,12 +12046,11 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
               <div className="project-task-section-title"><strong>تاریخچه</strong><span>{selectedTask.history.length.toLocaleString("fa-IR")}</span></div>
               <ol>
                 {[...selectedTask.history].reverse().map((event) => (
-                  <li key={event.id} data-testid="project-task-history-event"><span><Check size={14} /></span><div><strong>{projectTaskEventLabel(event.type)}</strong><small>توسط {event.actor} · نسخهٔ {event.version.toLocaleString("fa-IR")} · {formatProjectFileDate(event.at)}</small></div></li>
+                  <li key={event.id} data-testid="project-task-history-event"><span><Check size={14} /></span><div><strong>{projectTaskEventLabel(event.type)}</strong><small>{event.actor} · {formatProjectFileDate(event.at)}</small></div></li>
                 ))}
               </ol>
             </section>
 
-            <aside className="project-task-boundary"><ShieldCheck size={17} /><span>این وظیفه فقط داخل همین مرورگر ثبت شده است؛ چیدا آن را در پس‌زمینه اجرا نمی‌کند و هیچ اعلان یا ارسال بیرونی انجام نشده است.</span></aside>
             {storageError && !editorOpen ? <p className="project-task-storage-error" role="alert" data-testid="project-task-storage-error">{storageError}</p> : null}
             <div className="project-task-actions">
               <button ref={taskEditButtonRef} className="project-task-edit-button" type="button" onClick={openTaskEditor} disabled={tasksStorageLocked} data-testid="project-task-edit"><PencilLine size={17} /> ویرایش کار</button>
@@ -11692,7 +12075,7 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
         <main className="project-tasks-content">
           <section className="project-tasks-heading">
             <span className="project-tasks-mark"><CheckCircle2 size={24} strokeWidth={1.65} /></span>
-            <div><span className="eyebrow">بیرون از تاریخچهٔ گفتگو</span><h1>کارهای {project.name}</h1><p>وظیفه‌ها و بازبینی نسخه‌های همین پروژه</p></div>
+            <div><span className="eyebrow">مرکز کارها</span><h1>کارهای {project.name}</h1><p>کارهای جاری و تصمیم‌های منتظر شما</p></div>
           </section>
 
           <button ref={taskAddButtonRef} className="primary-button project-task-add" type="button" onClick={openEditor} disabled={tasksStorageLocked} data-testid="project-task-add"><Plus size={18} /> کار جدید</button>
@@ -11700,20 +12083,18 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
           {tasksStorageLocked && (filter === "active" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-task-read-error"><ShieldCheck size={17} /><span><strong>کارهای محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، ثبت و تغییر وضعیت تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
-          {approvalsStorageLocked && (filter === "approval" || filter === "completed") ? (
+          {(approvalsStorageLocked || dispatchPlanApprovalsStorageLocked) && (filter === "approval" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-approval-read-error"><ShieldCheck size={17} /><span><strong>تأییدهای محلی کامل خوانده نشد.</strong> برای جلوگیری از تصمیم روی نسخهٔ نامطمئن، ایجاد و ثبت تصمیم تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
-
-          <aside className="project-task-boundary"><ShieldCheck size={17} /><span><strong>این مرکز فقط دادهٔ محلی و واقعی همین پروژه را نشان می‌دهد.</strong> تأیید نسخهٔ درخواست، مجوز ارسال بیرونی نیست؛ اجرا، اعلان و انتخاب تأمین‌کننده هنوز وصل نیست.</span></aside>
 
           <Carousel ariaLabel="فیلتر وضعیت کارها" className="project-task-filters" contentClassName="project-task-filter-track">
             {projectTaskFilters.map((item) => {
               const countUnavailable = item.id === "active"
                 ? tasksStorageLocked
                 : item.id === "approval"
-                  ? approvalsStorageLocked
+                  ? approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
                   : item.id === "completed"
-                    ? tasksStorageLocked || approvalsStorageLocked
+                    ? tasksStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
                     : false;
               return <button className="project-task-filter" type="button" key={item.id} aria-pressed={filter === item.id} onClick={() => { setStorageError(""); setFilter(item.id); }} data-testid={`project-task-filter-${item.id}`}><span>{item.label}</span><small aria-label={countUnavailable ? `بازیابی ${item.label} کامل نشد` : undefined}>{countUnavailable ? "!" : filterCounts[item.id].toLocaleString("fa-IR")}</small></button>;
             })}
@@ -11728,17 +12109,24 @@ function ProjectTasksView({ project, tasks, approvals, initialFilter, initialApp
           ) : (
             <section className="project-task-list" aria-label={projectTaskFilters.find((item) => item.id === filter)?.label}>
               <div className="project-task-section-title"><strong>{projectTaskFilters.find((item) => item.id === filter)?.label}</strong><span>{resultCount.toLocaleString("fa-IR")}</span></div>
+              {filteredDispatchPlanApprovals.map((approval) => {
+                const request = requests.find((item) => item.id === approval.target.requestId);
+                const contentApproval = approvals.find((item) => item.id === approval.target.contentApprovalId);
+                const effectiveStatus = dispatchPlanStatus(approval);
+                const title = contentApproval ? purchaseRequestSnapshotTitle(contentApproval.snapshot) : request ? purchaseRequestDisplayTitle(request) : "درخواست خرید";
+                return <button className="project-task-card project-approval-card project-dispatch-plan-card" type="button" key={approval.id} data-dispatch-plan-approval-id={approval.id} onClick={() => { setStorageError(""); setSelectedDispatchPlanApprovalId(approval.id); }} aria-label={`${title}، ${approval.snapshot.recipientCount.toLocaleString("fa-IR")} تأمین‌کننده، ${effectiveStatus === "pending" ? "منتظر تأیید نهایی" : effectiveStatus === "approved" ? "تأیید شده" : "نیازمند بازبینی"}`} data-testid="project-dispatch-plan-approval-card"><span className="project-task-card-icon"><Users size={20} strokeWidth={1.65} /></span><span className="project-task-card-copy"><span><small>{effectiveStatus === "pending" ? "منتظر تأیید نهایی" : effectiveStatus === "approved" ? "تأیید شده" : effectiveStatus === "withdrawn" ? "از صف خارج شده" : "نیازمند بازبینی"}</small><small>{formatProjectFileDate(approval.updatedAt)}</small></span><strong>{title}</strong><em>{approval.snapshot.recipientCount.toLocaleString("fa-IR")} تأمین‌کننده</em></span><ArrowRight size={17} aria-hidden="true" /></button>;
+              })}
               {filteredApprovals.map((approval) => (
-                <button className="project-task-card project-approval-card" type="button" key={approval.id} data-approval-id={approval.id} onClick={() => { setStorageError(""); setSelectedApprovalId(approval.id); }} aria-label={`${purchaseRequestSnapshotTitle(approval.snapshot)}، نسخهٔ درخواست ${approval.target.version.toLocaleString("fa-IR")}، پروژهٔ ${project.name}، ${projectApprovalStatusLabel(approval.status)}، فقط تأیید داخلی و ارسال نشده`} data-testid="project-approval-card">
+                <button className="project-task-card project-approval-card" type="button" key={approval.id} data-approval-id={approval.id} onClick={() => { setStorageError(""); setSelectedApprovalId(approval.id); }} aria-label={`${purchaseRequestSnapshotTitle(approval.snapshot)}، ${projectApprovalStatusLabel(approval.status)}`} data-testid="project-approval-card">
                   <span className="project-task-card-icon"><ClipboardCheck size={20} strokeWidth={1.65} /></span>
-                  <span className="project-task-card-copy"><span><small>{projectApprovalStatusLabel(approval.status)}</small><small>{formatProjectFileDate(approval.updatedAt)}</small></span><strong>{purchaseRequestSnapshotTitle(approval.snapshot)}</strong><em>{approval.status === "pending" ? "منتظر تصمیم شما" : approval.status === "approved" ? "فقط این نسخه پذیرفته شد؛ ارسال نشده" : "برای اصلاح علامت خورد؛ ارسال نشده"}</em><small>نسخهٔ درخواست {approval.target.version.toLocaleString("fa-IR")} · {approval.localStatus}</small></span>
+                  <span className="project-task-card-copy"><span><small>{projectApprovalStatusLabel(approval.status)}</small><small>{formatProjectFileDate(approval.updatedAt)}</small></span><strong>{purchaseRequestSnapshotTitle(approval.snapshot)}</strong><em>{approval.status === "pending" ? "منتظر تصمیم شما" : approval.status === "approved" ? "تأیید شده" : "نیاز به اصلاح"}</em></span>
                   <ArrowRight size={17} aria-hidden="true" />
                 </button>
               ))}
               {filteredTasks.map((task) => (
                 <button className="project-task-card" type="button" key={task.id} onClick={() => { setStorageError(""); setSelectedId(task.id); }} data-testid="project-task-card">
                   <span className="project-task-card-icon"><CheckCircle2 size={20} strokeWidth={1.65} /></span>
-                  <span className="project-task-card-copy"><span><small>{projectTaskStatusLabel(task.status)}</small><small>{formatProjectFileDate(task.updatedAt)}</small></span><strong>{task.title}</strong><em>{task.currentStep}</em><small className="project-task-card-date">{task.completedAt ? `تکمیل: ${formatProjectFileDate(task.completedAt)}${task.dueDate ? ` · موعد: ${task.dueDate}` : ""}` : `موعد اتمام: ${task.dueDate ?? "تعیین نشده"}`}</small><small>نسخهٔ {task.version.toLocaleString("fa-IR")} · {task.localStatus}</small></span>
+                  <span className="project-task-card-copy"><span><small>{projectTaskStatusLabel(task.status)}</small><small>{formatProjectFileDate(task.updatedAt)}</small></span><strong>{task.title}</strong><em>{task.currentStep}</em><small className="project-task-card-date">{task.completedAt ? `تکمیل: ${formatProjectFileDate(task.completedAt)}${task.dueDate ? ` · موعد: ${task.dueDate}` : ""}` : `موعد اتمام: ${task.dueDate ?? "تعیین نشده"}`}</small></span>
                   <ArrowRight size={17} aria-hidden="true" />
                 </button>
               ))}
@@ -11759,13 +12147,13 @@ function ProjectSourceSearchView({ project, memories, files, query, readError, o
   const matchingMemories = useMemo(() => {
     if (!normalizedQuery) return [];
     return memories
-      .filter((memory) => memory.projectId === project.id && matchesProjectSearch(query, [memory.title, memory.content, memory.kind, memory.source]))
+      .filter((memory) => memory.projectId === project.id && matchesProjectSearch(query, [memory.title, memory.content, memory.kind]))
       .sort((first, second) => second.updatedAt.localeCompare(first.updatedAt));
   }, [memories, normalizedQuery, project.id, query]);
   const matchingFiles = useMemo(() => {
     if (!normalizedQuery) return [];
     return files
-      .filter((file) => file.projectId === project.id && matchesProjectSearch(query, [file.displayName, file.originalName, file.category, file.projectStage, file.source, projectFileFormat(file)]))
+      .filter((file) => file.projectId === project.id && matchesProjectSearch(query, [file.displayName, file.originalName, file.category, file.projectStage, projectFileFormat(file)]))
       .sort((first, second) => second.createdAt.localeCompare(first.createdAt));
   }, [files, normalizedQuery, project.id, query]);
   const resultCount = matchingMemories.length + matchingFiles.length;
@@ -11841,9 +12229,6 @@ function ProjectSourceSearchView({ project, memories, files, query, readError, o
                             <span className="project-source-result-topline"><small>حافظه · {memory.kind}</small><small>{formatProjectFileDate(memory.updatedAt)}</small></span>
                             <strong dir="auto">{memory.title}</strong>
                             <span className="project-source-result-excerpt">{memory.content}</span>
-                            <span className="project-source-result-meta">{memory.source} · خصوصی در {project.name}</span>
-                            <span className="project-source-result-meta">نسخهٔ {memory.version.toLocaleString("fa-IR")} · {memory.status}</span>
-                            <small className={memory.useInContext ? "memory-context-on" : "memory-context-off"}>{memory.useInContext ? "برای زمینه فعال" : "برای زمینه غیرفعال"}</small>
                           </span>
                           <ArrowRight size={17} aria-hidden="true" />
                         </button>
@@ -11865,9 +12250,6 @@ function ProjectSourceSearchView({ project, memories, files, query, readError, o
                             <span className="project-source-result-topline"><small>شناسنامهٔ فایل · {file.category}</small><small>{formatProjectFileDate(file.createdAt)}</small></span>
                             <strong dir="auto">{file.displayName}</strong>
                             <span className="project-source-result-excerpt" dir="auto">{file.originalName} · {projectFileFormat(file)} · {formatProjectFileSize(file.size)}</span>
-                            <span className="project-source-result-meta">{file.source} · خصوصی در {project.name}</span>
-                            <span className="project-source-result-meta">نسخهٔ {file.version.toLocaleString("fa-IR")} · {file.status}</span>
-                            <small className="project-source-file-boundary">محتوای فایل جست‌وجو نشده</small>
                           </span>
                           <ArrowRight size={17} aria-hidden="true" />
                         </button>
@@ -12120,7 +12502,7 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
         <main className="project-memory-content">
           <section className="project-memory-heading">
             <span className="project-memory-mark"><BrainCircuit size={24} strokeWidth={1.65} /></span>
-            <div><span className="eyebrow">حافظهٔ همین پروژه</span><h1>چیدا چه می‌داند</h1><p>فقط مواردی که خودت مستقیم برای {project.name} ثبت کرده‌ای.</p></div>
+            <div><span className="eyebrow">حافظهٔ همین پروژه</span><h1>چیدا چه می‌داند</h1></div>
           </section>
 
           <button className="primary-button project-memory-add" type="button" onClick={openCreateEditor} disabled={storageLocked} data-testid="project-memory-add"><Plus size={18} /> افزودن به حافظه</button>
@@ -12129,16 +12511,10 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-memory-read-error"><ShieldCheck size={17} /><span><strong>حافظهٔ محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، افزودن و ویرایش تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
 
-          <aside className="project-memory-trust-note" aria-label="مرز حافظهٔ نسخهٔ فعلی">
-            <ShieldCheck size={17} />
-            <span><strong>تاریخچهٔ گفتگو حافظه نیست.</strong> پیام‌ها و فایل‌ها خودکار به حافظه تبدیل نمی‌شوند و این نسخه هنوز حافظه را واقعاً وارد زمینهٔ مدل نمی‌کند.</span>
-          </aside>
-
           {storageLocked ? null : orderedMemories.length === 0 ? (
             <section className="project-memory-empty" data-testid="project-memory-empty">
               <span><BrainCircuit size={25} strokeWidth={1.65} /></span>
               <h2>هنوز چیزی ثبت نشده</h2>
-              <p>یک تصمیم، قاعده یا واقعیت تأییدشده را خودت ثبت کن تا منشأ و تاریخ آن روشن بماند.</p>
             </section>
           ) : (
             <section className="project-memory-list" aria-label="موارد حافظهٔ پروژه">
@@ -12150,7 +12526,6 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
                     <span className="project-memory-card-topline"><small>{memory.kind}</small><small>{formatProjectFileDate(memory.updatedAt)}</small></span>
                     <strong>{memory.title}</strong>
                     <span>{memory.content}</span>
-                    <small className={memory.useInContext ? "memory-context-on" : "memory-context-off"}>{memory.useInContext ? "برای استفاده در زمینه علامت‌گذاری شده" : "در زمینه استفاده نمی‌شود"}</small>
                   </span>
                   <ArrowRight size={17} aria-hidden="true" />
                 </button>
@@ -12160,7 +12535,7 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
         </main>
       </MobileScroll>
 
-      <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open) { keyboard.hide(); setEditorOpen(false); setStorageError(""); } }} title={editingId ? "ویرایش حافظه" : "افزودن به حافظه"} description="پیش از ذخیره، نوع و محدودهٔ این مورد را بررسی کن." snap={0.94}>
+      <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open) { keyboard.hide(); setEditorOpen(false); setStorageError(""); } }} title={editingId ? "ویرایش حافظه" : "افزودن به حافظه"} description="متن و نوع مورد را وارد کن." snap={0.94}>
         <form className="project-memory-editor-sheet" dir="rtl" data-testid="project-memory-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveMemory(); }}>
           <label className="field-control" htmlFor="project-memory-title">
             <span>عنوان کوتاه</span>
@@ -12179,37 +12554,25 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
             <ProjectChoiceMenu id="project-memory-kind" testId="project-memory-kind" value={memoryDraft.kind} placeholder="نوع حافظه را انتخاب کن" options={projectMemoryKinds} ariaLabel="نوع حافظه" onChange={(value) => changeMemoryDraft("kind", value as ProjectMemoryKind)} />
           </div>
 
-          <dl className="project-memory-meta">
-            <div><dt>پروژهٔ مالک</dt><dd>{project.name}</dd></div>
-            <div><dt>منشأ</dt><dd>ثبت مستقیم شما</dd></div>
-            <div><dt>دسترسی</dt><dd>خصوصی پروژه</dd></div>
-            <div><dt>نسخه و تاریخ</dt><dd>نسخهٔ ۱ · هنگام ثبت</dd></div>
-          </dl>
-
-          <p className="project-memory-context-note"><CircleHelp size={16} /><span>فعال بودن برای زمینه در این پروتوتایپ فقط یک ترجیح محلی است؛ هنوز به مدل متصل نشده است.</span></p>
           {storageError ? <p className="project-memory-storage-error" role="alert" data-testid="project-memory-storage-error">{storageError}</p> : null}
           <button className="primary-button" type="submit" data-testid="project-memory-save">{editingId ? "ذخیرهٔ ویرایش" : "ثبت در حافظهٔ پروژه"}</button>
         </form>
       </BottomSheet>
 
-      <BottomSheet open={Boolean(selectedMemory)} onOpenChange={(open) => { if (!open) { setSelectedId(null); setDeleteConfirmation(false); setStorageError(""); } }} title="جزئیات حافظه" description="منشأ، تاریخ و وضعیت استفادهٔ این مورد" snap={0.9}>
+      <BottomSheet open={Boolean(selectedMemory)} onOpenChange={(open) => { if (!open) { setSelectedId(null); setDeleteConfirmation(false); setStorageError(""); } }} title="جزئیات حافظه" description="متن ثبت‌شده و زمان‌ها" snap={0.9}>
         {selectedMemory ? (
           <section className="project-memory-detail-sheet" dir="rtl" data-testid="project-memory-detail-sheet">
             <div className="project-memory-detail-title"><span><BrainCircuit size={21} /></span><div><small>{selectedMemory.kind}</small><strong>{selectedMemory.title}</strong></div></div>
             <p className="project-memory-detail-content">{selectedMemory.content}</p>
             <dl className="project-memory-meta">
-              <div><dt>منشأ</dt><dd>ثبت مستقیم شما</dd></div>
-              <div><dt>محدوده</dt><dd>خصوصی در {project.name}</dd></div>
-              <div><dt>نسخه و وضعیت</dt><dd>نسخهٔ {selectedMemory.version.toLocaleString("fa-IR")} · {selectedMemory.status}</dd></div>
               <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(selectedMemory.createdAt)}</dd></div>
               <div><dt>آخرین ویرایش</dt><dd>{formatProjectFileDate(selectedMemory.updatedAt)}</dd></div>
             </dl>
 
             <div className="project-memory-context-control" data-active={selectedMemory.useInContext ? "true" : "false"}>
-              <span><small>ترجیح استفاده در زمینه</small><strong>{selectedMemory.useInContext ? "برای زمینه فعال است" : "برای زمینه غیرفعال است"}</strong></span>
-              <button type="button" onClick={toggleSelectedMemoryUse} disabled={storageLocked} data-testid="project-memory-use-toggle">{selectedMemory.useInContext ? "غیرفعال کن" : "فعال کن"}</button>
+              <strong>استفاده در پاسخ‌ها</strong>
+              <button type="button" onClick={toggleSelectedMemoryUse} disabled={storageLocked} data-testid="project-memory-use-toggle">{selectedMemory.useInContext ? "روشن" : "خاموش"}</button>
             </div>
-            <p className="project-memory-context-note"><CircleHelp size={16} /><span>این کنترل فعلاً فقط در مرورگر ذخیره می‌شود؛ اتصال واقعی به زمینهٔ مدل در این تسک ساخته نشده است.</span></p>
             {storageError ? <p className="project-memory-storage-error" role="alert" data-testid="project-memory-storage-error">{storageError}</p> : null}
 
             <div className="project-memory-detail-actions">
@@ -12334,6 +12697,44 @@ function useProjectImageUrls(files: ProjectFileRecord[]) {
   return imageUrls;
 }
 
+function useProjectFileUrls(files: ProjectFileRecord[]) {
+  const [fileUrls, setFileUrls] = useState<Record<string, string>>({});
+  const [loadedIds, setLoadedIds] = useState<Set<string>>(() => new Set());
+  const fileIdentity = files.map((file) => `${file.id}:${file.storageMode}`).join("|");
+
+  useEffect(() => {
+    let disposed = false;
+    const createdUrls: string[] = [];
+    const loadFiles = async () => {
+      const entries = await Promise.all(files.map(async (file) => {
+        if (file.storageMode !== "browser-file") return [file.id, ""] as const;
+        try {
+          const blob = await readProjectFile(file);
+          if (!blob) return [file.id, ""] as const;
+          const url = URL.createObjectURL(blob);
+          createdUrls.push(url);
+          return [file.id, url] as const;
+        } catch {
+          return [file.id, ""] as const;
+        }
+      }));
+      if (disposed) {
+        createdUrls.forEach((url) => URL.revokeObjectURL(url));
+        return;
+      }
+      setFileUrls(Object.fromEntries(entries.filter(([, url]) => url)));
+      setLoadedIds(new Set(entries.map(([id]) => id)));
+    };
+    void loadFiles();
+    return () => {
+      disposed = true;
+      createdUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [fileIdentity]);
+
+  return { fileUrls, loadedIds };
+}
+
 function ProjectGalleryView({ project, files, storageLocked, onBack, onRegister }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean> }) {
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -12402,7 +12803,7 @@ function ProjectGalleryView({ project, files, storageLocked, onBack, onRegister 
         <main className="project-gallery-content">
           <section className="project-gallery-heading">
             <span className="project-gallery-mark"><ImageIcon size={25} strokeWidth={1.65} /></span>
-            <div><span className="eyebrow">تصاویر همین پروژه</span><h1>گالری تصاویر</h1><p>عکس‌های ثبت‌شده فقط به {project.name} متصل می‌مانند.</p></div>
+            <div><span className="eyebrow">تصاویر همین پروژه</span><h1>گالری تصاویر</h1></div>
           </section>
 
           <div className="project-gallery-actions">
@@ -12416,8 +12817,6 @@ function ProjectGalleryView({ project, files, storageLocked, onBack, onRegister 
           {storageLocked ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-gallery-read-error"><ShieldCheck size={17} /><span><strong>شناسنامهٔ فایل‌ها کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، افزودن تصویر تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
-
-          <p className="project-files-storage-note"><ShieldCheck size={16} /><span>تصاویر فقط داخل همین مرورگر نگه‌داری می‌شوند و به سرور ارسال نمی‌شوند؛ تحلیل، جست‌وجو یا اشتراک‌گذاری انجام نمی‌شود.</span></p>
 
           {storageLocked ? null : orderedFiles.length === 0 ? (
             <section className="project-gallery-empty" data-testid="project-gallery-empty">
@@ -12467,20 +12866,17 @@ function ProjectGalleryDetailSheet({ file, imageUrl, project, onClose }: { file:
   }, [file?.id, imageUrl]);
 
   return (
-    <BottomSheet open={Boolean(file)} onOpenChange={(open) => !open && onClose()} title="جزئیات تصویر" description="نسخه و محدودهٔ این عکس" snap={0.94}>
+    <BottomSheet open={Boolean(file)} onOpenChange={(open) => !open && onClose()} title="جزئیات تصویر" description="عکس و مشخصات اصلی" snap={0.94}>
       {file ? (
         <section className="project-gallery-detail-sheet" dir="rtl" data-testid="project-gallery-detail-sheet">
           {imageUrl && !imageFailed ? <img className="project-gallery-detail-image" src={imageUrl} alt={file.displayName} draggable={false} data-testid="project-gallery-detail-image" onError={() => setImageFailed(true)} /> : <div className="project-gallery-detail-missing"><ImageIcon size={28} /><span>پیش‌نمایش این تصویر در مرورگر در دسترس نیست.</span></div>}
           <div className="project-gallery-detail-title"><small>عکس پروژه</small><strong dir="auto">{file.displayName}</strong></div>
           <dl className="project-file-meta">
             <div><dt>نوع و حجم</dt><dd>{projectFileFormat(file)} · {formatProjectFileSize(file.size)}</dd></div>
-            <div><dt>پروژه و دسترسی</dt><dd>خصوصی در {project.name}</dd></div>
+            <div><dt>پروژه</dt><dd>{project.name}</dd></div>
             <div><dt>مرحله هنگام ثبت</dt><dd>{file.projectStage || "ثبت نشده"}</dd></div>
-            <div><dt>منشأ</dt><dd>{file.source}</dd></div>
-            <div><dt>نسخه و وضعیت</dt><dd>نسخهٔ {file.version.toLocaleString("fa-IR")} · {file.status}</dd></div>
             <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(file.createdAt)}</dd></div>
           </dl>
-          <p className="project-file-trust-note"><ShieldCheck size={16} /><span>این تصویر فقط مدرک پروژه است؛ هیچ تحلیل، تشخیص نقص یا اقدام بیرونی انجام نشده است.</span></p>
           <button className="primary-button" type="button" onClick={onClose}>بستن</button>
         </section>
       ) : null}
@@ -12488,11 +12884,14 @@ function ProjectGalleryDetailSheet({ file, imageUrl, project, onClose }: { file:
   );
 }
 
-function ProjectFilesView({ project, files, storageLocked, initialSelectedId = null, onBack, onRegister, onRename }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; initialSelectedId?: string | null; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRename: (fileId: string, displayName: string) => boolean }) {
+function ProjectFilesView({ project, files, storageLocked, initialSelectedId = null, onBack, onRegister, onRestoreContent, onRename }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; initialSelectedId?: string | null; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => boolean }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<PendingProjectFile | null>(null);
+  const [restoreTargetId, setRestoreTargetId] = useState<string | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(initialSelectedId);
   const [fileError, setFileError] = useState("");
+  const [openError, setOpenError] = useState("");
   const [registrationError, setRegistrationError] = useState("");
   const [registrationPending, setRegistrationPending] = useState(false);
   const orderedFiles = useMemo(
@@ -12500,6 +12899,7 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
     [files],
   );
   const selectedFile = files.find((file) => file.id === selectedFileId) ?? null;
+  const { fileUrls, loadedIds } = useProjectFileUrls(orderedFiles);
 
   useEffect(() => {
     const previewUrl = pendingFile?.previewUrl;
@@ -12508,24 +12908,47 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
 
   const chooseFile = (file: File | undefined) => {
     setFileError("");
+    setOpenError("");
     setRegistrationError("");
     if (!file) return;
-    if (!isSupportedProjectFile(file)) {
+    if (isSupportedProjectImage(file)) {
       setPendingFile(null);
-      setFileError("این نوع فایل پشتیبانی نمی‌شود. PDF، تصویر JPG/PNG/WebP/HEIC، صفحه‌گسترده یا سند متنی انتخاب کن.");
+      setFileError("عکس را از گالری تصاویر اضافه کن.");
+      return;
+    }
+    if (!isSupportedProjectDocument(file)) {
+      setPendingFile(null);
+      setFileError(projectDocumentExtension(file.name)
+        ? "پسوند و نوع واقعی فایل با هم هم‌خوان نیستند."
+        : "این نوع فایل پشتیبانی نمی‌شود. PDF، صفحه‌گسترده یا سند متنی انتخاب کن.");
       return;
     }
     setPendingFile({
       displayName: file.name,
       originalName: file.name,
-      mimeType: file.type || "application/octet-stream",
+      mimeType: projectDocumentCanonicalMime(file.name),
       size: file.size,
       category: inferProjectFileCategory(file),
       source: "انتخاب مستقیم از دستگاه",
       sourceModifiedAt: file.lastModified ? new Date(file.lastModified).toISOString() : null,
-      blob: isSupportedProjectImage(file) ? file : null,
-      previewUrl: isSupportedProjectImage(file) && isBrowserPreviewableProjectImage({ mimeType: file.type, originalName: file.name }) ? URL.createObjectURL(file) : null,
+      blob: file,
+      previewUrl: null,
     });
+  };
+
+  const chooseRestoredFile = async (file: File | undefined) => {
+    const target = files.find((record) => record.id === restoreTargetId) ?? null;
+    setRestoreTargetId(null);
+    if (!file || !target) return;
+    if (file.name !== target.originalName || file.size !== target.size || !isSupportedProjectDocument(file)) {
+      setOpenError(`این فایل با نام، اندازه یا نوع ثبت‌شده هم‌خوان نیست: ${target.originalName}`);
+      return;
+    }
+    if (!await onRestoreContent(target.id, file)) {
+      setOpenError("فایل آماده نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
+      return;
+    }
+    setOpenError("فایل آماده شد؛ اصالت یا برابری محتوای آن با فایل قدیمی تأیید نمی‌شود.");
   };
 
   const registerPendingFile = async () => {
@@ -12537,7 +12960,7 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
       setRegistrationPending(false);
       return;
     }
-    setRegistrationError("شناسنامهٔ فایل ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
+    setRegistrationError("فایل ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
     setRegistrationPending(false);
   };
 
@@ -12553,7 +12976,7 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
         <main className="project-files-content">
           <section className="project-files-heading">
             <span className="project-files-mark"><FileText size={25} strokeWidth={1.65} /></span>
-            <div><span className="eyebrow">کتابخانهٔ پروژه</span><h1>فایل‌ها و اسناد</h1><p>مدارک ثبت‌شده فقط به همین پروژه متصل می‌مانند.</p></div>
+            <div><span className="eyebrow">کتابخانهٔ پروژه</span><h1>فایل‌ها و اسناد</h1></div>
           </section>
 
           <button className="primary-button project-file-add" type="button" onClick={() => inputRef.current?.click()} disabled={storageLocked} data-testid="project-file-add"><Plus size={18} /> افزودن فایل</button>
@@ -12569,6 +12992,18 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
               event.currentTarget.value = "";
             }}
           />
+          <input
+            ref={restoreInputRef}
+            className="project-file-native-input"
+            type="file"
+            accept={projectFileAccept}
+            disabled={storageLocked}
+            data-testid="project-file-restore-input"
+            onChange={(event) => {
+              void chooseRestoredFile(event.currentTarget.files?.[0]);
+              event.currentTarget.value = "";
+            }}
+          />
           <div className="project-file-error-slot" aria-live="polite">
             {fileError ? <p className="field-error" data-testid="project-file-error">{fileError}</p> : null}
           </div>
@@ -12577,24 +13012,35 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-files-read-error"><ShieldCheck size={17} /><span><strong>شناسنامهٔ فایل‌ها کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، افزودن و تغییر نام تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
 
-          <p className="project-files-storage-note"><ShieldCheck size={16} /><span>محتوای واقعی فایل روی سرور ارسال نمی‌شود؛ تصاویر گالری فقط در همین مرورگر و سایر فایل‌ها فقط به‌صورت شناسنامه نگه‌داری می‌شوند.</span></p>
+          {openError ? <p className="project-file-open-error" role="alert" data-testid="project-file-open-error">{openError}</p> : null}
 
           {storageLocked ? null : orderedFiles.length === 0 ? (
             <section className="project-files-empty" data-testid="project-files-empty">
               <span><FileText size={25} /></span>
               <h2>هنوز فایلی ثبت نشده</h2>
-              <p>PDF، تصویر JPG/PNG/WebP/HEIC، صفحه‌گسترده یا سند متنی پروژه را انتخاب کن.</p>
+              <p>PDF، صفحه‌گسترده یا سند متنی پروژه را انتخاب کن.</p>
             </section>
           ) : (
             <section className="project-file-list" aria-label="فایل‌های پروژه">
               <div className="project-file-list-title"><strong>فایل‌های ثبت‌شده</strong><span>{orderedFiles.length.toLocaleString("fa-IR")}</span></div>
-              {orderedFiles.map((file) => (
-                <button className="project-file-row" type="button" key={file.id} onClick={() => setSelectedFileId(file.id)} data-testid="project-file-row" aria-label={`جزئیات ${file.displayName}`}>
-                  <span className="project-file-row-icon">{isProjectImage(file) ? <ImageIcon size={20} /> : <FileText size={20} />}</span>
-                  <span className="project-file-row-copy"><strong dir="auto">{file.displayName}</strong><small>{file.category} · نسخهٔ {file.version.toLocaleString("fa-IR")} · {formatProjectFileSize(file.size)}</small></span>
-                  <ArrowRight size={17} aria-hidden="true" />
-                </button>
-              ))}
+              {orderedFiles.map((file) => {
+                const fileUrl = fileUrls[file.id];
+                const openContent = <><span className="project-file-row-icon"><FileText size={20} /></span><span className="project-file-row-copy"><strong dir="auto">{file.displayName}</strong><small>{file.category} · {formatProjectFileSize(file.size)}</small></span><ArrowUpRight size={17} aria-hidden="true" /></>;
+                return (
+                  <article className="project-file-row" key={file.id} data-testid="project-file-row">
+                    {fileUrl ? <a className="project-file-open" href={fileUrl} target="_blank" rel="noopener noreferrer" data-testid="project-file-open" aria-label={`باز کردن ${file.displayName}`} onClick={() => setOpenError("")}>{openContent}</a> : <button className="project-file-open" type="button" data-testid="project-file-open" aria-label={`باز کردن ${file.displayName}`} onClick={() => {
+                      if (file.storageMode === "metadata-only" && loadedIds.has(file.id)) {
+                        setRestoreTargetId(file.id);
+                        setOpenError(`برای بازکردن فایل قدیمی، فایلی با همین نام و اندازهٔ ثبت‌شده را انتخاب کن: ${file.originalName}`);
+                        window.requestAnimationFrame(() => restoreInputRef.current?.click());
+                        return;
+                      }
+                      setOpenError("فایل در حال آماده‌شدن است؛ یک لحظه دیگر دوباره بزن.");
+                    }}>{openContent}</button>}
+                    <button className="project-file-edit-button" type="button" onClick={() => { setOpenError(""); setSelectedFileId(file.id); }} data-testid="project-file-edit" aria-label={`ویرایش نام ${file.displayName}`}><PencilLine size={17} /></button>
+                  </article>
+                );
+              })}
             </section>
           )}
         </main>
@@ -12616,31 +13062,27 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
 
 function ProjectFileRegisterSheet({ file, project, error, busy, categoryLocked = false, onCategoryChange, onCancel, onRegister }: { file: PendingProjectFile | null; project: BuilderProject; error: string; busy: boolean; categoryLocked?: boolean; onCategoryChange: (category: ProjectFileCategory) => void; onCancel: () => void; onRegister: () => void }) {
   const [previewFailed, setPreviewFailed] = useState(false);
+  const isImage = file ? isProjectImage(file) : false;
 
   useEffect(() => {
     setPreviewFailed(false);
   }, [file?.previewUrl]);
 
   return (
-    <BottomSheet open={Boolean(file)} onOpenChange={(open) => !open && onCancel()} title="پیش‌نمایش ثبت فایل" description="قبل از ثبت، مقصد و شناسنامهٔ فایل را بررسی کن." snap={0.78}>
+    <BottomSheet open={Boolean(file)} onOpenChange={(open) => !open && onCancel()} title={isImage ? "ثبت عکس" : "ثبت فایل"} description="نام و دسته را بررسی کن." snap={0.78}>
       {file ? (
         <section className="project-file-register-sheet" dir="rtl" data-testid="project-file-register-sheet">
-          {file.previewUrl && !previewFailed ? <img className="project-file-preview-image" src={file.previewUrl} alt={`پیش‌نمایش ${file.displayName}`} draggable={false} data-testid="project-file-preview-image" onError={() => setPreviewFailed(true)} /> : file.blob ? <div className="project-file-preview-fallback" data-testid="project-file-preview-fallback"><ImageIcon size={25} /><span>پیش‌نمایش {projectFileFormat(file)} در این مرورگر در دسترس نیست.</span></div> : null}
-          <div className="project-file-preview-title"><span>{file.blob ? <ImageIcon size={22} /> : <FileText size={22} />}</span><div><small>{file.blob ? "تصویر انتخاب‌شده" : "فایل انتخاب‌شده"}</small><strong dir="auto">{file.originalName}</strong></div></div>
+          {isImage && file.previewUrl && !previewFailed ? <img className="project-file-preview-image" src={file.previewUrl} alt={`پیش‌نمایش ${file.displayName}`} draggable={false} data-testid="project-file-preview-image" onError={() => setPreviewFailed(true)} /> : isImage && file.blob ? <div className="project-file-preview-fallback" data-testid="project-file-preview-fallback"><ImageIcon size={25} /><span>پیش‌نمایش {projectFileFormat(file)} در این مرورگر در دسترس نیست.</span></div> : null}
+          <div className="project-file-preview-title"><span>{isImage ? <ImageIcon size={22} /> : <FileText size={22} />}</span><div><small>{isImage ? "عکس انتخاب‌شده" : "فایل انتخاب‌شده"}</small><strong dir="auto">{file.originalName}</strong></div></div>
           <dl className="project-file-meta">
             <div><dt>نوع و حجم</dt><dd>{projectFileFormat(file)} · {formatProjectFileSize(file.size)}</dd></div>
             <div><dt>پروژهٔ مقصد</dt><dd>{project.name}</dd></div>
-            <div><dt>منشأ</dt><dd>{file.source}</dd></div>
-            <div><dt>دسترسی</dt><dd>خصوصی در همین پروژه</dd></div>
             <div><dt>مرحله هنگام ثبت</dt><dd>{project.stage}</dd></div>
-            <div><dt>نسخه</dt><dd>نسخهٔ ۱</dd></div>
-            <div><dt>وضعیت</dt><dd>ثبت محلی آزمایشی</dd></div>
           </dl>
           <div className="field-control project-file-category-field">
             <span>دستهٔ سند</span>
-            {categoryLocked ? <div className="project-file-category-lock" data-testid="project-file-category">{file.category}</div> : <ProjectChoiceMenu id="project-file-category" testId="project-file-category" value={file.category} placeholder="دسته را انتخاب کن" options={projectFileCategories} ariaLabel="دستهٔ سند" onChange={(value) => onCategoryChange(value as ProjectFileCategory)} />}
+            {categoryLocked ? <div className="project-file-category-lock" data-testid="project-file-category">{file.category}</div> : <ProjectChoiceMenu id="project-file-category" testId="project-file-category" value={file.category} placeholder="دسته را انتخاب کن" options={projectDocumentCategories} ariaLabel="دستهٔ سند" onChange={(value) => onCategoryChange(value as ProjectFileCategory)} />}
           </div>
-          <p className="project-file-preview-note"><ShieldCheck size={16} /> {file.blob ? "تصویر فقط داخل همین مرورگر برای گالری نگه‌داری می‌شود؛ آپلود، تحلیل یا جست‌وجو نمی‌شود." : "فقط شناسنامه ثبت می‌شود؛ محتوای فایل آپلود، استخراج یا جست‌وجو نمی‌شود."}</p>
           <div className="project-file-register-error-slot" aria-live="assertive">
             {error ? <p className="field-error" data-testid="project-file-register-error">{error}</p> : null}
           </div>
@@ -12683,7 +13125,7 @@ function ProjectFileDetailSheet({ file, project, storageLocked, onClose, onRenam
   };
 
   return (
-    <BottomSheet open={Boolean(file)} onOpenChange={(open) => !open && close()} title="جزئیات فایل" description="منشأ، نسخه و محدودهٔ این فایل" snap={0.86}>
+    <BottomSheet open={Boolean(file)} onOpenChange={(open) => !open && close()} title="جزئیات فایل" description="نام و مشخصات اصلی" snap={0.86}>
       {file ? (
         <section className="project-file-detail-sheet" dir="rtl" data-testid="project-file-detail-sheet">
           <div className="project-file-preview-title"><span><FileText size={22} /></span><div><small>{file.category}</small><strong>{file.displayName}</strong></div></div>
@@ -12695,13 +13137,10 @@ function ProjectFileDetailSheet({ file, project, storageLocked, onClose, onRenam
           <dl className="project-file-meta">
             <div><dt>نام فایل اصلی</dt><dd>{file.originalName}</dd></div>
             <div><dt>نوع و حجم</dt><dd>{projectFileFormat(file)} · {formatProjectFileSize(file.size)}</dd></div>
-            <div><dt>پروژه و دسترسی</dt><dd>خصوصی در {project.name}</dd></div>
+            <div><dt>پروژه</dt><dd>{project.name}</dd></div>
             <div><dt>مرحله هنگام ثبت</dt><dd>{file.projectStage || "ثبت نشده"}</dd></div>
-            <div><dt>منشأ</dt><dd>{file.source}</dd></div>
-            <div><dt>نسخه و وضعیت</dt><dd>نسخهٔ {file.version.toLocaleString("fa-IR")} · {file.status}</dd></div>
             <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(file.createdAt)}</dd></div>
           </dl>
-          <p className="project-file-trust-note"><ShieldCheck size={16} /><span>محتوای بیرونی این فایل داده برای بررسی است، نه دستور برای چیدا؛ هیچ تحلیل یا اقدام بیرونی انجام نشده است.</span></p>
           <button className="primary-button" type="button" onClick={saveName} disabled={storageLocked} data-testid="project-file-rename-save">ذخیرهٔ نام نمایشی</button>
         </section>
       ) : null}
@@ -12791,7 +13230,7 @@ function BuildSheet({ sheet, activeProject, onClose, onInstalled }: { sheet: She
               </dl>
             </article>
             <button className="primary-button" type="button" data-testid="build-install-button" onClick={install}>نصب پلاگین و اسکیل</button>
-            <p className="prototype-disclaimer">در این پروتوتایپ نصب فقط داخل همین مرورگر شبیه‌سازی می‌شود.</p>
+            <p className="prototype-disclaimer">نصب واقعی انجام نمی‌شود.</p>
           </section>
         ) : null}
 
@@ -12884,7 +13323,6 @@ function ProjectsSheet({ sheet, projects, activeProjectId, onClose, onSelect, on
           />
         ))}
         <button className="projects-sheet-add" type="button" onClick={onCreate} data-testid="projects-sheet-add"><Plus size={19} /><span><strong>افزودن پروژهٔ جدید</strong><small>نام، محدودهٔ تهران و مرحلهٔ ساخت</small></span></button>
-        <p className="projects-sheet-note"><ShieldCheck size={15} /> اطلاعات این فهرست فعلاً فقط در همین مرورگر نگه‌داری می‌شود.</p>
       </div>
     </BottomSheet>
   );
@@ -12958,7 +13396,6 @@ function ProjectCreateSheet({ sheet, onClose, onSave }: { sheet: SheetName; onCl
           {fieldErrors.stage ? <small className="field-error" id="new-project-stage-error" data-testid="new-project-stage-error">{fieldErrors.stage}</small> : null}
         </div>
 
-        <p className="project-storage-note"><ShieldCheck size={15} /> پروژه پس از ذخیره، پروژهٔ فعال همین مرورگر می‌شود.</p>
         {storageError ? <p className="new-project-storage-error" role="alert" data-testid="new-project-storage-error">{storageError}</p> : null}
         <button className="primary-button" type="submit" data-testid="new-project-save">ساخت و ورود به پروژه</button>
       </form>
@@ -12972,7 +13409,7 @@ function SettingsSheet({ sheet, projectName, projectCount, localRecordCount, bri
       <div className="settings-sheet" dir="rtl">
         <section className="settings-profile-card" data-testid="settings-profile-section">
           <img src="/chida/profile-builder-fictional.jpg" alt="تصویر نمایشی پروفایل سازنده" data-testid="settings-profile-image" />
-          <span><small>حساب سازنده</small><strong>مهیار کلباسی</strong><em>تصویر نمایشی · پروفایل محلی</em></span>
+          <span><small>حساب سازنده</small><strong>مهیار کلباسی</strong><em>تصویر نمایشی</em></span>
           <HardHat size={20} aria-hidden="true" />
         </section>
 
@@ -12984,7 +13421,6 @@ function SettingsSheet({ sheet, projectName, projectCount, localRecordCount, bri
 
         <section className="settings-section" data-testid="settings-privacy-section">
           <div className="settings-section-heading"><ShieldCheck size={19} /><span><strong>حریم و نگه‌داری داده</strong><small>خصوصی و پروژه‌محور</small></span></div>
-          <p>پروژه، کارها، حافظه و شناسنامهٔ فایل‌ها فعلاً فقط همین مرورگر را منبع می‌گیرند؛ sync و پشتیبان ابری ادعا نمی‌شود.</p>
         </section>
 
         <section className="settings-section" data-testid="settings-model-section">
@@ -12994,7 +13430,7 @@ function SettingsSheet({ sheet, projectName, projectCount, localRecordCount, bri
 
         <section className="settings-section" data-testid="settings-brief-section">
           <div className="settings-section-heading"><Bell size={19} /><span><strong>اعلان و بریف</strong><small>{briefSummary}</small></span></div>
-          <p>زمان‌بندی بریف فعلاً شبیه‌سازی مرورگر است؛ push، ایمیل یا اجرای پس‌زمینه متصل نیست.</p>
+          <p>push، ایمیل و اجرای پس‌زمینه متصل نیستند.</p>
         </section>
 
         <section className="settings-section" data-testid="settings-appearance-section">

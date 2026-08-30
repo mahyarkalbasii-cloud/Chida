@@ -116,22 +116,27 @@ async function createReadyPurchaseRequestForApproval(page: Page) {
   await page.getByTestId("purchase-request-delivery-area-input").fill("سعادت‌آباد");
   await page.getByTestId("purchase-request-needed-by-input").fill("تا ۱۲ شهریور");
   await page.getByTestId("purchase-request-save").click();
-  await page.getByTestId("purchase-request-ready").click();
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("آمادهٔ بازبینی · نسخهٔ ۲");
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("آمادهٔ ادامه");
 }
 
 async function openApprovedPurchaseRequestDispatch(page: Page) {
-  await createReadyPurchaseRequestForApproval(page);
-  await page.getByTestId("purchase-request-request-approval").click();
-  await page.getByTestId("project-approval-approve").click();
-  await page.getByTestId("project-approval-detail-back").click();
-  await page.getByTestId("project-tasks-back").click();
+  await enterBuilderHome(page);
   await page.getByTestId("quick-action-purchase-request").click();
-  await page.keyboard.press("Escape");
-  await page.getByTestId("purchase-request-card").click();
-  await expect(page.getByTestId("purchase-request-open-dispatch")).toBeVisible();
-  await page.getByTestId("purchase-request-open-dispatch").click();
+  await page.getByTestId("purchase-request-raw-input").fill("پنج تن میلگرد آجدار برای ادامهٔ اسکلت لازم است");
+  await page.getByTestId("purchase-request-item-input").fill("میلگرد آجدار");
+  await page.getByTestId("purchase-request-quantity-input").fill("۵");
+  await chooseProjectOption(page, "purchase-request-unit-select", "تن");
+  await page.getByTestId("purchase-request-mode-advanced").click();
+  await page.getByTestId("purchase-request-brand-input").fill("A3");
+  await page.getByTestId("purchase-request-specification-input").fill("شاخه ۱۲ متری با پلاک تولید");
+  await page.getByTestId("purchase-request-delivery-area-input").fill("سعادت‌آباد");
+  await page.getByTestId("purchase-request-needed-by-input").fill("تا ۱۲ شهریور");
+  await page.getByTestId("purchase-request-save").click();
+  await page.getByTestId("purchase-request-ready").click();
   await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await page.getByTestId("dispatch-technical-details").locator("summary").click();
 }
 
 async function addLocalSupplierContact(page: Page, contact: { name: string; category: string; coverage: string; capability?: "product" | "service" | "both" }) {
@@ -152,6 +157,7 @@ async function reopenFirstPurchaseRequestDispatch(page: Page) {
   await page.getByTestId("purchase-request-card").click();
   await page.getByTestId("purchase-request-open-dispatch").click();
   await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await page.getByTestId("dispatch-technical-details").locator("summary").click();
 }
 
 async function createCurrentProductDispatchDraft(page: Page, contactNames: string[] = ["فولاد برنامه ارسال"]) {
@@ -178,6 +184,7 @@ async function approveCurrentRequestAndOpenDispatch(page: Page) {
   await page.getByTestId("purchase-request-card").first().click();
   await page.getByTestId("purchase-request-open-dispatch").click();
   await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await page.getByTestId("dispatch-technical-details").locator("summary").click();
 }
 
 async function returnFromDispatchToHome(page: Page) {
@@ -261,7 +268,8 @@ async function createTwoItemProductProposalPrerequisites(page: Page, contactName
   await page.getByTestId("purchase-request-delivery-area-input").fill("سعادت‌آباد");
   await page.getByTestId("purchase-request-save").click();
   await page.getByTestId("purchase-request-ready").click();
-  await approveCurrentRequestAndOpenDispatch(page);
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await page.getByTestId("dispatch-technical-details").locator("summary").click();
   await addLocalSupplierContact(page, { name: contactName, category: "مصالح سفت‌کاری", coverage: "غرب تهران", capability: "product" });
   await returnFromDispatchToHome(page);
 }
@@ -276,7 +284,8 @@ async function createServiceProposalPrerequisites(page: Page, contactName = "م�
   await page.getByTestId("purchase-request-service-size-input").fill("۸۵۰ مترمربع");
   await page.getByTestId("purchase-request-save").click();
   await page.getByTestId("purchase-request-ready").click();
-  await approveCurrentRequestAndOpenDispatch(page);
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await page.getByTestId("dispatch-technical-details").locator("summary").click();
   await addLocalSupplierContact(page, { name: contactName, category: "عایق‌کاری", coverage: "تمام تهران", capability: "service" });
   await returnFromDispatchToHome(page);
 }
@@ -344,7 +353,8 @@ async function createTwoCurrentServiceProposalsForComparison(page: Page) {
   await page.getByTestId("purchase-request-service-payment-input").fill("حداکثر سی درصد پیش پرداخت و مانده مرحله ای");
   await page.getByTestId("purchase-request-save").click();
   await page.getByTestId("purchase-request-ready").click();
-  await approveCurrentRequestAndOpenDispatch(page);
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await page.getByTestId("dispatch-technical-details").locator("summary").click();
   await addLocalSupplierContact(page, { name: firstSupplier, category: "عایق کاری", coverage: "غرب تهران", capability: "service" });
   await addLocalSupplierContact(page, { name: secondSupplier, category: "عایق کاری", coverage: "تمام تهران", capability: "service" });
   await page.getByTestId("dispatch-draft-save").click();
@@ -751,13 +761,18 @@ test("builder creates the first project and keeps it as the active context", asy
   await expect(page.getByTestId("project-stage-error")).toContainText("مرحلهٔ ساخت");
   await expect(page.getByTestId("builder-home")).toHaveCount(0);
 
-  await page.getByTestId("project-name-input").fill("برج نیلوفر");
-  await page.getByTestId("project-location-input").fill("تهران");
+  const projectNameInput = page.getByTestId("project-name-input");
+  const projectLocationInput = page.getByTestId("project-location-input");
+  await projectNameInput.fill("برج نیلوفر");
+  await expect(projectNameInput).toHaveValue("برج نیلوفر");
+  await projectLocationInput.fill("تهران");
+  await expect(projectLocationInput).toHaveValue("تهران");
   await page.getByTestId("project-create-button").click();
-  await expect(page.getByTestId("project-name-input")).toHaveValue("برج نیلوفر");
+  await expect(projectNameInput).toHaveValue("برج نیلوفر");
   await expect(page.getByTestId("project-location-error")).toContainText("محله یا منطقه");
 
-  await page.getByTestId("project-location-input").fill("سعادت‌آباد");
+  await projectLocationInput.fill("سعادت‌آباد");
+  await expect(projectLocationInput).toHaveValue("سعادت‌آباد");
   await expect(page.locator('select[data-testid="project-stage-select"]')).toHaveCount(0);
 
   const authScroller = page.locator(".auth-page .mobile-scroll");
@@ -771,7 +786,12 @@ test("builder creates the first project and keeps it as the active context", asy
   await page.mouse.down();
   await page.mouse.move(dragX, dragY - 90, { steps: 8 });
   await page.mouse.up();
-  await expect.poll(() => authScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(8);
+  const authScrollRange = await authScroller.evaluate((element) => element.scrollHeight - element.clientHeight);
+  if (authScrollRange > 8) {
+    await expect.poll(() => authScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(8);
+  } else {
+    await expect(authScroller).toHaveJSProperty("scrollTop", 0);
+  }
   await expect(page.getByTestId("project-stage-select-menu")).toHaveCount(0);
 
   await authScroller.evaluate((element) => { element.scrollTop = 0; });
@@ -1146,7 +1166,7 @@ test("builder opens and edits the active project space without losing the chat d
   await expect(page.getByTestId("project-workspace")).toContainText("۲۴ واحد");
 });
 
-test("builder registers a project document locally, reviews its provenance, and renames it", async ({ page }) => {
+test("builder stores a project document locally, opens the real file, and keeps photos out of Files", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   const activeProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
@@ -1161,8 +1181,9 @@ test("builder registers a project document locally, reviews its provenance, and 
   const filesView = page.getByTestId("project-files-view");
   await expect(filesView).toBeVisible();
   await expect(filesView).toContainText("برج نیلوفر");
-  await expect(filesView).toContainText("محتوای واقعی فایل روی سرور ارسال نمی‌شود");
+  await expect(filesView).not.toContainText("محتوای واقعی فایل روی سرور ارسال نمی‌شود");
   await expect(page.getByTestId("project-files-empty")).toBeVisible();
+  await expect(page.getByTestId("project-file-input")).not.toHaveAttribute("accept", /png|jpe?g|webp|heic/i);
 
   const fileInput = page.getByTestId("project-file-input");
   await fileInput.setInputFiles({
@@ -1173,16 +1194,19 @@ test("builder registers a project document locally, reviews its provenance, and 
   await expect(page.getByTestId("project-file-error")).toContainText("پشتیبانی نمی‌شود");
   await expect(page.getByTestId("project-file-register-sheet")).toHaveCount(0);
 
-  const registerSheet = page.getByTestId("project-file-register-sheet");
   await fileInput.setInputFiles({
-    name: "تصویر کارگاه.heic",
-    mimeType: "image/heic",
-    buffer: Buffer.from("synthetic-heic-metadata-only"),
+    name: "گزارش جعلی.pdf",
+    mimeType: "text/html",
+    buffer: Buffer.from("<script>localStorage.setItem('__chida_active_content_probe','executed')</script>"),
   });
-  await expect(registerSheet).toBeVisible();
-  await expect(page.getByTestId("project-file-category")).toContainText("عکس");
-  await page.getByTestId("project-file-cancel").click();
-  await expect(registerSheet).toBeHidden();
+  await expect(page.getByTestId("project-file-error")).toContainText("پسوند و نوع واقعی فایل");
+  await expect(page.getByTestId("project-file-register-sheet")).toHaveCount(0);
+  await expect(page.getByTestId("project-file-row")).toHaveCount(0);
+
+  const registerSheet = page.getByTestId("project-file-register-sheet");
+  await fileInput.setInputFiles({ name: "تصویر کارگاه.jpg", mimeType: "image/jpeg", buffer: sampleProjectImage.buffer });
+  await expect(page.getByTestId("project-file-error")).toContainText("گالری تصاویر");
+  await expect(registerSheet).toHaveCount(0);
 
   const sampleDocument = {
     name: "پیش‌فاکتور بتن.pdf",
@@ -1193,7 +1217,15 @@ test("builder registers a project document locally, reviews its provenance, and 
   await expect(registerSheet).toBeVisible();
   await expect(registerSheet).toContainText("پیش‌فاکتور بتن.pdf");
   await expect(registerSheet).toContainText("برج نیلوفر");
-  await expect(registerSheet).toContainText("نسخهٔ ۱");
+  await expect(registerSheet).not.toContainText("نسخهٔ ۱");
+  await expect(registerSheet).not.toContainText("منشأ");
+  await expect(registerSheet).not.toContainText("دسترسی");
+  await expect(registerSheet).not.toContainText("وضعیت");
+  expect(await registerSheet.locator(".project-file-preview-title small").evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
+  expect(await registerSheet.locator(".project-file-preview-title strong").evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
+  expect(await registerSheet.locator(".project-file-meta dt").first().evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
+  expect(await registerSheet.locator(".project-file-meta dd").first().evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(15);
+  expect(await registerSheet.locator(".project-file-category-field > span").evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
   await expect(page.getByTestId("project-file-category")).toContainText("پیش‌فاکتور");
   await expect(page.locator('select[data-testid="project-file-category"]')).toHaveCount(0);
   await page.getByTestId("project-file-cancel").click();
@@ -1206,7 +1238,7 @@ test("builder registers a project document locally, reviews its provenance, and 
   await expect(fileRow).toHaveCount(1);
   await expect(fileRow).toContainText("پیش‌فاکتور بتن.pdf");
   await expect(fileRow).toContainText("پیش‌فاکتور");
-  await expect(fileRow).toContainText("نسخهٔ ۱");
+  await expect(fileRow).not.toContainText("نسخهٔ ۱");
   const rowMetadataFontSize = await fileRow.locator(".project-file-row-copy small").evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize));
   expect(rowMetadataFontSize).toBeGreaterThanOrEqual(11);
   const storedFileMetadata = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1") ?? "");
@@ -1215,21 +1247,56 @@ test("builder registers a project document locally, reviews its provenance, and 
     originalName: "پیش‌فاکتور بتن.pdf",
     version: 1,
     visibility: "خصوصی پروژه",
-    storageMode: "metadata-only",
+    storageMode: "browser-file",
   });
   expect(storedFileMetadata).not.toContain("CHIDA synthetic test document");
   expect(storedFileMetadata).not.toContain("buffer");
-  await fileRow.click();
+  const fileOpen = page.getByTestId("project-file-open");
+  await expect(fileOpen).toHaveAttribute("href", /^blob:/);
+  await expect(fileOpen).toHaveAttribute("target", "_blank");
+  const popupPromise = page.waitForEvent("popup");
+  await fileOpen.click();
+  const openedFile = await popupPromise;
+  expect(openedFile).toBeTruthy();
+  await openedFile.close();
+
+  await page.getByTestId("project-file-edit").click();
 
   const detailSheet = page.getByTestId("project-file-detail-sheet");
   await expect(detailSheet).toBeVisible();
-  await expect(detailSheet).toContainText("خصوصی در برج نیلوفر");
-  await expect(detailSheet).toContainText("انتخاب مستقیم از دستگاه");
-  await expect(detailSheet).toContainText("داده برای بررسی است، نه دستور برای چیدا");
+  await expect(detailSheet).not.toContainText("خصوصی در برج نیلوفر");
+  await expect(detailSheet).not.toContainText("انتخاب مستقیم از دستگاه");
+  await expect(detailSheet).not.toContainText("داده برای بررسی است، نه دستور برای چیدا");
+  expect(await detailSheet.locator(".project-file-meta dt").first().evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
+  expect(await page.getByTestId("project-file-display-name").evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16);
   await page.getByTestId("project-file-display-name").fill("پیش‌فاکتور بتن مرداد");
   await page.getByTestId("project-file-rename-save").click();
   await expect(detailSheet).toBeHidden();
   await expect(fileRow).toContainText("پیش‌فاکتور بتن مرداد");
+
+  await page.evaluate(async ({ projectId }) => {
+    const records = JSON.parse(window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]") as Array<{ id: string; originalName: string }>;
+    const record = records[0];
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = window.indexedDB.open("chida-prototype-project-file-content:v1", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("files", "readwrite");
+      transaction.objectStore("files").put({
+        id: record.id,
+        projectId,
+        originalName: record.originalName,
+        mimeType: "text/html",
+        blob: new Blob(["<script>localStorage.setItem('__chida_active_content_probe','executed')</script>"], { type: "text/html" }),
+      });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    database.close();
+  }, { projectId: activeProjectId });
 
   await page.reload();
   await reachBuilderWelcome(page);
@@ -1238,6 +1305,19 @@ test("builder registers a project document locally, reviews its provenance, and 
   await expect(page.getByTestId("project-files-entry")).toContainText("۱ فایل ثبت‌شده");
   await page.getByTestId("project-files-entry").click();
   await expect(page.getByTestId("project-file-row")).toContainText("پیش‌فاکتور بتن مرداد");
+  const restoredFileOpen = page.getByTestId("project-file-open");
+  await expect(restoredFileOpen).toHaveAttribute("href", /^blob:/);
+  const safeContentType = await restoredFileOpen.evaluate(async (element) => {
+    const response = await fetch((element as HTMLAnchorElement).href);
+    return response.headers.get("content-type");
+  });
+  expect(safeContentType).toBe("application/pdf");
+  const unsafePopupPromise = page.waitForEvent("popup");
+  await restoredFileOpen.click();
+  const unsafePopup = await unsafePopupPromise;
+  await page.waitForTimeout(250);
+  expect(await page.evaluate(() => window.localStorage.getItem("__chida_active_content_probe"))).toBeNull();
+  await unsafePopup.close();
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 
   await page.getByTestId("project-files-back").click();
@@ -1245,6 +1325,107 @@ test("builder registers a project document locally, reviews its provenance, and 
   await page.getByTestId("capability-cluster").click();
   await page.getByTestId("project-documents-tool").click();
   await expect(page.getByTestId("project-files-view")).toBeVisible();
+});
+
+test("an older metadata-only document can be reselected by recorded name and size without claiming content identity", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const activeProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!activeProjectId) throw new Error("Active project was not created");
+  const legacyDocument = {
+    name: "صورت وضعیت قدیمی.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\n% CHIDA legacy document"),
+  };
+  await page.evaluate(({ projectId, size }) => {
+    window.localStorage.setItem("chida-prototype-project-files:v1", JSON.stringify([{
+      id: "legacy-metadata-document",
+      projectId,
+      displayName: "صورت وضعیت قدیمی",
+      originalName: "صورت وضعیت قدیمی.pdf",
+      mimeType: "application/pdf",
+      size,
+      category: "صورت‌جلسه",
+      source: "انتخاب مستقیم از دستگاه",
+      status: "ثبت محلی",
+      version: 1,
+      projectStage: "اسکلت بندی",
+      visibility: "خصوصی پروژه",
+      storageMode: "metadata-only",
+      sourceModifiedAt: null,
+      createdAt: "2026-08-27T11:00:00.000Z",
+    }]));
+  }, { projectId: activeProjectId, size: legacyDocument.buffer.length });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-files-entry").click();
+
+  const wrongNameChooserPromise = page.waitForEvent("filechooser");
+  await page.getByTestId("project-file-open").click();
+  const wrongNameChooser = await wrongNameChooserPromise;
+  await wrongNameChooser.setFiles({ ...legacyDocument, name: "صورت وضعیت دیگر.pdf" });
+  await expect(page.getByTestId("project-file-open-error")).toContainText("هم‌خوان نیست");
+  expect(JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]"))[0]).toMatchObject({
+    id: "legacy-metadata-document",
+    storageMode: "metadata-only",
+  });
+
+  const wrongSizeChooserPromise = page.waitForEvent("filechooser");
+  await page.getByTestId("project-file-open").click();
+  const wrongSizeChooser = await wrongSizeChooserPromise;
+  await wrongSizeChooser.setFiles({ ...legacyDocument, buffer: Buffer.concat([legacyDocument.buffer, Buffer.from("x")]) });
+  await expect(page.getByTestId("project-file-open-error")).toContainText("هم‌خوان نیست");
+  expect(JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]"))[0]).toMatchObject({
+    id: "legacy-metadata-document",
+    storageMode: "metadata-only",
+  });
+
+  const wrongMimeChooserPromise = page.waitForEvent("filechooser");
+  await page.getByTestId("project-file-open").click();
+  const wrongMimeChooser = await wrongMimeChooserPromise;
+  await wrongMimeChooser.setFiles({ ...legacyDocument, mimeType: "text/html" });
+  await expect(page.getByTestId("project-file-open-error")).toContainText("هم‌خوان نیست");
+  expect(JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]"))[0]).toMatchObject({
+    id: "legacy-metadata-document",
+    storageMode: "metadata-only",
+  });
+
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.getByTestId("project-file-open").click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles(legacyDocument);
+  await expect(page.getByTestId("project-file-open-error")).toContainText("اصالت یا برابری محتوای آن با فایل قدیمی تأیید نمی‌شود");
+  await expect(page.getByTestId("project-file-open-error")).not.toContainText("همان فایل اصلی");
+  const restoredOpen = page.getByTestId("project-file-open");
+  await expect(restoredOpen).toHaveAttribute("href", /^blob:/);
+  expect(JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]"))[0]).toMatchObject({
+    id: "legacy-metadata-document",
+    storageMode: "browser-file",
+  });
+  const restoredMime = await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = window.indexedDB.open("chida-prototype-project-file-content:v1", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const stored = await new Promise<{ mimeType?: string; blob?: Blob } | undefined>((resolve, reject) => {
+      const transaction = database.transaction("files", "readonly");
+      const request = transaction.objectStore("files").get("legacy-metadata-document");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    return { metadata: stored?.mimeType ?? "", blob: stored?.blob?.type ?? "" };
+  });
+  expect(restoredMime).toEqual({ metadata: "application/pdf", blob: "application/pdf" });
+
+  const popupPromise = page.waitForEvent("popup");
+  await restoredOpen.click();
+  const openedFile = await popupPromise;
+  expect(openedFile).toBeTruthy();
+  await openedFile.close();
 });
 
 test("builder adds a project image and the project gallery restores its real preview", async ({ page }) => {
@@ -1262,12 +1443,12 @@ test("builder adds a project image and the project gallery restores its real pre
   const galleryView = page.getByTestId("project-gallery-view");
   await expect(galleryView).toBeVisible();
   await expect(galleryView).toContainText("تصاویر همین پروژه");
-  await expect(galleryView).toContainText("به سرور ارسال نمی‌شوند");
+  await expect(galleryView).not.toContainText("به سرور ارسال نمی‌شوند");
   await expect(page.getByTestId("project-gallery-empty")).toBeVisible();
   await expect(page.getByTestId("project-camera-input")).toHaveAttribute("capture", "environment");
 
   await page.getByTestId("project-camera-input").setInputFiles({ ...sampleProjectImage, name: "عکس دوربین کارگاه.png" });
-  await expect(page.getByTestId("project-file-register-sheet")).toContainText("دوربین دستگاه");
+  await expect(page.getByTestId("project-file-register-sheet")).not.toContainText("دوربین دستگاه");
   await page.getByTestId("project-file-cancel").click();
 
   await page.evaluate(() => {
@@ -1284,7 +1465,10 @@ test("builder adds a project image and the project gallery restores its real pre
   await expect(registerSheet).toBeVisible();
   await expect(registerSheet).toContainText("نمای جنوبی کارگاه.png");
   await expect(registerSheet).toContainText("برج نیلوفر");
-  await expect(registerSheet).toContainText("خصوصی در همین پروژه");
+  await expect(registerSheet).not.toContainText("خصوصی در همین پروژه");
+  await expect(registerSheet).not.toContainText("منشأ");
+  await expect(registerSheet).not.toContainText("نسخه");
+  await expect(registerSheet).not.toContainText("وضعیت");
   await expect(registerSheet).toContainText("اسکلت بندی");
   await expect(page.getByTestId("project-file-preview-image")).toBeVisible();
   await page.getByTestId("project-file-register").click();
@@ -1311,8 +1495,12 @@ test("builder adds a project image and the project gallery restores its real pre
   await galleryItem.click();
   const detailSheet = page.getByTestId("project-gallery-detail-sheet");
   await expect(detailSheet).toBeVisible();
-  await expect(detailSheet).toContainText("خصوصی در برج نیلوفر");
+  await expect(detailSheet).not.toContainText("خصوصی در برج نیلوفر");
+  await expect(detailSheet).not.toContainText("این تصویر فقط مدرک پروژه است");
+  await expect(detailSheet).not.toContainText("نسخه و وضعیت");
   await expect(detailSheet).toContainText("اسکلت بندی");
+  const photoDetailFont = await detailSheet.locator(".project-file-meta dd").first().evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize));
+  expect(photoDetailFont).toBeGreaterThanOrEqual(14);
   await expect(page.getByTestId("project-gallery-detail-image")).toBeVisible();
   await page.getByRole("button", { name: "بستن" }).click();
   await page.getByTestId("project-gallery-back").click();
@@ -1330,6 +1518,7 @@ test("builder adds a project image and the project gallery restores its real pre
   await page.getByTestId("enter-home").click();
   await page.getByTestId("open-project-space").click();
   await expect(page.getByTestId("project-gallery-entry")).toContainText("۱ عکس ثبت‌شده");
+  await expect(page.getByTestId("project-files-entry")).toContainText("هنوز فایلی ثبت نشده");
   await page.getByTestId("project-gallery-entry").click();
   await expect(page.getByTestId("project-gallery-item")).toHaveCount(1);
   const restoredThumbnail = page.getByTestId("project-gallery-thumbnail");
@@ -1346,7 +1535,7 @@ test("builder adds a project image and the project gallery restores its real pre
   await expect(page.getByTestId("project-gallery-item")).toHaveCount(0);
 });
 
-test("project gallery rejects mismatched files and ignores an editable photo category on a PDF", async ({ page }) => {
+test("project gallery rejects mismatched files and keeps the photo category out of document registration", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   await page.getByTestId("open-project-space").click();
@@ -1374,7 +1563,9 @@ test("project gallery rejects mismatched files and ignores an editable photo cat
     mimeType: "application/pdf",
     buffer: Buffer.from("%PDF project contract"),
   });
-  await chooseProjectOption(page, "project-file-category", "عکس");
+  await page.getByTestId("project-file-category").click();
+  await expect(page.getByTestId("project-file-category-option-عکس")).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await page.getByTestId("project-file-register").click();
   await expect(page.getByTestId("project-file-row")).toContainText("قرارداد.pdf");
   await page.getByTestId("project-files-back").click();
@@ -1525,6 +1716,33 @@ test("project document registration reports storage failure instead of showing f
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1"))).toBe(storageBefore);
 });
 
+test("project document content failure rolls back its metadata", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-files-entry").click();
+
+  await page.evaluate(() => {
+    const nativeTransaction = IDBDatabase.prototype.transaction;
+    IDBDatabase.prototype.transaction = function transaction(storeNames: string | Iterable<string>, mode?: IDBTransactionMode, options?: IDBTransactionOptions) {
+      if (this.name === "chida-prototype-project-file-content:v1" && mode === "readwrite") throw new DOMException("IndexedDB write failed", "InvalidStateError");
+      return nativeTransaction.call(this, storeNames, mode, options);
+    };
+  });
+
+  await page.getByTestId("project-file-input").setInputFiles({
+    name: "صورت وضعیت.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF local IndexedDB rollback"),
+  });
+  await page.getByTestId("project-file-register").click();
+
+  await expect(page.getByTestId("project-file-register-sheet")).toBeVisible();
+  await expect(page.getByTestId("project-file-register-error")).toContainText("ذخیره نشد");
+  await expect(page.getByTestId("project-file-row")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1"))).toBeNull();
+});
+
 test("project document parser drops semantically invalid and duplicate records", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => {
@@ -1562,7 +1780,7 @@ test("project document parser drops semantically invalid and duplicate records",
   await expect(page.getByTestId("project-file-row")).toContainText("گزارش معتبر");
   await expect(page.getByText("شناسه تکراری")).toHaveCount(0);
   await expect(page.getByText("منشأ جعلی")).toHaveCount(0);
-  await page.getByTestId("project-file-row").click();
+  await page.getByTestId("project-file-edit").click();
   await expect(page.getByTestId("project-file-detail-sheet")).toContainText("اسکلت بندی");
 });
 
@@ -1669,16 +1887,16 @@ test("builder manages a transparent project memory through its full local lifecy
   const memoryView = page.getByTestId("project-memory-view");
   await expect(memoryView).toBeVisible();
   await expect(memoryView).toContainText("چیدا چه می‌داند");
-  await expect(memoryView).toContainText("تاریخچهٔ گفتگو حافظه نیست");
+  await expect(memoryView).not.toContainText("تاریخچهٔ گفتگو حافظه نیست");
   await expect(page.getByTestId("project-memory-empty")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
 
   await page.getByTestId("project-memory-add").click();
   const editor = page.getByTestId("project-memory-editor-sheet");
   await expect(editor).toBeVisible();
-  await expect(editor).toContainText("برج نیلوفر");
-  await expect(editor).toContainText("ثبت مستقیم شما");
-  await expect(editor).toContainText("خصوصی پروژه");
+  await expect(editor).not.toContainText("ثبت مستقیم شما");
+  await expect(editor).not.toContainText("خصوصی پروژه");
+  await expect(editor).not.toContainText("فقط یک ترجیح محلی");
   await page.getByTestId("project-memory-save").click();
   await expect(page.getByTestId("project-memory-title-error")).toContainText("عنوان");
   await expect(page.getByTestId("project-memory-content-error")).toContainText("متن حافظه");
@@ -1709,11 +1927,14 @@ test("builder manages a transparent project memory through its full local lifecy
   await memoryCard.click();
   const detail = page.getByTestId("project-memory-detail-sheet");
   await expect(detail).toBeVisible();
-  await expect(detail).toContainText("ثبت مستقیم شما");
-  await expect(detail).toContainText("خصوصی در برج نیلوفر");
-  await expect(detail).toContainText("نسخهٔ ۱");
+  await expect(detail).not.toContainText("ثبت مستقیم شما");
+  await expect(detail).not.toContainText("خصوصی در برج نیلوفر");
+  await expect(detail).not.toContainText("نسخهٔ ۱");
+  await expect(detail).not.toContainText("این کنترل فعلاً فقط در مرورگر");
+  const memoryBodyFont = await detail.locator(".project-memory-detail-content").evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize));
+  expect(memoryBodyFont).toBeGreaterThanOrEqual(16);
   await page.getByTestId("project-memory-use-toggle").click();
-  await expect(detail).toContainText("برای زمینه غیرفعال است");
+  await expect(page.getByTestId("project-memory-use-toggle")).toContainText("خاموش");
 
   await page.getByTestId("project-memory-edit").click();
   await page.getByTestId("project-memory-content").fill("فاکتور رسمی، زمان تحویل و ردهٔ بتن پیش از مقایسهٔ قیمت بررسی شود.");
@@ -1726,7 +1947,7 @@ test("builder manages a transparent project memory through its full local lifecy
   await page.getByTestId("open-project-space").click();
   await expect(page.getByTestId("project-memory-entry")).toContainText("۱ مورد ثبت‌شده");
   await page.getByTestId("project-memory-entry").click();
-  await expect(page.getByTestId("project-memory-card")).toContainText("در زمینه استفاده نمی‌شود");
+  await expect(page.getByTestId("project-memory-card")).not.toContainText("در زمینه استفاده نمی‌شود");
   await page.getByTestId("project-memory-card").click();
   await page.getByTestId("project-memory-delete").click();
   await expect(page.getByTestId("project-memory-delete-confirmation")).toContainText("حذف دائمی از این مرورگر");
@@ -1873,7 +2094,7 @@ test("project memory keeps persisted state when edit toggle or delete storage fa
   });
   await page.getByTestId("project-memory-use-toggle").click();
   await expect(page.getByTestId("project-memory-storage-error")).toContainText("ذخیره نشد");
-  await expect(page.getByTestId("project-memory-detail-sheet")).toContainText("برای زمینه فعال است");
+  await expect(page.getByTestId("project-memory-use-toggle")).toContainText("روشن");
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBe(persistedMemory);
 
   await openSavedProjectMemory(page);
@@ -1909,7 +2130,7 @@ test("project memory keeps persisted state when edit toggle or delete storage fa
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBe(persistedMemory);
 });
 
-test("builder searches only local project memory and file metadata with transparent provenance", async ({ page }) => {
+test("builder searches only local project memory and file metadata without technical card clutter", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.evaluate(() => {
@@ -1986,11 +2207,10 @@ test("builder searches only local project memory and file metadata with transpar
   const memoryResult = page.getByTestId("project-source-result-memory");
   await expect(memoryResult).toHaveCount(1);
   await expect(memoryResult).toContainText("تصمیم پروژه ۱۲");
-  await expect(memoryResult).toContainText("ثبت مستقیم شما");
-  await expect(memoryResult).toContainText("خصوصی در برج نیلوفر");
-  await expect(memoryResult).toContainText("نسخهٔ ۱");
-  await expect(memoryResult).toContainText("برای زمینه غیرفعال");
-  await expect(memoryResult).toHaveAccessibleName(/ثبت مستقیم شما.*خصوصی در برج نیلوفر/);
+  await expect(memoryResult).not.toContainText("ثبت مستقیم شما");
+  await expect(memoryResult).not.toContainText("خصوصی در برج نیلوفر");
+  await expect(memoryResult).not.toContainText("نسخهٔ ۱");
+  await expect(memoryResult).not.toContainText("برای زمینه غیرفعال");
   await memoryResult.click();
   await expect(page.getByTestId("project-memory-view")).toBeVisible();
   await expect(page.getByTestId("project-memory-detail-sheet")).toContainText("تصمیم پروژه ۱۲");
@@ -2009,10 +2229,9 @@ test("builder searches only local project memory and file metadata with transpar
   const fileResult = page.getByTestId("project-source-result-file");
   await expect(fileResult).toHaveCount(1);
   await expect(fileResult).toContainText("نقشه سازه طبقه همکف");
-  await expect(fileResult).toContainText("انتخاب مستقیم از دستگاه");
-  await expect(fileResult).toContainText("خصوصی در برج نیلوفر");
-  await expect(fileResult).toContainText("محتوای فایل جست‌وجو نشده");
-  await expect(fileResult).toHaveAccessibleName(/انتخاب مستقیم از دستگاه.*محتوای فایل جست‌وجو نشده/);
+  await expect(fileResult).not.toContainText("انتخاب مستقیم از دستگاه");
+  await expect(fileResult).not.toContainText("خصوصی در برج نیلوفر");
+  await expect(fileResult).not.toContainText("محتوای فایل جست‌وجو نشده");
   await fileResult.click();
   await expect(page.getByTestId("project-files-view")).toBeVisible();
   await expect(page.getByTestId("project-file-detail-sheet")).toContainText("نقشه سازه طبقه همکف");
@@ -2026,6 +2245,9 @@ test("builder searches only local project memory and file metadata with transpar
   await searchInput.fill("۱۲رده");
   await expect(page.getByTestId("project-source-result")).toHaveCount(0);
   await expect(page.getByTestId("project-source-search-no-results")).toBeVisible();
+
+  await searchInput.fill("ثبت مستقیم شما");
+  await expect(page.getByTestId("project-source-result")).toHaveCount(0);
 
   await searchInput.fill("عنوانمرزی");
   await expect(page.getByTestId("project-source-result-memory")).toHaveCount(1);
@@ -2326,7 +2548,8 @@ test("project context, dark-only settings, keyboard attachment, and local send a
   await expect(page.getByTestId("settings-usage-section")).toContainText("مصرف و داده‌های محلی");
   await expect(page.getByTestId("settings-usage-section")).toContainText("۱ پروژه");
   await expect(page.getByTestId("settings-local-record-count")).toContainText("۰ رکورد");
-  await expect(page.getByTestId("settings-privacy-section")).toContainText("فقط همین مرورگر");
+  await expect(page.getByTestId("settings-privacy-section")).toContainText("خصوصی و پروژه‌محور");
+  await expect(page.getByTestId("settings-privacy-section")).not.toContainText("مرورگر");
   await expect(page.getByTestId("settings-brief-section")).toContainText("تنظیم نشده");
   await expect(page.getByTestId("settings-model-section")).toContainText("خودکار");
   await expect(page.getByTestId("settings-version-section")).toContainText("۰.۱.۰");
@@ -2436,7 +2659,7 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await expect(page.getByTestId("project-task-filter-monitor")).toContainText("پایش‌ها");
   expect(await page.locator(".project-task-filters").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   await expect(page.getByTestId("project-task-empty")).toContainText("هنوز کار در حال انجامی ثبت نشده");
-  await expect(taskCenter).toContainText("اجرا، اعلان و انتخاب تأمین‌کننده هنوز وصل نیست");
+  await expect(taskCenter).toContainText("کارهای جاری و تصمیم‌های منتظر شما");
   expect(await taskCenter.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 
@@ -2478,7 +2701,7 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await expect(taskCard).toContainText("در حال انجام");
   await expect(taskCard).toContainText("موعد اتمام");
   await expect(taskCard).toContainText("۱۴۰۵/۰۶/۱۵");
-  await expect(taskCard).toContainText("نسخهٔ ۱");
+  await expect(taskCard).not.toContainText("نسخهٔ ۱");
   const createdTask = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-tasks:v1") ?? "[]")[0]);
   expect(createdTask).toMatchObject({
     projectId: activeProjectId,
@@ -2497,11 +2720,10 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await taskCard.click();
   const taskDetail = page.getByTestId("project-task-detail-view");
   await expect(taskDetail).toBeVisible();
-  await expect(taskDetail).toContainText("ثبت مستقیم شما");
-  await expect(taskDetail).toContainText("خصوصی پروژه");
-  await expect(taskDetail).toContainText("ثبت محلی");
+  await expect(taskDetail).not.toContainText("خصوصی پروژه");
+  await expect(taskDetail).not.toContainText("ثبت محلی");
   await expect(taskDetail).toContainText("۱۴۰۵/۰۶/۱۵");
-  await expect(taskDetail).toContainText("نسخهٔ ۱");
+  await expect(taskDetail).not.toContainText("نسخهٔ ۱");
   await expect(page.getByTestId("project-task-history-event")).toHaveCount(1);
   await page.getByTestId("project-task-edit").click();
   await expect(page.getByTestId("project-task-editor-sheet")).toBeVisible();
@@ -2514,7 +2736,7 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await expect(taskDetail).toContainText("پیگیری نقشه سازه و معماری");
   await expect(taskDetail).toContainText("دریافت امضای مهندس محاسب");
   await expect(taskDetail).toContainText("۱۴۰۵/۰۶/۲۰");
-  await expect(taskDetail).toContainText("نسخهٔ ۲");
+  await expect(taskDetail).not.toContainText("نسخهٔ ۲");
   await expect(page.getByTestId("project-task-history-event")).toHaveCount(2);
   await expect(page.getByTestId("project-task-history-event").first()).toContainText("کار ویرایش شد");
   const editedTaskSnapshot = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"));
@@ -2522,12 +2744,12 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await page.getByTestId("project-task-save").click();
   await expect(page.getByTestId("project-task-editor-sheet")).toBeHidden();
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"))).toBe(editedTaskSnapshot);
-  await expect(taskDetail).toContainText("نسخهٔ ۲");
+  await expect(taskDetail).not.toContainText("نسخهٔ ۲");
   await expect(page.getByTestId("project-task-history-event")).toHaveCount(2);
   await page.getByTestId("project-task-status-toggle").click();
   await expect(taskDetail).toContainText("تمام‌شده");
   await expect(taskDetail).toContainText("آخرین گام ثبت‌شده");
-  await expect(taskDetail).toContainText("نسخهٔ ۳");
+  await expect(taskDetail).not.toContainText("نسخهٔ ۳");
   await expect(page.getByTestId("project-task-history-event")).toHaveCount(3);
   const completedTask = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-tasks:v1") ?? "[]")[0]);
   expect(completedTask.status).toBe("completed");
@@ -2554,7 +2776,7 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await page.getByTestId("project-task-card").click();
   await page.getByTestId("project-task-status-toggle").click();
   await expect(page.getByTestId("project-task-detail-view")).toContainText("در حال انجام");
-  await expect(page.getByTestId("project-task-detail-view")).toContainText("نسخهٔ ۴");
+  await expect(page.getByTestId("project-task-detail-view")).not.toContainText("نسخهٔ ۴");
   await expect(page.getByTestId("project-task-history-event")).toHaveCount(4);
 });
 
@@ -2764,8 +2986,7 @@ test("task status stays unchanged when its new version cannot persist", async ({
   await page.getByTestId("project-task-status-toggle").click();
   const detail = page.getByTestId("project-task-detail-view");
   await expect(page.getByTestId("project-task-storage-error")).toContainText("تغییر وضعیت ذخیره نشد");
-  await expect(detail).toContainText("در حال انجام · نسخهٔ ۱");
-  await expect(detail).not.toContainText("تمام‌شده · نسخهٔ ۲");
+  await expect(detail.locator(".project-task-detail-heading small")).toHaveText("در حال انجام");
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"))).toBe(persistedTask);
 });
 
@@ -2806,8 +3027,8 @@ test("purchase request opens simple, preserves advanced values, and keeps detail
   await page.getByTestId("purchase-request-detail-mode-advanced").click();
   await expect(page.getByTestId("purchase-request-product-items")).toContainText("A3");
   await expect(page.getByTestId("purchase-request-terms")).toContainText("تحویل در کارگاه");
-  await expect(page.getByTestId("purchase-request-clarifications")).toBeVisible();
-  await expect(page.getByTestId("purchase-request-history")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-clarifications")).toHaveCount(0);
+  await expect(page.getByTestId("purchase-request-history")).toHaveCount(0);
 });
 
 test("simple service request shows only essential fields and saves the rest as explicit unknowns", async ({ page }) => {
@@ -2853,15 +3074,15 @@ test("builder creates, completes, and readies a private local purchase request w
   await page.getByRole("button", { name: "درخواست قیمت" }).click();
   const requestsView = page.getByTestId("project-purchase-requests-view");
   await expect(requestsView).toBeVisible();
-  await expect(requestsView).toContainText("درخواست‌های خرید برج نیلوفر");
-  await expect(requestsView).toContainText("تأیید داخلی هر نسخه ممکن است");
-  await expect(requestsView).toContainText("مجوز ارسال و ارسال بیرونی هنوز وصل نیست");
+  await expect(requestsView).toContainText("درخواست‌های خرید");
+  await expect(requestsView).toContainText("نیازت را سریع ثبت و برای تأمین‌کننده‌ها آماده کن");
+  await expect(requestsView).not.toContainText("تأیید داخلی هر نسخه ممکن است");
   const editor = page.getByTestId("purchase-request-editor-sheet");
   await expect(editor).toBeVisible();
   await expect(page.getByTestId("purchase-request-raw-input")).toHaveCSS("font-size", "16px");
   expect(await editor.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   await page.getByTestId("purchase-request-save").click();
-  await expect(page.getByTestId("purchase-request-raw-error")).toContainText("نیازت را بنویس");
+  await expect(page.getByTestId("purchase-request-raw-error")).toContainText("نام قلم را وارد کن");
 
   await page.getByTestId("purchase-request-raw-input").fill("۲۰٫۵ تن سیمان تیپ ۲ برای هفتهٔ آینده لازم داریم");
   await page.getByTestId("purchase-request-save").click();
@@ -2870,9 +3091,7 @@ test("builder creates, completes, and readies a private local purchase request w
   await expect(detail).toBeVisible();
   await expect(page.getByTestId("purchase-request-detail-heading")).toBeFocused();
   expect(await detail.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
-  await expect(detail).toContainText("پیش‌نویس · نسخهٔ ۱");
-  await expect(detail).toContainText("ارسال نشده");
-  await expect(page.getByTestId("purchase-request-missing-fields")).toContainText("نام قلم");
+  await expect(detail).toContainText("در حال تکمیل");
   await expect(page.getByTestId("purchase-request-missing-fields")).toContainText("مقدار");
   await expect(page.getByTestId("purchase-request-missing-fields")).toContainText("واحد");
   await expect(page.getByTestId("purchase-request-ready")).toBeDisabled();
@@ -2906,18 +3125,16 @@ test("builder creates, completes, and readies a private local purchase request w
   await chooseProjectOption(page, "purchase-request-alternatives-select", "فقط با تأیید من");
   await page.getByTestId("purchase-request-save").click();
 
-  await expect(detail).toContainText("پیش‌نویس · نسخهٔ ۲");
+  await expect(detail).toContainText("در حال تکمیل");
   await expect(page.getByTestId("purchase-request-detail-heading")).toBeFocused();
   await expect(page.getByTestId("purchase-request-missing-fields")).toHaveCount(0);
   await expect(page.getByTestId("purchase-request-ready")).toBeEnabled();
-  await page.getByTestId("purchase-request-ready").click();
-  await expect(detail).toContainText("آمادهٔ بازبینی · نسخهٔ ۳");
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
+  await expect(detail).toContainText("آمادهٔ ادامه");
   await expect(page.getByTestId("purchase-request-detail-heading")).toBeFocused();
-  await expect(detail).toContainText("این وضعیت تأیید یا مجوز ارسال نیست");
   await expect(page.getByTestId("purchase-request-edit")).toHaveCount(0);
   await expect(page.getByTestId("purchase-request-return-draft")).toBeVisible();
-  await page.getByTestId("purchase-request-detail-mode-advanced").click();
-  await expect(page.getByTestId("purchase-request-history-event")).toHaveCount(3);
 
   storedRequests = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]"));
   expect(storedRequests[0]).toMatchObject({
@@ -2950,7 +3167,7 @@ test("builder creates, completes, and readies a private local purchase request w
   await page.getByTestId("open-project-space").click();
   await expect(page.getByTestId("project-purchase-requests-entry")).toContainText("۱ درخواست ثبت‌شده");
   await page.getByTestId("project-purchase-requests-entry").click();
-  await expect(page.getByTestId("purchase-request-card")).toContainText("آمادهٔ بازبینی");
+  await expect(page.getByTestId("purchase-request-card")).toContainText("آمادهٔ ادامه");
   expect(await requestsView.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
   await page.getByTestId("purchase-requests-back").click();
@@ -2982,7 +3199,7 @@ test("purchase requests never cross the active project boundary", async ({ page 
   await page.getByTestId("project-space-back").click();
   await page.getByRole("button", { name: "درخواست قیمت" }).click();
   await page.keyboard.press("Escape");
-  await expect(page.getByTestId("purchase-request-empty")).toContainText("هنوز درخواست خریدی ثبت نشده");
+  await expect(page.getByTestId("purchase-request-empty")).toContainText("هنوز درخواستی ثبت نشده");
   await expect(page.getByText("درخواست فقط پروژه الف")).toHaveCount(0);
 });
 
@@ -3071,8 +3288,9 @@ test("purchase request return-to-draft is versioned and never advances after a f
   await page.getByTestId("purchase-request-quantity-input").fill("۵");
   await chooseProjectOption(page, "purchase-request-unit-select", "تن");
   await page.getByTestId("purchase-request-save").click();
-  await page.getByTestId("purchase-request-ready").click();
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("آمادهٔ بازبینی · نسخهٔ ۲");
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("آمادهٔ ادامه");
 
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
@@ -3086,17 +3304,16 @@ test("purchase request return-to-draft is versioned and never advances after a f
   });
   await page.getByTestId("purchase-request-return-draft").click();
   await expect(page.getByTestId("purchase-request-storage-error")).toContainText("بازگشت به ویرایش ذخیره نشد");
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("آمادهٔ بازبینی · نسخهٔ ۲");
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("آمادهٔ ادامه");
 
   await page.evaluate(() => {
     Storage.prototype.setItem = (window as Window & { __purchaseRequestNativeSetItem: typeof Storage.prototype.setItem }).__purchaseRequestNativeSetItem;
     delete (window as Window & { __purchaseRequestNativeSetItem?: typeof Storage.prototype.setItem }).__purchaseRequestNativeSetItem;
   });
   await page.getByTestId("purchase-request-return-draft").click();
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("پیش‌نویس · نسخهٔ ۳");
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("در حال تکمیل");
   await expect(page.getByTestId("purchase-request-detail-heading")).toBeFocused();
-  await page.getByTestId("purchase-request-detail-mode-advanced").click();
-  await expect(page.getByTestId("purchase-request-history-event")).toHaveCount(3);
+  await expect(page.getByTestId("purchase-request-history-event")).toHaveCount(0);
   await expect(page.getByTestId("purchase-request-edit")).toBeVisible();
   const storedRequest = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]")[0]);
   expect(storedRequest.status).toBe("draft");
@@ -3181,7 +3398,7 @@ test("builder approves an exact purchase request version internally without auth
   page.on("pageerror", (error) => consoleFailures.push(`pageerror: ${error.message}`));
 
   await createReadyPurchaseRequestForApproval(page);
-  await expect(page.getByTestId("purchase-request-approval-status")).toContainText("هنوز در صف تأیید ثبت نشده");
+  await expect(page.getByTestId("purchase-request-approval-status")).toContainText("منتظر تأیید");
   const requestStoreBefore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"));
   const taskStoreBefore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"));
   page.on("request", (request) => {
@@ -3193,13 +3410,12 @@ test("builder approves an exact purchase request version internally without auth
   const approvalDetail = page.getByTestId("project-approval-detail-view");
   await expect(approvalDetail).toBeVisible();
   await expect(page.getByTestId("project-approval-detail-heading")).toBeFocused();
-  await expect(approvalDetail).toContainText("منتظر تأیید · نسخهٔ درخواست ۲");
+  await expect(approvalDetail).toContainText("منتظر تصمیم شما");
   await expect(approvalDetail).toContainText("۵ تن");
   await expect(approvalDetail).toContainText("حمل");
   await expect(approvalDetail).toContainText("نامشخص");
-  await expect(approvalDetail).toContainText("هیچ مقصد بیرونی انتخاب نشده");
-  await expect(approvalDetail).toContainText("مجوز ارسال نیست");
-  await expect(page.getByTestId("project-approval-approve")).toHaveAccessibleDescription(/مجوز ارسال نیست/);
+  await expect(approvalDetail).not.toContainText("هیچ مقصد بیرونی انتخاب نشده");
+  await expect(page.getByTestId("project-approval-approve")).toHaveAccessibleDescription(/اطلاعات را بررسی کن/);
   expect(await approvalDetail.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
 
   let storedApprovals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]"));
@@ -3239,13 +3455,13 @@ test("builder approves an exact purchase request version internally without auth
   await expect(page.getByTestId("project-task-filter-approval")).toContainText("۱");
   const approvalCard = page.getByTestId("project-approval-card");
   await expect(approvalCard).toContainText("میلگرد آجدار");
-  await expect(approvalCard).toContainText("نسخهٔ درخواست ۲");
-  await expect(approvalCard).toHaveAccessibleName(/ارسال نشده/);
+  await expect(approvalCard).not.toContainText("نسخهٔ درخواست ۲");
+  await expect(approvalCard).toHaveAccessibleName(/منتظر تأیید/);
   await expect(approvalCard).toBeFocused();
   await approvalCard.click();
 
   await page.getByTestId("project-approval-approve").click();
-  await expect(approvalDetail).toContainText("نسخهٔ درخواست تأیید شد");
+  await expect(approvalDetail).toContainText("درخواست تأیید شد");
   await expect(page.getByTestId("project-approval-detail-heading")).toBeFocused();
   await expect(page.getByTestId("project-approval-approve")).toHaveCount(0);
   storedApprovals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]"));
@@ -3265,19 +3481,15 @@ test("builder approves an exact purchase request version internally without auth
   await page.getByTestId("menu-button").click();
   await page.getByTestId("drawer-tasks-entry").click();
   await page.getByTestId("project-task-filter-completed").click();
-  await expect(page.getByTestId("project-approval-card")).toContainText("نسخهٔ درخواست تأیید شد");
-  await expect(page.getByTestId("project-approval-card")).toHaveAccessibleName(/فقط تأیید داخلی و ارسال نشده/);
+  await expect(page.getByTestId("project-approval-card")).toContainText("درخواست تأیید شد");
+  await expect(page.getByTestId("project-approval-card")).toHaveAccessibleName(/تأیید/);
   await page.getByTestId("project-tasks-back").click();
   await page.getByTestId("quick-action-purchase-request").click();
   await page.keyboard.press("Escape");
   await page.getByTestId("purchase-request-card").click();
-  await expect(page.getByTestId("purchase-request-approval-status")).toContainText("نسخهٔ ۲ تأیید شده");
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("ارسال نشده");
-  await page.getByTestId("purchase-request-request-approval").click();
-  await expect(page.getByTestId("project-approval-detail-view")).toContainText("نسخهٔ درخواست تأیید شد");
-  await page.getByTestId("project-approval-detail-back").click();
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toBeVisible();
-  await expect(page.getByTestId("purchase-request-request-approval")).toBeFocused();
+  await expect(page.getByTestId("purchase-request-approval-status")).toContainText("اطلاعات درخواست تأیید شده");
+  await expect(page.getByTestId("purchase-request-open-dispatch")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-request-approval")).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
   expect(consoleFailures).toEqual([]);
 });
@@ -3295,7 +3507,7 @@ test("a requested change preserves the reviewed snapshot and requires a fresh ap
   await page.keyboard.press("Escape");
   await page.getByTestId("purchase-request-card").click();
   await expect(page.getByTestId("purchase-request-return-draft")).toBeDisabled();
-  await expect(page.getByTestId("purchase-request-request-approval")).toContainText("مشاهدهٔ تأیید نسخهٔ ۲");
+  await expect(page.getByTestId("purchase-request-request-approval")).toContainText("مشاهده در کارها");
   await page.getByTestId("purchase-request-request-approval").click();
   expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]"))).toHaveLength(1);
 
@@ -3315,17 +3527,18 @@ test("a requested change preserves the reviewed snapshot and requires a fresh ap
   await expect(page.getByTestId("purchase-request-approval-status")).toContainText("نیاز به اصلاح");
   await expect(page.getByTestId("purchase-request-return-draft")).toBeEnabled();
   await page.getByTestId("purchase-request-return-draft").click();
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("پیش‌نویس · نسخهٔ ۳");
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("در حال تکمیل");
 
   await page.getByTestId("purchase-request-edit").click();
   await page.getByTestId("purchase-request-item-input").fill("میلگرد آجدار اصلاح‌شده");
   await page.getByTestId("purchase-request-save").click();
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("پیش‌نویس · نسخهٔ ۴");
-  await page.getByTestId("purchase-request-ready").click();
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("آمادهٔ بازبینی · نسخهٔ ۵");
-  await expect(page.getByTestId("purchase-request-approval-status")).toContainText("هنوز در صف تأیید ثبت نشده");
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("در حال تکمیل");
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("آمادهٔ ادامه");
+  await expect(page.getByTestId("purchase-request-approval-status")).toContainText("منتظر تأیید");
   await page.getByTestId("purchase-request-request-approval").click();
-  await expect(page.getByTestId("project-approval-detail-view")).toContainText("منتظر تأیید · نسخهٔ درخواست ۵");
+  await expect(page.getByTestId("project-approval-detail-view")).toContainText("منتظر تصمیم شما");
 
   const approvals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]"));
   expect(approvals).toHaveLength(2);
@@ -3366,7 +3579,7 @@ test("approval creation and decision writes fail closed without advancing local 
   });
   await page.getByTestId("project-approval-approve").click();
   await expect(page.getByTestId("project-approval-storage-error")).toContainText("تصمیم ذخیره نشد");
-  await expect(page.getByTestId("project-approval-status")).toContainText("منتظر تصمیم صریح شما");
+  await expect(page.getByTestId("project-approval-status")).toContainText("منتظر تصمیم شما");
   await expect(page.getByTestId("project-approval-approve")).toBeVisible();
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1"))).toBe(pendingStore);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"))).toBe(requestStoreBefore);
@@ -3406,8 +3619,9 @@ test("approval read failure stays separate from healthy tasks and locks only dep
   await page.getByTestId("purchase-request-quantity-input").fill("۵");
   await chooseProjectOption(page, "purchase-request-unit-select", "تن");
   await page.getByTestId("purchase-request-save").click();
-  await page.getByTestId("purchase-request-ready").click();
-  await expect(page.getByTestId("purchase-request-approval-status")).toContainText("تأییدهای محلی کامل خوانده نشد");
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
+  await expect(page.getByTestId("purchase-request-approval-status")).toContainText("وضعیت تأیید کامل خوانده نشد");
   await expect(page.getByTestId("purchase-request-request-approval")).toBeDisabled();
   await expect(page.getByTestId("purchase-request-return-draft")).toBeDisabled();
   expect(await page.evaluate(() => (window as Window & { __approvalWriteAttempts: number }).__approvalWriteAttempts)).toBe(0);
@@ -3460,8 +3674,8 @@ test("a decided approval remains visible when only completed tasks are unreadabl
   await page.getByTestId("project-task-filter-completed").click();
   await expect(page.getByTestId("project-task-read-error")).toContainText("کارهای محلی کامل خوانده نشد");
   await expect(page.getByTestId("project-task-filter-completed")).toContainText("!");
-  await expect(page.getByTestId("project-approval-card")).toContainText("نسخهٔ درخواست تأیید شد");
-  await expect(page.getByTestId("project-approval-card")).toHaveAccessibleName(/ارسال نشده/);
+  await expect(page.getByTestId("project-approval-card")).toContainText("اطلاعات درخواست تأیید شد");
+  await expect(page.getByTestId("project-approval-card")).toHaveAccessibleName(/تأیید/);
 });
 
 test("approval parser rejects a snapshot that no longer matches its exact pending target", async ({ page }) => {
@@ -3760,7 +3974,8 @@ test("T6-B2 rejects a tampered historical approval revision after a fresh approv
   await page.getByTestId("purchase-request-edit").click();
   await page.getByTestId("purchase-request-quantity-input").fill("۶");
   await page.getByTestId("purchase-request-save").click();
-  await page.getByTestId("purchase-request-ready").click();
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
   await page.getByTestId("purchase-request-request-approval").click();
 
   const approvalsBeforeTamper = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]"));
@@ -3797,7 +4012,8 @@ test("T6-B2 versions removal of a saved item and rejects coordinated duplicate i
   await page.getByTestId("purchase-request-quantity-input-1").fill("۱۲۰۰");
   await chooseProjectOption(page, "purchase-request-unit-select-1", "عدد");
   await page.getByTestId("purchase-request-save").click();
-  await page.getByTestId("purchase-request-ready").click();
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
   await page.getByTestId("purchase-request-request-approval").click();
   await page.getByTestId("project-approval-needs-changes").click();
   await page.getByTestId("project-approval-detail-back").click();
@@ -3810,7 +4026,8 @@ test("T6-B2 versions removal of a saved item and rejects coordinated duplicate i
   await page.getByRole("button", { name: "حذف قلم 2" }).click();
   await page.getByTestId("purchase-request-save").click();
   await expect(page.getByTestId("purchase-request-product-item")).toHaveCount(1);
-  await page.getByTestId("purchase-request-ready").click();
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
 
   const beforeTamper = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]")[0]);
   expect(beforeTamper.items).toHaveLength(1);
@@ -4065,8 +4282,8 @@ test("T6-C builds an exact local product dispatch draft for direct builder conta
   page.on("pageerror", (error) => runtimeFailures.push(`pageerror: ${error.message}`));
   await openApprovedPurchaseRequestDispatch(page);
 
-  await expect(page.getByTestId("dispatch-preview-banner")).toContainText("پیش‌نمایش محلی");
-  await expect(page.getByTestId("dispatch-preview-banner")).toContainText("هیچ دعوت یا درخواستی ارسال نشده");
+  await expect(page.getByTestId("dispatch-preview-banner")).toContainText("تا تأیید نهایی در «کارها» چیزی ارسال نمی‌شود");
+  await expect(page.getByTestId("dispatch-human-share-summary")).toContainText("میلگرد آجدار");
   await expect(page.getByTestId("dispatch-payload-preview")).toContainText("items.0.name");
   await expect(page.getByTestId("dispatch-payload-preview")).toContainText("میلگرد آجدار");
   await expect(page.getByTestId("dispatch-privacy-preview")).toContainText("نام پروژه، بودجه، فایل‌ها، حافظه");
@@ -4079,7 +4296,7 @@ test("T6-C builds an exact local product dispatch draft for direct builder conta
   page.on("request", requestListener);
   await addLocalSupplierContact(page, { name: "فروشگاه فولاد غرب", category: "میلگرد و فولاد", coverage: "غرب و شمال‌غرب تهران", capability: "product" });
   await addLocalSupplierContact(page, { name: "گروه اجرای عایق", category: "خدمات عایق‌کاری", coverage: "تمام تهران", capability: "service" });
-  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۱ گیرنده انتخاب شده");
+  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۱ تأمین‌کننده انتخاب شده");
   const incompatibleContact = page.getByTestId("supplier-contact-card").filter({ hasText: "گروه اجرای عایق" });
   await expect(incompatibleContact.getByTestId("supplier-contact-select")).toBeDisabled();
   await expect(incompatibleContact).toContainText("قابل انتخاب نیست");
@@ -4134,7 +4351,6 @@ test("T6-C builds an exact local product dispatch draft for direct builder conta
 test("T6-C stays locked for pending or stale approvals and unlocks only the exact approved current revision", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await createReadyPurchaseRequestForApproval(page);
-  await expect(page.getByTestId("purchase-request-dispatch-locked")).toContainText("فقط بعد از تأیید صریح همین نسخه");
   await expect(page.getByTestId("purchase-request-open-dispatch")).toHaveCount(0);
 
   await page.getByTestId("purchase-request-request-approval").click();
@@ -4143,14 +4359,14 @@ test("T6-C stays locked for pending or stale approvals and unlocks only the exac
   await page.getByTestId("quick-action-purchase-request").click();
   await page.keyboard.press("Escape");
   await page.getByTestId("purchase-request-card").click();
-  await expect(page.getByTestId("purchase-request-dispatch-locked")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-open-dispatch")).toHaveCount(0);
   await page.getByTestId("purchase-request-request-approval").click();
   await page.getByTestId("project-approval-approve").click();
   await page.getByTestId("project-approval-detail-back").click();
   await expect(page.getByTestId("purchase-request-open-dispatch")).toBeVisible();
 
   await page.getByTestId("purchase-request-return-draft").click();
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("پیش‌نویس · نسخهٔ ۳");
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("در حال تکمیل");
   await expect(page.getByTestId("purchase-request-open-dispatch")).toHaveCount(0);
   await expect(page.getByTestId("project-dispatch-planner-view")).toHaveCount(0);
 });
@@ -4160,7 +4376,7 @@ test("T6-C versions recipient changes, keeps archived history, and treats an unc
   await openApprovedPurchaseRequestDispatch(page);
   await addLocalSupplierContact(page, { name: "فولاد یک", category: "میلگرد", coverage: "منطقه ۲", capability: "product" });
   await addLocalSupplierContact(page, { name: "فولاد دو", category: "میلگرد", coverage: "منطقه ۵", capability: "product" });
-  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۲ گیرنده انتخاب شده");
+  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۲ تأمین‌کننده انتخاب شده");
   await page.getByTestId("dispatch-draft-save").click();
   await expect(page.getByTestId("invite-draft-card")).toHaveCount(2);
   const firstStoredDraft = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]")[0]);
@@ -4173,9 +4389,10 @@ test("T6-C versions recipient changes, keeps archived history, and treats an unc
   expect(noOpStoredDraft).toEqual(firstStoredDraft);
 
   const firstContactCard = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد یک" });
+  await firstContactCard.locator("summary").click();
   await firstContactCard.getByTestId("supplier-contact-status").click();
-  await expect(firstContactCard).toContainText("این رکورد آرشیو است");
-  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۱ گیرنده انتخاب شده");
+  await expect(firstContactCard).toContainText("قابل انتخاب نیست");
+  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۱ تأمین‌کننده انتخاب شده");
   await expect(page.getByTestId("dispatch-draft-preview")).toContainText("اکنون آرشیو");
   await expect(page.getByTestId("invite-draft-card")).toHaveCount(2);
   await page.getByTestId("dispatch-draft-save").click();
@@ -4225,16 +4442,10 @@ test("T6-C keeps contacts and dispatch drafts isolated when the builder changes 
   await chooseProjectOption(page, "purchase-request-unit-select", "عدد");
   await page.getByTestId("purchase-request-save").click();
   await page.getByTestId("purchase-request-ready").click();
-  await page.getByTestId("purchase-request-request-approval").click();
-  await page.getByTestId("project-approval-approve").click();
-  await page.getByTestId("project-approval-detail-back").click();
-  await page.getByTestId("project-tasks-back").click();
-  await page.getByTestId("quick-action-purchase-request").click();
-  await page.keyboard.press("Escape");
-  await page.getByTestId("purchase-request-card").click();
-  await page.getByTestId("purchase-request-open-dispatch").click();
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await page.getByTestId("dispatch-technical-details").locator("summary").click();
 
-  await expect(page.getByTestId("supplier-contact-empty")).toContainText("هنوز گیرنده‌ای ثبت نشده");
+  await expect(page.getByTestId("supplier-contact-empty")).toContainText("هنوز تأمین‌کننده‌ای ثبت نشده");
   await expect(page.getByTestId("supplier-contact-card")).toHaveCount(0);
   await expect(page.getByTestId("dispatch-draft-empty")).toBeVisible();
   await expect(page.getByTestId("dispatch-draft-preview")).toHaveCount(0);
@@ -4262,14 +4473,8 @@ test("T6-C exposes the service location for manual review without claiming seman
   await page.getByTestId("purchase-request-service-size-input").fill("۸۵۰ مترمربع");
   await page.getByTestId("purchase-request-save").click();
   await page.getByTestId("purchase-request-ready").click();
-  await page.getByTestId("purchase-request-request-approval").click();
-  await page.getByTestId("project-approval-approve").click();
-  await page.getByTestId("project-approval-detail-back").click();
-  await page.getByTestId("project-tasks-back").click();
-  await page.getByTestId("quick-action-purchase-request").click();
-  await page.keyboard.press("Escape");
-  await page.getByTestId("purchase-request-card").click();
-  await page.getByTestId("purchase-request-open-dispatch").click();
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await page.getByTestId("dispatch-technical-details").locator("summary").click();
 
   await expect(page.getByTestId("dispatch-payload-preview")).toContainText("service.location");
   await expect(page.getByTestId("dispatch-payload-preview")).toContainText("نشانی آزاد نیازمند بازبینی");
@@ -4477,12 +4682,40 @@ for (const readFailure of [
       await expect(page.getByTestId("supplier-contact-read-error")).toHaveCount(0);
       await expect(page.getByTestId("supplier-contact-add")).toBeEnabled();
       await addLocalSupplierContact(page, { name: "گیرنده مستقل از Draft", category: "میلگرد", coverage: "تهران", capability: "product" });
-      await expect(page.getByTestId("dispatch-selected-count")).toContainText("۱ گیرنده انتخاب شده");
+      await expect(page.getByTestId("dispatch-selected-count")).toContainText("۱ تأمین‌کننده انتخاب شده");
       await expect(page.getByTestId("dispatch-draft-save")).toBeDisabled();
     }
     expect(await page.evaluate(() => (window as Window & { __t6cReadFailureWriteAttempts: number }).__t6cReadFailureWriteAttempts)).toBe(0);
   });
 }
+
+test("fast purchase flow sends the final decision to Tasks without attempting a network send", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const networkRequests: string[] = [];
+  await openApprovedPurchaseRequestDispatch(page);
+  page.on("request", (request) => {
+    const protocol = new URL(request.url()).protocol;
+    if (protocol === "http:" || protocol === "https:") networkRequests.push(request.url());
+  });
+  await addLocalSupplierContact(page, { name: "فولاد سریع", category: "میلگرد", coverage: "غرب تهران", capability: "product" });
+  await expect(page.getByTestId("dispatch-human-share-summary")).toContainText("فولاد سریع");
+  await page.getByTestId("dispatch-submit-to-tasks").click();
+
+  await expect(page.getByTestId("project-dispatch-plan-approval-detail-view")).toBeVisible();
+  await expect(page.getByTestId("project-dispatch-plan-approval-heading")).toContainText("میلگرد آجدار");
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("منتظر تأیید نهایی");
+  await expect(page.getByTestId("project-dispatch-plan-approval-technical")).not.toHaveAttribute("open", "");
+
+  const pending = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0]);
+  expect(pending).toMatchObject({ status: "pending", simulationOnly: true, externalEffect: "none", sendAuthorized: false, externalActionAttempted: false });
+  await page.getByTestId("dispatch-plan-approval-approve").click();
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("تأیید نهایی ثبت شد");
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در این نمونه چیزی ارسال نشد");
+  const approved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0]);
+  expect(approved).toMatchObject({ status: "approved", simulationOnly: true, externalEffect: "none", sendAuthorized: false, externalActionAttempted: false });
+  expect(networkRequests).toEqual([]);
+  expect(await page.getByTestId("project-dispatch-plan-approval-detail-view").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+});
 
 test("T6-D independently approves the exact current dispatch plan without authorizing or attempting a send", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -4591,8 +4824,9 @@ test("T6-D invalidates and preserves an approved historical plan when recipients
   await page.getByTestId("dispatch-plan-approval-back").click();
 
   const removedContact = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد نسخه یک" });
+  await removedContact.locator("summary").click();
   await removedContact.getByTestId("supplier-contact-status").click();
-  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۱ گیرنده انتخاب شده");
+  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۱ تأمین‌کننده انتخاب شده");
   await page.getByTestId("dispatch-draft-save").click();
   await expect(page.getByTestId("dispatch-draft-preview")).toContainText("نسخهٔ ۲");
   await expect(page.getByTestId("dispatch-plan-approval-invalidated")).toBeVisible();
@@ -4807,7 +5041,7 @@ test("T7-A records a two-item product proposal with exact lineage, separated pro
   await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
   await expect(page.getByTestId("proposal-effective-status")).toHaveText("جاری");
   await openProposalDetailReference(page);
-  await expect(page.getByTestId("proposal-reference")).toContainText("فقط شناسنامهٔ محلی");
+  await expect(page.getByTestId("proposal-reference")).toContainText("نام و مشخصات این فایل");
   await openProposalDetailConditions(page);
   await expect(page.getByTestId("proposal-line-card")).toHaveCount(2);
   await expect(page.getByTestId("proposal-line-card").nth(1)).toContainText("نامشخص");
@@ -4959,7 +5193,9 @@ test("T7-A treats unchanged edits as a no-op, versions real edits, and keeps an 
   await page.keyboard.press("Escape");
   await page.getByTestId("purchase-request-card").click();
   await page.getByTestId("purchase-request-open-dispatch").click();
-  await page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد تاریخچه پیشنهاد" }).getByTestId("supplier-contact-status").click();
+  const historicalProposalContact = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد تاریخچه پیشنهاد" });
+  await historicalProposalContact.locator("summary").click();
+  await historicalProposalContact.getByTestId("supplier-contact-status").click();
   await returnFromDispatchToHome(page);
   await page.reload();
   await reachBuilderWelcome(page);
@@ -4987,7 +5223,9 @@ test("T7-A rejects a coordinated proposal claimed to be created after its suppli
   await page.keyboard.press("Escape");
   await page.getByTestId("purchase-request-card").click();
   await page.getByTestId("purchase-request-open-dispatch").click();
-  await page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد ترتیب تماس" }).getByTestId("supplier-contact-status").click();
+  const orderedProposalContact = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد ترتیب تماس" });
+  await orderedProposalContact.locator("summary").click();
+  await orderedProposalContact.getByTestId("supplier-contact-status").click();
 
   const records = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
   const contacts = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]"));
@@ -7768,7 +8006,9 @@ test("T8-A5a keeps a historical product diff read-only with focus, accessible la
   await page.keyboard.press("Escape");
   await page.getByTestId("purchase-request-card").click();
   await page.getByTestId("purchase-request-open-dispatch").click();
-  await page.getByTestId("supplier-contact-card").filter({ hasText: created.supplierName }).getByTestId("supplier-contact-status").click();
+  const historicalProductContact = page.getByTestId("supplier-contact-card").filter({ hasText: created.supplierName });
+  await historicalProductContact.locator("summary").click();
+  await historicalProductContact.getByTestId("supplier-contact-status").click();
   await returnFromDispatchToHome(page);
   await page.reload();
   await reachBuilderWelcome(page);
@@ -8101,7 +8341,9 @@ test("T8-A5b keeps a historical service diff read-only with focus, exact lineage
   await page.keyboard.press("Escape");
   await page.getByTestId("purchase-request-card").click();
   await page.getByTestId("purchase-request-open-dispatch").click();
-  await page.getByTestId("supplier-contact-card").filter({ hasText: created.supplierName }).getByTestId("supplier-contact-status").click();
+  const historicalServiceContact = page.getByTestId("supplier-contact-card").filter({ hasText: created.supplierName });
+  await historicalServiceContact.locator("summary").click();
+  await historicalServiceContact.getByTestId("supplier-contact-status").click();
   await returnFromDispatchToHome(page);
   await page.reload();
   await reachBuilderWelcome(page);
