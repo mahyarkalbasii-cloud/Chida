@@ -1444,7 +1444,7 @@
 ### رسید baseline برای ادامه
 
 - `HEAD`، `main`، `origin/main` و remote `main` پیش از این هنداف روی `8b557020768b22b81b8aadbd28c6a078e26c7ee5` هم‌تراز، ahead/behind صفر/صفر و working tree تمیز بودند؛ prototype tree `4297309252e2e6f9d80c184be7aad1e795c80279` است.
-- آخرین receipt تأییدشدهٔ Cloudflare deployment برابر `fc1cfa70-9f76-4891-ace4-4c28c3ccee73` و ChatGPT Sites نسخهٔ ۲۶/deployment برابر `appgdep_6a941e4a10208191a28ac33932d30200` است. این هنداف تازه هنوز commit، push یا deploy نشده و هیچ مجوزی برای آن‌ها از درخواست ساخت گفت‌وگوی جدید استنباط نمی‌شود.
+- receipt baseline پیش از PB-1 شامل Cloudflare deployment `fc1cfa70-9f76-4891-ace4-4c28c3ccee73` و ChatGPT Sites نسخهٔ ۲۶/deployment `appgdep_6a941e4a10208191a28ac33932d30200` بود. ماهیار بعداً بستهٔ اسناد، اجرای PB-1، اصلاح خرید/RTL و در نهایت انتشار همان snapshot را هرکدام با پیام صریح جداگانه مجاز کرد؛ receipt تازه در انتهای UX-R1 ثبت شده است.
 
 ### پیشنهاد برای تکمیل سند مادر
 
@@ -1452,10 +1452,10 @@
 - Memory، shared domain projection، Instruction/Workflow، Harness، ModelGateway، Domain/Application Service و چهار مفهوم Build در قراردادهای مستقل و بدون هم‌پوشانی تعریف شوند.
 - Builder completion به acceptance matrix قابل‌آزمون تبدیل و M1a/M1b به‌عنوان دو gate متوالی و محدود ثبت شوند.
 
-## PB-1 — Project Backbone محلی سازنده
+## PB-1 — Project Backbone منتشرشدهٔ سازنده
 
 - **تاریخ تصمیم و اجرا:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
-- **وضعیت:** بستهٔ چهار سند توسط ماهیار تأیید و برش اول با پیام اجرایی جداگانه مجاز شد. پیاده‌سازی فقط در checkout اصلی و به‌صورت local/uncommitted انجام شده و برای مشاهده و تأیید تجربهٔ ماهیار متوقف است؛ commit، push یا deploy انجام نشده است.
+- **وضعیت:** بستهٔ چهار سند توسط ماهیار تأیید و برش اول با پیام اجرایی جداگانه مجاز شد. پیاده‌سازی در checkout اصلی تکمیل و مشاهده شد؛ پس از اصلاح بازیابی درخواست خرید و RTL و پاس‌شدن gateها، ماهیار انتشار همین snapshot را صریحاً مجاز کرد. قابلیت‌ها با commit `6d71e42a89441b3499a4fe335e7bc5874feb6e36` و source release با commit `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` در GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۲۷ منتشر شدند. برش دوم همچنان مجوز جدا می‌خواهد.
 - **دامنه:** یک Milestone، یک Decision با دلیل اجباری و یک Task متصل در همان پروژه، همراه با ownership/scope، نسخه، revision، تاریخچه، optimistic concurrency، no-op، بازیابی نسخه و fail-close؛ بدون مدل، backend، شبکه، تأمین‌کننده یا اثر بیرونی.
 
 ### تجربهٔ ساخت و نتیجهٔ رابط
@@ -1497,7 +1497,7 @@
 ## UX-R1 — بازیابی امن مخزن ناخوانای درخواست خرید
 
 - **تاریخ مشاهده و اصلاح:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
-- **وضعیت:** ماهیار در اجرای واقعی لوکال مشاهده کرد که «درخواست جدید» قابل‌ثبت نیست و صریحاً اصلاح را خواست. علت، قفل درستِ fail-close پس از ناخوانا تشخیص‌دادن مخزن درخواست خرید بود، اما رابط هیچ مسیر امنی برای خروج از این وضعیت نداشت. اصلاح در snapshot جاری تکمیل و آزموده شد و مجوز صریح انتشار همان snapshot دریافت شده است؛ رسید نهایی Git/Cloudflare/Sites پس از موفقیت release ثبت می‌شود.
+- **وضعیت:** ماهیار در اجرای واقعی لوکال مشاهده کرد که «درخواست جدید» قابل‌ثبت نیست و صریحاً اصلاح را خواست. علت، قفل درستِ fail-close پس از ناخوانا تشخیص‌دادن مخزن درخواست خرید بود، اما رابط هیچ مسیر امنی برای خروج از این وضعیت نداشت. اصلاح همراه PB-1 و RTL تکمیل، آزموده و پس از مجوز صریح در GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۲۷ منتشر شد؛ رسید زیر این release را می‌بندد و برش بعدی را مجاز نمی‌کند.
 - **دامنه:** بازیابی دستی و دوگامی همان مخزن درخواست خرید؛ بدون تغییر یا پاک‌کردن Approvalها، گیرنده‌ها، DispatchDraftها، برنامه‌های ارسال، پیشنهادها، فایل‌ها، حافظه، کارها یا Project Backbone و بدون هیچ اثر بیرونی.
 
 ### تجربهٔ مشاهده‌شده و شکاف قرارداد
@@ -1527,3 +1527,11 @@
 
 - برای هر مخزن محلی fail-closed، مسیر بازیابی رسمی تعریف شود: snapshot دقیق، backup تأییدشده، intent ماندگار برای عملیات نیمه‌تمام، rollback/resume، جداسازی مخزن‌های وابسته و بازشدن mutation فقط پس از read معتبر.
 - هر reset یا خالی‌کردن دادهٔ اصلی باید پیامد صریح، تأیید انسانیِ همان لحظه و رسید قابل‌فهم داشته باشد؛ fail-close بدون راه بازیابی امن، معیار پذیرش کامل نیست.
+
+### رسید انتشار PB-1، UX-R1 و اصلاح RTL
+
+- commit قابلیت‌ها `6d71e42a89441b3499a4fe335e7bc5874feb6e36` و commit منبع/اسناد `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` روی GitHub `main` منتشر شدند؛ prototype tree نهایی `1e1fd3768c0516dc83fe3a7b01844bb35f1837b8` است.
+- gateهای release شامل Project Backbone برابر ۱۱/۱۱، app برابر ۱۷۸/۱۷۸، runtime برابر ۱۸۶/۱۸۶، Sites برابر ۴/۴، build/TypeScript، integrity هر ۲۸ فایل و بازبینی مستقل بدون finding باز P0/P1/P2 پاس شدند. پس از اصلاح test-only انتظار focus مسیر خرید، focused آن ۱/۱ و app کامل دوباره ۱۷۸/۱۷۸ پاس شد؛ runtime محافظت‌شده تغییر نکرد و اجرای تازهٔ هشت تست آن ۸/۸ بود.
+- Cloudflare Pages deployment `5ef162d0-4521-481b-8f2a-31535c7f92e8` از source release با `github:push` روی `main` به وضعیت `success` رسید. canonical و immutable هر دو HTTP 200 و با build محلی یکسان‌اند: HTML `7f2082299414fa461afbca9a781fc7db75d039ee04b230c36041b90dd32fe889`، JavaScript `2526137571c3bfd51f36f83a5a5832cf30f76901f89fe46403c8b954bd6c5309` و CSS `a19f8e04180930ffbfe2220fcdc3d0c87d3b3c35132ffd703d52d8d4a319e566`.
+- ChatGPT Sites نسخهٔ ۲۷ با source commit release، ۱۹ فایل و archive hash `sha256:a2d674bf2ca803650dbc2ed7f0aea0e7cb895d59a68dc1030b20601e8797ff93` ذخیره شد؛ version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_dd4dabe662448191a1813e97a54ab503` و deployment خصوصی `appgdep_6a9482959f008191802cf8098160378a` در وضعیت `succeeded` است. دسترسی `custom`/owner-only با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
+- commit مستندیِ حاوی همین رسید prototype tree را تغییر نمی‌دهد و دوباره روی هر سه مقصد همسان می‌شود. شناسه‌های خود receipt نهایی به‌دلیل self-reference در پیام تحویل ثبت می‌شوند؛ Memory Core، مدل، backend، شبکه، مسیر تأمین‌کننده و برش بعدی آغاز نشده‌اند.

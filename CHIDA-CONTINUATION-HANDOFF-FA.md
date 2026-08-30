@@ -2,11 +2,11 @@
 
 **تاریخ تهیه:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
 **مسیر پروژه:** `/Users/mahyarkl/Desktop/ChatGPT/CHIDA`
-**نقطهٔ ادامه:** baseline منتشرشده پیش از release جاری commit `8b557020768b22b81b8aadbd28c6a078e26c7ee5` روی `main`/`origin/main` با prototype tree برابر `4297309252e2e6f9d80c184be7aad1e795c80279` بود. ماهیار بستهٔ اسناد معماری، اجرای برش اول `Project Backbone` و سپس اصلاح‌های بازیابی درخواست خرید و RTL را صریحاً پیش برد. پس از اعلام پایان اصلاح RTL و نتیجهٔ کامل آزمون‌ها، ماهیار با پیام «وقتی انجام شد همه جا منتشر کن» commit، push و انتشار همین snapshot را صریحاً مجاز کرد. این مجوز فقط release snapshot فعلی است و Memory Core، مدل، backend، شبکه/ارسال یا مسیر تأمین‌کننده را آغاز نمی‌کند. چهار فایل بسته برای حفظ همسانی بایتی با Sourceهای وب تغییر نکردند و رسید تأیید در learnings و این هنداف ثبت شد.
+**نقطهٔ ادامه:** baseline پیش از این release commit `8b557020768b22b81b8aadbd28c6a078e26c7ee5` بود. ماهیار بستهٔ اسناد معماری، اجرای برش اول `Project Backbone` و سپس اصلاح‌های بازیابی درخواست خرید و RTL را صریحاً پیش برد و با پیام «وقتی انجام شد همه جا منتشر کن» انتشار همان snapshot آزموده را مجاز کرد. قابلیت‌ها در commit `6d71e42a89441b3499a4fe335e7bc5874feb6e36` و بستهٔ source/release در commit `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` با prototype tree برابر `1e1fd3768c0516dc83fe3a7b01844bb35f1837b8` روی GitHub منتشر شدند؛ Cloudflare deployment `5ef162d0-4521-481b-8f2a-31535c7f92e8` و ChatGPT Sites نسخهٔ ۲۷/deployment `appgdep_6a9482959f008191802cf8098160378a` نیز موفق شدند. commit مستندیِ حاوی همین رسید فقط اسناد را تغییر می‌دهد و شناسه‌های نهایی خودش برای جلوگیری از حلقهٔ self-reference در پیام تحویل ثبت می‌شوند. Memory Core، مدل، backend، شبکه/ارسال و مسیر تأمین‌کننده آغاز نشده‌اند و برش بعدی مجوز تازه می‌خواهد.
 
 ## مأموریت گفت‌وگوی بعدی
 
-**انتشار snapshot تأییدشده و سپس توقف:** بستهٔ اسناد، مجوز اجرای برش اول و مجوز صریح انتشار snapshot فعلی دریافت شدند. مأموریت جاری هم‌ترازکردن GitHub، Cloudflare Pages و ChatGPT Sites روی یک منبع تست‌شده و ثبت رسید آن است؛ پس از آن برش دوم به‌صورت خودکار آغاز نمی‌شود.
+**توقف پس از انتشار snapshot تأییدشده:** GitHub، Cloudflare Pages و ChatGPT Sites روی منبع تست‌شدهٔ همین برش منتشر و رسید آن ثبت شده است. اکنون هیچ برش تازه‌ای به‌صورت خودکار آغاز نمی‌شود؛ گام بعدی فقط پس از مشاهده و پیام اجرایی صریح ماهیار انتخاب می‌شود.
 
 ترتیب مشترک Sol و Codex پس از تأیید بسته:
 
@@ -22,7 +22,7 @@
 
 تعریف کاری پیشنهادی برای «تکمیل سمت سازنده» دیگر completion مبهم کل T13 نیست؛ یک acceptance matrix دودویی برای ownership/scope، isolation، schema/state/version، failure/rollback، memory control، Source/Composer intake محلی، Task/Monitor، lifecycle حداقلی `BuiltArtifact`، پذیرش UI و شواهد آزمون است. backend production، شبکهٔ واقعی، طرف دوم واقعی، marketplace، Connector، اجرای کد آزاد، مالی سبک و desktop نهایی شرط این gate نیستند.
 
-## وضعیت لوکال برش ۱ — Project Backbone
+## وضعیت منتشرشدهٔ برش ۱ — Project Backbone
 
 - مسیر کاربر «برنامه پروژه» است: Quick Action واقعی در خانه، ورودی «برنامه و تصمیم‌ها» در فضای پروژه و کارت Task متصل در مرکز کارها.
 - store تازه `chida-prototype-project-backbone:v1` یک envelope اتمیک با سه Domain Object مستقل Milestone، Decision و Task است. هر سه project-scoped و دارای owner/scope، version، revision snapshot، fingerprint و history هستند؛ لینک Decision↔Task↔Milestone دقیق و در parser اعتبارسنجی می‌شود.
@@ -33,7 +33,7 @@
 - یازده regression متمرکز Project Backbone برابر ۱۱/۱۱ پاس شده‌اند؛ ساخت/لینک/reload و نبود duplication، RTL واقعی create/edit، reason مرئی و دسترس‌پذیری، جداسازی پروژه، no-op/edit/rollback، ساعت عقب‌رفته، stale conflict، رقابت واقعی دو تب، نبود Web Locks، write failure، JSON خراب و semantic tamper شامل fingerprint، تاریخ ناممکن و cross-project link را پوشش می‌دهند.
 - `npm run test:app` برابر ۱۷۸/۱۷۸، `npm run test:runtime` برابر ۱۸۶/۱۸۶، `npm run test:sites` برابر ۴/۴، build/TypeScript و integrity هر ۲۸ فایل پاس شدند. QA دیداری پیشین مرورگر داخلی در `390 × 844` حالت خالی، sheet سه‌بخشی، ثبت، ویرایش، تاریخچه/rollback و کارت Task را تأیید کرد؛ `document/body scrollWidth = 390`، عنصر افقی بیرون‌زده صفر و console error/warning صفر بود. بازخورد RTL فعلی با computed style واقعی در همان viewport برای header، توضیح، section copy، labelها و هر پنج فیلد create/edit آزموده شد.
 - بازبینی مستقل نهایی diff پس از اصلاح Web Locks، تاریخ تقویمی exact، نویسه‌های نامرئی و دسترس‌پذیری، finding باز P0/P1/P2 گزارش نکرد.
-- تا پیش از اجرای release جاری، این snapshot local/uncommitted و انتشارهای Cloudflare و ChatGPT Sites روی baseline `8b557020...` بودند؛ رسید commit و deployment نهایی پس از موفقیت در همین هنداف ثبت می‌شود.
+- این snapshot با commit قابلیت `6d71e42a89441b3499a4fe335e7bc5874feb6e36` و commit منبع/اسناد `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` منتشر شد. GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۲۷ موفق‌اند و جزئیات کامل در رسید انتهای هنداف آمده است؛ این انتشار برش دوم را مجاز نمی‌کند.
 
 ## نتیجهٔ مشترک Sol و Codex؛ تأییدشده توسط ماهیار
 
@@ -54,8 +54,8 @@
 1. `AGENTS.md` و `prototype/AGENTS.md` را کامل بخوان.
 2. منبع حقیقت را فقط `CHIDA-Product-Definition-FA.md` بدان؛ `BUILDER-FEATURE-BACKLOG-FA.md` فقط ترتیب اجرایی و این فایل فقط هنداف است.
 3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007 تا C-010، T7/T8، T8-UX1/T8-UX2/T8-UX3، H1 و H2 بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه C-010 است و قاعدهٔ Quick Action grid در C-010 با تصمیم صریح T8-UX3 منسوخ شده است.
-4. `CHIDA-SOL-HANDOFF-FA.md` را کامل بخوان و سپس `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را فقط read-only تطبیق بده. baseline فعلی `8b557020768b22b81b8aadbd28c6a078e26c7ee5` با prototype tree برابر `4297309252e2e6f9d80c184be7aad1e795c80279` است.
-5. Project Backbone لوکال را همراه بخش `PB-1` دفتر یادگیری بررسی کن؛ تغییرهای موجود کار همین برش و اسناد عمداً dirty پیشین‌اند و نباید پاک شوند.
+4. `CHIDA-SOL-HANDOFF-FA.md` را کامل بخوان و سپس `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را فقط read-only تطبیق بده. commit منبع release برابر `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` و prototype tree منتشرشده برابر `1e1fd3768c0516dc83fe3a7b01844bb35f1837b8` است؛ commit مستندی receipt روی آن فقط docs را تغییر می‌دهد و SHA جاری باید از `HEAD`/remote خوانده شود.
+5. Project Backbone منتشرشده را همراه بخش `PB-1` دفتر یادگیری بررسی کن؛ checkout تحویلی باید تمیز و `HEAD`/`origin/main` هم‌تراز باشد و هیچ تغییر محلی را بدون تعیین منشأ پاک نکن.
 6. preview/تست فقط برای بازبینی یا اصلاح همین برش مجاز است؛ commit، push و deploy همچنان نیازمند درخواست صریح تازه‌اند.
 7. مدل، Memory Core، Source/Composer Intake، Task/Monitor Core، Build Lifecycle، backend و مسیر تأمین‌کننده را آغاز نکن.
 8. برای مشاهده، اصلاح یا تأیید صریح Project Backbone منتظر ماهیار بمان؛ برش بعدی مجوز جدا می‌خواهد.
@@ -459,13 +459,13 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 ## متن کوتاه آماده برای آغاز گفت‌وگوی جدید
 
-> این تسک ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز و از محیط local همین پروژه استفاده کن. ابتدا `AGENTS.md`، `prototype/AGENTS.md`، `CHIDA-CONTINUATION-HANDOFF-FA.md`، `CHIDA-SOL-HANDOFF-FA.md`، بخش H2 در `CHIDA-PRODUCT-LEARNINGS-FA.md`، سند مادر، backlog و بستهٔ چهار سند Proposed معماری را کامل بخوان. وضعیت Git را فقط read-only با baseline `8b557020768b22b81b8aadbd28c6a078e26c7ee5` تطبیق بده. سپس هیچ preview، تست artifact‌ساز، commit، push، deploy، مدل، backend یا مسیر تأمین‌کننده را شروع نکن؛ فقط وضعیت بسته و تصمیم‌های نیازمند تأیید را گزارش کن و منتظر تأیید یا اصلاح صریح ماهیار بمان. حتی پس از تأیید اسناد، implementation فقط با پیام اجرایی صریح و جداگانهٔ ماهیار آغاز می‌شود و نخستین برش `Project Backbone` است.
+> این تسک ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز و از محیط local همین پروژه استفاده کن. ابتدا `AGENTS.md`، `prototype/AGENTS.md`، `CHIDA-CONTINUATION-HANDOFF-FA.md`، `CHIDA-SOL-HANDOFF-FA.md`، بخش H2 و PB-1/UX-R1 در `CHIDA-PRODUCT-LEARNINGS-FA.md`، سند مادر، backlog و بستهٔ چهار سند Proposed معماری را کامل بخوان. وضعیت Git را فقط read-only تطبیق بده؛ commit منبع release `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` و prototype tree منتشرشده `1e1fd3768c0516dc83fe3a7b01844bb35f1837b8` است و commit receipt مستندی باید همان prototype tree را حفظ کرده باشد. سپس هیچ preview، تست artifact‌ساز، commit، push، deploy، Memory Core، مدل، backend یا مسیر تأمین‌کننده را شروع نکن؛ فقط وضعیت منتشرشده و تصمیم‌های نیازمند تأیید را گزارش کن و منتظر پیام اجرایی صریح ماهیار بمان. Project Backbone و اصلاح‌های خرید/RTL منتشر شده‌اند؛ برش بعدی هنوز مجوز ندارد.
 
-## آخرین اصلاح لوکال — بازیابی امن درخواست خرید ناخوانا
+## آخرین اصلاح منتشرشده — بازیابی امن درخواست خرید ناخوانا
 
 - **محرک:** ماهیار در preview لوکال گزارش کرد درخواست‌های خرید قابل‌ثبت نیستند و با پیام «درستش کن» اصلاح را مجاز کرد. علت، read-error مخزن `PurchaseRequest` و قفل fail-close درست، اما بدون مسیر recovery بود؛ این رفتار disable عمدی قابلیت نبود.
-- **زمینهٔ محفوظ:** بستهٔ اسناد تأییدشده و برش PB-1 دست‌نخورده ادامه دارند. baseline منتشرشده همچنان `8b557020768b22b81b8aadbd28c6a078e26c7ee5` است و این hotfix فقط روی working tree محلیِ موجود افزوده شده است.
-- **وضعیت کد:** در `prototype/src/Prototype.tsx` مسیر backup-first و دوگامی اضافه شد؛ در `prototype/src/prototype.css` حالت‌های هشدار/sheet/موفقیت و کنتراست اصلاح شدند؛ در `prototype/tests/chida-flow.spec.ts` نه سناریوی recovery افزوده شد؛ و قرارداد ماندگار آن در `prototype/AGENTS.md` ثبت شد. همهٔ تغییرها در checkout اصلی، شاخهٔ `main` و local/uncommitted هستند.
+- **زمینهٔ محفوظ:** بستهٔ اسناد تأییدشده و برش PB-1 دست‌نخورده ادامه دارند. این hotfix همراه PB-1 و اصلاح RTL در source commit `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` منتشر شده است.
+- **وضعیت کد:** در `prototype/src/Prototype.tsx` مسیر backup-first و دوگامی اضافه شد؛ در `prototype/src/prototype.css` حالت‌های هشدار/sheet/موفقیت، کنتراست و RTL فرم PB-1 اصلاح شدند؛ در `prototype/tests/chida-flow.spec.ts` نه سناریوی recovery و regression RTL افزوده شد؛ و قرارداد ماندگار آن در `prototype/AGENTS.md` ثبت شد. تغییرها روی `main` در GitHub و هر دو مقصد میزبانی منتشر شده‌اند.
 - **قرارداد:** recovery یک snapshot واحد از raw موجود می‌گیرد؛ اگر معتبر شده باشد فقط reload می‌کند. اگر نامعتبر باشد، backup یکتای بایت‌به‌بایت تأییدشده و recovery intent ماندگار را پیش از remove می‌سازد، تغییر نکردن source را دوباره می‌سنجد، فقط primary را خالی می‌کند، empty معتبر را بررسی می‌کند و سپس intent را پاک و UI را باز می‌کند. شکست‌های میانی rollback یا resume پس از reload دارند و mutation در هر وضعیت نامطمئن بسته می‌ماند.
 - **حفظ داده‌های دیگر:** Approvalها، گیرنده‌ها، DispatchDraftها، برنامه‌های ارسال، پیشنهادها و سایر storeها هدف recovery نیستند و در تست موفق bytes آن‌ها بدون تغییر ماند.
 - **شواهد:** focused recovery برابر ۹/۹، app برابر ۱۷۷/۱۷۷، runtime برابر ۱۸۵/۱۸۵، Sites برابر ۴/۴ و build/TypeScript/integrity هر ۲۸ فایل پاس شدند. بازبینی مستقل نهایی finding باز P0/P1/P2 نداشت. ریسک باقیماندهٔ ثبت‌شده، پنجرهٔ کوچک cross-tab میان آخرین source-check و remove در writerهای قدیمیِ بدون Web Lock مشترک است.
@@ -477,4 +477,11 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 1. تأیید لحظه‌ای ماهیار دریافت و recovery فقط روی primary درخواست خرید اجرا شد.
 2. رسید موفقیت، empty state معتبر و فعال‌شدن «درخواست جدید» در همان مرورگر مشاهده شد؛ جریان ساخت درخواست عمداً آغاز نشد.
 3. این باگ در اجرای فعلی بسته است. گام بعدی فقط با درخواست جداگانهٔ ماهیار انتخاب می‌شود؛ دادهٔ backup محلی UI lifecycle مستقل ندارد و ریسک cross-tab ثبت‌شده همچنان بدهی است.
-4. این تأیید مجوز commit، push، deploy، مدل، backend، شبکه یا مسیر تأمین‌کننده نیست. پس از همین ثبت بازخورد، تسک متوقف می‌شود.
+4. ماهیار بعداً commit، push و deploy همین snapshot را صریحاً مجاز کرد و انتشار انجام شد. این مجوز به Memory Core، مدل، backend، شبکه، مسیر تأمین‌کننده یا برش بعدی گسترش ندارد؛ پس از ثبت رسید، تسک متوقف می‌شود.
+
+### رسید انتشار PB-1، UX-R1 و اصلاح RTL
+
+- commit قابلیت‌ها `6d71e42a89441b3499a4fe335e7bc5874feb6e36` و commit منبع/اسناد تأییدشده `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` روی GitHub `main` منتشر شدند؛ prototype tree هر دو مرحلهٔ نهایی برابر `1e1fd3768c0516dc83fe3a7b01844bb35f1837b8` است.
+- Cloudflare Pages deployment `5ef162d0-4521-481b-8f2a-31535c7f92e8` با trigger برابر `github:push`، شاخهٔ `main` و source commit `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` به وضعیت `success` رسید. canonical و immutable هر دو HTTP 200 و با build محلی یکسان‌اند: HTML `7f2082299414fa461afbca9a781fc7db75d039ee04b230c36041b90dd32fe889`، JavaScript `2526137571c3bfd51f36f83a5a5832cf30f76901f89fe46403c8b954bd6c5309` و CSS `a19f8e04180930ffbfe2220fcdc3d0c87d3b3c35132ffd703d52d8d4a319e566`.
+- ChatGPT Sites نسخهٔ ۲۷ با source commit همان release، ۱۹ فایل و archive hash `sha256:a2d674bf2ca803650dbc2ed7f0aea0e7cb895d59a68dc1030b20601e8797ff93` ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_dd4dabe662448191a1813e97a54ab503` و deployment خصوصی `appgdep_6a9482959f008191802cf8098160378a` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی `custom`/owner-only با دقیقاً یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
+- commit مستندی حاوی این رسید بدون تغییر prototype tree روی هر سه مقصد منتشر می‌شود. SHA و deployment/version خود آن به‌دلیل حلقهٔ self-reference فقط در پیام تحویل نهایی ثبت می‌شوند؛ receiptهای نسخهٔ ۲۷ برای تاریخچه حفظ می‌شوند.
