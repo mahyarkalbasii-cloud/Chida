@@ -1403,3 +1403,127 @@
 - Cloudflare deployment نهایی `f665580f-26c9-4363-9793-d4baaae5e644` از source commit مستندی فعال است و canonical/immutable برای HTML، JavaScript، CSS و نشان دقیقاً hashهای build محلی را دارند.
 - ChatGPT Sites نسخهٔ ۲۵ با version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_4fd3dab34a8481918949ad5a947d6942` و deployment `appgdep_6a941bdda88881918951b8508e2c2eec` در وضعیت `succeeded` منتشر شد؛ owner-only/custom حفظ است.
 - اجرای تازهٔ `check:runtime`، build، app `159/159`، runtime `167/167` و Sites `4/4` همگی پاس شدند. commit و شناسه‌های انتشار خود هنداف به‌دلیل self-reference در پیام تحویل ثبت می‌شوند.
+
+## H2 — نتیجهٔ بازبینی Sol/Codex و انتقال به گفت‌وگوی تازه
+
+- **تاریخ تصمیم:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
+- **وضعیت:** گفت‌وگوی معماری Sol و Codex بسته شد؛ بستهٔ چهار سند Architecture Review، Domain/Ownership/Permissions، Memory/Context/Retrieval و Harness/Agent Runtime ساخته، نقد و اصلاح شد. هر چهار سند در repo قرار دارند و همراه سند مادر، اقتصاد و زیرساخت با هفت Source پروژهٔ ChatGPT بایت‌به‌بایت همسان شدند. ماهیار در همین ادامه بسته را صریحاً تأیید کرد؛ رسید تأیید در این دفتر و هنداف ثبت شد و خود چهار فایل برای حفظ همسانی بایتی با Sourceهای وب تغییر نکردند.
+- **دامنه:** تثبیت مرز حساب تک‌نقشی، دو gate جدا برای builder و adapter مدل، defer بخش‌های shared T8، invariants حافظه/Harness/Build و ترتیب اسناد و implementation؛ بدون تغییر کد، prototype، سند مادر، backend، مدل یا مسیر تأمین‌کننده.
+
+### تجربه و بازخورد کاربر
+
+- ماهیار تصمیم تک‌نقشی را برای کاهش تقلب و تعارض منافع دوباره صریح کرد و خواست Sol و Codex فقط یک دور نتیجه‌محور گفت‌وگو کنند، وارد loop نشوند و نتیجه را در یک سند واحد تحویل دهند.
+- ماهیار سپس به‌دلیل سنگین‌شدن چت خواست هنداف Codex به‌روز و یک گفت‌وگوی تازه در همان پروژه و checkout اصلی ساخته شود. او فایل نهایی Sol را خودش در گفت‌وگوی تازه ارائه می‌کند.
+- ماهیار پس از آماده‌شدن بسته خواست همهٔ Sourceهای وب و checkout محلی همسان شوند و سپس قدم بعدی شفاف اعلام شود؛ بنابراین همسانی فقط از روی نام فایل فرض نشد و محتوای هر هفت Source با فایل محلی مقایسه شد.
+
+### شکاف و تعارض سند مادر
+
+- سند مادر در بخش onboarding و مدل مالکیت هنوز امکان نقش «هر دو» و حضور یک فرد در هر دو سمت را باز می‌گذارد، اما تصمیم صریح تازهٔ ماهیار و قرارداد prototype هر حساب را به یک سمت تغییرناپذیر محدود می‌کنند. این تعارض باید شفاف supersede شود و تا اصلاح سند مادر پنهان نماند.
+- قفل‌کردن یک فیلد نقش در account به‌تنهایی ضدتقلب کامل نیست؛ multi-account، related identity، beneficial ownership و استثناهای احراز/بازیابی به قرارداد جداگانهٔ Identity & Abuse نیاز دارند.
+- T13 یک bucket بزرگ و نامناسب برای gate پایان builder است؛ بخش‌های ضروری باید به acceptance matrix دودویی و قابل‌آزمون شکسته شوند.
+
+### نتیجهٔ مشترک؛ تأییدشده توسط ماهیار
+
+- `AccountSide = builder | supplier` invariant هویت/دامنه است و از Identity/Policy معتبر می‌آید؛ مدل و Harness حق infer یا override آن را ندارند. `MembershipRole` فقط داخل فضای همان سمت است و role switch عادی وجود ندارد.
+- بخش‌های local/manual فعلی T8 حفظ می‌شوند؛ پاسخ authenticated طرف دوم، رضایت، amendment/shared case واقعی و بستن دوطرفه تا فاز supplier/shared defer می‌شوند. deadline/follow-up به Task/Monitor منتقل و اثر عددی تا قرارداد دامنه و فرمول معتبر عقب می‌افتد.
+- Domain Object منبع حقیقت است؛ `MemoryCandidate` از `MemoryRecord` جداست. procedural rule اجرایی باید `Instruction/WorkflowDefinition` نسخه‌دار باشد و `case_shared` حافظه نیست، بلکه shared domain projection/share event صریح، نسخه‌دار، permissioned و audited است.
+- visibility، manual search، automatic retrieval، model eligibility و shareability کنترل‌های مستقل‌اند؛ `useInContext` به‌تنهایی مجوز ورود به مدل یا اشتراک نیست.
+- authorization پیش از retrieval/tool routing اجرا می‌شود. Harness context/workflow/tool را هماهنگ می‌کند، ModelGateway فقط provider call و concerns فنی آن را مدیریت می‌کند، و فقط Domain/Application Service مجاز با optimistic concurrency/idempotency mutation انجام می‌دهد.
+- Build در gate سازنده فقط lifecycle یک `BuiltArtifact` امن، declarative، project-scoped و ساخته‌شده از catalog بسته است؛ `Capability/Plugin`، runtime `Tool` و `Connector` مفاهیم جدا هستند.
+- Builder Prototype Architecture Gate به acceptance matrix دودویی تبدیل می‌شود. پس از PASS و تأیید جداگانهٔ ماهیار، M1a فقط local/opt-in/provider-neutral/text-only و بدون memory/file/web/tool/mutation/background action است؛ M1b برای `ContextManifest`/Memory فقط بعد از پذیرش M1a می‌آید.
+
+### ترتیب ادامه و مرز اختیار
+
+1. بستهٔ چهار سند ساخته، نقد، اصلاح و با Sources وب و repo همسان شده است.
+2. ماهیار بسته را صریحاً تأیید کرد؛ این تأیید در دفتر و هنداف ثبت شد، نه با تغییر بی‌صدای متن چهار Source.
+3. تأیید اسناد implementation را خودکار آغاز نمی‌کند.
+4. ماهیار در پیام جداگانهٔ «تسک اول رو انجام بده» شروع نخستین برش `Project Backbone` را نیز صریحاً مجاز کرد.
+5. سپس Memory Core، Source/Composer Intake، Task/Monitor Core و Build Lifecycle Minimum هرکدام جدا بررسی و تأیید می‌شوند.
+6. model، supplier، backend، network و هر برش بعدی gate و تأیید مستقل خود را حفظ می‌کنند.
+
+### رسید baseline برای ادامه
+
+- `HEAD`، `main`، `origin/main` و remote `main` پیش از این هنداف روی `8b557020768b22b81b8aadbd28c6a078e26c7ee5` هم‌تراز، ahead/behind صفر/صفر و working tree تمیز بودند؛ prototype tree `4297309252e2e6f9d80c184be7aad1e795c80279` است.
+- آخرین receipt تأییدشدهٔ Cloudflare deployment برابر `fc1cfa70-9f76-4891-ace4-4c28c3ccee73` و ChatGPT Sites نسخهٔ ۲۶/deployment برابر `appgdep_6a941e4a10208191a28ac33932d30200` است. این هنداف تازه هنوز commit، push یا deploy نشده و هیچ مجوزی برای آن‌ها از درخواست ساخت گفت‌وگوی جدید استنباط نمی‌شود.
+
+### پیشنهاد برای تکمیل سند مادر
+
+- مدل نقش سند مادر با `AccountSide` تغییرناپذیر و `MembershipRole` داخل‌سمتی جایگزین شود؛ پروندهٔ مشترک role switch یا دسترسی متقابل به فضای خصوصی نیست.
+- Memory، shared domain projection، Instruction/Workflow، Harness، ModelGateway، Domain/Application Service و چهار مفهوم Build در قراردادهای مستقل و بدون هم‌پوشانی تعریف شوند.
+- Builder completion به acceptance matrix قابل‌آزمون تبدیل و M1a/M1b به‌عنوان دو gate متوالی و محدود ثبت شوند.
+
+## PB-1 — Project Backbone محلی سازنده
+
+- **تاریخ تصمیم و اجرا:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
+- **وضعیت:** بستهٔ چهار سند توسط ماهیار تأیید و برش اول با پیام اجرایی جداگانه مجاز شد. پیاده‌سازی فقط در checkout اصلی و به‌صورت local/uncommitted انجام شده و برای مشاهده و تأیید تجربهٔ ماهیار متوقف است؛ commit، push یا deploy انجام نشده است.
+- **دامنه:** یک Milestone، یک Decision با دلیل اجباری و یک Task متصل در همان پروژه، همراه با ownership/scope، نسخه، revision، تاریخچه، optimistic concurrency، no-op، بازیابی نسخه و fail-close؛ بدون مدل، backend، شبکه، تأمین‌کننده یا اثر بیرونی.
+
+### تجربهٔ ساخت و نتیجهٔ رابط
+
+- اصطلاح داخلی `Project Backbone` در رابط به «برنامهٔ پروژه» و «برنامه و تصمیم‌ها» ترجمه شد. ورودی اصلی در فضای پروژه است و Quick Action بی‌مسیر «چیدن برنامه خرید» با مقصد واقعی «برنامه پروژه» جایگزین شد.
+- ثبت اولیه در یک sheet کوتاه و سه بخش روشن انجام می‌شود: نقطه‌عطف، تصمیم و دلیل، کار و گام بعدی. هر سه فقط در ذخیرهٔ نهایی ساخته می‌شوند تا هیچ شیء نیمه‌کاره یا لینک آویزان شکل نگیرد.
+- نمای روزمره یک زنجیرهٔ آرام «نقطه‌عطف ← تصمیم و دلیل ← کار بعدی» نشان می‌دهد. دلیل تصمیم پنهان نیست؛ شناسه‌ها، fingerprint و جزئیات نسخه پشت disclosure تاریخچه باقی می‌مانند.
+- Task متصل در «مرکز کارها» نیز دیده می‌شود، اما منبع حقیقت آن همان Project Backbone است؛ یک Task تکراری در مخزن قدیمی ساخته نشده و کارت کار به صفحهٔ برنامه برمی‌گردد.
+
+### قرارداد داده و حالت‌های شکست
+
+- سه Domain Object مستقل در envelope نسخه‌دار `chida-prototype-project-backbone:v1` و با یک write اتمیک نگه‌داری می‌شوند. هر object مالک project، `AccountSide=builder`، scope برابر `project_private`، custodian، version، current revision، تاریخچه و fingerprint مستقل دارد.
+- Decision به Milestone و Task و Task به همان Milestone و Decision لینک دوطرفهٔ قابل‌اعتبارسنجی دارد. parser کل envelope را exact می‌خواند و duplicate، orphan، cross-project link، revision/fingerprint ناسازگار و تاریخچهٔ نامعتبر را read-error می‌داند.
+- نبود کلید، empty سالم است؛ JSON خالی/خراب یا schema نامعتبر read-error است. در read-error هیچ mutation یا fallback به آرایهٔ ناقص انجام نمی‌شود و bytes خراب خودکار پاک یا بازنویسی نمی‌شوند.
+- هر create/update/rollback زیر Web Lock سراسری همان origin انجام می‌شود؛ commit-time reread، بررسی نسخه/graph و write-before-state داخل یک critical section هستند. اگر Web Locks در دسترس نباشد هیچ fallback ناامن یا write انجام نمی‌شود. stale editor با `VersionConflict` متوقف و نسخهٔ تازه بارگذاری می‌شود؛ no-op هیچ version/event/revision یا byte تازه‌ای نمی‌سازد و ساعت عقب‌رفته timestamp را به گذشته نمی‌برد.
+- rollback محتوای revision قدیمی را می‌خواند و به‌عنوان revision تازه با رویداد `rolled-back` ثبت می‌کند؛ تاریخچه rewrite نمی‌شود. شکست write، UI و bytes قبلی را حفظ می‌کند.
+
+### شواهد و محدودیت صادقانه
+
+- یازده regression متمرکز ساخت/لینک/reload و نبود duplication، RTL واقعی create/edit، دلیل اجباری و bidi-only، جداسازی پروژه، no-op/edit/rollback و ساعت عقب‌رفته، stale conflict، رقابت واقعی دو تب، نبود Web Locks، read/write failure، fingerprint/date/cross-project semantic tamper را پوشش می‌دهند و ۱۱/۱۱ پاس شده‌اند. مجموعهٔ مستقل app برابر ۱۷۸/۱۷۸، runtime برابر ۱۸۶/۱۸۶، Sites برابر ۴/۴ و build/TypeScript و integrity هر ۲۸ فایل نیز پاس شدند.
+- QA دیداری مرورگر داخلی در viewport واقعی `390 × 844` حالت خالی، sheet سه‌بخشی، ثبت، ویرایش، تاریخچه/rollback و کارت Task متصل را تأیید کرد. عرض body/document دقیقاً ۳۹۰، عناصر بیرون‌زده صفر و console error/warning صفر بود.
+- بازبینی مستقل نهایی پس از بسته‌شدن هم‌زمانی، تاریخ تقویمی exact، کنترل‌های نامرئی و دسترس‌پذیری، finding باز P0/P1/P2 نداشت.
+- این برش فقط store تازهٔ Project Backbone را مقاوم می‌کند و به‌غلط ادعا نمی‌کند که بدهی reader/write مخزن قدیمی `BuilderProject` یا migration همهٔ storeها حل شده است.
+- target date نقطه‌عطف، dueAt کار و transition وضعیت در schema حضور دارند، اما فرم این برش فقط دادهٔ حداقلی مصوب را می‌گیرد و statusهای اولیه `planned` و `in-progress` و تاریخ‌های اختیاری `null` می‌مانند. مدیریت کامل موعد/وضعیت به Task/Monitor Core موکول است.
+
+### پیشنهاد برای تکمیل سند مادر
+
+- Milestone، Decision و Task به‌عنوان اشیای مستقل پروژه با owner/scope، reason اجباری، لینک‌های معتبر، revision immutable و rollback-as-new-revision به تعریف محصول افزوده شوند.
+- «برنامهٔ پروژه» سطح روزمره و آرام همین اشیا باشد؛ تاریخچه و lineage در افشای تدریجی دیده شوند و Task متصل بدون duplication در مرکز کارها ارائه شود.
+- corrupted read، version conflict، no-op و persistence failure در قرارداد رسمی UI از empty/success جدا تعریف شوند.
+
+### بازخورد RTL پس از مشاهدهٔ ماهیار
+
+- **تجربهٔ مشاهده‌شده:** ماهیار پس از کارکردن با فرم ویرایش «برنامه پروژه» گزارش کرد که محتوا راست‌به‌چپ نیست. screenshot واقعی نشان داد عنوان و توضیح sheet، labelها و مقدار/selection فارسی پنج ورودی از سمت چپ آغاز می‌شوند.
+- **شکاف:** ریشهٔ `.chida-app` RTL بود، اما `BottomSheet` از طریق portal بیرون آن رندر می‌شود و direction را به ارث نمی‌برد. معیارهای PB-1 پیش‌تر رفتار داده، overflow و دسترس‌پذیری را می‌سنجیدند، اما computed direction/text alignment حالت create/edit را صریح پوشش نمی‌دادند.
+- **تصمیم و وضعیت:** فقط sheet فرم Project Backbone به زمینهٔ مستقل RTL و تراز راست محدود شد؛ form نیز `dir=rtl` دارد و پنج input/textarea به‌طور صریح `direction: rtl` و `text-align: right` می‌گیرند. runtime محافظت‌شده و سایر sheetها تغییر نکردند. regression تازه ابتدا با `direction=ltr` شکست خورد و پس از اصلاح در هر دو حالت create/edit با ۱/۱ پاس شد؛ مجموعهٔ Project Backbone برابر ۱۱/۱۱، app برابر ۱۷۸/۱۷۸، runtime برابر ۱۸۶/۱۸۶، Sites برابر ۴/۴، build/TypeScript و integrity هر ۲۸ فایل نیز پاس شدند. بازبینی مستقل finding باز P0/P1/P2 نداشت. ماهیار پس از اعلام پایان و نتیجهٔ آزمون‌ها، انتشار «همه‌جا»ی همین snapshot را صریحاً مجاز کرد؛ این مجوز فقط commit/push/deploy snapshot فعلی است و Memory Core یا برش بعدی را مجاز نمی‌کند.
+- **پیشنهاد برای سند مادر:** معیار پذیرش «RTL واقعی» برای سطوح portaled باید شامل direction مستقل container، تراز عنوان/توضیح/label و جهت و caret ورودی‌های فارسی در create/edit باشد؛ صرف RTL بودن ریشهٔ صفحه کافی نیست.
+
+## UX-R1 — بازیابی امن مخزن ناخوانای درخواست خرید
+
+- **تاریخ مشاهده و اصلاح:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
+- **وضعیت:** ماهیار در اجرای واقعی لوکال مشاهده کرد که «درخواست جدید» قابل‌ثبت نیست و صریحاً اصلاح را خواست. علت، قفل درستِ fail-close پس از ناخوانا تشخیص‌دادن مخزن درخواست خرید بود، اما رابط هیچ مسیر امنی برای خروج از این وضعیت نداشت. اصلاح در snapshot جاری تکمیل و آزموده شد و مجوز صریح انتشار همان snapshot دریافت شده است؛ رسید نهایی Git/Cloudflare/Sites پس از موفقیت release ثبت می‌شود.
+- **دامنه:** بازیابی دستی و دوگامی همان مخزن درخواست خرید؛ بدون تغییر یا پاک‌کردن Approvalها، گیرنده‌ها، DispatchDraftها، برنامه‌های ارسال، پیشنهادها، فایل‌ها، حافظه، کارها یا Project Backbone و بدون هیچ اثر بیرونی.
+
+### تجربهٔ مشاهده‌شده و شکاف قرارداد
+
+- تفکیک read-error از empty state و بستن mutation از بازنویسی دادهٔ خراب جلوگیری می‌کرد، اما در یک نشست واقعی read-error به بن‌بست دائمی تبدیل شده بود؛ refresh نیز همان قفل را دوباره می‌ساخت.
+- سند مادر و قرارداد قبلی fail-close را الزام می‌کنند، اما دربارهٔ snapshot دقیق، پشتیبان قابل‌بررسی، بازیابی پس از قطع میان عملیات، و تأیید صریح پیش از خالی‌کردن دادهٔ اصلی تصمیم کامل ندارند.
+- پاک‌کردن خودکار دادهٔ خراب یا تبدیل بی‌صدا به آرایهٔ خالی مجاز نیست؛ بازیابی باید پیامد را پیشاپیش بگوید و فقط با اقدام مستقیم سازنده آغاز شود.
+
+### تصمیم و قرارداد پیاده‌شده
+
+- در حالت read-error یک اقدام «بازیابی امن ثبت درخواست» نمایش داده می‌شود و sheet تأیید جدا صریحاً اعلام می‌کند که پس از پشتیبان دقیق، فهرست اصلی خالی و ثبت از نو آغاز می‌شود. اقدام نهایی با نام «پشتیبان‌گیری و خالی‌کردن فهرست» و توضیح متصل دسترس‌پذیر است.
+- recovery یک raw snapshot واحد می‌گیرد و همان bytes را parse می‌کند. اگر snapshot در لحظهٔ بازیابی معتبر باشد، فقط رکوردها دوباره بار می‌شوند و هیچ backup یا remove رخ نمی‌دهد.
+- برای snapshot نامعتبر، raw دقیق زیر کلید backup یکتا نوشته و برابری بایت‌به‌بایت آن تأیید می‌شود؛ سپس recovery intent ماندگار و قابل‌ازسرگیری ثبت و بررسی می‌شود. پیش از remove، منبع دوباره باید دقیقاً همان snapshot باشد؛ پس از remove نیز empty بودن مستقیم و معتبر مخزن بررسی می‌شود و فقط بعد از آن intent پاک و mutation باز می‌شود.
+- هر شکست، UI را fail-closed نگه می‌دارد. شکست پس از remove تا حد ممکن primary را از backup برمی‌گرداند؛ اگر بازگردانی نیز شکست بخورد، backup دقیق و intent روی reload باقی می‌مانند تا ادامهٔ امن بازیابی ممکن باشد و empty ظاهری با موفقیت اشتباه نشود.
+- recovery فقط کلید اصلی درخواست خرید را هدف می‌گیرد. مخزن‌های وابسته خوانده یا بازنویسی نمی‌شوند و در regression موفق، bytes همهٔ آن‌ها دقیقاً ثابت ماندند.
+- پس از QA اولیه و لغو بدون تغییر، ماهیار صریحاً تأیید کرد که دادهٔ مهمی در این مخزن ندارد و اجرای recovery را خواست. اقدام نهایی در همان مرورگر اجرا شد؛ backup محلی ساخته شد، primary نامعتبر به empty معتبر رسید، قفل باز و «درخواست جدید» فعال شد. هیچ درخواست تازه‌ای به‌جای کاربر ساخته نشد.
+
+### شواهد و محدودیت باقی‌مانده
+
+- ۹ regression متمرکز، خطای read، معتبرشدن snapshot، شکست backup، شکست remove/verify/rollback، تغییر منبع میان backup و remove، ماندگاری intent پس از بدترین شکست، resume پس از reload و موفقیت نهایی همراه با ثبات مخزن‌های وابسته را پوشش می‌دهند و ۹/۹ پاس شده‌اند.
+- build/TypeScript و integrity هر ۲۸ فایل، مجموعهٔ app برابر ۱۷۷/۱۷۷، runtime برابر ۱۸۵/۱۸۵ و Sites برابر ۴/۴ پاس شدند؛ بازبینی مستقل نهایی finding باز P0/P1/P2 نداشت.
+- QA مرورگر داخلی ابتدا پیام قفل، sheet دوگامی، متن پیامد و لغو بدون تغییر را تأیید کرد. پس از تأیید لحظه‌ای ماهیار، اجرای واقعی نیز status «نسخهٔ بازیابی محلی ساخته شد و ثبت درخواست دوباره فعال است»، empty state صحیح و فعال‌بودن «درخواست جدید» را نشان داد.
+- یک پنجرهٔ کوچک cross-tab میان آخرین source-check و remove باقی است، زیرا writerهای قدیمی درخواست خرید هنوز Web Lock مشترک ندارند. بستن این بدهی نیازمند بازآرایی هماهنگ همهٔ writerهای همان store و یک تسک مستقل است؛ این اصلاح محدود، آن را حل‌شده ادعا نمی‌کند.
+- backup بازیابی فعلاً فقط یک لایهٔ ایمنی محلی است و هنوز UI مستقل برای مشاهده، restore انتخابی، export، حذف یا retention ندارد؛ lifecycle کامل آن باید همراه migration/resetهای T13 تعریف شود.
+
+### پیشنهاد برای تکمیل سند مادر
+
+- برای هر مخزن محلی fail-closed، مسیر بازیابی رسمی تعریف شود: snapshot دقیق، backup تأییدشده، intent ماندگار برای عملیات نیمه‌تمام، rollback/resume، جداسازی مخزن‌های وابسته و بازشدن mutation فقط پس از read معتبر.
+- هر reset یا خالی‌کردن دادهٔ اصلی باید پیامد صریح، تأیید انسانیِ همان لحظه و رسید قابل‌فهم داشته باشد؛ fail-close بدون راه بازیابی امن، معیار پذیرش کامل نیست.

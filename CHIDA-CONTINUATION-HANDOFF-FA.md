@@ -2,21 +2,50 @@
 
 **تاریخ تهیه:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
 **مسیر پروژه:** `/Users/mahyarkl/Desktop/ChatGPT/CHIDA`
-**نقطهٔ ادامه:** T8-UX3 برای پولیش خانهٔ سازنده با commit کد `3e4b35fe08b02918e4be814d5d796da14bfa54ca` و commit مستندی receipt برابر `3bbd870ca021339d89abc09528f57fc690deec50` در GitHub، Cloudflare deployment نهایی `f665580f-26c9-4363-9793-d4baaae5e644` و ChatGPT Sites نسخهٔ ۲۵/deployment `appgdep_6a941bdda88881918951b8508e2c2eec` same-source منتشر است. prototype tree هر دو commit `4297309252e2e6f9d80c184be7aad1e795c80279` است. کنترل‌های پروژه فقط نام را نشان می‌دهند، Quick Action یک rail افقی dragپذیر با ده اقدام صادقانه است، نشان اختصاصی CHIDA جای Sparkles را گرفته و خوانایی خانه scoped افزایش یافته است. focused نهایی ۵/۵، app برابر ۱۵۹/۱۵۹، runtime برابر ۱۶۷/۱۶۷، Sites برابر ۴/۴، build/TypeScript و integrity هر ۲۸ فایل پاس‌اند؛ QA `390 × 844` و بازبینی مستقل finding باز P0/P1/P2 ندارند. پس از درخواست ماهیار، هنداف مستقل `CHIDA-SOL-HANDOFF-FA.md` برای بازبینی مسیر Memory/Harness و تکمیل فاز سازنده تهیه شد؛ تا نظر Sol و انتخاب صریح ماهیار هیچ برش، مدل محلی، شبکه/ارسال واقعی یا مسیر تأمین‌کننده آغاز نمی‌شود.
+**نقطهٔ ادامه:** baseline منتشرشده پیش از release جاری commit `8b557020768b22b81b8aadbd28c6a078e26c7ee5` روی `main`/`origin/main` با prototype tree برابر `4297309252e2e6f9d80c184be7aad1e795c80279` بود. ماهیار بستهٔ اسناد معماری، اجرای برش اول `Project Backbone` و سپس اصلاح‌های بازیابی درخواست خرید و RTL را صریحاً پیش برد. پس از اعلام پایان اصلاح RTL و نتیجهٔ کامل آزمون‌ها، ماهیار با پیام «وقتی انجام شد همه جا منتشر کن» commit، push و انتشار همین snapshot را صریحاً مجاز کرد. این مجوز فقط release snapshot فعلی است و Memory Core، مدل، backend، شبکه/ارسال یا مسیر تأمین‌کننده را آغاز نمی‌کند. چهار فایل بسته برای حفظ همسانی بایتی با Sourceهای وب تغییر نکردند و رسید تأیید در learnings و این هنداف ثبت شد.
 
 ## مأموریت گفت‌وگوی بعدی
 
-**توقف جاری برای بازبینی Sol:** پیش از انتخاب برش بعدی، `CHIDA-SOL-HANDOFF-FA.md` نیز کامل خوانده شود. مأموریت فعلی فقط تطبیق read-only، بازبینی تعریف پایان فاز سازنده، Memory/Harness و پیشنهاد ترتیب ادامه است؛ شروع پیاده‌سازی نیاز به انتخاب صریح تازهٔ ماهیار دارد.
+**انتشار snapshot تأییدشده و سپس توقف:** بستهٔ اسناد، مجوز اجرای برش اول و مجوز صریح انتشار snapshot فعلی دریافت شدند. مأموریت جاری هم‌ترازکردن GitHub، Cloudflare Pages و ChatGPT Sites روی یک منبع تست‌شده و ثبت رسید آن است؛ پس از آن برش دوم به‌صورت خودکار آغاز نمی‌شود.
 
-این پروژه در سه فاز و دقیقاً به این ترتیب ادامه پیدا می‌کند:
+ترتیب مشترک Sol و Codex پس از تأیید بسته:
 
-1. تکمیل و تأیید پروتوتایپ موبایل سمت سازنده؛
-2. اتصال آزمایشی مدل محلی Gemma برای تست تجربهٔ سازنده؛
-3. ساخت مسیر و فضای تأمین‌کننده.
+1. بستهٔ چهار سند Architecture Review، Domain/Ownership/Permissions، Memory/Context/Retrieval و Harness/Runtime ساخته، نقد و در repo ثبت شده است.
+2. ماهیار بسته را صریحاً تأیید کرد؛ رسید تأیید بدون تغییر بایتی چهار Source در دفتر یادگیری و هنداف ثبت شد.
+3. تأیید اسناد implementation را خودکار آغاز نمی‌کند.
+4. ماهیار با پیام اجرایی جداگانه برش اول Project Backbone را مجاز کرد؛ پس از بازخوردهای خرید و RTL و پاس‌شدن gateها، انتشار همین snapshot را نیز صریحاً مجاز کرد.
+5. چهار برش بعدی Memory Core، Source/Composer Intake، Task/Monitor Core و Build Lifecycle Minimum هستند و هرکدام فقط پس از مشاهده/تأیید برش قبلی و پیام صریح تازه آغاز می‌شوند.
+6. پس از PASS شدن Builder Prototype Architecture Gate، M1a فقط به‌صورت adapter محلی، opt-in، provider-neutral و text-only آزموده می‌شود؛ M1b برای `ContextManifest`/Memory فقط بعد از پذیرش M1a می‌آید.
+7. مسیر تأمین‌کننده، shared case واقعی، backend و شبکهٔ واقعی همچنان به gate و تأییدهای جدا نیاز دارند.
 
 هر بار فقط یک تسک کوچک ساخته می‌شود. پس از مشاهده، اصلاح و تأیید ماهیار به تسک بعد می‌رویم. commit، push، merge، انتشار Cloudflare یا انتشار ChatGPT Sites فقط با درخواست صریح تازه انجام می‌شود.
 
-تعریف کاری پیشنهادی هنداف برای «تکمیل سمت سازنده» این است که پروتوتایپ کلیک‌پذیر موبایل، مدل داده و قراردادهای شکست/حریم/نسخهٔ آن کامل و آزموده شوند؛ نه اینکه backend، شبکهٔ واقعی، ارسال واقعی، وب واقعی یا محصول production ساخته شده باشد. این تعریف باید توسط ماهیار تأیید شود. تا فاز تأمین‌کننده، مسیر ماندگارِ حالت‌های وابسته به طرف دوم فقط از ورود دستی استفاده می‌کند و `Mock` صرفاً در Demo جدا، فقط‌خواندنی و بدون mutation مجاز است.
+تعریف کاری پیشنهادی برای «تکمیل سمت سازنده» دیگر completion مبهم کل T13 نیست؛ یک acceptance matrix دودویی برای ownership/scope، isolation، schema/state/version، failure/rollback، memory control، Source/Composer intake محلی، Task/Monitor، lifecycle حداقلی `BuiltArtifact`، پذیرش UI و شواهد آزمون است. backend production، شبکهٔ واقعی، طرف دوم واقعی، marketplace، Connector، اجرای کد آزاد، مالی سبک و desktop نهایی شرط این gate نیستند.
+
+## وضعیت لوکال برش ۱ — Project Backbone
+
+- مسیر کاربر «برنامه پروژه» است: Quick Action واقعی در خانه، ورودی «برنامه و تصمیم‌ها» در فضای پروژه و کارت Task متصل در مرکز کارها.
+- store تازه `chida-prototype-project-backbone:v1` یک envelope اتمیک با سه Domain Object مستقل Milestone، Decision و Task است. هر سه project-scoped و دارای owner/scope، version، revision snapshot، fingerprint و history هستند؛ لینک Decision↔Task↔Milestone دقیق و در parser اعتبارسنجی می‌شود.
+- Decision بدون reason مرئی ثبت نمی‌شود. absent store با empty فرق دارد؛ malformed/schema-invalid/cross-project/orphan state read-error است و mutation را fail-close قفل می‌کند.
+- create/update/rollback زیر Web Lock سراسری همان origin اجرا می‌شوند؛ مسیر کامل read → expectedVersion/graph validation → write سریال است و نبود Web Locks بدون fallback ناامن fail-close می‌شود. stale editor overwrite نمی‌کند، no-op بایت و نسخه را ثابت نگه می‌دارد، timestamp با ساعت عقب‌رفته عقب نمی‌رود و rollback محتوای نسخهٔ قدیمی را به‌عنوان revision تازه ثبت می‌کند.
+- فرم این برش عمداً فقط دادهٔ حداقلی را می‌گیرد؛ target date/dueAt و transitionهای کامل status به Task/Monitor Core موکول‌اند. بدهی reader/write مخزن قدیمی BuilderProject نیز با این store تازه حل‌شده ادعا نمی‌شود.
+- پس از مشاهدهٔ ماهیار، یک نقص presentation در فرم create/edit پیدا شد: BottomSheet به‌علت portal شدن بیرون `.chida-app` مقدار `direction=ltr` می‌گرفت. اصلاح محدود، زمینهٔ RTL مستقل sheet و تراز راست پنج ورودی فارسی را اضافه کرد؛ regression اختصاصی ابتدا شکست را اثبات و سپس در create/edit با ۱/۱ پاس کرد. بازبینی مستقل finding باز P0/P1/P2 نداشت. پس از اعلام پایان و شواهد آزمون، ماهیار انتشار همین snapshot را صریحاً مجاز کرد؛ این مجوز به Memory Core یا برش بعدی گسترش ندارد.
+- یازده regression متمرکز Project Backbone برابر ۱۱/۱۱ پاس شده‌اند؛ ساخت/لینک/reload و نبود duplication، RTL واقعی create/edit، reason مرئی و دسترس‌پذیری، جداسازی پروژه، no-op/edit/rollback، ساعت عقب‌رفته، stale conflict، رقابت واقعی دو تب، نبود Web Locks، write failure، JSON خراب و semantic tamper شامل fingerprint، تاریخ ناممکن و cross-project link را پوشش می‌دهند.
+- `npm run test:app` برابر ۱۷۸/۱۷۸، `npm run test:runtime` برابر ۱۸۶/۱۸۶، `npm run test:sites` برابر ۴/۴، build/TypeScript و integrity هر ۲۸ فایل پاس شدند. QA دیداری پیشین مرورگر داخلی در `390 × 844` حالت خالی، sheet سه‌بخشی، ثبت، ویرایش، تاریخچه/rollback و کارت Task را تأیید کرد؛ `document/body scrollWidth = 390`، عنصر افقی بیرون‌زده صفر و console error/warning صفر بود. بازخورد RTL فعلی با computed style واقعی در همان viewport برای header، توضیح، section copy، labelها و هر پنج فیلد create/edit آزموده شد.
+- بازبینی مستقل نهایی diff پس از اصلاح Web Locks، تاریخ تقویمی exact، نویسه‌های نامرئی و دسترس‌پذیری، finding باز P0/P1/P2 گزارش نکرد.
+- تا پیش از اجرای release جاری، این snapshot local/uncommitted و انتشارهای Cloudflare و ChatGPT Sites روی baseline `8b557020...` بودند؛ رسید commit و deployment نهایی پس از موفقیت در همین هنداف ثبت می‌شود.
+
+## نتیجهٔ مشترک Sol و Codex؛ تأییدشده توسط ماهیار
+
+- invariant معماری نقش به‌صورت `AccountSide = builder | supplier` تعریف می‌شود؛ هر حساب فقط یک سمت تغییرناپذیر دارد و role switch عادی ندارد. `MembershipRole` فقط نقش دسترسی داخل فضای همان سمت است.
+- تک‌نقشی‌بودن تعارض منافع و سطح سوءاستفاده را کاهش می‌دهد، اما ضدتقلب کامل نیست؛ multi-account و related identity در سند آیندهٔ Identity & Abuse تصمیم‌گیری می‌شوند.
+- `AccountSide` از Identity/Policy معتبر می‌آید و Harness یا مدل حق استنباط یا override آن را ندارند.
+- بخش‌های local/manual فعلی T8 حفظ می‌شوند؛ پاسخ واقعی و احرازشدهٔ طرف دوم، رضایت، amendment مشترک، `case_shared` واقعی و بستن دوطرفه تا فاز supplier/shared case defer می‌شوند. موعد/follow-up به Task/Monitor منتقل و محاسبهٔ عددی اثر تا قرارداد دامنه و فرمول معتبر عقب می‌افتد.
+- Domain Object منبع حقیقت است. `MemoryCandidate` از `MemoryRecord` جداست، procedural rule اجرایی یک `Instruction/WorkflowDefinition` نسخه‌دار است و `case_shared` حافظه نیست؛ shared domain projection/share event صریح، نسخه‌دار، permissioned و audited است.
+- مشاهده، جست‌وجوی دستی، retrieval خودکار، model eligibility و shareability کنترل‌های مستقل‌اند؛ `useInContext` به‌تنهایی مجوز ورود به مدل یا اشتراک نیست.
+- Harness انتخاب context/workflow/tool را هماهنگ می‌کند؛ ModelGateway فقط provider call، caching، timeout، usage/cost و normalization را مدیریت می‌کند. مدل و orchestrator خروجی مدل را مستقیم commit نمی‌کنند و فقط Domain/Application Service مجاز با concurrency/idempotency می‌نویسد.
+- Build در gate سازنده فقط lifecycle یک `BuiltArtifact` امن، declarative و project-scoped از catalog بسته است؛ `Capability/Plugin`، runtime `Tool` و `Connector` مفاهیم جدا هستند.
+- بستهٔ چهار سند در repo و Sources پروژهٔ ChatGPT از نظر محتوایی همسان و اکنون صریحاً مورد تأیید ماهیار است. سند مادر تا بازنگری صریح همچنان تنها مرجع تعریف محصول می‌ماند؛ تعارض `AccountSide` باید شفاف ثبت و بعداً در سند مادر supersede شود.
 
 ## شروع اجباری در گفت‌وگوی جدید
 
@@ -24,11 +53,12 @@
 
 1. `AGENTS.md` و `prototype/AGENTS.md` را کامل بخوان.
 2. منبع حقیقت را فقط `CHIDA-Product-Definition-FA.md` بدان؛ `BUILDER-FEATURE-BACKLOG-FA.md` فقط ترتیب اجرایی و این فایل فقط هنداف است.
-3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007، C-008، C-009، C-010 و T6-A/T6-B/T6-B2/T6-C/T6-D/T7-A/T7-B1/T7-B2/T8-A1/T8-A2/T8-A3/T8-A4/T8-A5a/T8-A5b/T8-UX1/T8-UX2/T8-UX3، بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه فقط C-010 است و قاعدهٔ Quick Action grid در C-010 با تصمیم صریح T8-UX3 منسوخ شده است.
-4. `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را بررسی کن.
-5. پیش‌نمایش محلی را در viewport واقعی `390 × 844` باز کن؛ فقط Mobile و Dark در دامنه است.
-6. receipt نهایی انتشار T8-UX2 را با بخش Git همین هنداف تطبیق بده؛ commit کد `a08c93edefad6cc79bc7bb1f83a023730a2ef06f`، receipt `8c7e5d9a46f2da1acb02456b6b55010e6037db94` و prototype tree هر دو `0fe7bc7f77640e78091254e76d8d88670f002aa6` است. Cloudflare deployment نهایی `e24010be-d6bd-427d-95f5-77f2c05ec9a5` و Sites نسخهٔ ۲۳/deployment `appgdep_6a93f27f77c48191adc895a833c41695` را read-only تطبیق بده.
-7. انتشار T8-UX2 را تطبیق بده. این برش عکس را از «فایل‌ها» جدا، سند منتخب را فقط در IndexedDB همان مرورگر قابل‌بازشدن و مسیر خرید را به ثبت نیاز، انتخاب تأمین‌کننده‌های ثبت‌شده و تأیید نهایی در «کارها» کوتاه می‌کند؛ ارسال، matching، پاسخ واقعی تأمین‌کننده، مدل محلی یا مسیر تأمین‌کننده در آن وجود ندارد.
+3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007 تا C-010، T7/T8، T8-UX1/T8-UX2/T8-UX3، H1 و H2 بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه C-010 است و قاعدهٔ Quick Action grid در C-010 با تصمیم صریح T8-UX3 منسوخ شده است.
+4. `CHIDA-SOL-HANDOFF-FA.md` را کامل بخوان و سپس `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را فقط read-only تطبیق بده. baseline فعلی `8b557020768b22b81b8aadbd28c6a078e26c7ee5` با prototype tree برابر `4297309252e2e6f9d80c184be7aad1e795c80279` است.
+5. Project Backbone لوکال را همراه بخش `PB-1` دفتر یادگیری بررسی کن؛ تغییرهای موجود کار همین برش و اسناد عمداً dirty پیشین‌اند و نباید پاک شوند.
+6. preview/تست فقط برای بازبینی یا اصلاح همین برش مجاز است؛ commit، push و deploy همچنان نیازمند درخواست صریح تازه‌اند.
+7. مدل، Memory Core، Source/Composer Intake، Task/Monitor Core، Build Lifecycle، backend و مسیر تأمین‌کننده را آغاز نکن.
+8. برای مشاهده، اصلاح یا تأیید صریح Project Backbone منتظر ماهیار بمان؛ برش بعدی مجوز جدا می‌خواهد.
 
 ## سلسله‌مراتب تصمیم
 
@@ -280,7 +310,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 - کنترل بالای پروژه و دکمهٔ پروژه در نوار پایین فقط نام را نشان می‌دهند؛ affordance دیداری و accessible name حفظ شده و متن‌های تکراری/فلش حذف شده‌اند.
 - Quick Action خانه یک Carousel موجود و تغییرنیافته با wrapper جهت LTR و track محتوای RTL است. rail ده chip دارد، در ورود و بازگشت به ابتدای RTL هم‌تراز می‌شود و overflow فقط داخل rail است؛ قاعدهٔ تاریخی grid در C-010 برای این خانه منسوخ است.
-- هشت مقصد واقعی عبارت‌اند از درخواست قیمت، پیشنهادها، کار جدید، افزودن فایل، افزودن عکس، ثبت حافظه، جست‌وجوی پروژه و Build کنترل‌شده. «شروع صورت‌جلسه» و «چیدن برنامه خرید» فقط draft Composer را آغاز می‌کنند و به‌عنوان workflow ساخته‌شده معرفی نمی‌شوند.
+- در snapshot تاریخی T8-UX3 هشت مقصد واقعی و دو starter وجود داشتند. PB-1 اکنون starter «چیدن برنامه خرید» را با مقصد واقعی «برنامه پروژه» جایگزین کرده است؛ فقط «شروع صورت‌جلسه» draft Composer می‌سازد.
 - نشان PNG اختصاصی CHIDA جای آیکون عمومی را گرفته و متن‌های خانه scoped درشت‌تر شده‌اند. مدل، شبکه، ارسال، matching، مسیر تأمین‌کننده، runtime محافظت‌شده و قرارداد دادهٔ مقصدها تغییر نکرده‌اند.
 - وضعیت تحویل: focused نهایی ۵/۵، app برابر ۱۵۹/۱۵۹، runtime برابر ۱۶۷/۱۶۷، Sites برابر ۴/۴، build/TypeScript، integrity ۲۸ فایل و QA `390 × 844` پاس‌اند؛ `design-qa.md` نتیجهٔ `passed` دارد و بازبینی مستقل finding باز P0/P1/P2 ندارد. commit کد `3e4b35fe08b02918e4be814d5d796da14bfa54ca` در GitHub، Cloudflare deployment `9b78e089-e0f5-427b-b788-9221b908ef7d` و ChatGPT Sites نسخهٔ ۲۴/deployment `appgdep_6a940cbe06d48191912661b9e4ec4615` منتشر است.
 
@@ -334,7 +364,9 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - فرمول، واحد، منشأ و مقدار نامعلوم روشن باشند.
 - حسابداری رسمی، بانک، پرداخت، ERP و صورت‌وضعیت رسمی ساخته نشوند.
 
-### T13 — بستن بدهی‌های سازنده و دروازهٔ پایان فاز
+### T13 — فهرست تاریخی بدهی‌های سازنده؛ ورودی acceptance matrix
+
+این عنوان دیگر یک gate یک‌تکه و مستقل نیست. موارد زیر باید در سه سند تفصیلی آینده به acceptance matrix دودویی Builder Prototype Architecture Gate نگاشت، به یکی از پنج برش کوچک سازنده تخصیص یا با دلیل و تأیید صریح ماهیار defer شوند.
 
 - پیام‌های چت به `projectId` محدود شوند؛ پاسخ دیررس یا تعویض پروژه هرگز نشت نسازد.
 - Draft در قطع کوتاه ارتباط حفظ و وضعیت اتصال روشن شود.
@@ -345,13 +377,13 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - `README.md` و `prototype/README.md` با T5/T6 و مرزهای نهایی فاز هم‌تراز شوند.
 - QA نهایی Mobile/Dark در `390 × 844`، دسترس‌پذیری، فوکوس، کیبورد، متن RTL/LTR، ارقام و overflow انجام شود.
 - یک مسیر E2E سازنده با دادهٔ واقعی محلی و یک مسیر مستقل با `Mock` اجرا شود.
-- پس از تأیید T13، ماهیار باید صریحاً پایان فاز سازنده را تأیید کند؛ فقط بعد از آن M1 شروع می‌شود.
+- فقط پس از PASS شدن Builder Prototype Architecture Gateِ تفکیک‌شده و تأیید صریح ماهیار، M1a آغاز می‌شود؛ صرف بسته‌شدن عنوان تاریخی T13 یا چند آیتم پراکنده مجوز شروع مدل نیست.
 
 ## بدهی‌ها و affordanceهای نیمه‌کارهٔ شناخته‌شده
 
 - عدد پین‌شده‌ها واقعی نیست؛ «گفتگوی تازه»، پین‌ها، جست‌وجوی گفتگو و امکانات چیدا ظاهر فعال دارند اما رفتار کامل ندارند. Settings اکنون فقط وضعیت‌های واقعی را نمایش می‌دهد؛ usage/token/billing/quota تا اتصال منبع معتبر عمداً نامتصل‌اند.
 - دوربین و گالری Composer attachment نمی‌سازند؛ Voice handler ندارد.
-- Quick Action «پیشنهادها» اکنون صندوق دستی T7-A را باز می‌کند؛ «شروع صورت‌جلسه» و «چیدن برنامه خرید» هنوز فقط draft متن می‌سازند. خود Quick Action یک rail افقی dragپذیر با overflow داخلی است؛ فیلترهای کار همچنان grid بدون overflow صفحه‌اند.
+- Quick Action «پیشنهادها» صندوق دستی T7-A و «برنامه پروژه» Project Backbone را باز می‌کنند؛ فقط «شروع صورت‌جلسه» هنوز draft متن می‌سازد. خود Quick Action یک rail افقی dragپذیر با overflow داخلی است؛ فیلترهای کار همچنان grid بدون overflow صفحه‌اند.
 - «دستیار فنی» در Tools رفتار واقعی ندارد.
 - draft و پیام‌های چت در نشست فعلی بر اساس پروژه جدا شده‌اند، اما persistence چت، thread واقعی و پاسخ مدل هنوز وجود ندارد و پاسخ فعلی canned است.
 - لغو/بازگشایی Approval محلی برنامهٔ ارسال در T6-D ساخته شده است؛ این چرخه به Approval محتوای درخواست یا مجوز ارسال واقعی تعمیم داده نمی‌شود.
@@ -427,4 +459,22 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 ## متن کوتاه آماده برای آغاز گفت‌وگوی جدید
 
-> این گفت‌وگو ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز. ابتدا اسناد الزامی، C-010 و T7/T8/T8-UX1/T8-UX2/T8-UX3 را بخوان و receiptهای baseline را تطبیق بده. baseline پیش از T8-UX3، receipt نهایی T8-UX2 برابر `8c7e5d9a46f2da1acb02456b6b55010e6037db94` با prototype tree `0fe7bc7f77640e78091254e76d8d88670f002aa6`، Cloudflare deployment `e24010be-d6bd-427d-95f5-77f2c05ec9a5` و ChatGPT Sites نسخهٔ ۲۳/deployment `appgdep_6a93f27f77c48191adc895a833c41695` است. T8-UX3 کنترل‌های فقط‌نام پروژه، rail افقی ده‌تایی Quick Action، نشان اختصاصی و خوانایی بیشتر خانه را بدون مدل/شبکه/ارسال یا مسیر تأمین‌کننده پیاده می‌کند؛ receipt انتشار آن را از بخش Git همین هنداف بخوان و بدون مجوز صریح برش بعدی را شروع نکن.
+> این تسک ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز و از محیط local همین پروژه استفاده کن. ابتدا `AGENTS.md`، `prototype/AGENTS.md`، `CHIDA-CONTINUATION-HANDOFF-FA.md`، `CHIDA-SOL-HANDOFF-FA.md`، بخش H2 در `CHIDA-PRODUCT-LEARNINGS-FA.md`، سند مادر، backlog و بستهٔ چهار سند Proposed معماری را کامل بخوان. وضعیت Git را فقط read-only با baseline `8b557020768b22b81b8aadbd28c6a078e26c7ee5` تطبیق بده. سپس هیچ preview، تست artifact‌ساز، commit، push، deploy، مدل، backend یا مسیر تأمین‌کننده را شروع نکن؛ فقط وضعیت بسته و تصمیم‌های نیازمند تأیید را گزارش کن و منتظر تأیید یا اصلاح صریح ماهیار بمان. حتی پس از تأیید اسناد، implementation فقط با پیام اجرایی صریح و جداگانهٔ ماهیار آغاز می‌شود و نخستین برش `Project Backbone` است.
+
+## آخرین اصلاح لوکال — بازیابی امن درخواست خرید ناخوانا
+
+- **محرک:** ماهیار در preview لوکال گزارش کرد درخواست‌های خرید قابل‌ثبت نیستند و با پیام «درستش کن» اصلاح را مجاز کرد. علت، read-error مخزن `PurchaseRequest` و قفل fail-close درست، اما بدون مسیر recovery بود؛ این رفتار disable عمدی قابلیت نبود.
+- **زمینهٔ محفوظ:** بستهٔ اسناد تأییدشده و برش PB-1 دست‌نخورده ادامه دارند. baseline منتشرشده همچنان `8b557020768b22b81b8aadbd28c6a078e26c7ee5` است و این hotfix فقط روی working tree محلیِ موجود افزوده شده است.
+- **وضعیت کد:** در `prototype/src/Prototype.tsx` مسیر backup-first و دوگامی اضافه شد؛ در `prototype/src/prototype.css` حالت‌های هشدار/sheet/موفقیت و کنتراست اصلاح شدند؛ در `prototype/tests/chida-flow.spec.ts` نه سناریوی recovery افزوده شد؛ و قرارداد ماندگار آن در `prototype/AGENTS.md` ثبت شد. همهٔ تغییرها در checkout اصلی، شاخهٔ `main` و local/uncommitted هستند.
+- **قرارداد:** recovery یک snapshot واحد از raw موجود می‌گیرد؛ اگر معتبر شده باشد فقط reload می‌کند. اگر نامعتبر باشد، backup یکتای بایت‌به‌بایت تأییدشده و recovery intent ماندگار را پیش از remove می‌سازد، تغییر نکردن source را دوباره می‌سنجد، فقط primary را خالی می‌کند، empty معتبر را بررسی می‌کند و سپس intent را پاک و UI را باز می‌کند. شکست‌های میانی rollback یا resume پس از reload دارند و mutation در هر وضعیت نامطمئن بسته می‌ماند.
+- **حفظ داده‌های دیگر:** Approvalها، گیرنده‌ها، DispatchDraftها، برنامه‌های ارسال، پیشنهادها و سایر storeها هدف recovery نیستند و در تست موفق bytes آن‌ها بدون تغییر ماند.
+- **شواهد:** focused recovery برابر ۹/۹، app برابر ۱۷۷/۱۷۷، runtime برابر ۱۸۵/۱۸۵، Sites برابر ۴/۴ و build/TypeScript/integrity هر ۲۸ فایل پاس شدند. بازبینی مستقل نهایی finding باز P0/P1/P2 نداشت. ریسک باقیماندهٔ ثبت‌شده، پنجرهٔ کوچک cross-tab میان آخرین source-check و remove در writerهای قدیمیِ بدون Web Lock مشترک است.
+- **بدهی lifecycle:** backup محلی فعلاً UI مشاهده، restore انتخابی، export، حذف یا retention ندارد و نباید با backup کامل محصول یا sync اشتباه شود.
+- **وضعیت مرورگر واقعی:** پس از QA اولیه و لغو بدون تغییر، ماهیار صریحاً گفت دادهٔ مهمی در مخزن ندارد و اجرای recovery را تأیید کرد. «پشتیبان‌گیری و خالی‌کردن فهرست» اجرا شد؛ UI ساخت نسخهٔ بازیابی محلی را گزارش کرد، empty state «هنوز درخواستی ثبت نشده» دیده شد و «درخواست جدید» فعال است. هیچ درخواست تازه‌ای ساخته نشد.
+
+### نتیجهٔ اجرای واقعی و نقطهٔ توقف
+
+1. تأیید لحظه‌ای ماهیار دریافت و recovery فقط روی primary درخواست خرید اجرا شد.
+2. رسید موفقیت، empty state معتبر و فعال‌شدن «درخواست جدید» در همان مرورگر مشاهده شد؛ جریان ساخت درخواست عمداً آغاز نشد.
+3. این باگ در اجرای فعلی بسته است. گام بعدی فقط با درخواست جداگانهٔ ماهیار انتخاب می‌شود؛ دادهٔ backup محلی UI lifecycle مستقل ندارد و ریسک cross-tab ثبت‌شده همچنان بدهی است.
+4. این تأیید مجوز commit، push، deploy، مدل، backend، شبکه یا مسیر تأمین‌کننده نیست. پس از همین ثبت بازخورد، تسک متوقف می‌شود.
