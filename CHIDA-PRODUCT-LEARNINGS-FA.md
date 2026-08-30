@@ -1321,7 +1321,7 @@
 ## T8-UX3 — پولیش خانهٔ سازنده، نشان CHIDA و Quick Action کامل
 
 - **تاریخ بازخورد:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
-- **وضعیت:** بازخورد صریح ماهیار در checkout اصلی پیاده‌سازی و در viewport واقعی `390 × 844` QA شده است. انتشار same-source در GitHub، Cloudflare Pages و ChatGPT Sites با همان مجوز صریح «در نهایت همه چیز رو منتشر کن» در حال انجام است؛ receiptهای دقیق پس از موفقیت مقصدها ثبت می‌شوند.
+- **وضعیت:** بازخورد صریح ماهیار در checkout اصلی پیاده‌سازی، در viewport واقعی `390 × 844` QA و با commit کد `3e4b35fe08b02918e4be814d5d796da14bfa54ca` در GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۲۴ same-source منتشر شده است. commit مستندی receipt در ادامه همین release ثبت می‌شود؛ تأیید تجربه پس از مشاهده باز می‌ماند.
 - **دامنه:** خلوت‌سازی خانهٔ Chat-first، روشن‌ترکردن affordance پروژه، تبدیل Quick Action از grid به rail افقی dragپذیر، کامل‌کردن میان‌برهای صادقانهٔ قابلیت‌های ساخته‌شده، افزایش خوانایی و جایگزینی نشان عمومی با دارایی تصویری اختصاصی CHIDA؛ بدون تغییر schema، storage، runtime محافظت‌شده، مدل، شبکه یا اثر بیرونی.
 
 ### تجربهٔ مشاهده‌شده و بازخورد کاربر
@@ -1350,6 +1350,13 @@
 - build/TypeScript، integrity هر ۲۸ فایل، `test:app` برابر ۱۵۹/۱۵۹، `test:runtime` برابر ۱۶۷/۱۶۷، `test:sites` برابر ۴/۴ و `git diff --check` پاس شدند. هشدار شناخته‌شدهٔ chunk جاوااسکریپت بزرگ‌تر از 500kB باقی است.
 - QA مرورگر داخلی در `390 × 844` مقدار `rootOverflow=0`، overflow داخلی rail برابر ۹۱۸ پیکسل، شروع RTL در offset نهایی، فونت ۱۵px نام پروژه، ۱۴px متن راهنما، ۱۲px chip، border روشن کنترل پروژه، بارگذاری کامل نشان و console بدون warning/error را تأیید کرد. نشان نهایی برای slot کوچک خانه از ۱۲۵۴px/حدود ۴۸۶KB به ۲۵۶px/حدود ۳۶KB بهینه شد و alpha حفظ شد.
 - مقایسهٔ مرجع و پیاده‌سازی در یک ورودی دیداری انجام و نتیجه در `design-qa.md` با وضعیت `passed` ثبت شد. بازبینی مستقل پس از رفع وزن دارایی و دو تعارض مستندی، هیچ finding باز P0/P1/P2 نداشت.
+
+### release کد و receipt پیش از commit مستندی نهایی
+
+- commit کد `3e4b35fe08b02918e4be814d5d796da14bfa54ca` روی local/GitHub `main` هم‌تراز شد و prototype tree آن `4297309252e2e6f9d80c184be7aad1e795c80279` است.
+- Cloudflare Pages deployment تولید `9b78e089-e0f5-427b-b788-9221b908ef7d` از شاخهٔ `main` و source `3e4b35f` فعال شد. canonical `https://chida-prototype.pages.dev` و immutable `https://9b78e089.chida-prototype.pages.dev` هر دو برای HTML، JavaScript، CSS و نشان ۲۰۰ بودند و هش‌های build محلی را داشتند: HTML `2872325a9536c3c30933c0bf4e05c921c5c57841b2050565d4b4c0e4456ca2ce`، JavaScript `5b5b5cef51c427d108b02983213d14e6e27e403ec99fd27e7c7a75cd5e15ef1b`، CSS `94283e31ad8830896c0e44498a248d96f392b1de83912d9783a2e02867be81df` و نشان `44cc69c64df0f51d8603ce8157e3f3d7eb753ac4908eddf80b9e773ef1231cad`.
+- ChatGPT Sites نسخهٔ ۲۴ با version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_86ea0b7d394c8191aef34c83a2ae0e2f`، source commit دقیق کد، ۱۹ فایل و archive hash `sha256:316dbe635d0483a16eb3480c288898d8c14a1af97f2b1882187c6baf05da18f5` ذخیره و با deployment خصوصی `appgdep_6a940cbe06d48191912661b9e4ec4615` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` منتشر شد. access `custom`/owner-only با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
+- commit مستندی بعدی همین receipt را ثبت می‌کند و باید prototype tree را تغییر ندهد. شناسه‌های انتشار خود commit مستندی به‌دلیل حلقهٔ self-reference عمداً در نخستین commit مجاز بعدی backfill می‌شوند.
 
 ### پیشنهاد برای تکمیل سند مادر
 
