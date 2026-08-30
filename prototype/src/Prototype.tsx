@@ -149,6 +149,90 @@ type ProjectTaskRecord = {
 };
 type ProjectTaskDraft = Pick<ProjectTaskRecord, "title" | "currentStep"> & { dueDate: string };
 type ProjectTaskFilter = "active" | "approval" | "completed" | "failed" | "monitor";
+type ProjectBackboneObjectType = "milestone" | "decision" | "task";
+type ProjectBackboneEventType = "created" | "updated" | "rolled-back";
+type ProjectBackboneHistoryEvent = {
+  id: string;
+  type: ProjectBackboneEventType;
+  actor: "شما";
+  at: string;
+  version: number;
+  rollbackFromVersion: number | null;
+};
+type ProjectBackboneRevision<Snapshot> = {
+  id: string;
+  version: number;
+  createdAt: string;
+  snapshot: Snapshot;
+  fingerprint: string;
+};
+type ProjectBackboneRecord<ObjectType extends ProjectBackboneObjectType, Snapshot> = {
+  schemaVersion: 1;
+  id: string;
+  objectType: ObjectType;
+  projectId: string;
+  ownerPrincipalType: "project";
+  ownerPrincipalId: string;
+  accountSide: "builder";
+  scopeType: "project_private";
+  scopeId: string;
+  custodianService: "Domain Service";
+  sourceRefs: string[];
+  sensitivity: "private";
+  lifecycleState: "active";
+  version: number;
+  currentRevisionId: string;
+  createdBy: "شما";
+  updatedBy: "شما";
+  createdAt: string;
+  updatedAt: string;
+  history: ProjectBackboneHistoryEvent[];
+  revisions: ProjectBackboneRevision<Snapshot>[];
+};
+type ProjectMilestoneSnapshot = {
+  title: string;
+  status: "planned" | "reached";
+  targetDate: string | null;
+};
+type ProjectDecisionSnapshot = {
+  statement: string;
+  reason: string;
+  milestoneId: string;
+  taskId: string;
+};
+type ProjectBackboneTaskSnapshot = {
+  title: string;
+  nextStep: string;
+  dueAt: string | null;
+  status: ProjectTaskStatus;
+  milestoneId: string;
+  decisionId: string;
+};
+type ProjectMilestoneRecord = ProjectBackboneRecord<"milestone", ProjectMilestoneSnapshot>;
+type ProjectDecisionRecord = ProjectBackboneRecord<"decision", ProjectDecisionSnapshot>;
+type ProjectBackboneTaskRecord = ProjectBackboneRecord<"task", ProjectBackboneTaskSnapshot>;
+type ProjectBackboneEnvelope = {
+  schemaVersion: 1;
+  milestones: ProjectMilestoneRecord[];
+  decisions: ProjectDecisionRecord[];
+  tasks: ProjectBackboneTaskRecord[];
+};
+type ProjectBackboneGraph = {
+  milestone: ProjectMilestoneRecord;
+  decision: ProjectDecisionRecord;
+  task: ProjectBackboneTaskRecord;
+};
+type ProjectBackboneReadResult = { envelope: ProjectBackboneEnvelope; readError: boolean };
+type ProjectBackboneDraft = {
+  milestoneTitle: string;
+  decisionStatement: string;
+  decisionReason: string;
+  taskTitle: string;
+  taskNextStep: string;
+};
+type ProjectBackboneExpectedVersions = { milestone: number; decision: number; task: number };
+type ProjectBackboneMutationResult = "created" | "updated" | "rolled-back" | "unchanged" | "invalid" | "read-failure" | "version-conflict" | "write-failure" | "lock-unavailable";
+type ProjectBackboneReturnView = "chat" | "project" | "tasks";
 type PurchaseRequestStatus = "draft" | "ready-for-review";
 type PurchaseRequestEventType = "created" | "updated" | "marked-ready-for-review" | "returned-to-draft";
 type PurchaseRequestUnit = "عدد" | "کیلوگرم" | "تن" | "متر" | "مترمربع" | "مترمکعب" | "بسته" | "دستگاه";
@@ -1169,7 +1253,7 @@ type MockSourceAnswerDemo = {
   claims: readonly MockSourceClaim[];
   sources: readonly MockSourceRecord[];
 };
-type HomeView = "chat" | "project" | "files" | "gallery" | "memory" | "search" | "tasks" | "source-demo" | "purchase-requests" | "proposals";
+type HomeView = "chat" | "project" | "files" | "gallery" | "memory" | "search" | "tasks" | "project-backbone" | "source-demo" | "purchase-requests" | "proposals";
 type FilesReturnView = "chat" | "project" | "search";
 type GalleryReturnView = "chat" | "project";
 type MemoryReturnView = "chat" | "project" | "search";
@@ -1179,6 +1263,10 @@ type ProjectTasksLaunch = { filter: ProjectTaskFilter; approvalId: string | null
 type StoredProjectImage = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
 type StoredProjectFile = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
 type LocalRecordsReadResult<RecordType> = { records: RecordType[]; readError: boolean };
+type ProjectPurchaseRequestsRecoveryResult =
+  | { status: "reloaded"; records: ProjectPurchaseRequestRecord[] }
+  | { status: "reset"; records: ProjectPurchaseRequestRecord[] }
+  | { status: "not-needed" | "read-failure" | "backup-failure" | "source-changed" | "reset-failure" };
 
 const defaultInvite = "CHD-4K9P";
 const defaultPhone = "09123456789";
@@ -1191,7 +1279,11 @@ const activeProjectStorageKey = "chida-prototype-active-project";
 const projectFilesStorageKey = "chida-prototype-project-files:v1";
 const projectMemoriesStorageKey = "chida-prototype-project-memories:v1";
 const projectTasksStorageKey = "chida-prototype-project-tasks:v1";
+const projectBackboneStorageKey = "chida-prototype-project-backbone:v1";
+const projectBackboneWriteLockName = `${projectBackboneStorageKey}:write`;
 const projectPurchaseRequestsStorageKey = "chida-prototype-project-purchase-requests:v1";
+const projectPurchaseRequestsRecoveryBackupPrefix = `${projectPurchaseRequestsStorageKey}:recovery-backup:`;
+const projectPurchaseRequestsRecoveryIntentKey = `${projectPurchaseRequestsStorageKey}:recovery-intent:v1`;
 const projectApprovalsStorageKey = "chida-prototype-project-approvals:v1";
 const projectSupplierContactsStorageKey = "chida-prototype-project-supplier-contacts:v1";
 const projectDispatchDraftsStorageKey = "chida-prototype-project-dispatch-drafts:v1";
@@ -1303,7 +1395,7 @@ const quickActions = [
   { id: "search", label: "جست‌وجوی پروژه", icon: Search },
   { id: "build", label: "برایم بساز", icon: Hammer },
   { id: "meeting-notes", label: "شروع صورت‌جلسه", icon: ClipboardCheck },
-  { id: "purchase-plan", label: "چیدن برنامه خرید", icon: LayoutGrid },
+  { id: "project-plan", label: "برنامه پروژه", icon: Pin },
 ] as const;
 type QuickActionId = typeof quickActions[number]["id"];
 
@@ -3346,6 +3438,10 @@ function hasVisibleProjectTaskText(value: string) {
   return value.replace(/[\s\u200b\u200c\u200d\u2060\ufeff]/gu, "").length > 0;
 }
 
+function hasVisibleProjectBackboneText(value: string) {
+  return /[\p{L}\p{N}\p{P}\p{S}]/u.test(value.normalize("NFKC"));
+}
+
 function projectTaskHistoryReachesStatus(history: ProjectTaskEvent[], status: ProjectTaskStatus) {
   let reachableStatus: ProjectTaskStatus = "in-progress";
   for (const [index, event] of history.entries()) {
@@ -3465,6 +3561,281 @@ function readStoredProjectTasks(): LocalRecordsReadResult<ProjectTaskRecord> {
   } catch {
     return { records: [], readError: true };
   }
+}
+
+const projectBackboneRecordKeys = [
+  "schemaVersion", "id", "objectType", "projectId", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "custodianService", "sourceRefs", "sensitivity", "lifecycleState", "version", "currentRevisionId", "createdBy", "updatedBy", "createdAt", "updatedAt", "history", "revisions",
+] as const;
+
+function emptyProjectBackboneEnvelope(): ProjectBackboneEnvelope {
+  return { schemaVersion: 1, milestones: [], decisions: [], tasks: [] };
+}
+
+function projectBackboneRevisionFingerprint(objectType: ProjectBackboneObjectType, projectId: string, snapshot: ProjectMilestoneSnapshot | ProjectDecisionSnapshot | ProjectBackboneTaskSnapshot) {
+  const serialized = JSON.stringify(stablePurchaseRequestValue({ objectType, projectId, snapshot }));
+  return `fnv1a-${purchaseRequestStableHash(serialized)}`;
+}
+
+function isExactProjectBackboneDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function parseProjectBackboneSnapshot(objectType: ProjectBackboneObjectType, value: any): ProjectMilestoneSnapshot | ProjectDecisionSnapshot | ProjectBackboneTaskSnapshot | null {
+  if (objectType === "milestone") {
+    if (!hasExactObjectKeys(value, ["title", "status", "targetDate"])) return null;
+    const title = typeof value?.title === "string" ? value.title.trim() : "";
+    const targetDate = value?.targetDate === null ? null : typeof value?.targetDate === "string" ? value.targetDate.trim() : "";
+    if (!hasVisibleProjectBackboneText(title) || title !== value?.title || title.length > 120 || !["planned", "reached"].includes(value?.status) || targetDate !== null && !isExactProjectBackboneDate(targetDate)) return null;
+    return { title, status: value.status as ProjectMilestoneSnapshot["status"], targetDate };
+  }
+  if (objectType === "decision") {
+    if (!hasExactObjectKeys(value, ["statement", "reason", "milestoneId", "taskId"])) return null;
+    const statement = typeof value?.statement === "string" ? value.statement.trim() : "";
+    const reason = typeof value?.reason === "string" ? value.reason.trim() : "";
+    const milestoneId = typeof value?.milestoneId === "string" ? value.milestoneId.trim() : "";
+    const taskId = typeof value?.taskId === "string" ? value.taskId.trim() : "";
+    if (!hasVisibleProjectBackboneText(statement) || statement !== value?.statement || statement.length > 500 || !hasVisibleProjectBackboneText(reason) || reason !== value?.reason || reason.length > 500 || !milestoneId || milestoneId !== value?.milestoneId || !taskId || taskId !== value?.taskId) return null;
+    return { statement, reason, milestoneId, taskId };
+  }
+  if (!hasExactObjectKeys(value, ["title", "nextStep", "dueAt", "status", "milestoneId", "decisionId"])) return null;
+  const title = typeof value?.title === "string" ? value.title.trim() : "";
+  const nextStep = typeof value?.nextStep === "string" ? value.nextStep.trim() : "";
+  const dueAt = value?.dueAt === null ? null : typeof value?.dueAt === "string" ? value.dueAt.trim() : "";
+  const milestoneId = typeof value?.milestoneId === "string" ? value.milestoneId.trim() : "";
+  const decisionId = typeof value?.decisionId === "string" ? value.decisionId.trim() : "";
+  if (!hasVisibleProjectBackboneText(title) || title !== value?.title || title.length > 80 || !hasVisibleProjectBackboneText(nextStep) || nextStep !== value?.nextStep || nextStep.length > 300 || dueAt !== null && !isValidProjectFileDate(dueAt) || !["in-progress", "completed"].includes(value?.status) || !milestoneId || milestoneId !== value?.milestoneId || !decisionId || decisionId !== value?.decisionId) return null;
+  return { title, nextStep, dueAt, status: value.status as ProjectTaskStatus, milestoneId, decisionId };
+}
+
+function parseProjectBackboneRecord(value: any, objectType: ProjectBackboneObjectType): ProjectMilestoneRecord | ProjectDecisionRecord | ProjectBackboneTaskRecord | null {
+  if (!hasExactObjectKeys(value, projectBackboneRecordKeys) || value?.schemaVersion !== 1 || value?.objectType !== objectType) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  if (
+    !id || id !== value?.id || !projectId || projectId !== value?.projectId
+    || value?.ownerPrincipalType !== "project" || value?.ownerPrincipalId !== projectId
+    || value?.accountSide !== "builder" || value?.scopeType !== "project_private" || value?.scopeId !== projectId
+    || value?.custodianService !== "Domain Service" || !Array.isArray(value?.sourceRefs)
+    || value.sourceRefs.some((sourceRef: unknown) => typeof sourceRef !== "string" || !sourceRef.trim())
+    || new Set(value.sourceRefs).size !== value.sourceRefs.length
+    || value?.sensitivity !== "private" || value?.lifecycleState !== "active"
+    || value?.createdBy !== "شما" || value?.updatedBy !== "شما"
+    || !Number.isInteger(value?.version) || value.version < 1
+    || !currentRevisionId || currentRevisionId !== value?.currentRevisionId
+    || !isValidProjectFileDate(createdAt) || createdAt !== value?.createdAt
+    || !isValidProjectFileDate(updatedAt) || updatedAt !== value?.updatedAt
+    || new Date(updatedAt).getTime() < new Date(createdAt).getTime()
+    || !Array.isArray(value?.history) || !Array.isArray(value?.revisions)
+    || value.history.length !== value.version || value.revisions.length !== value.version
+  ) return null;
+
+  const historyIds = new Set<string>();
+  const history: ProjectBackboneHistoryEvent[] = value.history.flatMap((event: any, index: number): ProjectBackboneHistoryEvent[] => {
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version", "rollbackFromVersion"])) return [];
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as ProjectBackboneEventType;
+    const rollbackFromVersion = event?.rollbackFromVersion;
+    const rollbackMarkerIsValid = type === "rolled-back"
+      ? Number.isInteger(rollbackFromVersion) && rollbackFromVersion >= 1 && rollbackFromVersion <= index
+      : rollbackFromVersion === null;
+    if (!eventId || eventId !== event?.id || historyIds.has(eventId) || !["created", "updated", "rolled-back"].includes(type) || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at) || at !== event?.at || index === 0 && type !== "created" || index > 0 && type === "created" || !rollbackMarkerIsValid) return [];
+    historyIds.add(eventId);
+    return [{ id: eventId, type, actor: "شما", at, version: index + 1, rollbackFromVersion: rollbackFromVersion as number | null }];
+  });
+  if (history.length !== value.history.length || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())) return null;
+
+  const revisionIds = new Set<string>();
+  const revisions: ProjectBackboneRevision<ProjectMilestoneSnapshot | ProjectDecisionSnapshot | ProjectBackboneTaskSnapshot>[] = value.revisions.flatMap((revision: any, index: number): ProjectBackboneRevision<ProjectMilestoneSnapshot | ProjectDecisionSnapshot | ProjectBackboneTaskSnapshot>[] => {
+    if (!hasExactObjectKeys(revision, ["id", "version", "createdAt", "snapshot", "fingerprint"])) return [];
+    const revisionId = typeof revision?.id === "string" ? revision.id.trim() : "";
+    const revisionCreatedAt = typeof revision?.createdAt === "string" ? revision.createdAt.trim() : "";
+    const snapshot = parseProjectBackboneSnapshot(objectType, revision?.snapshot);
+    const fingerprint = snapshot ? projectBackboneRevisionFingerprint(objectType, projectId, snapshot) : "";
+    if (!revisionId || revisionId !== revision?.id || revisionIds.has(revisionId) || revision?.version !== index + 1 || !isValidProjectFileDate(revisionCreatedAt) || revisionCreatedAt !== revision?.createdAt || revisionCreatedAt !== history[index]?.at || !snapshot || revision?.fingerprint !== fingerprint) return [];
+    revisionIds.add(revisionId);
+    return [{ id: revisionId, version: index + 1, createdAt: revisionCreatedAt, snapshot, fingerprint }];
+  });
+  if (revisions.length !== value.revisions.length || history[0]?.at !== createdAt || history[history.length - 1]?.at !== updatedAt || revisions[revisions.length - 1]?.id !== currentRevisionId) return null;
+  for (let index = 1; index < revisions.length; index += 1) {
+    const currentSnapshot = JSON.stringify(stablePurchaseRequestValue(revisions[index].snapshot));
+    const previousSnapshot = JSON.stringify(stablePurchaseRequestValue(revisions[index - 1].snapshot));
+    if (currentSnapshot === previousSnapshot) return null;
+    if (history[index].type === "rolled-back") {
+      const target = revisions[history[index].rollbackFromVersion! - 1];
+      if (!target || currentSnapshot !== JSON.stringify(stablePurchaseRequestValue(target.snapshot))) return null;
+    }
+  }
+
+  const common = {
+    schemaVersion: 1 as const,
+    id,
+    objectType,
+    projectId,
+    ownerPrincipalType: "project" as const,
+    ownerPrincipalId: projectId,
+    accountSide: "builder" as const,
+    scopeType: "project_private" as const,
+    scopeId: projectId,
+    custodianService: "Domain Service" as const,
+    sourceRefs: [...value.sourceRefs] as string[],
+    sensitivity: "private" as const,
+    lifecycleState: "active" as const,
+    version: value.version as number,
+    currentRevisionId,
+    createdBy: "شما" as const,
+    updatedBy: "شما" as const,
+    createdAt,
+    updatedAt,
+    history,
+  };
+  if (objectType === "milestone") return { ...common, objectType, revisions: revisions as ProjectBackboneRevision<ProjectMilestoneSnapshot>[] };
+  if (objectType === "decision") return { ...common, objectType, revisions: revisions as ProjectBackboneRevision<ProjectDecisionSnapshot>[] };
+  return { ...common, objectType, revisions: revisions as ProjectBackboneRevision<ProjectBackboneTaskSnapshot>[] };
+}
+
+function projectBackboneCurrentSnapshot<RecordType extends ProjectMilestoneRecord | ProjectDecisionRecord | ProjectBackboneTaskRecord>(record: RecordType): RecordType["revisions"][number]["snapshot"] {
+  return record.revisions[record.revisions.length - 1].snapshot as RecordType["revisions"][number]["snapshot"];
+}
+
+function projectBackboneGraphForProject(envelope: ProjectBackboneEnvelope, projectId: string): ProjectBackboneGraph | null {
+  const milestone = envelope.milestones.find((record) => record.projectId === projectId);
+  const decision = envelope.decisions.find((record) => record.projectId === projectId);
+  const task = envelope.tasks.find((record) => record.projectId === projectId);
+  return milestone && decision && task ? { milestone, decision, task } : null;
+}
+
+function readStoredProjectBackbone(): ProjectBackboneReadResult {
+  try {
+    const raw = window.localStorage.getItem(projectBackboneStorageKey);
+    if (raw === null) return { envelope: emptyProjectBackboneEnvelope(), readError: false };
+    if (!raw.trim()) return { envelope: emptyProjectBackboneEnvelope(), readError: true };
+    const parsed = JSON.parse(raw);
+    if (!hasExactObjectKeys(parsed, ["schemaVersion", "milestones", "decisions", "tasks"]) || parsed?.schemaVersion !== 1 || !Array.isArray(parsed?.milestones) || !Array.isArray(parsed?.decisions) || !Array.isArray(parsed?.tasks)) return { envelope: emptyProjectBackboneEnvelope(), readError: true };
+
+    const milestones = parsed.milestones.map((record: any) => parseProjectBackboneRecord(record, "milestone"));
+    const decisions = parsed.decisions.map((record: any) => parseProjectBackboneRecord(record, "decision"));
+    const tasks = parsed.tasks.map((record: any) => parseProjectBackboneRecord(record, "task"));
+    if (milestones.some((record: unknown) => !record) || decisions.some((record: unknown) => !record) || tasks.some((record: unknown) => !record)) return { envelope: emptyProjectBackboneEnvelope(), readError: true };
+    const envelope = {
+      schemaVersion: 1,
+      milestones: milestones as ProjectMilestoneRecord[],
+      decisions: decisions as ProjectDecisionRecord[],
+      tasks: tasks as ProjectBackboneTaskRecord[],
+    } satisfies ProjectBackboneEnvelope;
+
+    const allIds = [...envelope.milestones, ...envelope.decisions, ...envelope.tasks].map((record) => record.id);
+    if (new Set(allIds).size !== allIds.length) return { envelope: emptyProjectBackboneEnvelope(), readError: true };
+    const projectIds = new Set([...envelope.milestones, ...envelope.decisions, ...envelope.tasks].map((record) => record.projectId));
+    for (const projectId of projectIds) {
+      const projectMilestones = envelope.milestones.filter((record) => record.projectId === projectId);
+      const projectDecisions = envelope.decisions.filter((record) => record.projectId === projectId);
+      const projectTasks = envelope.tasks.filter((record) => record.projectId === projectId);
+      if (projectMilestones.length !== 1 || projectDecisions.length !== 1 || projectTasks.length !== 1) return { envelope: emptyProjectBackboneEnvelope(), readError: true };
+      const milestone = projectMilestones[0];
+      const decision = projectDecisions[0];
+      const task = projectTasks[0];
+      const everyDecisionRevisionIsScoped = decision.revisions.every((revision) => revision.snapshot.milestoneId === milestone.id && revision.snapshot.taskId === task.id);
+      const everyTaskRevisionIsScoped = task.revisions.every((revision) => revision.snapshot.milestoneId === milestone.id && revision.snapshot.decisionId === decision.id);
+      if (!everyDecisionRevisionIsScoped || !everyTaskRevisionIsScoped) return { envelope: emptyProjectBackboneEnvelope(), readError: true };
+    }
+    return { envelope, readError: false };
+  } catch {
+    return { envelope: emptyProjectBackboneEnvelope(), readError: true };
+  }
+}
+
+function normalizeProjectBackboneDraft(draft: ProjectBackboneDraft): ProjectBackboneDraft {
+  return {
+    milestoneTitle: draft.milestoneTitle.trim(),
+    decisionStatement: draft.decisionStatement.trim(),
+    decisionReason: draft.decisionReason.trim(),
+    taskTitle: draft.taskTitle.trim(),
+    taskNextStep: draft.taskNextStep.trim(),
+  };
+}
+
+function projectBackboneDraftIsValid(draft: ProjectBackboneDraft) {
+  return hasVisibleProjectBackboneText(draft.milestoneTitle) && draft.milestoneTitle.length <= 120
+    && hasVisibleProjectBackboneText(draft.decisionStatement) && draft.decisionStatement.length <= 500
+    && hasVisibleProjectBackboneText(draft.decisionReason) && draft.decisionReason.length <= 500
+    && hasVisibleProjectBackboneText(draft.taskTitle) && draft.taskTitle.length <= 80
+    && hasVisibleProjectBackboneText(draft.taskNextStep) && draft.taskNextStep.length <= 300;
+}
+
+async function withProjectBackboneWriteLock(operation: () => ProjectBackboneMutationResult): Promise<ProjectBackboneMutationResult> {
+  try {
+    const lockManager = window.navigator.locks;
+    if (!lockManager?.request) return "lock-unavailable";
+    return await lockManager.request(projectBackboneWriteLockName, { mode: "exclusive" }, operation);
+  } catch {
+    return "lock-unavailable";
+  }
+}
+
+function projectBackboneDraftFromGraph(graph: ProjectBackboneGraph): ProjectBackboneDraft {
+  const milestone = projectBackboneCurrentSnapshot(graph.milestone) as ProjectMilestoneSnapshot;
+  const decision = projectBackboneCurrentSnapshot(graph.decision) as ProjectDecisionSnapshot;
+  const task = projectBackboneCurrentSnapshot(graph.task) as ProjectBackboneTaskSnapshot;
+  return { milestoneTitle: milestone.title, decisionStatement: decision.statement, decisionReason: decision.reason, taskTitle: task.title, taskNextStep: task.nextStep };
+}
+
+function createProjectBackboneRecord<ObjectType extends ProjectBackboneObjectType, Snapshot extends ProjectMilestoneSnapshot | ProjectDecisionSnapshot | ProjectBackboneTaskSnapshot>(objectType: ObjectType, id: string, projectId: string, snapshot: Snapshot, timestamp: string): ProjectBackboneRecord<ObjectType, Snapshot> {
+  const revisionId = `${objectType}-revision-${window.crypto.randomUUID()}`;
+  return {
+    schemaVersion: 1,
+    id,
+    objectType,
+    projectId,
+    ownerPrincipalType: "project",
+    ownerPrincipalId: projectId,
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: projectId,
+    custodianService: "Domain Service",
+    sourceRefs: [],
+    sensitivity: "private",
+    lifecycleState: "active",
+    version: 1,
+    currentRevisionId: revisionId,
+    createdBy: "شما",
+    updatedBy: "شما",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    history: [{ id: `${objectType}-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1, rollbackFromVersion: null }],
+    revisions: [{ id: revisionId, version: 1, createdAt: timestamp, snapshot, fingerprint: projectBackboneRevisionFingerprint(objectType, projectId, snapshot) }],
+  };
+}
+
+function appendProjectBackboneRevision<RecordType extends ProjectMilestoneRecord | ProjectDecisionRecord | ProjectBackboneTaskRecord>(record: RecordType, snapshot: RecordType["revisions"][number]["snapshot"], eventType: Exclude<ProjectBackboneEventType, "created">, timestamp: string, rollbackFromVersion: number | null = null): RecordType {
+  const version = record.version + 1;
+  const revisionId = `${record.objectType}-revision-${window.crypto.randomUUID()}`;
+  const revision = {
+    id: revisionId,
+    version,
+    createdAt: timestamp,
+    snapshot,
+    fingerprint: projectBackboneRevisionFingerprint(record.objectType, record.projectId, snapshot),
+  };
+  return {
+    ...record,
+    version,
+    currentRevisionId: revisionId,
+    updatedAt: timestamp,
+    history: [...record.history, { id: `${record.objectType}-event-${window.crypto.randomUUID()}`, type: eventType, actor: "شما", at: timestamp, version, rollbackFromVersion: eventType === "rolled-back" ? rollbackFromVersion : null }],
+    revisions: [...record.revisions, revision],
+  } as RecordType;
+}
+
+function replaceProjectBackboneRecord(envelope: ProjectBackboneEnvelope, record: ProjectMilestoneRecord | ProjectDecisionRecord | ProjectBackboneTaskRecord): ProjectBackboneEnvelope {
+  if (record.objectType === "milestone") return { ...envelope, milestones: envelope.milestones.map((item) => item.id === record.id ? record : item) };
+  if (record.objectType === "decision") return { ...envelope, decisions: envelope.decisions.map((item) => item.id === record.id ? record : item) };
+  return { ...envelope, tasks: envelope.tasks.map((item) => item.id === record.id ? record : item) };
 }
 
 function parseV2ProjectPurchaseRequest(request: any): ProjectPurchaseRequestRecord | null {
@@ -3596,9 +3967,8 @@ function upgradeLegacyProjectPurchaseRequest(legacy: Omit<ProjectPurchaseRequest
   return record;
 }
 
-function readStoredProjectPurchaseRequests(): LocalRecordsReadResult<ProjectPurchaseRequestRecord> {
+function parseStoredProjectPurchaseRequests(rawRequests: string | null): LocalRecordsReadResult<ProjectPurchaseRequestRecord> {
   try {
-    const rawRequests = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
     if (rawRequests === null) return { records: [], readError: false };
     const parsed = JSON.parse(rawRequests);
     if (!Array.isArray(parsed)) return { records: [], readError: true };
@@ -3759,6 +4129,134 @@ function readStoredProjectPurchaseRequests(): LocalRecordsReadResult<ProjectPurc
   } catch {
     return { records: [], readError: true };
   }
+}
+
+function readStoredProjectPurchaseRequests(): LocalRecordsReadResult<ProjectPurchaseRequestRecord> {
+  try {
+    if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) return { records: [], readError: true };
+    return parseStoredProjectPurchaseRequests(window.localStorage.getItem(projectPurchaseRequestsStorageKey));
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
+function restoreProjectPurchaseRequestsAfterFailedReset(rawRequests: string) {
+  try {
+    const currentRequests = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    if (currentRequests === null) window.localStorage.setItem(projectPurchaseRequestsStorageKey, rawRequests);
+  } catch {
+    try {
+      window.localStorage.setItem(projectPurchaseRequestsStorageKey, rawRequests);
+    } catch {
+      // The verified recovery copy remains available if the primary bytes cannot be restored.
+    }
+  }
+}
+
+function preserveProjectPurchaseRequestsRecoveryIntent(recoveryKey: string) {
+  try {
+    window.localStorage.setItem(projectPurchaseRequestsRecoveryIntentKey, recoveryKey);
+  } catch {
+    // The already-written recovery copy remains the last safe copy if storage is fully unavailable.
+  }
+}
+
+function recoverStoredProjectPurchaseRequests(): ProjectPurchaseRequestsRecoveryResult {
+  let pendingRecoveryKey: string | null;
+  try {
+    pendingRecoveryKey = window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey);
+  } catch {
+    return { status: "read-failure" };
+  }
+
+  if (pendingRecoveryKey !== null) {
+    let pendingRecoveryRaw: string | null;
+    let currentRequests: string | null;
+    try {
+      pendingRecoveryRaw = pendingRecoveryKey.startsWith(projectPurchaseRequestsRecoveryBackupPrefix)
+        ? window.localStorage.getItem(pendingRecoveryKey)
+        : null;
+      currentRequests = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    } catch {
+      return { status: "read-failure" };
+    }
+
+    if (currentRequests === null) {
+      if (pendingRecoveryRaw === null) return { status: "read-failure" };
+      try {
+        window.localStorage.setItem(projectPurchaseRequestsStorageKey, pendingRecoveryRaw);
+        if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== pendingRecoveryRaw) return { status: "reset-failure" };
+      } catch {
+        return { status: "reset-failure" };
+      }
+    }
+
+    try {
+      window.localStorage.removeItem(projectPurchaseRequestsRecoveryIntentKey);
+      if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) return { status: "reset-failure" };
+    } catch {
+      preserveProjectPurchaseRequestsRecoveryIntent(pendingRecoveryKey);
+      return { status: "reset-failure" };
+    }
+  }
+
+  let rawRequests: string | null;
+  try {
+    rawRequests = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+  } catch {
+    return { status: "read-failure" };
+  }
+
+  const reloaded = parseStoredProjectPurchaseRequests(rawRequests);
+  if (!reloaded.readError) return { status: "reloaded", records: reloaded.records };
+  if (rawRequests === null) return { status: "read-failure" };
+
+  const recoveryKey = `${projectPurchaseRequestsRecoveryBackupPrefix}${new Date().toISOString()}:${window.crypto.randomUUID()}`;
+  try {
+    window.localStorage.setItem(recoveryKey, rawRequests);
+    if (window.localStorage.getItem(recoveryKey) !== rawRequests) return { status: "backup-failure" };
+    window.localStorage.setItem(projectPurchaseRequestsRecoveryIntentKey, recoveryKey);
+    if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== recoveryKey) return { status: "backup-failure" };
+  } catch {
+    return { status: "backup-failure" };
+  }
+
+  let removalAttempted = false;
+  try {
+    if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== rawRequests) return { status: "source-changed" };
+    removalAttempted = true;
+    window.localStorage.removeItem(projectPurchaseRequestsStorageKey);
+    const currentRequests = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    if (currentRequests !== null) return currentRequests === rawRequests ? { status: "reset-failure" } : { status: "source-changed" };
+  } catch {
+    if (removalAttempted) restoreProjectPurchaseRequestsAfterFailedReset(rawRequests);
+    return { status: "reset-failure" };
+  }
+
+  let resetStore: LocalRecordsReadResult<ProjectPurchaseRequestRecord>;
+  try {
+    resetStore = parseStoredProjectPurchaseRequests(window.localStorage.getItem(projectPurchaseRequestsStorageKey));
+  } catch {
+    restoreProjectPurchaseRequestsAfterFailedReset(rawRequests);
+    return { status: "reset-failure" };
+  }
+  if (resetStore.readError || resetStore.records.length !== 0) {
+    restoreProjectPurchaseRequestsAfterFailedReset(rawRequests);
+    return { status: "reset-failure" };
+  }
+
+  try {
+    window.localStorage.removeItem(projectPurchaseRequestsRecoveryIntentKey);
+    if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) {
+      restoreProjectPurchaseRequestsAfterFailedReset(rawRequests);
+      return { status: "reset-failure" };
+    }
+  } catch {
+    preserveProjectPurchaseRequestsRecoveryIntent(recoveryKey);
+    restoreProjectPurchaseRequestsAfterFailedReset(rawRequests);
+    return { status: "reset-failure" };
+  }
+  return { status: "reset", records: [] };
 }
 
 function parseV2ProjectApproval(approval: any, purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): ProjectApprovalRecord | null {
@@ -6907,6 +7405,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [filesReturnView, setFilesReturnView] = useState<FilesReturnView>("project");
   const [galleryReturnView, setGalleryReturnView] = useState<GalleryReturnView>("project");
   const [memoryReturnView, setMemoryReturnView] = useState<MemoryReturnView>("project");
+  const [projectBackboneReturnView, setProjectBackboneReturnView] = useState<ProjectBackboneReturnView>("project");
+  const [startProjectBackboneEditor, setStartProjectBackboneEditor] = useState(false);
   const [purchaseRequestsReturnView, setPurchaseRequestsReturnView] = useState<PurchaseRequestsReturnView>("chat");
   const [proposalsReturnView, setProposalsReturnView] = useState<ProposalsReturnView>("chat");
   const [startPurchaseRequestEditor, setStartPurchaseRequestEditor] = useState(false);
@@ -6921,6 +7421,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [initialProjectFiles] = useState<LocalRecordsReadResult<ProjectFileRecord>>(readStoredProjectFiles);
   const [initialProjectMemories] = useState<LocalRecordsReadResult<ProjectMemoryRecord>>(readStoredProjectMemories);
   const [initialProjectTasks] = useState<LocalRecordsReadResult<ProjectTaskRecord>>(readStoredProjectTasks);
+  const [initialProjectBackbone] = useState<ProjectBackboneReadResult>(readStoredProjectBackbone);
   const [initialProjectPurchaseRequests] = useState<LocalRecordsReadResult<ProjectPurchaseRequestRecord>>(readStoredProjectPurchaseRequests);
   const [initialProjectApprovals] = useState<LocalRecordsReadResult<ProjectApprovalRecord>>(() => readStoredProjectApprovals(initialProjectPurchaseRequests));
   const [initialProjectSupplierContacts] = useState<LocalRecordsReadResult<SupplierContactRecord>>(readStoredProjectSupplierContacts);
@@ -6938,6 +7439,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [projectFiles, setProjectFiles] = useState<ProjectFileRecord[]>(initialProjectFiles.records);
   const [projectMemories, setProjectMemories] = useState<ProjectMemoryRecord[]>(initialProjectMemories.records);
   const [projectTasks, setProjectTasks] = useState<ProjectTaskRecord[]>(initialProjectTasks.records);
+  const [projectBackbone, setProjectBackbone] = useState<ProjectBackboneEnvelope>(initialProjectBackbone.envelope);
   const [projectPurchaseRequests, setProjectPurchaseRequests] = useState<ProjectPurchaseRequestRecord[]>(initialProjectPurchaseRequests.records);
   const [projectApprovals, setProjectApprovals] = useState<ProjectApprovalRecord[]>(initialProjectApprovals.records);
   const [projectSupplierContacts, setProjectSupplierContacts] = useState<SupplierContactRecord[]>(initialProjectSupplierContacts.records);
@@ -6955,7 +7457,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [projectFilesReadError] = useState(initialProjectFiles.readError);
   const [projectMemoriesReadError] = useState(initialProjectMemories.readError);
   const [projectTasksReadError] = useState(initialProjectTasks.readError);
-  const [projectPurchaseRequestsReadError] = useState(initialProjectPurchaseRequests.readError);
+  const [projectBackboneReadError, setProjectBackboneReadError] = useState(initialProjectBackbone.readError);
+  const [projectPurchaseRequestsReadError, setProjectPurchaseRequestsReadError] = useState(initialProjectPurchaseRequests.readError);
   const [projectApprovalsReadError] = useState(initialProjectApprovals.readError);
   const [projectSupplierContactsReadError] = useState(initialProjectSupplierContacts.readError);
   const [projectDispatchDraftsReadError] = useState(initialProjectDispatchDrafts.readError);
@@ -7092,6 +7595,10 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     () => projectTasks.filter((task) => task.projectId === activeProject.id),
     [activeProject.id, projectTasks],
   );
+  const activeProjectBackbone = useMemo(
+    () => projectBackboneGraphForProject(projectBackbone, activeProject.id),
+    [activeProject.id, projectBackbone],
+  );
   const activeProjectPurchaseRequests = useMemo(
     () => projectPurchaseRequests.filter((request) => request.projectId === activeProject.id),
     [activeProject.id, projectPurchaseRequests],
@@ -7148,7 +7655,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     () => builderManualNegotiationConditionImpacts.filter((impact) => impact.projectId === activeProject.id),
     [activeProject.id, builderManualNegotiationConditionImpacts],
   );
-  const activeProjectTaskCount = activeProjectTasks.filter((task) => task.status === "in-progress").length;
+  const activeBackboneTask = activeProjectBackbone ? projectBackboneCurrentSnapshot(activeProjectBackbone.task) as ProjectBackboneTaskSnapshot : null;
+  const activeProjectTaskCount = activeProjectTasks.filter((task) => task.status === "in-progress").length + (activeBackboneTask?.status === "in-progress" ? 1 : 0);
   const briefSummary = briefSchedule
     ? briefSchedule.frequency === "daily"
       ? `روزانه · ${briefSchedule.time}`
@@ -7238,6 +7746,19 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     setView("tasks");
   };
 
+  const openProjectBackbone = (returnView: ProjectBackboneReturnView, startWithEditor = false) => {
+    keyboard.hide();
+    onOpenSheet(null);
+    setDrawerOpen(false);
+    if (returnView === "project") {
+      const projectScroll = document.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
+      if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
+    }
+    setProjectBackboneReturnView(returnView);
+    setStartProjectBackboneEditor(startWithEditor && !projectBackboneReadError);
+    setView("project-backbone");
+  };
+
   const openProjectApproval = (approvalId: string, returnToPurchaseRequestId: string | null) => {
     keyboard.hide();
     onOpenSheet(null);
@@ -7279,11 +7800,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   };
 
   const handleQuickAction = (id: QuickActionId, label: string) => {
-    if (id !== "meeting-notes" && id !== "purchase-plan" && id !== "build") pendingHomeQuickActionFocus.current = id;
+    if (id !== "meeting-notes" && id !== "build") pendingHomeQuickActionFocus.current = id;
     switch (id) {
       case "purchase-request": openProjectPurchaseRequests("chat", true); break;
       case "compare-offers": openProjectProposals("chat"); break;
       case "tasks": openProjectTasks(); break;
+      case "project-plan": openProjectBackbone("chat"); break;
       case "files": openProjectFiles("chat"); break;
       case "gallery": openProjectGallery("chat"); break;
       case "memory": openProjectMemory("chat"); break;
@@ -7543,6 +8065,110 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return persistProjectTasks(nextTasks);
   };
 
+  const writeProjectBackbone = (nextEnvelope: ProjectBackboneEnvelope) => {
+    try {
+      window.localStorage.setItem(projectBackboneStorageKey, JSON.stringify(nextEnvelope));
+    } catch {
+      return false;
+    }
+    setProjectBackbone(nextEnvelope);
+    return true;
+  };
+
+  const createProjectBackbone = async (draft: ProjectBackboneDraft): Promise<ProjectBackboneMutationResult> => {
+    const normalizedDraft = normalizeProjectBackboneDraft(draft);
+    if (!projectBackboneDraftIsValid(normalizedDraft) || projectBackboneReadError) return projectBackboneReadError ? "read-failure" : "invalid";
+    return withProjectBackboneWriteLock(() => {
+      const latest = readStoredProjectBackbone();
+      if (latest.readError) {
+        setProjectBackboneReadError(true);
+        return "read-failure";
+      }
+      if (projectBackboneGraphForProject(latest.envelope, activeProject.id)) {
+        setProjectBackbone(latest.envelope);
+        return "version-conflict";
+      }
+
+      const timestamp = new Date().toISOString();
+      const milestoneId = `milestone-${window.crypto.randomUUID()}`;
+      const decisionId = `decision-${window.crypto.randomUUID()}`;
+      const taskId = `backbone-task-${window.crypto.randomUUID()}`;
+      const milestone = createProjectBackboneRecord("milestone", milestoneId, activeProject.id, { title: normalizedDraft.milestoneTitle, status: "planned", targetDate: null }, timestamp);
+      const decision = createProjectBackboneRecord("decision", decisionId, activeProject.id, { statement: normalizedDraft.decisionStatement, reason: normalizedDraft.decisionReason, milestoneId, taskId }, timestamp);
+      const task = createProjectBackboneRecord("task", taskId, activeProject.id, { title: normalizedDraft.taskTitle, nextStep: normalizedDraft.taskNextStep, dueAt: null, status: "in-progress", milestoneId, decisionId }, timestamp);
+      const nextEnvelope = {
+        schemaVersion: 1,
+        milestones: [...latest.envelope.milestones, milestone],
+        decisions: [...latest.envelope.decisions, decision],
+        tasks: [...latest.envelope.tasks, task],
+      } satisfies ProjectBackboneEnvelope;
+      return writeProjectBackbone(nextEnvelope) ? "created" : "write-failure";
+    });
+  };
+
+  const updateProjectBackbone = async (draft: ProjectBackboneDraft, expectedVersions: ProjectBackboneExpectedVersions): Promise<ProjectBackboneMutationResult> => {
+    const normalizedDraft = normalizeProjectBackboneDraft(draft);
+    if (!projectBackboneDraftIsValid(normalizedDraft) || projectBackboneReadError) return projectBackboneReadError ? "read-failure" : "invalid";
+    return withProjectBackboneWriteLock(() => {
+      const latest = readStoredProjectBackbone();
+      if (latest.readError) {
+        setProjectBackboneReadError(true);
+        return "read-failure";
+      }
+      const graph = projectBackboneGraphForProject(latest.envelope, activeProject.id);
+      if (!graph || graph.milestone.version !== expectedVersions.milestone || graph.decision.version !== expectedVersions.decision || graph.task.version !== expectedVersions.task) {
+        setProjectBackbone(latest.envelope);
+        return "version-conflict";
+      }
+
+      const currentMilestone = projectBackboneCurrentSnapshot(graph.milestone) as ProjectMilestoneSnapshot;
+      const currentDecision = projectBackboneCurrentSnapshot(graph.decision) as ProjectDecisionSnapshot;
+      const currentTask = projectBackboneCurrentSnapshot(graph.task) as ProjectBackboneTaskSnapshot;
+      const nextMilestone = { ...currentMilestone, title: normalizedDraft.milestoneTitle } satisfies ProjectMilestoneSnapshot;
+      const nextDecision = { ...currentDecision, statement: normalizedDraft.decisionStatement, reason: normalizedDraft.decisionReason } satisfies ProjectDecisionSnapshot;
+      const nextTask = { ...currentTask, title: normalizedDraft.taskTitle, nextStep: normalizedDraft.taskNextStep } satisfies ProjectBackboneTaskSnapshot;
+      const milestoneChanged = JSON.stringify(stablePurchaseRequestValue(currentMilestone)) !== JSON.stringify(stablePurchaseRequestValue(nextMilestone));
+      const decisionChanged = JSON.stringify(stablePurchaseRequestValue(currentDecision)) !== JSON.stringify(stablePurchaseRequestValue(nextDecision));
+      const taskChanged = JSON.stringify(stablePurchaseRequestValue(currentTask)) !== JSON.stringify(stablePurchaseRequestValue(nextTask));
+      if (!milestoneChanged && !decisionChanged && !taskChanged) {
+        setProjectBackbone(latest.envelope);
+        return "unchanged";
+      }
+
+      const timestamp = new Date(Math.max(Date.now(), new Date(graph.milestone.updatedAt).getTime(), new Date(graph.decision.updatedAt).getTime(), new Date(graph.task.updatedAt).getTime())).toISOString();
+      let nextEnvelope = latest.envelope;
+      if (milestoneChanged) nextEnvelope = replaceProjectBackboneRecord(nextEnvelope, appendProjectBackboneRevision(graph.milestone, nextMilestone, "updated", timestamp));
+      if (decisionChanged) nextEnvelope = replaceProjectBackboneRecord(nextEnvelope, appendProjectBackboneRevision(graph.decision, nextDecision, "updated", timestamp));
+      if (taskChanged) nextEnvelope = replaceProjectBackboneRecord(nextEnvelope, appendProjectBackboneRevision(graph.task, nextTask, "updated", timestamp));
+      return writeProjectBackbone(nextEnvelope) ? "updated" : "write-failure";
+    });
+  };
+
+  const rollbackProjectBackbone = async (objectType: ProjectBackboneObjectType, recordId: string, targetVersion: number, expectedVersion: number): Promise<ProjectBackboneMutationResult> => {
+    if (projectBackboneReadError) return "read-failure";
+    return withProjectBackboneWriteLock(() => {
+      const latest = readStoredProjectBackbone();
+      if (latest.readError) {
+        setProjectBackboneReadError(true);
+        return "read-failure";
+      }
+      const records = objectType === "milestone" ? latest.envelope.milestones : objectType === "decision" ? latest.envelope.decisions : latest.envelope.tasks;
+      const record = records.find((item) => item.id === recordId && item.projectId === activeProject.id) as ProjectMilestoneRecord | ProjectDecisionRecord | ProjectBackboneTaskRecord | undefined;
+      if (!record || record.version !== expectedVersion) {
+        setProjectBackbone(latest.envelope);
+        return "version-conflict";
+      }
+      const target = record.revisions.find((revision) => revision.version === targetVersion);
+      if (!target || targetVersion >= record.version) return "invalid";
+      const currentSnapshot = projectBackboneCurrentSnapshot(record);
+      if (JSON.stringify(stablePurchaseRequestValue(currentSnapshot)) === JSON.stringify(stablePurchaseRequestValue(target.snapshot))) return "unchanged";
+      const timestamp = new Date(Math.max(Date.now(), new Date(record.updatedAt).getTime())).toISOString();
+      const restoredRecord = appendProjectBackboneRevision(record, target.snapshot as never, "rolled-back", timestamp, targetVersion);
+      const nextEnvelope = replaceProjectBackboneRecord(latest.envelope, restoredRecord);
+      return writeProjectBackbone(nextEnvelope) ? "rolled-back" : "write-failure";
+    });
+  };
+
   const persistProjectPurchaseRequests = (nextRequests: ProjectPurchaseRequestRecord[]) => {
     if (projectPurchaseRequestsReadError) return false;
     try {
@@ -7553,6 +8179,16 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     }
     setProjectPurchaseRequests(nextRequests);
     return true;
+  };
+
+  const recoverProjectPurchaseRequests = (): ProjectPurchaseRequestsRecoveryResult => {
+    if (!projectPurchaseRequestsReadError) return { status: "not-needed" };
+    const result = recoverStoredProjectPurchaseRequests();
+    if (result.status === "reloaded" || result.status === "reset") {
+      setProjectPurchaseRequests(result.records);
+      setProjectPurchaseRequestsReadError(false);
+    }
+    return result;
   };
 
   const createProjectPurchaseRequest = (requestDraft: PurchaseRequestDraft) => {
@@ -9039,6 +9675,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return (
       <ProjectWorkspace
         project={activeProject}
+        backbone={activeProjectBackbone}
         fileCount={activeProjectDocuments.length}
         imageCount={activeProjectImages.length}
         memoryCount={activeProjectMemories.length}
@@ -9046,6 +9683,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         proposalCount={activeBuilderRecordedProposals.length}
         filesReadError={projectFilesReadError}
         memoriesReadError={projectMemoriesReadError}
+        backboneReadError={projectBackboneReadError}
         purchaseRequestsReadError={projectPurchaseRequestsReadError}
         proposalsReadError={builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError}
         initialScrollTop={projectWorkspaceScrollPositions.current.get(activeProject.id) ?? 0}
@@ -9058,6 +9696,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
           if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
           openProjectMemory("project");
         }}
+        onOpenBackbone={() => openProjectBackbone("project")}
         onOpenPurchaseRequests={() => openProjectPurchaseRequests("project")}
         onOpenProposals={() => openProjectProposals("project")}
         onUpdate={(draft) => onProjectUpdate(activeProject.id, draft)}
@@ -9130,6 +9769,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <ProjectTasksView
         project={activeProject}
         tasks={activeProjectTasks}
+        backbone={activeProjectBackbone}
         approvals={activeProjectApprovals}
         dispatchPlanApprovals={activeProjectDispatchPlanApprovals}
         dispatchDrafts={activeProjectDispatchDrafts}
@@ -9140,15 +9780,33 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         initialDispatchPlanApprovalId={projectTasksLaunch.dispatchPlanApprovalId}
         returnToPurchaseRequestId={projectTasksLaunch.returnToPurchaseRequestId}
         tasksStorageLocked={projectTasksReadError}
+        backboneStorageLocked={projectBackboneReadError}
         approvalsStorageLocked={projectApprovalsReadError || projectPurchaseRequestsReadError}
         dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError}
         onBack={() => { keyboard.hide(); setView("chat"); }}
+        onOpenBackbone={() => openProjectBackbone("tasks")}
         onReturnToPurchaseRequest={returnToProjectPurchaseRequest}
         onCreate={createProjectTask}
         onUpdate={updateProjectTask}
         onStatusChange={changeProjectTaskStatus}
         onApprovalDecision={decideProjectApproval}
         onDispatchPlanApprovalDecision={changeProjectDispatchPlanApproval}
+      />
+    );
+  }
+
+  if (view === "project-backbone") {
+    return (
+      <ProjectBackboneView
+        project={activeProject}
+        graph={activeProjectBackbone}
+        storageLocked={projectBackboneReadError}
+        startWithEditor={startProjectBackboneEditor}
+        backLabel={projectBackboneReturnView === "chat" ? "بازگشت به گفت‌وگو" : projectBackboneReturnView === "tasks" ? "بازگشت به کارها" : "بازگشت به فضای پروژه"}
+        onBack={() => { keyboard.hide(); setStartProjectBackboneEditor(false); setView(projectBackboneReturnView); }}
+        onCreate={createProjectBackbone}
+        onUpdate={updateProjectBackbone}
+        onRollback={rollbackProjectBackbone}
       />
     );
   }
@@ -9171,6 +9829,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         startWithEditor={startPurchaseRequestEditor}
         backLabel={purchaseRequestsReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
         onBack={() => { keyboard.hide(); pendingPurchaseRequestsReturnFocus.current = purchaseRequestsReturnView; setView(purchaseRequestsReturnView); }}
+        onRecoverStorage={recoverProjectPurchaseRequests}
         onCreate={createProjectPurchaseRequest}
         onUpdate={updateProjectPurchaseRequest}
         onMarkReady={markProjectPurchaseRequestReady}
@@ -9309,7 +9968,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
               <div className="drawer-top"><div className="brand-lockup"><span className="brand-mark"><HardHat size={19} /></span><strong>چیدا</strong></div><button className="icon-button" type="button" onClick={() => setDrawerOpen(false)} aria-label="بستن منو"><X size={20} /></button></div>
               <nav className="drawer-nav" aria-label="منوی چیدا">
                 <button type="button"><MessageSquare size={19} /><span>گفتگوی تازه</span><Plus size={17} /></button>
-                <button type="button" onClick={openProjectTasks} data-testid="drawer-tasks-entry"><CheckCircle2 size={19} /><span>کارها</span><span className="nav-count" data-testid="drawer-task-count" aria-label={projectTasksReadError ? "بازیابی کارها کامل نشد" : `${activeProjectTaskCount.toLocaleString("fa-IR")} کار در حال انجام`}>{projectTasksReadError ? "!" : activeProjectTaskCount.toLocaleString("fa-IR")}</span></button>
+                <button type="button" onClick={openProjectTasks} data-testid="drawer-tasks-entry"><CheckCircle2 size={19} /><span>کارها</span><span className="nav-count" data-testid="drawer-task-count" aria-label={projectTasksReadError || projectBackboneReadError ? "بازیابی کارها کامل نشد" : `${activeProjectTaskCount.toLocaleString("fa-IR")} کار در حال انجام`}>{projectTasksReadError || projectBackboneReadError ? "!" : activeProjectTaskCount.toLocaleString("fa-IR")}</span></button>
                 <button type="button" onClick={() => { setDrawerOpen(false); onOpenSheet("projects"); }} data-testid="drawer-projects-entry"><Folder size={19} /><span>پروژه‌ها</span><span className="nav-count" data-testid="drawer-project-count">{projects.length.toLocaleString("fa-IR")}</span></button>
                 <button type="button"><Pin size={19} /><span>پین‌شده‌ها</span><span className="nav-count">۳</span></button>
                 <button type="button" data-testid="drawer-brief-entry" onClick={() => { setDrawerOpen(false); onOpenSheet("brief"); }}>
@@ -9342,11 +10001,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         sheet={sheet}
         projectName={activeProject.name}
         projectCount={projects.length}
-        localRecordCount={projectFilesReadError || projectMemoriesReadError || projectTasksReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError || builderManualNegotiationConditionImpactsReadError
+        localRecordCount={projectFilesReadError || projectMemoriesReadError || projectTasksReadError || projectBackboneReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError || builderManualNegotiationConditionImpactsReadError
           ? null
           : activeProjectFiles.length
             + activeProjectMemories.length
             + activeProjectTasks.length
+            + (activeProjectBackbone ? 3 : 0)
             + activeProjectPurchaseRequests.length
             + activeProjectApprovals.length
             + activeProjectSupplierContacts.length
@@ -9370,7 +10030,213 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   );
 }
 
-function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, purchaseRequestCount, proposalCount, filesReadError, memoriesReadError, purchaseRequestsReadError, proposalsReadError, initialScrollTop, onBack, onContinue, onOpenFiles, onOpenGallery, onOpenMemory, onOpenPurchaseRequests, onOpenProposals, onUpdate }: { project: BuilderProject; fileCount: number; imageCount: number; memoryCount: number; purchaseRequestCount: number; proposalCount: number; filesReadError: boolean; memoriesReadError: boolean; purchaseRequestsReadError: boolean; proposalsReadError: boolean; initialScrollTop: number; onBack: () => void; onContinue: () => void; onOpenFiles: () => void; onOpenGallery: () => void; onOpenMemory: () => void; onOpenPurchaseRequests: () => void; onOpenProposals: () => void; onUpdate: (draft: ProjectProfileDraft) => void }) {
+function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, backLabel, onBack, onCreate, onUpdate, onRollback }: { project: BuilderProject; graph: ProjectBackboneGraph | null; storageLocked: boolean; startWithEditor: boolean; backLabel: string; onBack: () => void; onCreate: (draft: ProjectBackboneDraft) => Promise<ProjectBackboneMutationResult>; onUpdate: (draft: ProjectBackboneDraft, expectedVersions: ProjectBackboneExpectedVersions) => Promise<ProjectBackboneMutationResult>; onRollback: (objectType: ProjectBackboneObjectType, recordId: string, targetVersion: number, expectedVersion: number) => Promise<ProjectBackboneMutationResult> }) {
+  const keyboard = useKeyboard();
+  const emptyDraft: ProjectBackboneDraft = { milestoneTitle: "", decisionStatement: "", decisionReason: "", taskTitle: "", taskNextStep: "" };
+  const [editorOpen, setEditorOpen] = useState(startWithEditor && !storageLocked);
+  const [draft, setDraft] = useState<ProjectBackboneDraft>(() => graph ? projectBackboneDraftFromGraph(graph) : emptyDraft);
+  const [expectedVersions, setExpectedVersions] = useState<ProjectBackboneExpectedVersions | null>(() => graph ? { milestone: graph.milestone.version, decision: graph.decision.version, task: graph.task.version } : null);
+  const [formError, setFormError] = useState("");
+  const [invalidFieldId, setInvalidFieldId] = useState<string | null>(null);
+  const [pageError, setPageError] = useState("");
+  const [liveMessage, setLiveMessage] = useState("");
+  const [mutationPending, setMutationPending] = useState(false);
+
+  const openEditor = () => {
+    setDraft(graph ? projectBackboneDraftFromGraph(graph) : emptyDraft);
+    setExpectedVersions(graph ? { milestone: graph.milestone.version, decision: graph.decision.version, task: graph.task.version } : null);
+    setFormError("");
+    setInvalidFieldId(null);
+    setPageError("");
+    setLiveMessage("");
+    setEditorOpen(true);
+  };
+
+  const updateDraft = (field: keyof ProjectBackboneDraft, value: string) => {
+    setDraft((current) => ({ ...current, [field]: value }));
+    setFormError("");
+    setInvalidFieldId(null);
+  };
+
+  const validateDraft = () => {
+    const normalized = normalizeProjectBackboneDraft(draft);
+    const fields: { key: keyof ProjectBackboneDraft; id: string; label: string; max: number }[] = [
+      { key: "milestoneTitle", id: "backbone-milestone-title", label: "عنوان نقطه‌عطف", max: 120 },
+      { key: "decisionStatement", id: "backbone-decision-statement", label: "متن تصمیم", max: 500 },
+      { key: "decisionReason", id: "backbone-decision-reason", label: "دلیل تصمیم", max: 500 },
+      { key: "taskTitle", id: "backbone-task-title", label: "عنوان کار", max: 80 },
+      { key: "taskNextStep", id: "backbone-task-next-step", label: "گام بعدی", max: 300 },
+    ];
+    const invalid = fields.find((field) => !hasVisibleProjectBackboneText(normalized[field.key]) || normalized[field.key].length > field.max);
+    if (!invalid) return normalized;
+    setFormError(`${invalid.label} را کامل و کوتاه ثبت کن.`);
+    setInvalidFieldId(invalid.id);
+    window.requestAnimationFrame(() => document.getElementById(invalid.id)?.focus());
+    return null;
+  };
+
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (mutationPending) return;
+    const normalized = validateDraft();
+    if (!normalized) return;
+    setMutationPending(true);
+    const result = await (graph && expectedVersions ? onUpdate(normalized, expectedVersions) : onCreate(normalized));
+    setMutationPending(false);
+    if (result === "created" || result === "updated" || result === "unchanged") {
+      keyboard.hide();
+      setEditorOpen(false);
+      setFormError("");
+      setInvalidFieldId(null);
+      setPageError("");
+      setLiveMessage(result === "created" ? "برنامهٔ پروژه با سه رکورد متصل ثبت شد." : result === "updated" ? "نسخهٔ تازهٔ تغییرهای معنادار ثبت شد." : "تغییر تازه‌ای برای ثبت وجود نداشت؛ نسخه و بایت‌ها ثابت ماندند.");
+      return;
+    }
+    if (result === "version-conflict") {
+      keyboard.hide();
+      setEditorOpen(false);
+      setPageError("این برنامه در جای دیگری تغییر کرده بود. نسخهٔ تازه بارگذاری شد؛ دوباره ویرایش را باز کن.");
+      return;
+    }
+    setFormError(result === "write-failure" ? "ذخیرهٔ محلی انجام نشد؛ هیچ رکوردی تغییر نکرد." : result === "lock-unavailable" ? "قفل امن مرورگر در دسترس نبود؛ برای جلوگیری از بازنویسی هم‌زمان، چیزی ذخیره نشد." : result === "read-failure" ? "دادهٔ محلی خوانا نیست؛ برای جلوگیری از بازنویسی، ثبت قفل شد." : "اطلاعات برنامه کامل یا معتبر نیست.");
+  };
+
+  const rollback = async (objectType: ProjectBackboneObjectType, recordId: string, targetVersion: number, currentVersion: number) => {
+    if (mutationPending) return;
+    setPageError("");
+    setLiveMessage("");
+    setMutationPending(true);
+    const result = await onRollback(objectType, recordId, targetVersion, currentVersion);
+    setMutationPending(false);
+    if (result === "rolled-back") {
+      setLiveMessage(`محتوای نسخهٔ ${targetVersion.toLocaleString("fa-IR")} بازیابی شد و به‌عنوان نسخهٔ تازه ثبت شد.`);
+      return;
+    }
+    if (result === "unchanged") {
+      setLiveMessage("محتوای آن نسخه همین حالا جاری است؛ نسخهٔ تازه‌ای ساخته نشد.");
+      return;
+    }
+    setPageError(result === "version-conflict" ? "نسخه در جای دیگری تغییر کرده بود. نسخهٔ تازه بارگذاری شد و بازگشت انجام نشد." : result === "write-failure" ? "بازگشت ذخیره نشد؛ بایت‌های قبلی دست‌نخورده ماندند." : result === "lock-unavailable" ? "قفل امن مرورگر در دسترس نبود؛ بازگشت برای جلوگیری از برخورد هم‌زمان انجام نشد." : result === "read-failure" ? "دادهٔ محلی خوانا نیست؛ بازگشت برای جلوگیری از بازنویسی قفل شد." : "این نسخه برای بازگشت معتبر نیست.");
+  };
+
+  const revisionCopy = (objectType: ProjectBackboneObjectType, snapshot: ProjectMilestoneSnapshot | ProjectDecisionSnapshot | ProjectBackboneTaskSnapshot) => {
+    if (objectType === "milestone") return [(snapshot as ProjectMilestoneSnapshot).title];
+    if (objectType === "decision") {
+      const decision = snapshot as ProjectDecisionSnapshot;
+      return [decision.statement, `دلیل: ${decision.reason}`];
+    }
+    const task = snapshot as ProjectBackboneTaskSnapshot;
+    return [task.title, `گام بعدی: ${task.nextStep}`];
+  };
+
+  const renderHistoryGroup = (objectType: ProjectBackboneObjectType, label: string, record: ProjectMilestoneRecord | ProjectDecisionRecord | ProjectBackboneTaskRecord) => (
+    <section className="project-backbone-history-group" key={record.id}>
+      <strong>{label} · نسخهٔ جاری {record.version.toLocaleString("fa-IR")}</strong>
+      {[...record.revisions].reverse().map((revision) => (
+        <article className="project-backbone-revision" key={revision.id} data-testid={`backbone-${objectType}-revision-${revision.version}`}>
+          <div>
+            <strong>نسخهٔ {revision.version.toLocaleString("fa-IR")}</strong>
+            <small>{revision.id === record.currentRevisionId ? "جاری" : formatProjectFileDate(revision.createdAt)}</small>
+          </div>
+          {revisionCopy(objectType, revision.snapshot).map((line) => <small key={line}>{line}</small>)}
+          {revision.id !== record.currentRevisionId ? (
+            <button type="button" onClick={() => void rollback(objectType, record.id, revision.version, record.version)} disabled={storageLocked || mutationPending} aria-label={`بازگردانی ${label} به نسخهٔ ${revision.version.toLocaleString("fa-IR")}`} data-testid={`backbone-${objectType}-rollback-${revision.version}`}><RotateCcw size={15} /> بازگردانی این محتوا</button>
+          ) : null}
+        </article>
+      ))}
+    </section>
+  );
+
+  const milestone = graph ? projectBackboneCurrentSnapshot(graph.milestone) as ProjectMilestoneSnapshot : null;
+  const decision = graph ? projectBackboneCurrentSnapshot(graph.decision) as ProjectDecisionSnapshot : null;
+  const task = graph ? projectBackboneCurrentSnapshot(graph.task) as ProjectBackboneTaskSnapshot : null;
+
+  return (
+    <div className="chida-app project-backbone-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-backbone-view">
+      <header className="project-workspace-header">
+        <button className="icon-button" type="button" onClick={onBack} disabled={mutationPending} aria-label={backLabel} data-testid="project-backbone-back"><ArrowRight size={21} /></button>
+        <span className="project-workspace-title"><small>برنامهٔ پروژه</small><strong>{project.name}</strong></span>
+        <span className="project-workspace-header-spacer" aria-hidden="true" />
+      </header>
+
+      <MobileScroll className="project-backbone-scroll">
+        <main className="project-backbone-content">
+          <section className="project-backbone-intro">
+            <span><Pin size={23} /></span>
+            <div><small>پایهٔ سیستم عامل پروژه</small><h1>برنامه و تصمیم‌ها</h1><p>یک نقطه‌عطف، دلیل تصمیم و کار بعدی را در یک زنجیرهٔ روشن نگه دار.</p></div>
+          </section>
+
+          <p className="project-backbone-boundary"><ShieldCheck size={17} /><span><strong>خصوصی و محلی در همین پروژه</strong>این بخش به مدل، شبکه، تأمین‌کننده یا اقدام بیرونی متصل نیست.</span></p>
+
+          {storageLocked ? <p className="project-backbone-read-error" role="alert" data-testid="project-backbone-read-error"><CircleHelp size={18} /><span data-testid="project-backbone-error"><strong>بازیابی برنامه کامل نشد</strong>این وضعیت خالی نیست. ثبت و بازگشت قفل شده تا دادهٔ ناخوانده بازنویسی نشود.</span></p> : null}
+          {pageError ? <p className="project-backbone-form-error" role="alert" data-testid="project-backbone-page-error">{pageError}</p> : null}
+          {liveMessage ? <p className="project-backbone-save-message" role="status" data-testid="project-backbone-status">{liveMessage}</p> : null}
+
+          {!graph || !milestone || !decision || !task ? (
+            <section className="project-backbone-empty">
+              <span><LayoutGrid size={24} /></span>
+              <h2>هنوز برنامه‌ای ثبت نشده</h2>
+              <p>اولین برنامه، نقطه‌عطف و دلیل تصمیم را مستقیم به یک کار قابل‌پیگیری وصل می‌کند.</p>
+              <button className="primary-button" type="button" onClick={openEditor} disabled={storageLocked || mutationPending} data-testid="project-backbone-start"><Plus size={17} /> ثبت اولین برنامه</button>
+            </section>
+          ) : (
+            <>
+              <section className="project-backbone-flow" aria-label="زنجیرهٔ برنامهٔ پروژه">
+                <article className="project-backbone-card" data-testid="project-backbone-milestone">
+                  <div className="project-backbone-card-head"><div><small>نقطه‌عطف</small><h2>{milestone.title}</h2></div><span>برنامه‌ریزی‌شده · نسخهٔ {graph.milestone.version.toLocaleString("fa-IR")}</span></div>
+                </article>
+                <span className="project-backbone-link"><ArrowUpRight size={17} /> تصمیم زیر برای رسیدن به این نقطه‌عطف ثبت شده</span>
+                <article className="project-backbone-card" data-testid="project-backbone-decision">
+                  <div className="project-backbone-card-head"><div><small>تصمیم</small><h2>{decision.statement}</h2></div><span>ثبت مستقیم شما · نسخهٔ {graph.decision.version.toLocaleString("fa-IR")}</span></div>
+                  <p className="project-backbone-reason" data-testid="project-backbone-reason"><strong>چرا این تصمیم؟</strong>{decision.reason}</p>
+                </article>
+                <span className="project-backbone-link"><ArrowUpRight size={17} /> این تصمیم به کار بعدی و همان نقطه‌عطف متصل است</span>
+                <article className="project-backbone-card" data-testid="project-backbone-task">
+                  <div className="project-backbone-card-head"><div><small>کار متصل</small><h2>{task.title}</h2></div><span>{task.status === "completed" ? "انجام‌شده" : "در حال انجام"} · نسخهٔ {graph.task.version.toLocaleString("fa-IR")}</span></div>
+                  <p><strong>گام بعدی: </strong>{task.nextStep}</p>
+                </article>
+              </section>
+
+              <div className="project-backbone-actions"><button className="primary-button" type="button" onClick={openEditor} disabled={storageLocked || mutationPending} data-testid="project-backbone-edit"><PencilLine size={16} /> ویرایش برنامه</button></div>
+
+              <details className="project-backbone-history" data-testid="project-backbone-history">
+                <summary><span>نسخه‌ها و بازگشت امن</span><ChevronDown size={17} /></summary>
+                {renderHistoryGroup("milestone", "نقطه‌عطف", graph.milestone)}
+                {renderHistoryGroup("decision", "تصمیم", graph.decision)}
+                {renderHistoryGroup("task", "کار متصل", graph.task)}
+              </details>
+            </>
+          )}
+        </main>
+      </MobileScroll>
+
+      <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open && mutationPending) return; setEditorOpen(open); if (!open) { keyboard.hide(); setFormError(""); setInvalidFieldId(null); } }} title={graph ? "ویرایش برنامهٔ پروژه" : "ثبت اولین برنامه"} description="هر سه بخش فقط پس از ذخیرهٔ نهایی و به‌صورت اتمیک ثبت می‌شوند.">
+        <div className="project-backbone-editor-sheet">
+          <form className="project-backbone-editor" dir="rtl" onSubmit={save} aria-busy={mutationPending} data-testid="project-backbone-editor">
+            <section className="project-backbone-editor-section">
+              <strong>۱. نقطه‌عطف</strong><small>یک نتیجهٔ روشن که می‌خواهی پروژه به آن برسد.</small>
+              <label className="field-control" htmlFor="backbone-milestone-title"><span>عنوان نقطه‌عطف</span><KeyboardInput id="backbone-milestone-title" data-testid="backbone-milestone-title" value={draft.milestoneTitle} onChange={(event) => updateDraft("milestoneTitle", event.target.value)} maxLength={120} placeholder="مثلاً تکمیل فونداسیون" disabled={storageLocked || mutationPending} aria-required="true" aria-invalid={invalidFieldId === "backbone-milestone-title"} aria-describedby={invalidFieldId === "backbone-milestone-title" ? "project-backbone-form-error" : undefined} /></label>
+            </section>
+            <section className="project-backbone-editor-section">
+              <strong>۲. تصمیم و دلیل</strong><small>دلیل، بخشی اجباری از خود تصمیم است.</small>
+              <label className="field-control" htmlFor="backbone-decision-statement"><span>تصمیم</span><KeyboardTextarea id="backbone-decision-statement" data-testid="backbone-decision-statement" value={draft.decisionStatement} onChange={(event) => updateDraft("decisionStatement", event.target.value)} maxLength={500} rows={3} placeholder="چه تصمیمی گرفته شد؟" disabled={storageLocked || mutationPending} aria-required="true" aria-invalid={invalidFieldId === "backbone-decision-statement"} aria-describedby={invalidFieldId === "backbone-decision-statement" ? "project-backbone-form-error" : undefined} /></label>
+              <label className="field-control" htmlFor="backbone-decision-reason"><span>دلیل تصمیم</span><KeyboardTextarea id="backbone-decision-reason" data-testid="backbone-decision-reason" value={draft.decisionReason} onChange={(event) => updateDraft("decisionReason", event.target.value)} maxLength={500} rows={3} placeholder="چرا این تصمیم را گرفتی؟" disabled={storageLocked || mutationPending} aria-required="true" aria-invalid={invalidFieldId === "backbone-decision-reason"} aria-describedby={invalidFieldId === "backbone-decision-reason" ? "project-backbone-form-error" : undefined} /></label>
+            </section>
+            <section className="project-backbone-editor-section">
+              <strong>۳. کار متصل</strong><small>این کار به نقطه‌عطف و تصمیم بالا وصل می‌شود.</small>
+              <label className="field-control" htmlFor="backbone-task-title"><span>عنوان کار</span><KeyboardInput id="backbone-task-title" data-testid="backbone-task-title" value={draft.taskTitle} onChange={(event) => updateDraft("taskTitle", event.target.value)} maxLength={80} placeholder="مثلاً هماهنگی بازدید آرماتوربندی" disabled={storageLocked || mutationPending} aria-required="true" aria-invalid={invalidFieldId === "backbone-task-title"} aria-describedby={invalidFieldId === "backbone-task-title" ? "project-backbone-form-error" : undefined} /></label>
+              <label className="field-control" htmlFor="backbone-task-next-step"><span>گام بعدی</span><KeyboardTextarea id="backbone-task-next-step" data-testid="backbone-task-next-step" value={draft.taskNextStep} onChange={(event) => updateDraft("taskNextStep", event.target.value)} maxLength={300} rows={3} placeholder="اقدام مشخص بعدی چیست؟" disabled={storageLocked || mutationPending} aria-required="true" aria-invalid={invalidFieldId === "backbone-task-next-step"} aria-describedby={invalidFieldId === "backbone-task-next-step" ? "project-backbone-form-error" : undefined} /></label>
+            </section>
+            {formError ? <p id="project-backbone-form-error" className="project-backbone-form-error" role="alert" data-testid="project-backbone-error">{formError}</p> : null}
+            <button className="primary-button" type="submit" disabled={storageLocked || mutationPending} data-testid="project-backbone-save">{mutationPending ? "در حال ثبت امن..." : graph ? "ثبت تغییرهای معنادار" : "ثبت برنامهٔ متصل"}</button>
+          </form>
+        </div>
+      </BottomSheet>
+    </div>
+  );
+}
+
+function ProjectWorkspace({ project, backbone, fileCount, imageCount, memoryCount, purchaseRequestCount, proposalCount, filesReadError, memoriesReadError, backboneReadError, purchaseRequestsReadError, proposalsReadError, initialScrollTop, onBack, onContinue, onOpenFiles, onOpenGallery, onOpenMemory, onOpenBackbone, onOpenPurchaseRequests, onOpenProposals, onUpdate }: { project: BuilderProject; backbone: ProjectBackboneGraph | null; fileCount: number; imageCount: number; memoryCount: number; purchaseRequestCount: number; proposalCount: number; filesReadError: boolean; memoriesReadError: boolean; backboneReadError: boolean; purchaseRequestsReadError: boolean; proposalsReadError: boolean; initialScrollTop: number; onBack: () => void; onContinue: () => void; onOpenFiles: () => void; onOpenGallery: () => void; onOpenMemory: () => void; onOpenBackbone: () => void; onOpenPurchaseRequests: () => void; onOpenProposals: () => void; onUpdate: (draft: ProjectProfileDraft) => void }) {
   const keyboard = useKeyboard();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -9379,7 +10245,10 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, purchas
 
   useLayoutEffect(() => {
     const projectScroll = workspaceRef.current?.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
-    if (projectScroll) projectScroll.scrollTop = initialScrollTop;
+    if (!projectScroll) return;
+    projectScroll.scrollTop = initialScrollTop;
+    const restoreFrame = window.requestAnimationFrame(() => { projectScroll.scrollTop = initialScrollTop; });
+    return () => window.cancelAnimationFrame(restoreFrame);
   }, [initialScrollTop, project.id]);
 
   const openEditor = () => {
@@ -9459,6 +10328,15 @@ function ProjectWorkspace({ project, fileCount, imageCount, memoryCount, purchas
             <span className="project-files-entry-copy">
               <strong>فایل‌ها و اسناد</strong>
               <small>{filesReadError ? "بازیابی محلی کامل نشد" : fileCount ? `${fileCount.toLocaleString("fa-IR")} فایل ثبت‌شده` : "هنوز فایلی ثبت نشده"}</small>
+            </span>
+            <ArrowRight size={18} aria-hidden="true" />
+          </button>
+
+          <button className="project-files-entry project-backbone-entry" type="button" onClick={onOpenBackbone} data-testid="project-backbone-entry" aria-label={`باز کردن برنامه و تصمیم‌های پروژهٔ ${project.name}`}>
+            <span className="project-files-entry-icon"><Pin size={22} strokeWidth={1.65} /></span>
+            <span className="project-files-entry-copy">
+              <strong>برنامه و تصمیم‌ها</strong>
+              <small>{backboneReadError ? "بازیابی محلی کامل نشد" : backbone ? "نقطه‌عطف، تصمیم و کار متصل ثبت شده" : "اولین برنامهٔ پروژه را ثبت کن"}</small>
             </span>
             <ArrowRight size={18} aria-hidden="true" />
           </button>
@@ -10935,7 +11813,7 @@ function PurchaseRequestModeSwitch({ mode, onChange, testIdPrefix, label }: { mo
   );
 }
 
-function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, dispatchDrafts, dispatchPlanApprovals, storageLocked, approvalsStorageLocked, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, initialSelectedId, startWithEditor, backLabel, onBack, onCreate, onUpdate, onMarkReady, onConfirmForRecipients, onReturnToDraft, onCreateApproval, onOpenApproval, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval, onOpenDispatchPlanApproval }: { project: BuilderProject; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; dispatchDrafts: DispatchDraftRecord[]; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; storageLocked: boolean; approvalsStorageLocked: boolean; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; initialSelectedId: string | null; startWithEditor: boolean; backLabel: string; onBack: () => void; onCreate: (draft: PurchaseRequestDraft) => string | null; onUpdate: (requestId: string, draft: PurchaseRequestDraft) => boolean; onMarkReady: (requestId: string) => boolean; onConfirmForRecipients: (requestId: string) => string | null; onReturnToDraft: (requestId: string) => boolean; onCreateApproval: (requestId: string) => string | null; onOpenApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void; onCreateContact: (draft: SupplierContactDraft) => string | null; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null; onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean; onOpenDispatchPlanApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void }) {
+function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, dispatchDrafts, dispatchPlanApprovals, storageLocked, approvalsStorageLocked, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, initialSelectedId, startWithEditor, backLabel, onBack, onRecoverStorage, onCreate, onUpdate, onMarkReady, onConfirmForRecipients, onReturnToDraft, onCreateApproval, onOpenApproval, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval, onOpenDispatchPlanApproval }: { project: BuilderProject; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; dispatchDrafts: DispatchDraftRecord[]; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; storageLocked: boolean; approvalsStorageLocked: boolean; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; initialSelectedId: string | null; startWithEditor: boolean; backLabel: string; onBack: () => void; onRecoverStorage: () => ProjectPurchaseRequestsRecoveryResult; onCreate: (draft: PurchaseRequestDraft) => string | null; onUpdate: (requestId: string, draft: PurchaseRequestDraft) => boolean; onMarkReady: (requestId: string) => boolean; onConfirmForRecipients: (requestId: string) => string | null; onReturnToDraft: (requestId: string) => boolean; onCreateApproval: (requestId: string) => string | null; onOpenApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void; onCreateContact: (draft: SupplierContactDraft) => string | null; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null; onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean; onOpenDispatchPlanApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void }) {
   const keyboard = useKeyboard();
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
@@ -10949,6 +11827,9 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   const [requestDraft, setRequestDraft] = useState<PurchaseRequestDraft>(() => ({ ...emptyPurchaseRequestDraft, items: [emptyProductRequestItemDraft()] }));
   const [fieldErrors, setFieldErrors] = useState<PurchaseRequestFieldErrors>(emptyPurchaseRequestFieldErrors);
   const [storageError, setStorageError] = useState("");
+  const [recoverySheetOpen, setRecoverySheetOpen] = useState(false);
+  const [recoveryError, setRecoveryError] = useState("");
+  const [recoverySuccess, setRecoverySuccess] = useState("");
   const [dispatchPlannerRequestId, setDispatchPlannerRequestId] = useState<string | null>(null);
   const selectedRequest = selectedId ? requests.find((request) => request.id === selectedId) ?? null : null;
   const selectedRequestApproval = selectedRequest
@@ -11150,6 +12031,24 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
     });
   };
 
+  const confirmStorageRecovery = () => {
+    const result = onRecoverStorage();
+    if (result.status === "reloaded" || result.status === "reset" || result.status === "not-needed") {
+      setRecoveryError("");
+      setRecoverySuccess(result.status === "reset" ? "نسخهٔ بازیابی محلی ساخته شد و ثبت درخواست دوباره فعال است." : "داده‌های درخواست دوباره با موفقیت خوانده شد.");
+      setRecoverySheetOpen(false);
+      window.requestAnimationFrame(() => addButtonRef.current?.focus());
+      return;
+    }
+    const messages: Record<Exclude<typeof result.status, "reloaded" | "reset" | "not-needed">, string> = {
+      "read-failure": "دادهٔ اصلی دوباره خوانده نشد؛ هیچ چیزی پاک یا بازنویسی نشد.",
+      "backup-failure": "نسخهٔ بازیابی ساخته و تأیید نشد؛ دادهٔ اصلی دست‌نخورده است.",
+      "source-changed": "داده در تب دیگری تغییر کرد؛ برای حفظ نسخهٔ تازه، بازیابی متوقف شد.",
+      "reset-failure": "مخزن اصلی تازه نشد؛ نسخهٔ بازیابی نگه داشته شد و ثبت همچنان قفل است.",
+    };
+    setRecoveryError(messages[result.status]);
+  };
+
   const editorSheet = (
     <BottomSheet key={editingId ? `purchase-editor-${editingId}` : "purchase-editor-create"} open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }} title={editingId ? "ویرایش درخواست" : "درخواست خرید"} description="نیاز و زمان تحویل را ثبت کن." snap={0.94}>
       <form className="purchase-request-editor-sheet" dir="rtl" data-testid="purchase-request-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveRequest(); }}>
@@ -11226,6 +12125,20 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
         {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-storage-error">{storageError}</p> : null}
         <button className="primary-button" type="submit" data-testid="purchase-request-save">{editingId ? "ذخیرهٔ تغییرات" : "ادامه"}</button>
       </form>
+    </BottomSheet>
+  );
+
+  const recoverySheet = (
+    <BottomSheet open={recoverySheetOpen} onOpenChange={(open) => { setRecoverySheetOpen(open); if (!open) setRecoveryError(""); }} title="بازیابی درخواست‌ها" description="پس از پشتیبان دقیق، فهرست اصلی درخواست‌های خرید خالی می‌شود و ثبت از نو آغاز خواهد شد." snap={0.55}>
+      <section className="purchase-request-recovery-sheet" dir="rtl" data-testid="purchase-request-recovery-sheet">
+        <div className="purchase-request-recovery-summary"><ShieldCheck size={20} /><span><strong>اول پشتیبان، بعد شروع تازه</strong><small>دادهٔ فعلی بدون تغییر در یک نسخهٔ بازیابیِ محلی و یکتا نگه‌داری و کنترل می‌شود.</small></span></div>
+        <p id="purchase-request-recovery-consequence">اگر داده در بررسی دوباره سالم باشد، همان فهرست برمی‌گردد. اگر هنوز ناخوانا باشد، فقط پس از ساخت پشتیبان دقیق، فهرست اصلی درخواست‌های خرید خالی می‌شود و ثبت از نو آغاز خواهد شد؛ دادهٔ قبلی فقط در نسخهٔ بازیابی محلی می‌ماند. فایل‌ها، کارها، تأییدها و سایر داده‌های پروژه تغییر نمی‌کنند.</p>
+        {recoveryError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-recovery-error">{recoveryError}</p> : null}
+        <div className="purchase-request-recovery-actions">
+          <button type="button" onClick={() => { setRecoveryError(""); setRecoverySheetOpen(false); }} data-testid="purchase-request-recovery-cancel">انصراف</button>
+          <button className="primary-button" type="button" onClick={confirmStorageRecovery} aria-describedby="purchase-request-recovery-consequence" data-testid="purchase-request-recovery-confirm"><RotateCcw size={17} /> پشتیبان‌گیری و خالی‌کردن فهرست</button>
+        </div>
+      </section>
     </BottomSheet>
   );
 
@@ -11348,7 +12261,9 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
 
           <button ref={addButtonRef} className="primary-button purchase-request-add" type="button" onClick={openCreateEditor} disabled={storageLocked} data-testid="purchase-request-add"><Plus size={18} /> درخواست جدید</button>
 
-          {storageLocked ? <p className="project-storage-recovery-alert" role="alert" data-testid="purchase-request-read-error"><ShieldCheck size={17} /><span><strong>درخواست‌های محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، ثبت و تغییر وضعیت تا بارگذاری موفق بعدی غیرفعال است.</span></p> : null}
+          {storageLocked ? <section className="project-storage-recovery-alert purchase-request-recovery-alert" role="alert" data-testid="purchase-request-read-error"><ShieldCheck size={17} /><div><span><strong>درخواست‌های محلی کامل خوانده نشد.</strong> ثبت و تغییر وضعیت برای جلوگیری از بازنویسی داده‌های قبلی قفل است.</span><button type="button" onClick={() => { setRecoveryError(""); setRecoverySuccess(""); setRecoverySheetOpen(true); }} data-testid="purchase-request-recovery-start"><RotateCcw size={15} /> بازیابی امن ثبت درخواست</button></div></section> : null}
+
+          {!storageLocked && recoverySuccess ? <p className="purchase-request-recovery-success" role="status" data-testid="purchase-request-recovery-success"><CheckCircle2 size={17} /> {recoverySuccess}</p> : null}
 
           {storageLocked ? null : orderedRequests.length === 0 ? (
             <section className="purchase-request-empty" data-testid="purchase-request-empty"><span><ShoppingCart size={25} strokeWidth={1.65} /></span><h2>هنوز درخواستی ثبت نشده</h2><p>اولین نیاز خرید یا خدمت پروژه را ثبت کن.</p></section>
@@ -11361,6 +12276,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
         </main>
       </MobileScroll>
       {editorSheet}
+      {recoverySheet}
     </div>
   );
 }
@@ -11700,7 +12616,7 @@ function projectTaskEventLabel(type: ProjectTaskEventType) {
   return "کار ثبت شد";
 }
 
-function ProjectTasksView({ project, tasks, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onApprovalDecision, onDispatchPlanApprovalDecision }: { project: BuilderProject; tasks: ProjectTaskRecord[]; approvals: ProjectApprovalRecord[]; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; dispatchDrafts: DispatchDraftRecord[]; requests: ProjectPurchaseRequestRecord[]; contacts: SupplierContactRecord[]; initialFilter: ProjectTaskFilter; initialApprovalId: string | null; initialDispatchPlanApprovalId: string | null; returnToPurchaseRequestId: string | null; tasksStorageLocked: boolean; approvalsStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; onBack: () => void; onReturnToPurchaseRequest: (requestId: string) => void; onCreate: (draft: ProjectTaskDraft) => boolean; onUpdate: (taskId: string, draft: ProjectTaskDraft) => boolean; onStatusChange: (taskId: string, status: ProjectTaskStatus) => boolean; onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => boolean; onDispatchPlanApprovalDecision: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean }) {
+function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, backboneStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onOpenBackbone, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onApprovalDecision, onDispatchPlanApprovalDecision }: { project: BuilderProject; tasks: ProjectTaskRecord[]; backbone: ProjectBackboneGraph | null; approvals: ProjectApprovalRecord[]; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; dispatchDrafts: DispatchDraftRecord[]; requests: ProjectPurchaseRequestRecord[]; contacts: SupplierContactRecord[]; initialFilter: ProjectTaskFilter; initialApprovalId: string | null; initialDispatchPlanApprovalId: string | null; returnToPurchaseRequestId: string | null; tasksStorageLocked: boolean; backboneStorageLocked: boolean; approvalsStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; onBack: () => void; onOpenBackbone: () => void; onReturnToPurchaseRequest: (requestId: string) => void; onCreate: (draft: ProjectTaskDraft) => boolean; onUpdate: (taskId: string, draft: ProjectTaskDraft) => boolean; onStatusChange: (taskId: string, status: ProjectTaskStatus) => boolean; onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => boolean; onDispatchPlanApprovalDecision: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean }) {
   const keyboard = useKeyboard();
   const taskAddButtonRef = useRef<HTMLButtonElement>(null);
   const taskEditButtonRef = useRef<HTMLButtonElement>(null);
@@ -11737,8 +12653,9 @@ function ProjectTasksView({ project, tasks, approvals, dispatchPlanApprovals, di
     () => [...dispatchPlanApprovals].sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
     [dispatchPlanApprovals],
   );
-  const activeCount = tasks.filter((task) => task.status === "in-progress").length;
-  const completedCount = tasks.filter((task) => task.status === "completed").length;
+  const backboneTask = backbone ? projectBackboneCurrentSnapshot(backbone.task) as ProjectBackboneTaskSnapshot : null;
+  const activeCount = tasks.filter((task) => task.status === "in-progress").length + (backboneTask?.status === "in-progress" ? 1 : 0);
+  const completedCount = tasks.filter((task) => task.status === "completed").length + (backboneTask?.status === "completed" ? 1 : 0);
   const dispatchPlanStatus = (record: DispatchPlanApprovalRecord) => {
     const draft = dispatchDrafts.find((item) => item.id === record.target.dispatchDraftId) ?? null;
     const request = requests.find((item) => item.id === record.target.requestId);
@@ -11772,11 +12689,12 @@ function ProjectTasksView({ project, tasks, approvals, dispatchPlanApprovals, di
   const filterReadError = filter === "approval"
     ? approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
     : filter === "completed"
-      ? tasksStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
+      ? tasksStorageLocked || backboneStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
       : filter === "active"
-        ? tasksStorageLocked
+        ? tasksStorageLocked || backboneStorageLocked
         : false;
-  const resultCount = filteredTasks.length + filteredApprovals.length + filteredDispatchPlanApprovals.length;
+  const backboneTaskIsVisible = !backboneStorageLocked && Boolean(backboneTask) && (filter === "active" && backboneTask?.status === "in-progress" || filter === "completed" && backboneTask?.status === "completed");
+  const resultCount = filteredTasks.length + filteredApprovals.length + filteredDispatchPlanApprovals.length + (backboneTaskIsVisible ? 1 : 0);
 
   useEffect(() => {
     if (selectedId && !selectedTask) setSelectedId(null);
@@ -12138,6 +13056,9 @@ function ProjectTasksView({ project, tasks, approvals, dispatchPlanApprovals, di
           {tasksStorageLocked && (filter === "active" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-task-read-error"><ShieldCheck size={17} /><span><strong>کارهای محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، ثبت و تغییر وضعیت تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
+          {backboneStorageLocked && (filter === "active" || filter === "completed") ? (
+            <p className="project-storage-recovery-alert" role="alert" data-testid="project-backbone-task-read-error"><ShieldCheck size={17} /><span><strong>کار متصل به برنامه کامل خوانده نشد.</strong> این وضعیت خالی نیست؛ برنامه و تغییرهای وابسته تا بازیابی موفق قفل‌اند.</span></p>
+          ) : null}
           {(approvalsStorageLocked || dispatchPlanApprovalsStorageLocked) && (filter === "approval" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-approval-read-error"><ShieldCheck size={17} /><span><strong>تأییدهای محلی کامل خوانده نشد.</strong> برای جلوگیری از تصمیم روی نسخهٔ نامطمئن، ایجاد و ثبت تصمیم تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
@@ -12145,11 +13066,11 @@ function ProjectTasksView({ project, tasks, approvals, dispatchPlanApprovals, di
           <Carousel ariaLabel="فیلتر وضعیت کارها" className="project-task-filters" contentClassName="project-task-filter-track">
             {projectTaskFilters.map((item) => {
               const countUnavailable = item.id === "active"
-                ? tasksStorageLocked
+                ? tasksStorageLocked || backboneStorageLocked
                 : item.id === "approval"
                   ? approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
                   : item.id === "completed"
-                    ? tasksStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
+                    ? tasksStorageLocked || backboneStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
                     : false;
               return <button className="project-task-filter" type="button" key={item.id} aria-pressed={filter === item.id} onClick={() => { setStorageError(""); setFilter(item.id); }} data-testid={`project-task-filter-${item.id}`}><span>{item.label}</span><small aria-label={countUnavailable ? `بازیابی ${item.label} کامل نشد` : undefined}>{countUnavailable ? "!" : filterCounts[item.id].toLocaleString("fa-IR")}</small></button>;
             })}
@@ -12178,6 +13099,13 @@ function ProjectTasksView({ project, tasks, approvals, dispatchPlanApprovals, di
                   <ArrowRight size={17} aria-hidden="true" />
                 </button>
               ))}
+              {backboneTaskIsVisible && backbone && backboneTask ? (
+                <button className="project-task-card project-backbone-task-card" type="button" onClick={onOpenBackbone} data-testid="project-backbone-task-card">
+                  <span className="project-task-card-icon"><Pin size={20} strokeWidth={1.65} /></span>
+                  <span className="project-task-card-copy"><span><small>{projectTaskStatusLabel(backboneTask.status)}</small><small>متصل به برنامهٔ پروژه</small></span><strong>{backboneTask.title}</strong><em>{backboneTask.nextStep}</em><small className="project-task-card-date">نقطه‌عطف و دلیل تصمیم در جزئیات برنامه ثبت شده‌اند.</small></span>
+                  <ArrowRight size={17} aria-hidden="true" />
+                </button>
+              ) : null}
               {filteredTasks.map((task) => (
                 <button className="project-task-card" type="button" key={task.id} onClick={() => { setStorageError(""); setSelectedId(task.id); }} data-testid="project-task-card">
                   <span className="project-task-card-icon"><CheckCircle2 size={20} strokeWidth={1.65} /></span>

@@ -1084,7 +1084,7 @@ test("quick action chips form one readable draggable row at the RTL start", asyn
   await expect(page.getByTestId("quick-action-search")).toContainText("جست‌وجوی پروژه");
   await expect(page.getByTestId("quick-action-build")).toContainText("برایم بساز");
   await expect(page.getByTestId("quick-action-meeting-notes")).toContainText("شروع صورت‌جلسه");
-  await expect(page.getByTestId("quick-action-purchase-plan")).toContainText("چیدن برنامه خرید");
+  await expect(page.getByTestId("quick-action-project-plan")).toContainText("برنامه پروژه");
 
   const railBox = await rail.boundingBox();
   if (!railBox) throw new Error("Quick-action rail is not rendered");
@@ -1121,15 +1121,16 @@ test("quick actions open every built project destination and label prompt starte
   await expect(page.getByTestId("project-source-search-view")).toBeVisible();
   await page.getByTestId("project-source-search-back").click();
 
+  await page.getByTestId("quick-action-project-plan").click();
+  await expect(page.getByTestId("project-backbone-view")).toBeVisible();
+  await page.getByTestId("project-backbone-back").click();
+
   await page.getByTestId("quick-action-build").click();
   await expect(page.getByTestId("build-flow")).toBeVisible();
   await page.keyboard.press("Escape");
 
   await page.getByTestId("quick-action-meeting-notes").click();
   await expect(page.getByTestId("composer-input")).toHaveValue("شروع صورت‌جلسه");
-  await page.getByTestId("composer-input").fill("");
-  await page.getByTestId("quick-action-purchase-plan").click();
-  await expect(page.getByTestId("composer-input")).toHaveValue("چیدن برنامه خرید");
 });
 
 test("builder opens and edits the active project space without losing the chat draft", async ({ page }) => {
@@ -3147,6 +3148,7 @@ test("builder creates, completes, and readies a private local purchase request w
   expect(await editor.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   await page.getByTestId("purchase-request-save").click();
   await expect(page.getByTestId("purchase-request-raw-error")).toContainText("نام قلم را وارد کن");
+  await expect(page.getByTestId("purchase-request-item-input")).toBeFocused();
 
   await page.getByTestId("purchase-request-raw-input").fill("۲۰٫۵ تن سیمان تیپ ۲ برای هفتهٔ آینده لازم داریم");
   await page.getByTestId("purchase-request-save").click();
@@ -3267,23 +3269,734 @@ test("purchase requests never cross the active project boundary", async ({ page 
   await expect(page.getByText("درخواست فقط پروژه الف")).toHaveCount(0);
 });
 
-test("purchase request read failures stay distinct from an empty list and lock changes", async ({ page }) => {
+const purchaseRequestRecoverySourceKey = "chida-prototype-project-purchase-requests:v1";
+const purchaseRequestRecoveryBackupPrefix = `${purchaseRequestRecoverySourceKey}:recovery-backup:`;
+const purchaseRequestRecoveryIntentKey = `${purchaseRequestRecoverySourceKey}:recovery-intent:v1`;
+const purchaseRequestRecoveryDependentKeys = [
+  "chida-prototype-project-approvals:v1",
+  "chida-prototype-project-supplier-contacts:v1",
+  "chida-prototype-project-dispatch-drafts:v1",
+  "chida-prototype-project-dispatch-plan-approvals:v1",
+  "chida-prototype-builder-recorded-proposals:v1",
+] as const;
+
+async function readPurchaseRequestRecoveryBackups(page: Page) {
+  return page.evaluate((prefix) => {
+    const backups: Array<{ key: string; value: string | null }> = [];
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (key?.startsWith(prefix)) backups.push({ key, value: window.localStorage.getItem(key) });
+    }
+    return backups.sort((first, second) => first.key.localeCompare(second.key));
+  }, purchaseRequestRecoveryBackupPrefix);
+}
+
+async function readExactLocalStorageSnapshot(page: Page, keys: readonly string[]) {
+  return page.evaluate(
+    (storageKeys) => Object.fromEntries(storageKeys.map((key) => [key, window.localStorage.getItem(key)])),
+    [...keys],
+  );
+}
+
+test("purchase request read failures stay distinct from an empty list and recovery cannot mutate bytes it cannot read", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => {
+  await page.addInitScript(({ sourceKey, backupPrefix }) => {
     const nativeGetItem = Storage.prototype.getItem;
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    const probeWindow = window as Window & {
+      __purchaseRequestRecoveryNativeGetItem?: typeof Storage.prototype.getItem;
+      __purchaseRequestRecoveryNativeSetItem?: typeof Storage.prototype.setItem;
+      __purchaseRequestRecoveryNativeRemoveItem?: typeof Storage.prototype.removeItem;
+      __purchaseRequestRecoveryMutations?: Array<{ operation: "set" | "remove"; key: string; value?: string }>;
+    };
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryNativeGetItem", { value: nativeGetItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryNativeSetItem", { value: nativeSetItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryNativeRemoveItem", { value: nativeRemoveItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryMutations", { value: [], configurable: true });
     Storage.prototype.getItem = function getItem(key: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-purchase-requests:v1") {
+      if (this === window.localStorage && key === sourceKey) {
         throw new DOMException("Purchase request storage read failed", "SecurityError");
       }
       return nativeGetItem.call(this, key);
     };
-  });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && (key === sourceKey || key.startsWith(backupPrefix))) {
+        probeWindow.__purchaseRequestRecoveryMutations?.push({ operation: "set", key, value });
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      if (this === window.localStorage && (key === sourceKey || key.startsWith(backupPrefix))) {
+        probeWindow.__purchaseRequestRecoveryMutations?.push({ operation: "remove", key });
+      }
+      return nativeRemoveItem.call(this, key);
+    };
+  }, { sourceKey: purchaseRequestRecoverySourceKey, backupPrefix: purchaseRequestRecoveryBackupPrefix });
   await enterBuilderHome(page);
   await page.getByRole("button", { name: "درخواست قیمت" }).click();
   await expect(page.getByTestId("purchase-request-read-error")).toContainText("درخواست‌های محلی کامل خوانده نشد");
   await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
   await expect(page.getByTestId("purchase-request-editor-sheet")).toHaveCount(0);
   await expect(page.getByTestId("purchase-request-empty")).toHaveCount(0);
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeVisible();
+  await page.getByTestId("purchase-request-recovery-confirm").click();
+  const mutationAttempts = await page.evaluate(() => {
+    const probeWindow = window as Window & {
+      __purchaseRequestRecoveryNativeGetItem: typeof Storage.prototype.getItem;
+      __purchaseRequestRecoveryNativeSetItem: typeof Storage.prototype.setItem;
+      __purchaseRequestRecoveryNativeRemoveItem: typeof Storage.prototype.removeItem;
+      __purchaseRequestRecoveryMutations?: Array<{ operation: "set" | "remove"; key: string; value?: string }>;
+    };
+    const attempts = [...(probeWindow.__purchaseRequestRecoveryMutations ?? [])];
+    Storage.prototype.getItem = probeWindow.__purchaseRequestRecoveryNativeGetItem;
+    Storage.prototype.setItem = probeWindow.__purchaseRequestRecoveryNativeSetItem;
+    Storage.prototype.removeItem = probeWindow.__purchaseRequestRecoveryNativeRemoveItem;
+    delete probeWindow.__purchaseRequestRecoveryNativeGetItem;
+    delete probeWindow.__purchaseRequestRecoveryNativeSetItem;
+    delete probeWindow.__purchaseRequestRecoveryNativeRemoveItem;
+    delete probeWindow.__purchaseRequestRecoveryMutations;
+    return attempts;
+  });
+  await expect(page.getByTestId("purchase-request-recovery-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-success")).not.toBeVisible();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+  expect(mutationAttempts).toEqual([]);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBeNull();
+  expect(await readPurchaseRequestRecoveryBackups(page)).toEqual([]);
+});
+
+test("purchase request recovery reloads a newly valid source without backup or removal", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await page.getByTestId("purchase-request-raw-input").fill("درخواست معتبری که باید دوباره بارگذاری شود");
+  await page.getByTestId("purchase-request-item-input").fill("سیمان تیپ ۲ معتبر");
+  await page.getByTestId("purchase-request-save").click();
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toBeVisible();
+  const validRaw = await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey);
+  if (validRaw === null) throw new Error("The UI-generated valid purchase-request snapshot is missing");
+
+  const unreadableRaw = "\n{\"legacy\":\"نسخهٔ خراب اولیه برای قفل UI\"}\n";
+  await page.evaluate(
+    ({ sourceKey, raw }) => window.localStorage.setItem(sourceKey, raw),
+    { sourceKey: purchaseRequestRecoverySourceKey, raw: unreadableRaw },
+  );
+  await reenterBuilderHomeAfterReload(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeVisible();
+
+  await page.evaluate(({ sourceKey, raw, backupPrefix }) => {
+    window.localStorage.setItem(sourceKey, raw);
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    const probeWindow = window as Window & {
+      __purchaseRequestReloadNativeSetItem?: typeof Storage.prototype.setItem;
+      __purchaseRequestReloadNativeRemoveItem?: typeof Storage.prototype.removeItem;
+      __purchaseRequestReloadMutations?: Array<{ operation: "set" | "remove"; key: string }>;
+    };
+    Object.defineProperty(probeWindow, "__purchaseRequestReloadNativeSetItem", { value: nativeSetItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestReloadNativeRemoveItem", { value: nativeRemoveItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestReloadMutations", { value: [], configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && (key === sourceKey || key.startsWith(backupPrefix))) {
+        probeWindow.__purchaseRequestReloadMutations?.push({ operation: "set", key });
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      if (this === window.localStorage && (key === sourceKey || key.startsWith(backupPrefix))) {
+        probeWindow.__purchaseRequestReloadMutations?.push({ operation: "remove", key });
+      }
+      return nativeRemoveItem.call(this, key);
+    };
+  }, { sourceKey: purchaseRequestRecoverySourceKey, raw: validRaw, backupPrefix: purchaseRequestRecoveryBackupPrefix });
+
+  await page.getByTestId("purchase-request-recovery-confirm").click();
+  const mutationAttempts = await page.evaluate(() => {
+    const probeWindow = window as Window & {
+      __purchaseRequestReloadNativeSetItem: typeof Storage.prototype.setItem;
+      __purchaseRequestReloadNativeRemoveItem: typeof Storage.prototype.removeItem;
+      __purchaseRequestReloadMutations?: Array<{ operation: "set" | "remove"; key: string }>;
+    };
+    const attempts = [...(probeWindow.__purchaseRequestReloadMutations ?? [])];
+    Storage.prototype.setItem = probeWindow.__purchaseRequestReloadNativeSetItem;
+    Storage.prototype.removeItem = probeWindow.__purchaseRequestReloadNativeRemoveItem;
+    delete probeWindow.__purchaseRequestReloadNativeSetItem;
+    delete probeWindow.__purchaseRequestReloadNativeRemoveItem;
+    delete probeWindow.__purchaseRequestReloadMutations;
+    return attempts;
+  });
+
+  expect(mutationAttempts).toEqual([]);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(validRaw);
+  expect(await readPurchaseRequestRecoveryBackups(page)).toEqual([]);
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeHidden();
+  await expect(page.getByTestId("purchase-request-recovery-error")).not.toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-success")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("purchase-request-add")).toBeEnabled();
+  await expect(page.getByTestId("purchase-request-card")).toContainText("سیمان تیپ ۲ معتبر");
+});
+
+test("purchase request recovery preserves the source and lock when writing the exact backup fails", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const unreadableRaw = "\n {\"legacy\":\"درخواست قبلیِ بدون مهاجرت\",\"opaque\":[1,2]} \n";
+  await page.goto("/");
+  await page.evaluate(
+    ({ sourceKey, raw }) => window.localStorage.setItem(sourceKey, raw),
+    { sourceKey: purchaseRequestRecoverySourceKey, raw: unreadableRaw },
+  );
+  await enterBuilderHome(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeVisible();
+
+  await page.evaluate((backupPrefix) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    const probeWindow = window as Window & {
+      __purchaseRequestRecoveryNativeSetItem?: typeof Storage.prototype.setItem;
+      __purchaseRequestRecoveryBackupAttempts?: Array<{ key: string; value: string }>;
+    };
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryNativeSetItem", { value: nativeSetItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryBackupAttempts", { value: [], configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key.startsWith(backupPrefix)) {
+        probeWindow.__purchaseRequestRecoveryBackupAttempts?.push({ key, value });
+        throw new DOMException("Purchase request recovery backup failed", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  }, purchaseRequestRecoveryBackupPrefix);
+
+  await page.getByTestId("purchase-request-recovery-confirm").click();
+  const backupAttempts = await page.evaluate(() => {
+    const probeWindow = window as Window & {
+      __purchaseRequestRecoveryNativeSetItem: typeof Storage.prototype.setItem;
+      __purchaseRequestRecoveryBackupAttempts?: Array<{ key: string; value: string }>;
+    };
+    const attempts = [...(probeWindow.__purchaseRequestRecoveryBackupAttempts ?? [])];
+    Storage.prototype.setItem = probeWindow.__purchaseRequestRecoveryNativeSetItem;
+    delete probeWindow.__purchaseRequestRecoveryNativeSetItem;
+    delete probeWindow.__purchaseRequestRecoveryBackupAttempts;
+    return attempts;
+  });
+  await expect(page.getByTestId("purchase-request-recovery-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-success")).not.toBeVisible();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+  expect(backupAttempts).toHaveLength(1);
+  expect(backupAttempts[0].key.startsWith(purchaseRequestRecoveryBackupPrefix)).toBe(true);
+  expect(backupAttempts[0].value).toBe(unreadableRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(unreadableRaw);
+  expect(await readPurchaseRequestRecoveryBackups(page)).toEqual([]);
+});
+
+test("purchase request recovery keeps the exact source locked when reset removal fails after backup", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const unreadableRaw = "\t{\"schema\":\"ناسازگار\",\"raw\":\"باید دست‌نخورده بماند\"}\r\n";
+  await page.goto("/");
+  await page.evaluate(
+    ({ sourceKey, raw }) => window.localStorage.setItem(sourceKey, raw),
+    { sourceKey: purchaseRequestRecoverySourceKey, raw: unreadableRaw },
+  );
+  await enterBuilderHome(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeVisible();
+
+  await page.evaluate((sourceKey) => {
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    const probeWindow = window as Window & {
+      __purchaseRequestRecoveryNativeRemoveItem?: typeof Storage.prototype.removeItem;
+      __purchaseRequestRecoveryRemoveAttempts?: string[];
+    };
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryNativeRemoveItem", { value: nativeRemoveItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryRemoveAttempts", { value: [], configurable: true });
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      if (this === window.localStorage && key === sourceKey) {
+        probeWindow.__purchaseRequestRecoveryRemoveAttempts?.push(key);
+        throw new DOMException("Purchase request recovery reset failed", "SecurityError");
+      }
+      return nativeRemoveItem.call(this, key);
+    };
+  }, purchaseRequestRecoverySourceKey);
+
+  await page.getByTestId("purchase-request-recovery-confirm").click();
+  const removeAttempts = await page.evaluate(() => {
+    const probeWindow = window as Window & {
+      __purchaseRequestRecoveryNativeRemoveItem: typeof Storage.prototype.removeItem;
+      __purchaseRequestRecoveryRemoveAttempts?: string[];
+    };
+    const attempts = [...(probeWindow.__purchaseRequestRecoveryRemoveAttempts ?? [])];
+    Storage.prototype.removeItem = probeWindow.__purchaseRequestRecoveryNativeRemoveItem;
+    delete probeWindow.__purchaseRequestRecoveryNativeRemoveItem;
+    delete probeWindow.__purchaseRequestRecoveryRemoveAttempts;
+    return attempts;
+  });
+  await expect(page.getByTestId("purchase-request-recovery-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-success")).not.toBeVisible();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+  expect(removeAttempts).toEqual([purchaseRequestRecoverySourceKey]);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(unreadableRaw);
+  const backups = await readPurchaseRequestRecoveryBackups(page);
+  expect(backups).toHaveLength(1);
+  expect(backups[0].value).toBe(unreadableRaw);
+});
+
+test("purchase request recovery keeps a newer source locked when it changes after the exact backup is verified", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const unreadableRaw = "\n{\"legacy\":\"نسخهٔ اولیهٔ ناخوانا\",\"items\":null}\n";
+  const newerRaw = "\n{\"legacy\":\"نسخهٔ تازه‌تر هم‌زمان\",\"items\":[\"جدید\"]}\n";
+  await page.goto("/");
+  await page.evaluate(
+    ({ sourceKey, raw }) => window.localStorage.setItem(sourceKey, raw),
+    { sourceKey: purchaseRequestRecoverySourceKey, raw: unreadableRaw },
+  );
+  await enterBuilderHome(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeVisible();
+
+  await page.evaluate(({ sourceKey, backupPrefix, replacementRaw }) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    const probeWindow = window as Window & {
+      __purchaseRequestRecoveryNativeGetItem?: typeof Storage.prototype.getItem;
+      __purchaseRequestRecoveryNativeRemoveItem?: typeof Storage.prototype.removeItem;
+      __purchaseRequestRecoverySourceWasChanged?: boolean;
+      __purchaseRequestRecoveryRemoveAttempts?: string[];
+    };
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryNativeGetItem", { value: nativeGetItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryNativeRemoveItem", { value: nativeRemoveItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoverySourceWasChanged", { value: false, writable: true, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestRecoveryRemoveAttempts", { value: [], configurable: true });
+    Storage.prototype.getItem = function getItem(key: string) {
+      const value = nativeGetItem.call(this, key);
+      if (this === window.localStorage && key.startsWith(backupPrefix) && !probeWindow.__purchaseRequestRecoverySourceWasChanged) {
+        nativeSetItem.call(window.localStorage, sourceKey, replacementRaw);
+        probeWindow.__purchaseRequestRecoverySourceWasChanged = true;
+      }
+      return value;
+    };
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      if (this === window.localStorage && key === sourceKey) probeWindow.__purchaseRequestRecoveryRemoveAttempts?.push(key);
+      return nativeRemoveItem.call(this, key);
+    };
+  }, {
+    sourceKey: purchaseRequestRecoverySourceKey,
+    backupPrefix: purchaseRequestRecoveryBackupPrefix,
+    replacementRaw: newerRaw,
+  });
+
+  await page.getByTestId("purchase-request-recovery-confirm").click();
+  const probe = await page.evaluate(() => {
+    const probeWindow = window as Window & {
+      __purchaseRequestRecoveryNativeGetItem: typeof Storage.prototype.getItem;
+      __purchaseRequestRecoveryNativeRemoveItem: typeof Storage.prototype.removeItem;
+      __purchaseRequestRecoverySourceWasChanged?: boolean;
+      __purchaseRequestRecoveryRemoveAttempts?: string[];
+    };
+    const result = {
+      sourceWasChanged: Boolean(probeWindow.__purchaseRequestRecoverySourceWasChanged),
+      removeAttempts: [...(probeWindow.__purchaseRequestRecoveryRemoveAttempts ?? [])],
+    };
+    Storage.prototype.getItem = probeWindow.__purchaseRequestRecoveryNativeGetItem;
+    Storage.prototype.removeItem = probeWindow.__purchaseRequestRecoveryNativeRemoveItem;
+    delete probeWindow.__purchaseRequestRecoveryNativeGetItem;
+    delete probeWindow.__purchaseRequestRecoveryNativeRemoveItem;
+    delete probeWindow.__purchaseRequestRecoverySourceWasChanged;
+    delete probeWindow.__purchaseRequestRecoveryRemoveAttempts;
+    return result;
+  });
+
+  expect(probe.sourceWasChanged).toBe(true);
+  expect(probe.removeAttempts).toEqual([]);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(newerRaw);
+  const backups = await readPurchaseRequestRecoveryBackups(page);
+  expect(backups).toHaveLength(1);
+  expect(backups[0].value).toBe(unreadableRaw);
+  await expect(page.getByTestId("purchase-request-recovery-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-success")).not.toBeVisible();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+});
+
+test("purchase request recovery restores the exact primary bytes when direct reset verification throws after removal", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const unreadableRaw = "\n{\"legacy\":\"بازگردانی پس از خطای بررسی مستقیم\"}\n";
+  await page.goto("/");
+  await page.evaluate(
+    ({ sourceKey, raw }) => window.localStorage.setItem(sourceKey, raw),
+    { sourceKey: purchaseRequestRecoverySourceKey, raw: unreadableRaw },
+  );
+  await enterBuilderHome(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeVisible();
+
+  await page.evaluate((sourceKey) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    const probeWindow = window as Window & {
+      __purchaseRequestVerifyNativeGetItem?: typeof Storage.prototype.getItem;
+      __purchaseRequestVerifyNativeRemoveItem?: typeof Storage.prototype.removeItem;
+      __purchaseRequestVerifySourceRemoved?: boolean;
+      __purchaseRequestVerifyReadThrown?: boolean;
+      __purchaseRequestVerifyRemoveAttempts?: string[];
+    };
+    Object.defineProperty(probeWindow, "__purchaseRequestVerifyNativeGetItem", { value: nativeGetItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestVerifyNativeRemoveItem", { value: nativeRemoveItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestVerifySourceRemoved", { value: false, writable: true, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestVerifyReadThrown", { value: false, writable: true, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestVerifyRemoveAttempts", { value: [], configurable: true });
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      const result = nativeRemoveItem.call(this, key);
+      if (this === window.localStorage && key === sourceKey) {
+        probeWindow.__purchaseRequestVerifyRemoveAttempts?.push(key);
+        probeWindow.__purchaseRequestVerifySourceRemoved = true;
+      }
+      return result;
+    };
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === sourceKey && probeWindow.__purchaseRequestVerifySourceRemoved && !probeWindow.__purchaseRequestVerifyReadThrown) {
+        probeWindow.__purchaseRequestVerifyReadThrown = true;
+        throw new DOMException("Purchase request direct reset verification failed", "SecurityError");
+      }
+      return nativeGetItem.call(this, key);
+    };
+  }, purchaseRequestRecoverySourceKey);
+
+  await page.getByTestId("purchase-request-recovery-confirm").click();
+  const probe = await page.evaluate(() => {
+    const probeWindow = window as Window & {
+      __purchaseRequestVerifyNativeGetItem: typeof Storage.prototype.getItem;
+      __purchaseRequestVerifyNativeRemoveItem: typeof Storage.prototype.removeItem;
+      __purchaseRequestVerifySourceRemoved?: boolean;
+      __purchaseRequestVerifyReadThrown?: boolean;
+      __purchaseRequestVerifyRemoveAttempts?: string[];
+    };
+    const result = {
+      readThrown: Boolean(probeWindow.__purchaseRequestVerifyReadThrown),
+      removeAttempts: [...(probeWindow.__purchaseRequestVerifyRemoveAttempts ?? [])],
+    };
+    Storage.prototype.getItem = probeWindow.__purchaseRequestVerifyNativeGetItem;
+    Storage.prototype.removeItem = probeWindow.__purchaseRequestVerifyNativeRemoveItem;
+    delete probeWindow.__purchaseRequestVerifyNativeGetItem;
+    delete probeWindow.__purchaseRequestVerifyNativeRemoveItem;
+    delete probeWindow.__purchaseRequestVerifySourceRemoved;
+    delete probeWindow.__purchaseRequestVerifyReadThrown;
+    delete probeWindow.__purchaseRequestVerifyRemoveAttempts;
+    return result;
+  });
+
+  expect(probe.readThrown).toBe(true);
+  expect(probe.removeAttempts).toEqual([purchaseRequestRecoverySourceKey]);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(unreadableRaw);
+  const backups = await readPurchaseRequestRecoveryBackups(page);
+  expect(backups).toHaveLength(1);
+  expect(backups[0].value).toBe(unreadableRaw);
+  await expect(page.getByTestId("purchase-request-recovery-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-success")).not.toBeVisible();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+});
+
+test("purchase request recovery restores exact primary bytes when the final empty-store read throws once", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const unreadableRaw = "\r\n{\"legacy\":\"بازگردانی پس از خطای خواندن نهایی\"}\r\n";
+  await page.goto("/");
+  await page.evaluate(
+    ({ sourceKey, raw }) => window.localStorage.setItem(sourceKey, raw),
+    { sourceKey: purchaseRequestRecoverySourceKey, raw: unreadableRaw },
+  );
+  await enterBuilderHome(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeVisible();
+
+  await page.evaluate((sourceKey) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    const probeWindow = window as Window & {
+      __purchaseRequestFinalReadNativeGetItem?: typeof Storage.prototype.getItem;
+      __purchaseRequestFinalReadNativeRemoveItem?: typeof Storage.prototype.removeItem;
+      __purchaseRequestFinalReadSourceRemoved?: boolean;
+      __purchaseRequestFinalReadCount?: number;
+      __purchaseRequestFinalReadThrown?: boolean;
+      __purchaseRequestFinalReadRemoveAttempts?: string[];
+    };
+    Object.defineProperty(probeWindow, "__purchaseRequestFinalReadNativeGetItem", { value: nativeGetItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestFinalReadNativeRemoveItem", { value: nativeRemoveItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestFinalReadSourceRemoved", { value: false, writable: true, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestFinalReadCount", { value: 0, writable: true, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestFinalReadThrown", { value: false, writable: true, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestFinalReadRemoveAttempts", { value: [], configurable: true });
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      const result = nativeRemoveItem.call(this, key);
+      if (this === window.localStorage && key === sourceKey) {
+        probeWindow.__purchaseRequestFinalReadRemoveAttempts?.push(key);
+        probeWindow.__purchaseRequestFinalReadSourceRemoved = true;
+      }
+      return result;
+    };
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === sourceKey && probeWindow.__purchaseRequestFinalReadSourceRemoved) {
+        probeWindow.__purchaseRequestFinalReadCount = (probeWindow.__purchaseRequestFinalReadCount ?? 0) + 1;
+        if (probeWindow.__purchaseRequestFinalReadCount === 2 && !probeWindow.__purchaseRequestFinalReadThrown) {
+          probeWindow.__purchaseRequestFinalReadThrown = true;
+          throw new DOMException("Purchase request final empty-store read failed", "SecurityError");
+        }
+      }
+      return nativeGetItem.call(this, key);
+    };
+  }, purchaseRequestRecoverySourceKey);
+
+  await page.getByTestId("purchase-request-recovery-confirm").click();
+  const probe = await page.evaluate(() => {
+    const probeWindow = window as Window & {
+      __purchaseRequestFinalReadNativeGetItem: typeof Storage.prototype.getItem;
+      __purchaseRequestFinalReadNativeRemoveItem: typeof Storage.prototype.removeItem;
+      __purchaseRequestFinalReadSourceRemoved?: boolean;
+      __purchaseRequestFinalReadCount?: number;
+      __purchaseRequestFinalReadThrown?: boolean;
+      __purchaseRequestFinalReadRemoveAttempts?: string[];
+    };
+    const result = {
+      readCount: probeWindow.__purchaseRequestFinalReadCount ?? 0,
+      readThrown: Boolean(probeWindow.__purchaseRequestFinalReadThrown),
+      removeAttempts: [...(probeWindow.__purchaseRequestFinalReadRemoveAttempts ?? [])],
+    };
+    Storage.prototype.getItem = probeWindow.__purchaseRequestFinalReadNativeGetItem;
+    Storage.prototype.removeItem = probeWindow.__purchaseRequestFinalReadNativeRemoveItem;
+    delete probeWindow.__purchaseRequestFinalReadNativeGetItem;
+    delete probeWindow.__purchaseRequestFinalReadNativeRemoveItem;
+    delete probeWindow.__purchaseRequestFinalReadSourceRemoved;
+    delete probeWindow.__purchaseRequestFinalReadCount;
+    delete probeWindow.__purchaseRequestFinalReadThrown;
+    delete probeWindow.__purchaseRequestFinalReadRemoveAttempts;
+    return result;
+  });
+
+  expect(probe.readThrown).toBe(true);
+  expect(probe.readCount).toBeGreaterThanOrEqual(3);
+  expect(probe.removeAttempts).toEqual([purchaseRequestRecoverySourceKey]);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(unreadableRaw);
+  const backups = await readPurchaseRequestRecoveryBackups(page);
+  expect(backups).toHaveLength(1);
+  expect(backups[0].value).toBe(unreadableRaw);
+  await expect(page.getByTestId("purchase-request-recovery-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-success")).not.toBeVisible();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+});
+
+test("purchase request recovery intent keeps an unrestored reset locked across reload and resumes from its exact backup", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const unreadableRaw = "\n{\"legacy\":\"تنها نسخهٔ امن برای ادامهٔ بازیابی\",\"items\":null}\n";
+  await page.goto("/");
+  await page.evaluate(
+    ({ sourceKey, raw }) => window.localStorage.setItem(sourceKey, raw),
+    { sourceKey: purchaseRequestRecoverySourceKey, raw: unreadableRaw },
+  );
+  await enterBuilderHome(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeVisible();
+
+  await page.evaluate((sourceKey) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    const probeWindow = window as Window & {
+      __purchaseRequestIntentNativeGetItem?: typeof Storage.prototype.getItem;
+      __purchaseRequestIntentNativeSetItem?: typeof Storage.prototype.setItem;
+      __purchaseRequestIntentNativeRemoveItem?: typeof Storage.prototype.removeItem;
+      __purchaseRequestIntentSourceRemoved?: boolean;
+      __purchaseRequestIntentVerifyThrown?: boolean;
+      __purchaseRequestIntentRollbackAttempts?: string[];
+      __purchaseRequestIntentRemoveAttempts?: string[];
+    };
+    Object.defineProperty(probeWindow, "__purchaseRequestIntentNativeGetItem", { value: nativeGetItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestIntentNativeSetItem", { value: nativeSetItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestIntentNativeRemoveItem", { value: nativeRemoveItem, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestIntentSourceRemoved", { value: false, writable: true, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestIntentVerifyThrown", { value: false, writable: true, configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestIntentRollbackAttempts", { value: [], configurable: true });
+    Object.defineProperty(probeWindow, "__purchaseRequestIntentRemoveAttempts", { value: [], configurable: true });
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      const result = nativeRemoveItem.call(this, key);
+      if (this === window.localStorage && key === sourceKey) {
+        probeWindow.__purchaseRequestIntentRemoveAttempts?.push(key);
+        probeWindow.__purchaseRequestIntentSourceRemoved = true;
+      }
+      return result;
+    };
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === sourceKey && probeWindow.__purchaseRequestIntentSourceRemoved && !probeWindow.__purchaseRequestIntentVerifyThrown) {
+        probeWindow.__purchaseRequestIntentVerifyThrown = true;
+        throw new DOMException("Purchase request intent verification failed", "SecurityError");
+      }
+      return nativeGetItem.call(this, key);
+    };
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === sourceKey && probeWindow.__purchaseRequestIntentSourceRemoved) {
+        probeWindow.__purchaseRequestIntentRollbackAttempts?.push(value);
+        throw new DOMException("Purchase request primary rollback failed", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  }, purchaseRequestRecoverySourceKey);
+
+  await page.getByTestId("purchase-request-recovery-confirm").click();
+  const probe = await page.evaluate(() => {
+    const probeWindow = window as Window & {
+      __purchaseRequestIntentNativeGetItem: typeof Storage.prototype.getItem;
+      __purchaseRequestIntentNativeSetItem: typeof Storage.prototype.setItem;
+      __purchaseRequestIntentNativeRemoveItem: typeof Storage.prototype.removeItem;
+      __purchaseRequestIntentSourceRemoved?: boolean;
+      __purchaseRequestIntentVerifyThrown?: boolean;
+      __purchaseRequestIntentRollbackAttempts?: string[];
+      __purchaseRequestIntentRemoveAttempts?: string[];
+    };
+    const result = {
+      verifyThrown: Boolean(probeWindow.__purchaseRequestIntentVerifyThrown),
+      rollbackAttempts: [...(probeWindow.__purchaseRequestIntentRollbackAttempts ?? [])],
+      removeAttempts: [...(probeWindow.__purchaseRequestIntentRemoveAttempts ?? [])],
+    };
+    Storage.prototype.getItem = probeWindow.__purchaseRequestIntentNativeGetItem;
+    Storage.prototype.setItem = probeWindow.__purchaseRequestIntentNativeSetItem;
+    Storage.prototype.removeItem = probeWindow.__purchaseRequestIntentNativeRemoveItem;
+    delete probeWindow.__purchaseRequestIntentNativeGetItem;
+    delete probeWindow.__purchaseRequestIntentNativeSetItem;
+    delete probeWindow.__purchaseRequestIntentNativeRemoveItem;
+    delete probeWindow.__purchaseRequestIntentSourceRemoved;
+    delete probeWindow.__purchaseRequestIntentVerifyThrown;
+    delete probeWindow.__purchaseRequestIntentRollbackAttempts;
+    delete probeWindow.__purchaseRequestIntentRemoveAttempts;
+    return result;
+  });
+
+  expect(probe.verifyThrown).toBe(true);
+  expect(probe.removeAttempts).toEqual([purchaseRequestRecoverySourceKey]);
+  expect(probe.rollbackAttempts).toEqual([unreadableRaw, unreadableRaw]);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBeNull();
+  const backupsBeforeReload = await readPurchaseRequestRecoveryBackups(page);
+  expect(backupsBeforeReload).toHaveLength(1);
+  expect(backupsBeforeReload[0].value).toBe(unreadableRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoveryIntentKey)).toBe(backupsBeforeReload[0].key);
+  await expect(page.getByTestId("purchase-request-recovery-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-success")).not.toBeVisible();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+
+  await reenterBuilderHomeAfterReload(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+  await expect(page.getByTestId("purchase-request-empty")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoveryIntentKey)).toBe(backupsBeforeReload[0].key);
+
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await page.getByTestId("purchase-request-recovery-confirm").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeHidden();
+  await expect(page.getByTestId("purchase-request-recovery-error")).not.toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-success")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("purchase-request-add")).toBeEnabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoveryIntentKey)).toBeNull();
+  expect(await readPurchaseRequestRecoveryBackups(page)).toContainEqual(backupsBeforeReload[0]);
+});
+
+test("purchase request recovery confirms, backs up exact bytes uniquely, preserves dependencies, and unlocks creation after reload", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const unreadableRaw = "\n { \"legacy\": \"نیاز خرید قدیمی\", \"unknown\": [\"الف\", ۲] } \n";
+  const oldBackupKey = `${purchaseRequestRecoveryBackupPrefix}existing-backup`;
+  const oldBackupValue = "نسخهٔ پشتیبان قدیمی — دست‌نخورده";
+  const dependentSeed: Record<(typeof purchaseRequestRecoveryDependentKeys)[number], string> = {
+    "chida-prototype-project-approvals:v1": "\n[]\n",
+    "chida-prototype-project-supplier-contacts:v1": " [] ",
+    "chida-prototype-project-dispatch-drafts:v1": "\t[]",
+    "chida-prototype-project-dispatch-plan-approvals:v1": "\r\n[]\n",
+    "chida-prototype-builder-recorded-proposals:v1": "\n []",
+  };
+  await page.goto("/");
+  await page.evaluate(({ sourceKey, raw, existingBackupKey, existingBackupValue, dependencies }) => {
+    window.localStorage.setItem(sourceKey, raw);
+    window.localStorage.setItem(existingBackupKey, existingBackupValue);
+    for (const [key, value] of Object.entries(dependencies)) window.localStorage.setItem(key, value);
+  }, {
+    sourceKey: purchaseRequestRecoverySourceKey,
+    raw: unreadableRaw,
+    existingBackupKey: oldBackupKey,
+    existingBackupValue: oldBackupValue,
+    dependencies: dependentSeed,
+  });
+  const dependentBytesBefore = await readExactLocalStorageSnapshot(page, purchaseRequestRecoveryDependentKeys);
+
+  await enterBuilderHome(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+  await expect(page.getByTestId("purchase-request-editor-sheet")).toHaveCount(0);
+  await expect(page.getByTestId("purchase-request-empty")).toHaveCount(0);
+
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-confirm")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-cancel")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(unreadableRaw);
+  expect(await readPurchaseRequestRecoveryBackups(page)).toEqual([{ key: oldBackupKey, value: oldBackupValue }]);
+  await page.getByTestId("purchase-request-recovery-cancel").click();
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeHidden();
+  await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(unreadableRaw);
+
+  await page.getByTestId("purchase-request-recovery-start").click();
+  await page.getByTestId("purchase-request-recovery-confirm").click();
+  await expect(page.getByTestId("purchase-request-recovery-success")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-recovery-error")).not.toBeVisible();
+  await expect(page.getByTestId("purchase-request-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("purchase-request-add")).toBeEnabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBeNull();
+  expect(await readExactLocalStorageSnapshot(page, purchaseRequestRecoveryDependentKeys)).toEqual(dependentBytesBefore);
+
+  const backupsAfterRecovery = await readPurchaseRequestRecoveryBackups(page);
+  expect(backupsAfterRecovery).toHaveLength(2);
+  expect(backupsAfterRecovery).toContainEqual({ key: oldBackupKey, value: oldBackupValue });
+  const newBackup = backupsAfterRecovery.find((backup) => backup.key !== oldBackupKey);
+  expect(newBackup).toBeDefined();
+  expect(newBackup?.key.startsWith(purchaseRequestRecoveryBackupPrefix)).toBe(true);
+  expect(newBackup?.value).toBe(unreadableRaw);
+
+  await expect(page.getByTestId("purchase-request-recovery-sheet")).toBeHidden();
+  await page.getByTestId("purchase-request-add").click();
+  await expect(page.getByTestId("purchase-request-editor-sheet")).toBeVisible();
+  await page.getByTestId("purchase-request-raw-input").fill("درخواست تازه پس از بازیابی امن");
+  await page.getByTestId("purchase-request-save").click();
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("درخواست تازه پس از بازیابی امن");
+  const savedRequests = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "[]"), purchaseRequestRecoverySourceKey);
+  expect(savedRequests).toHaveLength(1);
+  expect(await readExactLocalStorageSnapshot(page, purchaseRequestRecoveryDependentKeys)).toEqual(dependentBytesBefore);
+
+  await reenterBuilderHomeAfterReload(page);
+  await page.getByRole("button", { name: "درخواست قیمت" }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("purchase-request-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("purchase-request-card")).toContainText("درخواست تازه پس از بازیابی امن");
+  expect(await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "[]"), purchaseRequestRecoverySourceKey)).toHaveLength(1);
+  expect(await readExactLocalStorageSnapshot(page, purchaseRequestRecoveryDependentKeys)).toEqual(dependentBytesBefore);
+  expect(await readPurchaseRequestRecoveryBackups(page)).toEqual(backupsAfterRecovery);
 });
 
 test("purchase request write failure never reports a saved draft", async ({ page }) => {
@@ -8542,4 +9255,737 @@ test("T8-UX1 keeps the proposal journey calm by default and preserves every adva
   await expect(page.getByTestId("negotiation-drafts-entry")).toBeHidden();
 
   expect(await allLocalStorageBytes(page)).toEqual(sourceBytes);
+});
+
+const projectBackboneStorageKey = "chida-prototype-project-backbone:v1";
+
+type ProjectBackboneRevisionFixture = {
+  id: string;
+  version: number;
+  createdAt: string;
+  snapshot: Record<string, unknown>;
+  fingerprint: string;
+  [key: string]: unknown;
+};
+
+type ProjectBackboneRecordFixture = {
+  id: string;
+  objectType: "milestone" | "decision" | "task";
+  projectId: string;
+  version: number;
+  currentRevisionId: string;
+  createdAt: string;
+  updatedAt: string;
+  history: Array<{ type: string; version: number; at: string }>;
+  revisions: ProjectBackboneRevisionFixture[];
+};
+
+type ProjectBackboneEnvelopeFixture = {
+  schemaVersion: number;
+  milestones: ProjectBackboneRecordFixture[];
+  decisions: ProjectBackboneRecordFixture[];
+  tasks: ProjectBackboneRecordFixture[];
+};
+
+const initialProjectBackboneDraft = {
+  milestoneTitle: "پ".repeat(80),
+  decisionStatement: "بتن‌ریزی فونداسیون در یک مرحله انجام شود",
+  decisionReason: "برای کاهش درز سرد و هماهنگ‌ماندن برنامهٔ اجرا با آزمایشگاه بتن",
+  taskTitle: "هماهنگی بتن‌ریزی فونداسیون",
+  taskNextStep: "تأیید برنامهٔ پمپ و حضور آزمایشگاه را بگیر",
+};
+
+const updatedProjectBackboneDraft = {
+  milestoneTitle: "آماده‌سازی فونداسیون برای اجرای ستون‌ها",
+  decisionStatement: "بتن‌ریزی فونداسیون در دو جبههٔ هماهنگ انجام شود",
+  decisionReason: "برای حفظ دسترسی کارگاه و کنترل زمان ورود تراک‌میکسرها",
+  taskTitle: "هماهنگی نهایی اجرای فونداسیون",
+  taskNextStep: "برنامهٔ دو جبهه را با ناظر و آزمایشگاه نهایی کن",
+};
+
+async function openProjectBackbone(page: Page) {
+  await page.getByTestId("quick-action-project-plan").click();
+  await expect(page.getByTestId("project-backbone-view")).toBeVisible();
+}
+
+async function openProjectBackboneCreate(page: Page) {
+  await openProjectBackbone(page);
+  await page.getByTestId("project-backbone-start").click();
+}
+
+async function fillProjectBackboneForm(page: Page, draft: typeof initialProjectBackboneDraft) {
+  await page.getByTestId("backbone-milestone-title").fill(draft.milestoneTitle);
+  await page.getByTestId("backbone-decision-statement").fill(draft.decisionStatement);
+  await page.getByTestId("backbone-decision-reason").fill(draft.decisionReason);
+  await page.getByTestId("backbone-task-title").fill(draft.taskTitle);
+  await page.getByTestId("backbone-task-next-step").fill(draft.taskNextStep);
+}
+
+async function expectProjectBackboneEditorRtl(page: Page) {
+  const sheet = page.getByTestId("bottom-sheet");
+  const editor = page.getByTestId("project-backbone-editor");
+  await expect(sheet).toHaveCSS("direction", "rtl");
+  await expect(sheet).toHaveCSS("text-align", "right");
+  await expect(editor).toHaveAttribute("dir", "rtl");
+  for (const selector of [
+    ".sheet-title",
+    ".sheet-description",
+    ".project-backbone-editor-section > strong",
+    ".project-backbone-editor-section > small",
+    ".field-control > span",
+  ]) {
+    const copies = sheet.locator(selector);
+    const count = await copies.count();
+    expect(count).toBeGreaterThan(0);
+    for (let index = 0; index < count; index += 1) await expect(copies.nth(index)).toHaveCSS("text-align", "right");
+  }
+  for (const testId of [
+    "backbone-milestone-title",
+    "backbone-decision-statement",
+    "backbone-decision-reason",
+    "backbone-task-title",
+    "backbone-task-next-step",
+  ]) {
+    const field = page.getByTestId(testId);
+    await expect(field).toHaveCSS("direction", "rtl");
+    await expect(field).toHaveCSS("text-align", "right");
+  }
+}
+
+async function createProjectBackbone(page: Page, draft = initialProjectBackboneDraft) {
+  await openProjectBackboneCreate(page);
+  await fillProjectBackboneForm(page, draft);
+  await page.getByTestId("project-backbone-save").click();
+  await expect(page.getByTestId("project-backbone-milestone")).toContainText(draft.milestoneTitle);
+  await expect(page.getByTestId("project-backbone-decision")).toContainText(draft.decisionStatement);
+  await expect(page.getByTestId("project-backbone-reason")).toContainText(draft.decisionReason);
+  await expect(page.getByTestId("project-backbone-task")).toContainText(draft.taskTitle);
+  await expect(page.getByTestId("project-backbone-task")).toContainText(draft.taskNextStep);
+}
+
+async function readProjectBackboneEnvelope(page: Page) {
+  return page.evaluate((key) => {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) throw new Error("Project Backbone store is missing");
+    return JSON.parse(raw) as ProjectBackboneEnvelopeFixture;
+  }, projectBackboneStorageKey);
+}
+
+function currentProjectBackboneSnapshot(record: ProjectBackboneRecordFixture) {
+  const revision = record.revisions.find((item) => item.id === record.currentRevisionId);
+  if (!revision) throw new Error(`Current revision is missing for ${record.id}`);
+  return revision.snapshot;
+}
+
+function expectProjectBackboneVersion(record: ProjectBackboneRecordFixture, version: number) {
+  expect(record.version).toBe(version);
+  expect(record.history.map((event) => event.version)).toEqual(Array.from({ length: version }, (_, index) => index + 1));
+  expect(record.revisions.map((revision) => revision.version)).toEqual(Array.from({ length: version }, (_, index) => index + 1));
+  expect(record.currentRevisionId).toBe(record.revisions.at(-1)?.id);
+}
+
+function expectExactProjectBackboneLinks(
+  milestone: ProjectBackboneRecordFixture,
+  decision: ProjectBackboneRecordFixture,
+  task: ProjectBackboneRecordFixture,
+) {
+  const decisionBytes = JSON.stringify(decision);
+  const taskBytes = JSON.stringify(task);
+  expect(decisionBytes).toContain(milestone.id);
+  expect(decisionBytes).toContain(task.id);
+  expect(taskBytes).toContain(milestone.id);
+  expect(taskBytes).toContain(decision.id);
+}
+
+async function reenterBuilderHomeAfterReload(page: Page) {
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+}
+
+test("Project Backbone creates one exactly linked project plan, reloads it, and stays inside 390px", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const activeProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const legacyTaskBytes = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"));
+  expect(legacyTaskBytes).toBeNull();
+
+  await createProjectBackbone(page);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"))).toBe(legacyTaskBytes);
+
+  const envelope = await readProjectBackboneEnvelope(page);
+  expect(envelope.schemaVersion).toBe(1);
+  expect(envelope.milestones).toHaveLength(1);
+  expect(envelope.decisions).toHaveLength(1);
+  expect(envelope.tasks).toHaveLength(1);
+  const [milestone] = envelope.milestones;
+  const [decision] = envelope.decisions;
+  const [task] = envelope.tasks;
+  expect(milestone.projectId).toBe(activeProjectId);
+  expect(decision.projectId).toBe(activeProjectId);
+  expect(task.projectId).toBe(activeProjectId);
+  expectProjectBackboneVersion(milestone, 1);
+  expectProjectBackboneVersion(decision, 1);
+  expectProjectBackboneVersion(task, 1);
+  expect(currentProjectBackboneSnapshot(milestone)).toMatchObject({ title: initialProjectBackboneDraft.milestoneTitle });
+  expect(currentProjectBackboneSnapshot(decision)).toMatchObject({
+    statement: initialProjectBackboneDraft.decisionStatement,
+    reason: initialProjectBackboneDraft.decisionReason,
+  });
+  expect(currentProjectBackboneSnapshot(task)).toMatchObject({
+    title: initialProjectBackboneDraft.taskTitle,
+    nextStep: initialProjectBackboneDraft.taskNextStep,
+  });
+  expectExactProjectBackboneLinks(milestone, decision, task);
+
+  const view = page.getByTestId("project-backbone-view");
+  expect(await view.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  for (const testId of ["project-backbone-milestone", "project-backbone-decision", "project-backbone-reason", "project-backbone-task"]) {
+    expect(await page.getByTestId(testId).evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  }
+
+  await page.getByTestId("project-backbone-back").click();
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await expect(page.getByTestId("project-backbone-task-card")).toContainText(initialProjectBackboneDraft.taskTitle);
+  await expect(page.getByTestId("project-backbone-task-card")).toContainText("متصل به برنامهٔ پروژه");
+  await page.getByTestId("project-backbone-task-card").click();
+  await expect(page.getByTestId("project-backbone-view")).toBeVisible();
+
+  const persistedBytes = await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey);
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectBackbone(page);
+  await expect(page.getByTestId("project-backbone-reason")).toContainText(initialProjectBackboneDraft.decisionReason);
+  await expect(page.getByTestId("project-backbone-task")).toContainText(initialProjectBackboneDraft.taskNextStep);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBe(persistedBytes);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"))).toBe(legacyTaskBytes);
+});
+
+test("Project Backbone create and edit sheets keep Persian fields true RTL and right-aligned", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await openProjectBackboneCreate(page);
+  await fillProjectBackboneForm(page, initialProjectBackboneDraft);
+  await expectProjectBackboneEditorRtl(page);
+
+  await page.getByTestId("project-backbone-save").click();
+  await page.getByTestId("project-backbone-edit").click();
+  await expectProjectBackboneEditorRtl(page);
+});
+
+test("Project Backbone requires a visible decision reason before writing anything", async ({ page }) => {
+  await enterBuilderHome(page);
+  await openProjectBackboneCreate(page);
+  await fillProjectBackboneForm(page, { ...initialProjectBackboneDraft, decisionReason: "\u200c\u200b" });
+  await page.getByTestId("project-backbone-save").click();
+
+  await expect(page.getByTestId("project-backbone-error")).toContainText("دلیل");
+  await expect(page.getByTestId("project-backbone-view")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBeNull();
+});
+
+test("Project Backbone rejects a reason made only of bidi controls with an accessible field error", async ({ page }) => {
+  await enterBuilderHome(page);
+  await openProjectBackboneCreate(page);
+  const bidiControlsOnly = "\u200e\u200f\u061c\u2066\u2067\u2068\u2069";
+  await fillProjectBackboneForm(page, { ...initialProjectBackboneDraft, decisionReason: bidiControlsOnly });
+  const reasonField = page.getByTestId("backbone-decision-reason");
+  await page.getByTestId("project-backbone-save").click();
+
+  await expect(reasonField).toHaveAttribute("aria-invalid", "true");
+  const describedBy = await reasonField.getAttribute("aria-describedby");
+  expect(describedBy?.trim()).toBeTruthy();
+  const describedElements = describedBy!.trim().split(/\s+/).map((id) => page.locator(`#${id}`));
+  expect(describedElements.length).toBeGreaterThan(0);
+  const describedText = (await Promise.all(describedElements.map((element) => element.textContent()))).join(" ");
+  expect(describedText).toContain("دلیل");
+  await expect(page.getByTestId("project-backbone-error")).toContainText("دلیل");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBeNull();
+});
+
+test("Project Backbone keeps plans and links inside their owning project", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.evaluate(() => {
+    const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-30T08:00:00.000Z" };
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
+      { ...projectBase, id: "project-backbone-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
+      { ...projectBase, id: "project-backbone-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
+    ]));
+    window.localStorage.setItem("chida-prototype-active-project", "project-backbone-a");
+  });
+  await enterBuilderHome(page);
+  const projectADraft = { ...initialProjectBackboneDraft, milestoneTitle: "نقطه عطف فقط پروژه الف" };
+  await createProjectBackbone(page, projectADraft);
+
+  await reenterBuilderHomeAfterReload(page);
+  await page.getByTestId("project-switcher").click();
+  await page.getByRole("button", { name: /پروژه ب تهران/ }).click();
+  await page.getByTestId("project-space-back").click();
+  await openProjectBackbone(page);
+  await expect(page.getByTestId("project-backbone-start")).toBeVisible();
+  await expect(page.getByText(projectADraft.milestoneTitle, { exact: true })).toHaveCount(0);
+
+  await page.getByTestId("project-backbone-start").click();
+  const projectBDraft = { ...updatedProjectBackboneDraft, milestoneTitle: "نقطه عطف فقط پروژه ب" };
+  await fillProjectBackboneForm(page, projectBDraft);
+  await page.getByTestId("project-backbone-save").click();
+  await expect(page.getByTestId("project-backbone-milestone")).toContainText(projectBDraft.milestoneTitle);
+
+  const envelope = await readProjectBackboneEnvelope(page);
+  expect(envelope.milestones).toHaveLength(2);
+  expect(envelope.decisions).toHaveLength(2);
+  expect(envelope.tasks).toHaveLength(2);
+  for (const projectId of ["project-backbone-a", "project-backbone-b"]) {
+    const milestone = envelope.milestones.find((record) => record.projectId === projectId);
+    const decision = envelope.decisions.find((record) => record.projectId === projectId);
+    const task = envelope.tasks.find((record) => record.projectId === projectId);
+    if (!milestone || !decision || !task) throw new Error(`Backbone records are missing for ${projectId}`);
+    expectExactProjectBackboneLinks(milestone, decision, task);
+    const foreignRecords = [...envelope.milestones, ...envelope.decisions, ...envelope.tasks].filter((record) => record.projectId !== projectId);
+    for (const foreignRecord of foreignRecords) {
+      expect(JSON.stringify(milestone)).not.toContain(foreignRecord.id);
+      expect(JSON.stringify(decision)).not.toContain(foreignRecord.id);
+      expect(JSON.stringify(task)).not.toContain(foreignRecord.id);
+    }
+  }
+
+  await reenterBuilderHomeAfterReload(page);
+  await page.getByTestId("project-switcher").click();
+  await page.getByRole("button", { name: /پروژه الف تهران/ }).click();
+  await page.getByTestId("project-space-back").click();
+  await openProjectBackbone(page);
+  await expect(page.getByTestId("project-backbone-milestone")).toContainText(projectADraft.milestoneTitle);
+  await expect(page.getByText(projectBDraft.milestoneTitle, { exact: true })).toHaveCount(0);
+});
+
+test("Project Backbone keeps no-op bytes stable and rolls every edited object back as a new version", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await createProjectBackbone(page);
+  const versionOneBytes = await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey);
+  const versionOneEnvelope = await readProjectBackboneEnvelope(page);
+
+  await page.getByTestId("project-backbone-edit").click();
+  await page.getByTestId("project-backbone-save").click();
+  await expect(page.getByTestId("project-backbone-status")).toContainText("بایت‌ها ثابت ماندند");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBe(versionOneBytes);
+
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectBackbone(page);
+  await page.getByTestId("project-backbone-edit").click();
+  await fillProjectBackboneForm(page, updatedProjectBackboneDraft);
+  await installBackwardBrowserClock(page);
+  expect(await page.evaluate(() => Date.now())).toBeLessThan(Math.min(
+    ...[versionOneEnvelope.milestones[0], versionOneEnvelope.decisions[0], versionOneEnvelope.tasks[0]].map((record) => Date.parse(record.updatedAt)),
+  ));
+  await page.getByTestId("project-backbone-save").click();
+  await expect(page.getByTestId("project-backbone-status")).toContainText("نسخهٔ تازه");
+
+  const versionTwoEnvelope = await readProjectBackboneEnvelope(page);
+  for (const [versionOneRecord, versionTwoRecord] of [
+    [versionOneEnvelope.milestones[0], versionTwoEnvelope.milestones[0]],
+    [versionOneEnvelope.decisions[0], versionTwoEnvelope.decisions[0]],
+    [versionOneEnvelope.tasks[0], versionTwoEnvelope.tasks[0]],
+  ] satisfies Array<[ProjectBackboneRecordFixture, ProjectBackboneRecordFixture]>) {
+    expectProjectBackboneVersion(versionTwoRecord, 2);
+    expect(versionTwoRecord.revisions[0]).toEqual(versionOneRecord.revisions[0]);
+    const previousEvent = versionOneRecord.history.at(-1);
+    const nextEvent = versionTwoRecord.history.at(-1);
+    const previousRevision = versionOneRecord.revisions.at(-1);
+    const nextRevision = versionTwoRecord.revisions.at(-1);
+    if (!previousEvent || !nextEvent || !previousRevision || !nextRevision) throw new Error(`Backbone timestamps are missing for ${versionTwoRecord.id}`);
+    expect(Date.parse(versionTwoRecord.updatedAt)).toBeGreaterThanOrEqual(Date.parse(versionOneRecord.updatedAt));
+    expect(Date.parse(nextEvent.at)).toBeGreaterThanOrEqual(Date.parse(previousEvent.at));
+    expect(Date.parse(nextRevision.createdAt)).toBeGreaterThanOrEqual(Date.parse(previousRevision.createdAt));
+    expect(versionTwoRecord.updatedAt).toBe(nextEvent.at);
+    expect(nextRevision.createdAt).toBe(nextEvent.at);
+  }
+  expect(currentProjectBackboneSnapshot(versionTwoEnvelope.milestones[0])).toMatchObject({ title: updatedProjectBackboneDraft.milestoneTitle });
+  expect(currentProjectBackboneSnapshot(versionTwoEnvelope.decisions[0])).toMatchObject({
+    statement: updatedProjectBackboneDraft.decisionStatement,
+    reason: updatedProjectBackboneDraft.decisionReason,
+  });
+  expect(currentProjectBackboneSnapshot(versionTwoEnvelope.tasks[0])).toMatchObject({
+    title: updatedProjectBackboneDraft.taskTitle,
+    nextStep: updatedProjectBackboneDraft.taskNextStep,
+  });
+  const versionTwoBytes = await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey);
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectBackbone(page);
+  await expect(page.getByTestId("project-backbone-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-backbone-milestone")).toContainText(updatedProjectBackboneDraft.milestoneTitle);
+  await expect(page.getByTestId("project-backbone-decision")).toContainText(updatedProjectBackboneDraft.decisionStatement);
+  await expect(page.getByTestId("project-backbone-task")).toContainText(updatedProjectBackboneDraft.taskTitle);
+  expect(await readProjectBackboneEnvelope(page)).toEqual(versionTwoEnvelope);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBe(versionTwoBytes);
+  await expect(page.getByTestId("project-backbone-history")).toContainText("نسخهٔ ۲");
+  await page.getByTestId("project-backbone-history").locator("summary").click();
+
+  await installBackwardBrowserClock(page);
+  expect(await page.evaluate(() => Date.now())).toBeLessThan(Math.min(
+    ...[versionTwoEnvelope.milestones[0], versionTwoEnvelope.decisions[0], versionTwoEnvelope.tasks[0]].map((record) => Date.parse(record.updatedAt)),
+  ));
+  await page.getByTestId("backbone-milestone-rollback-1").click();
+  await expect.poll(async () => (await readProjectBackboneEnvelope(page)).milestones[0].version).toBe(3);
+  await page.getByTestId("backbone-decision-rollback-1").click();
+  await expect.poll(async () => (await readProjectBackboneEnvelope(page)).decisions[0].version).toBe(3);
+  await page.getByTestId("backbone-task-rollback-1").click();
+  await expect.poll(async () => (await readProjectBackboneEnvelope(page)).tasks[0].version).toBe(3);
+
+  const rolledBackEnvelope = await readProjectBackboneEnvelope(page);
+  expectProjectBackboneVersion(rolledBackEnvelope.milestones[0], 3);
+  expectProjectBackboneVersion(rolledBackEnvelope.decisions[0], 3);
+  expectProjectBackboneVersion(rolledBackEnvelope.tasks[0], 3);
+  for (const [versionTwoRecord, rolledBackRecord] of [
+    [versionTwoEnvelope.milestones[0], rolledBackEnvelope.milestones[0]],
+    [versionTwoEnvelope.decisions[0], rolledBackEnvelope.decisions[0]],
+    [versionTwoEnvelope.tasks[0], rolledBackEnvelope.tasks[0]],
+  ] satisfies Array<[ProjectBackboneRecordFixture, ProjectBackboneRecordFixture]>) {
+    const previousEvent = versionTwoRecord.history.at(-1);
+    const nextEvent = rolledBackRecord.history.at(-1);
+    const previousRevision = versionTwoRecord.revisions.at(-1);
+    const nextRevision = rolledBackRecord.revisions.at(-1);
+    if (!previousEvent || !nextEvent || !previousRevision || !nextRevision) throw new Error(`Rollback timestamps are missing for ${rolledBackRecord.id}`);
+    expect(Date.parse(rolledBackRecord.updatedAt)).toBeGreaterThanOrEqual(Date.parse(versionTwoRecord.updatedAt));
+    expect(Date.parse(nextEvent.at)).toBeGreaterThanOrEqual(Date.parse(previousEvent.at));
+    expect(Date.parse(nextRevision.createdAt)).toBeGreaterThanOrEqual(Date.parse(previousRevision.createdAt));
+    expect(rolledBackRecord.updatedAt).toBe(nextEvent.at);
+    expect(nextRevision.createdAt).toBe(nextEvent.at);
+  }
+  expect(rolledBackEnvelope.milestones[0].revisions[1]).toEqual(versionTwoEnvelope.milestones[0].revisions[1]);
+  expect(rolledBackEnvelope.decisions[0].revisions[1]).toEqual(versionTwoEnvelope.decisions[0].revisions[1]);
+  expect(rolledBackEnvelope.tasks[0].revisions[1]).toEqual(versionTwoEnvelope.tasks[0].revisions[1]);
+  expect(currentProjectBackboneSnapshot(rolledBackEnvelope.milestones[0])).toMatchObject({ title: initialProjectBackboneDraft.milestoneTitle });
+  expect(currentProjectBackboneSnapshot(rolledBackEnvelope.decisions[0])).toMatchObject({
+    statement: initialProjectBackboneDraft.decisionStatement,
+    reason: initialProjectBackboneDraft.decisionReason,
+  });
+  expect(currentProjectBackboneSnapshot(rolledBackEnvelope.tasks[0])).toMatchObject({
+    title: initialProjectBackboneDraft.taskTitle,
+    nextStep: initialProjectBackboneDraft.taskNextStep,
+  });
+  expectExactProjectBackboneLinks(rolledBackEnvelope.milestones[0], rolledBackEnvelope.decisions[0], rolledBackEnvelope.tasks[0]);
+  const rolledBackBytes = await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey);
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectBackbone(page);
+  await expect(page.getByTestId("project-backbone-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-backbone-milestone")).toContainText(initialProjectBackboneDraft.milestoneTitle);
+  await expect(page.getByTestId("project-backbone-decision")).toContainText(initialProjectBackboneDraft.decisionStatement);
+  await expect(page.getByTestId("project-backbone-task")).toContainText(initialProjectBackboneDraft.taskTitle);
+  expect(await readProjectBackboneEnvelope(page)).toEqual(rolledBackEnvelope);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBe(rolledBackBytes);
+});
+
+test("Project Backbone rejects a stale editor without overwriting the newer version", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page);
+  await page.getByTestId("project-backbone-edit").click();
+  await fillProjectBackboneForm(page, { ...initialProjectBackboneDraft, decisionReason: "دلیل مانده در ویرایشگر قدیمی" });
+
+  const secondPage = await page.context().newPage();
+  await enterBuilderHome(secondPage);
+  await openProjectBackbone(secondPage);
+  await secondPage.getByTestId("project-backbone-edit").click();
+  await fillProjectBackboneForm(secondPage, updatedProjectBackboneDraft);
+  await secondPage.getByTestId("project-backbone-save").click();
+  await expect(secondPage.getByTestId("project-backbone-status")).toContainText("نسخهٔ تازه");
+  const newerBytes = await secondPage.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey);
+
+  await page.getByTestId("project-backbone-save").click();
+  await expect(page.getByTestId("project-backbone-page-error")).toContainText("جای دیگری تغییر کرده");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBe(newerBytes);
+  const envelope = await readProjectBackboneEnvelope(page);
+  expectProjectBackboneVersion(envelope.milestones[0], 2);
+  expectProjectBackboneVersion(envelope.decisions[0], 2);
+  expectProjectBackboneVersion(envelope.tasks[0], 2);
+  expect(currentProjectBackboneSnapshot(envelope.decisions[0])).toMatchObject({ reason: updatedProjectBackboneDraft.decisionReason });
+  await secondPage.close();
+});
+
+test("Project Backbone serializes two v1 editors through Web Locks and commits exactly one v2 winner", async ({ page }) => {
+  const lockName = "chida-prototype-project-backbone:v1:write";
+  await enterBuilderHome(page);
+  await createProjectBackbone(page);
+  await page.getByTestId("project-backbone-edit").click();
+  const firstDraft = {
+    ...updatedProjectBackboneDraft,
+    milestoneTitle: "برندهٔ احتمالی ویرایشگر نخست",
+    decisionReason: "دلیل مستقل ثبت‌شده در ویرایشگر نخست",
+    taskNextStep: "گام مستقل ویرایشگر نخست را اجرا کن",
+  };
+  await fillProjectBackboneForm(page, firstDraft);
+
+  const secondPage = await page.context().newPage();
+  try {
+    await enterBuilderHome(secondPage);
+    await openProjectBackbone(secondPage);
+    await secondPage.getByTestId("project-backbone-edit").click();
+    const secondDraft = {
+      ...updatedProjectBackboneDraft,
+      milestoneTitle: "برندهٔ احتمالی ویرایشگر دوم",
+      decisionReason: "دلیل مستقل ثبت‌شده در ویرایشگر دوم",
+      taskNextStep: "گام مستقل ویرایشگر دوم را اجرا کن",
+    };
+    await fillProjectBackboneForm(secondPage, secondDraft);
+
+    const versionOneEnvelope = await readProjectBackboneEnvelope(page);
+    expectProjectBackboneVersion(versionOneEnvelope.milestones[0], 1);
+    expectProjectBackboneVersion(versionOneEnvelope.decisions[0], 1);
+    expectProjectBackboneVersion(versionOneEnvelope.tasks[0], 1);
+    await expect(page.getByTestId("project-backbone-save")).toBeVisible();
+    await expect(secondPage.getByTestId("project-backbone-save")).toBeVisible();
+
+    await page.evaluate((name) => {
+      const lockWindow = window as Window & {
+        __projectBackboneConcurrencyLockHeld?: boolean;
+        __releaseProjectBackboneConcurrencyLock?: () => void;
+      };
+      void navigator.locks.request(name, async () => {
+        lockWindow.__projectBackboneConcurrencyLockHeld = true;
+        await new Promise<void>((resolve) => {
+          lockWindow.__releaseProjectBackboneConcurrencyLock = resolve;
+        });
+        lockWindow.__projectBackboneConcurrencyLockHeld = false;
+      });
+    }, lockName);
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __projectBackboneConcurrencyLockHeld?: boolean }).__projectBackboneConcurrencyLockHeld))).toBe(true);
+
+    await page.getByTestId("project-backbone-save").click();
+    await secondPage.getByTestId("project-backbone-save").click();
+
+    try {
+      await expect.poll(() => page.evaluate(async (name) => {
+        const snapshot = await navigator.locks.query();
+        return {
+          held: snapshot.held.filter((lock) => lock.name === name).length,
+          pending: snapshot.pending.filter((lock) => lock.name === name).length,
+        };
+      }, lockName)).toEqual({ held: 1, pending: 2 });
+      const stillVersionOne = await readProjectBackboneEnvelope(page);
+      expectProjectBackboneVersion(stillVersionOne.milestones[0], 1);
+      expectProjectBackboneVersion(stillVersionOne.decisions[0], 1);
+      expectProjectBackboneVersion(stillVersionOne.tasks[0], 1);
+    } finally {
+      await page.evaluate(() => {
+        const lockWindow = window as Window & { __releaseProjectBackboneConcurrencyLock?: () => void };
+        const release = lockWindow.__releaseProjectBackboneConcurrencyLock;
+        delete lockWindow.__releaseProjectBackboneConcurrencyLock;
+        release?.();
+      });
+    }
+
+    const outcome = async (candidate: Page) => ({
+      success: await candidate.getByTestId("project-backbone-status").filter({ hasText: "نسخهٔ تازه" }).count(),
+      conflict: await candidate.getByTestId("project-backbone-page-error").filter({ hasText: "جای دیگری تغییر کرده" }).count(),
+    });
+    await expect.poll(async () => {
+      const first = await outcome(page);
+      const second = await outcome(secondPage);
+      return { success: first.success + second.success, conflict: first.conflict + second.conflict };
+    }).toEqual({ success: 1, conflict: 1 });
+
+    const firstOutcome = await outcome(page);
+    const secondOutcome = await outcome(secondPage);
+    expect([firstOutcome.success, secondOutcome.success]).toEqual(expect.arrayContaining([0, 1]));
+    expect([firstOutcome.conflict, secondOutcome.conflict]).toEqual(expect.arrayContaining([0, 1]));
+    const winningDraft = firstOutcome.success === 1 ? firstDraft : secondDraft;
+
+    const winnerEnvelope = await readProjectBackboneEnvelope(page);
+    expect(winnerEnvelope.milestones).toHaveLength(1);
+    expect(winnerEnvelope.decisions).toHaveLength(1);
+    expect(winnerEnvelope.tasks).toHaveLength(1);
+    const [milestone] = winnerEnvelope.milestones;
+    const [decision] = winnerEnvelope.decisions;
+    const [task] = winnerEnvelope.tasks;
+    expectProjectBackboneVersion(milestone, 2);
+    expectProjectBackboneVersion(decision, 2);
+    expectProjectBackboneVersion(task, 2);
+    expect(milestone.revisions[0]).toEqual(versionOneEnvelope.milestones[0].revisions[0]);
+    expect(decision.revisions[0]).toEqual(versionOneEnvelope.decisions[0].revisions[0]);
+    expect(task.revisions[0]).toEqual(versionOneEnvelope.tasks[0].revisions[0]);
+    expect(currentProjectBackboneSnapshot(milestone)).toMatchObject({ title: winningDraft.milestoneTitle });
+    expect(currentProjectBackboneSnapshot(decision)).toMatchObject({
+      statement: winningDraft.decisionStatement,
+      reason: winningDraft.decisionReason,
+    });
+    expect(currentProjectBackboneSnapshot(task)).toMatchObject({
+      title: winningDraft.taskTitle,
+      nextStep: winningDraft.taskNextStep,
+    });
+    expectExactProjectBackboneLinks(milestone, decision, task);
+
+    for (const record of [milestone, decision, task]) {
+      const revision = record.revisions.at(-1);
+      if (!revision) throw new Error(`Winner revision is missing for ${record.id}`);
+      const objectType = (record as ProjectBackboneRecordFixture & { objectType: "milestone" | "decision" | "task" }).objectType;
+      const expectedFingerprint = `fnv1a-${stableTestHash(JSON.stringify(stableTestValue({ objectType, projectId: record.projectId, snapshot: revision.snapshot })))}`;
+      expect(revision.fingerprint).toBe(expectedFingerprint);
+    }
+  } finally {
+    await page.evaluate(() => {
+      const lockWindow = window as Window & { __releaseProjectBackboneConcurrencyLock?: () => void };
+      lockWindow.__releaseProjectBackboneConcurrencyLock?.();
+      delete lockWindow.__releaseProjectBackboneConcurrencyLock;
+    }).catch(() => undefined);
+    await secondPage.close();
+  }
+});
+
+test("Project Backbone keeps the create form open and writes nothing when Web Locks are unavailable", async ({ page }) => {
+  await enterBuilderHome(page);
+  await openProjectBackboneCreate(page);
+  await fillProjectBackboneForm(page, initialProjectBackboneDraft);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBeNull();
+
+  await page.evaluate((key) => {
+    const probeWindow = window as Window & { __projectBackboneWriteAttempts?: number };
+    const nativeSetItem = Storage.prototype.setItem;
+    probeWindow.__projectBackboneWriteAttempts = 0;
+    Object.defineProperty(window.navigator, "locks", { value: undefined, configurable: true });
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      if (this === window.localStorage && storageKey === key) probeWindow.__projectBackboneWriteAttempts = (probeWindow.__projectBackboneWriteAttempts ?? 0) + 1;
+      return nativeSetItem.call(this, storageKey, value);
+    };
+  }, projectBackboneStorageKey);
+  expect(await page.evaluate(() => typeof window.navigator.locks)).toBe("undefined");
+
+  await page.getByTestId("project-backbone-save").click();
+  await expect(page.getByTestId("project-backbone-error")).toContainText("قفل امن مرورگر در دسترس نبود");
+  await expect(page.getByTestId("project-backbone-editor")).toBeVisible();
+  await expect(page.getByTestId("project-backbone-save")).toBeEnabled();
+  await expect(page.getByTestId("backbone-decision-reason")).toHaveValue(initialProjectBackboneDraft.decisionReason);
+  await expect(page.getByTestId("project-backbone-milestone")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as Window & { __projectBackboneWriteAttempts?: number }).__projectBackboneWriteAttempts)).toBe(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBeNull();
+});
+
+test("Project Backbone preserves exact bytes on write failure and fail-closes a corrupted store", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page);
+  const validBytes = await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey);
+
+  await page.getByTestId("project-backbone-edit").click();
+  await fillProjectBackboneForm(page, updatedProjectBackboneDraft);
+  await page.evaluate((key) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__projectBackboneNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      if (this === window.localStorage && storageKey === key) throw new DOMException("Project Backbone write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, storageKey, value);
+    };
+  }, projectBackboneStorageKey);
+  await page.getByTestId("project-backbone-save").click();
+
+  await expect(page.getByTestId("project-backbone-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBe(validBytes);
+
+  await page.evaluate(({ key, malformed }) => {
+    const nativeSetItem = (window as Window & { __projectBackboneNativeSetItem: typeof Storage.prototype.setItem }).__projectBackboneNativeSetItem;
+    Storage.prototype.setItem = nativeSetItem;
+    nativeSetItem.call(window.localStorage, key, malformed);
+  }, { key: projectBackboneStorageKey, malformed: "{" });
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectBackbone(page);
+
+  await expect(page.getByTestId("project-backbone-error")).toBeVisible();
+  const mutationControl = page.locator('[data-testid="project-backbone-start"], [data-testid="project-backbone-edit"]');
+  await expect(mutationControl).toHaveCount(1);
+  await expect(mutationControl).toBeDisabled();
+  await expect(page.getByTestId("project-backbone-milestone")).toHaveCount(0);
+  await expect(page.getByTestId("project-backbone-decision")).toHaveCount(0);
+  await expect(page.getByTestId("project-backbone-task")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBe("{");
+});
+
+test("Project Backbone fail-closes valid JSON with stale fingerprints, impossible dates, or coordinated cross-project links without rewriting bytes", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => {
+    const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-30T08:00:00.000Z" };
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
+      { ...projectBase, id: "project-backbone-tamper-a", name: "پروژه دستکاری الف", location: "ونک", stage: "فونداسیون" },
+      { ...projectBase, id: "project-backbone-tamper-b", name: "پروژه دستکاری ب", location: "جردن", stage: "نازک کاری و نما" },
+    ]));
+    window.localStorage.setItem("chida-prototype-active-project", "project-backbone-tamper-a");
+  });
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, milestoneTitle: "نقطه عطف سالم پروژه الف" });
+
+  await reenterBuilderHomeAfterReload(page);
+  await page.getByTestId("project-switcher").click();
+  await page.getByRole("button", { name: /پروژه دستکاری ب تهران/ }).click();
+  await page.getByTestId("project-space-back").click();
+  await openProjectBackbone(page);
+  await page.getByTestId("project-backbone-start").click();
+  await fillProjectBackboneForm(page, { ...updatedProjectBackboneDraft, milestoneTitle: "نقطه عطف سالم پروژه ب" });
+  await page.getByTestId("project-backbone-save").click();
+  await expect(page.getByTestId("project-backbone-status")).toContainText("سه رکورد متصل ثبت شد");
+
+  const validEnvelope = await readProjectBackboneEnvelope(page);
+  const assertReadLockedWithoutRewrite = async (exactBytes: string) => {
+    await reenterBuilderHomeAfterReload(page);
+    await openProjectBackbone(page);
+    await expect(page.getByTestId("project-backbone-read-error")).toBeVisible();
+    const mutationControl = page.locator('[data-testid="project-backbone-start"], [data-testid="project-backbone-edit"]');
+    await expect(mutationControl).toHaveCount(1);
+    await expect(mutationControl).toBeDisabled();
+    await expect(page.getByTestId("project-backbone-milestone")).toHaveCount(0);
+    await expect(page.getByTestId("project-backbone-decision")).toHaveCount(0);
+    await expect(page.getByTestId("project-backbone-task")).toHaveCount(0);
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBe(exactBytes);
+  };
+
+  const staleFingerprintEnvelope = JSON.parse(JSON.stringify(validEnvelope)) as ProjectBackboneEnvelopeFixture;
+  const staleFingerprintDecision = staleFingerprintEnvelope.decisions.find((record) => record.projectId === "project-backbone-tamper-b");
+  const staleFingerprintRevision = staleFingerprintDecision?.revisions.find((revision) => revision.id === staleFingerprintDecision.currentRevisionId);
+  if (!staleFingerprintRevision) throw new Error("Decision revision for stale-fingerprint tamper is missing");
+  staleFingerprintRevision.snapshot.reason = "دلیل دستکاری‌شده بدون بازسازی اثرانگشت";
+  const staleFingerprintBytes = JSON.stringify(staleFingerprintEnvelope);
+  await page.evaluate(({ key, bytes }) => window.localStorage.setItem(key, bytes), { key: projectBackboneStorageKey, bytes: staleFingerprintBytes });
+  await assertReadLockedWithoutRewrite(staleFingerprintBytes);
+
+  const impossibleDateEnvelope = JSON.parse(JSON.stringify(validEnvelope)) as ProjectBackboneEnvelopeFixture;
+  const impossibleDateMilestone = impossibleDateEnvelope.milestones.find((record) => record.projectId === "project-backbone-tamper-b");
+  const impossibleDateRevision = impossibleDateMilestone
+    ? impossibleDateMilestone.revisions.find((revision) => revision.id === impossibleDateMilestone.currentRevisionId)
+    : undefined;
+  if (!impossibleDateMilestone || !impossibleDateRevision) throw new Error("Milestone revision for impossible-date tamper is missing");
+  impossibleDateRevision.snapshot.targetDate = "2026-02-30";
+  impossibleDateRevision.fingerprint = `fnv1a-${stableTestHash(JSON.stringify(stableTestValue({
+    objectType: impossibleDateMilestone.objectType,
+    projectId: impossibleDateMilestone.projectId,
+    snapshot: impossibleDateRevision.snapshot,
+  })))}`;
+  const impossibleDateBytes = JSON.stringify(impossibleDateEnvelope);
+  await page.evaluate(({ key, bytes }) => window.localStorage.setItem(key, bytes), { key: projectBackboneStorageKey, bytes: impossibleDateBytes });
+  await assertReadLockedWithoutRewrite(impossibleDateBytes);
+
+  const crossLinkedEnvelope = JSON.parse(JSON.stringify(validEnvelope)) as ProjectBackboneEnvelopeFixture;
+  const projectADecision = crossLinkedEnvelope.decisions.find((record) => record.projectId === "project-backbone-tamper-a");
+  const projectATask = crossLinkedEnvelope.tasks.find((record) => record.projectId === "project-backbone-tamper-a");
+  const projectBMilestone = crossLinkedEnvelope.milestones.find((record) => record.projectId === "project-backbone-tamper-b");
+  const projectBDecision = crossLinkedEnvelope.decisions.find((record) => record.projectId === "project-backbone-tamper-b");
+  const projectBTask = crossLinkedEnvelope.tasks.find((record) => record.projectId === "project-backbone-tamper-b");
+  const projectADecisionRevision = projectADecision
+    ? projectADecision.revisions.find((revision) => revision.id === projectADecision.currentRevisionId)
+    : undefined;
+  const projectATaskRevision = projectATask
+    ? projectATask.revisions.find((revision) => revision.id === projectATask.currentRevisionId)
+    : undefined;
+  if (!projectADecision || !projectATask || !projectBMilestone || !projectBDecision || !projectBTask || !projectADecisionRevision || !projectATaskRevision) {
+    throw new Error("Two complete graphs are required for coordinated cross-project tampering");
+  }
+  projectADecisionRevision.snapshot.milestoneId = projectBMilestone.id;
+  projectADecisionRevision.snapshot.taskId = projectBTask.id;
+  projectATaskRevision.snapshot.milestoneId = projectBMilestone.id;
+  projectATaskRevision.snapshot.decisionId = projectBDecision.id;
+  for (const [record, revision] of [[projectADecision, projectADecisionRevision], [projectATask, projectATaskRevision]] as const) {
+    const objectType = (record as ProjectBackboneRecordFixture & { objectType: "decision" | "task" }).objectType;
+    revision.fingerprint = `fnv1a-${stableTestHash(JSON.stringify(stableTestValue({ objectType, projectId: record.projectId, snapshot: revision.snapshot })))}`;
+  }
+  const crossLinkedBytes = JSON.stringify(crossLinkedEnvelope);
+  await page.evaluate(({ key, bytes }) => window.localStorage.setItem(key, bytes), { key: projectBackboneStorageKey, bytes: crossLinkedBytes });
+  await assertReadLockedWithoutRewrite(crossLinkedBytes);
 });
