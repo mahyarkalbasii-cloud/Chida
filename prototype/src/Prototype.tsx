@@ -1171,7 +1171,8 @@ type MockSourceAnswerDemo = {
 };
 type HomeView = "chat" | "project" | "files" | "gallery" | "memory" | "search" | "tasks" | "source-demo" | "purchase-requests" | "proposals";
 type FilesReturnView = "chat" | "project" | "search";
-type MemoryReturnView = "project" | "search";
+type GalleryReturnView = "chat" | "project";
+type MemoryReturnView = "chat" | "project" | "search";
 type PurchaseRequestsReturnView = "chat" | "project";
 type ProposalsReturnView = "chat" | "project";
 type ProjectTasksLaunch = { filter: ProjectTaskFilter; approvalId: string | null; dispatchPlanApprovalId: string | null; returnToPurchaseRequestId: string | null };
@@ -1294,10 +1295,17 @@ const emptyProjectProfileErrors: ProjectProfileFieldErrors = {
 
 const quickActions = [
   { id: "purchase-request", label: "درخواست قیمت", icon: FileText },
-  { id: "compare-offers", label: "بررسی پیشنهادها", icon: Search },
-  { id: "meeting-notes", label: "صورت‌جلسه", icon: CheckCircle2 },
-  { id: "purchase-plan", label: "برنامه خرید", icon: LayoutGrid },
-];
+  { id: "compare-offers", label: "پیشنهادها", icon: Search },
+  { id: "tasks", label: "کار جدید", icon: CheckCircle2 },
+  { id: "files", label: "افزودن فایل", icon: FileText },
+  { id: "gallery", label: "افزودن عکس", icon: ImageIcon },
+  { id: "memory", label: "ثبت حافظه", icon: BrainCircuit },
+  { id: "search", label: "جست‌وجوی پروژه", icon: Search },
+  { id: "build", label: "برایم بساز", icon: Hammer },
+  { id: "meeting-notes", label: "شروع صورت‌جلسه", icon: ClipboardCheck },
+  { id: "purchase-plan", label: "چیدن برنامه خرید", icon: LayoutGrid },
+] as const;
+type QuickActionId = typeof quickActions[number]["id"];
 
 const mockSourceAnswerDemo = {
   schemaVersion: 1,
@@ -6890,11 +6898,14 @@ function SuccessScreen({ project, onContinue, onSave }: { project: BuilderProjec
 function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onProjectCreate, onProjectUpdate, onModelChange, onOpenSheet, sheet }: { activeProject: BuilderProject; projects: BuilderProject[]; modelMode: ModelMode; onProjectChange: (projectId: string) => void; onProjectCreate: (draft: ProjectSetupDraft) => boolean; onProjectUpdate: (projectId: string, draft: ProjectProfileDraft) => void; onModelChange: (mode: ModelMode) => void; onOpenSheet: (sheet: SheetName) => void; sheet: SheetName }) {
   const keyboard = useKeyboard();
   const { bottomInset } = useKeyboardInsets();
+  const homeRef = useRef<HTMLDivElement>(null);
   const projectWorkspaceScrollPositions = useRef(new Map<string, number>());
   const pendingPurchaseRequestsReturnFocus = useRef<PurchaseRequestsReturnView | null>(null);
   const pendingProposalsReturnFocus = useRef<ProposalsReturnView | null>(null);
+  const pendingHomeQuickActionFocus = useRef<QuickActionId | null>(null);
   const [view, setView] = useState<HomeView>("chat");
   const [filesReturnView, setFilesReturnView] = useState<FilesReturnView>("project");
+  const [galleryReturnView, setGalleryReturnView] = useState<GalleryReturnView>("project");
   const [memoryReturnView, setMemoryReturnView] = useState<MemoryReturnView>("project");
   const [purchaseRequestsReturnView, setPurchaseRequestsReturnView] = useState<PurchaseRequestsReturnView>("chat");
   const [proposalsReturnView, setProposalsReturnView] = useState<ProposalsReturnView>("chat");
@@ -7021,6 +7032,28 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     void reconcileMissingFileContent();
     return () => { disposed = true; };
   }, [projectFiles]);
+
+  useLayoutEffect(() => {
+    if (view !== "chat") return;
+    const rail = homeRef.current?.querySelector<HTMLElement>(".quick-actions");
+    if (!rail) return;
+    const content = rail.firstElementChild;
+    const alignToRtlStart = () => {
+      rail.scrollLeft = Math.max(0, rail.scrollWidth - rail.clientWidth);
+    };
+    alignToRtlStart();
+    const observer = new ResizeObserver(alignToRtlStart);
+    observer.observe(rail);
+    if (content) observer.observe(content);
+    return () => observer.disconnect();
+  }, [view]);
+
+  useLayoutEffect(() => {
+    const quickActionId = pendingHomeQuickActionFocus.current;
+    if (!quickActionId || view !== "chat") return;
+    pendingHomeQuickActionFocus.current = null;
+    document.querySelector<HTMLElement>(`[data-testid="quick-action-${quickActionId}"]`)?.focus();
+  }, [view]);
 
   useLayoutEffect(() => {
     const returnView = pendingProposalsReturnFocus.current;
@@ -7166,6 +7199,17 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     setView("files");
   };
 
+  const openProjectGallery = (returnView: GalleryReturnView) => {
+    keyboard.hide();
+    onOpenSheet(null);
+    if (returnView === "project") {
+      const projectScroll = document.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
+      if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
+    }
+    setGalleryReturnView(returnView);
+    setView("gallery");
+  };
+
   const openProjectMemory = (returnView: MemoryReturnView, focusedId: string | null = null) => {
     keyboard.hide();
     onOpenSheet(null);
@@ -7232,6 +7276,21 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     }
     setProposalsReturnView(returnView);
     setView("proposals");
+  };
+
+  const handleQuickAction = (id: QuickActionId, label: string) => {
+    if (id !== "meeting-notes" && id !== "purchase-plan" && id !== "build") pendingHomeQuickActionFocus.current = id;
+    switch (id) {
+      case "purchase-request": openProjectPurchaseRequests("chat", true); break;
+      case "compare-offers": openProjectProposals("chat"); break;
+      case "tasks": openProjectTasks(); break;
+      case "files": openProjectFiles("chat"); break;
+      case "gallery": openProjectGallery("chat"); break;
+      case "memory": openProjectMemory("chat"); break;
+      case "search": openProjectSearch(); break;
+      case "build": keyboard.hide(); onOpenSheet("build"); break;
+      default: setDraft(label);
+    }
   };
 
   const returnToProjectPurchaseRequest = (requestId: string) => {
@@ -8993,11 +9052,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         onBack={leaveProjectWorkspace}
         onContinue={leaveProjectWorkspace}
         onOpenFiles={() => openProjectFiles("project")}
-        onOpenGallery={() => {
-          const projectScroll = document.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
-          if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
-          setView("gallery");
-        }}
+        onOpenGallery={() => openProjectGallery("project")}
         onOpenMemory={() => {
           const projectScroll = document.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
           if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
@@ -9031,7 +9086,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         project={activeProject}
         files={activeProjectImages}
         storageLocked={projectFilesReadError}
-        onBack={() => setView("project")}
+        onBack={() => setView(galleryReturnView)}
         onRegister={registerProjectFile}
       />
     );
@@ -9044,7 +9099,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         memories={activeProjectMemories}
         storageLocked={projectMemoriesReadError}
         initialSelectedId={focusedMemoryId}
-        backLabel={memoryReturnView === "search" ? "بازگشت به جست‌وجو" : "بازگشت به فضای پروژه"}
+        backLabel={memoryReturnView === "search" ? "بازگشت به جست‌وجو" : memoryReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
         onBack={() => { setFocusedMemoryId(null); setView(memoryReturnView); }}
         onCreate={createProjectMemory}
         onUpdate={updateProjectMemory}
@@ -9189,12 +9244,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   }
 
   return (
-    <div className="chida-app chida-shell" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="builder-home">
+    <div ref={homeRef} className="chida-app chida-shell" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="builder-home">
       <MobileScroll className="chat-scroll">
         <main className="chat-canvas">
           {messages.length === 0 ? (
             <div className="empty-chat" data-testid="empty-chat">
-              <span className="empty-mark"><Sparkles size={23} strokeWidth={1.65} /></span>
+              <span className="empty-mark" aria-hidden="true"><img src="/chida/chida-assistant-mark-v1.png" alt="" draggable={false} data-testid="chida-assistant-mark" /></span>
               <h1>برای {activeProject.name} چه کاری را پیش ببریم؟</h1>
               <p>نیازت را بگو؛ چیدا مسیر بررسی، مقایسه و اقدام بعدی را مرتب می‌کند.</p>
             </div>
@@ -9208,14 +9263,14 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
 
       <header className="app-header">
         <button className="icon-button header-button" type="button" onClick={() => { keyboard.hide(); setDrawerOpen(true); }} aria-label="بازکردن منو" data-testid="menu-button"><Menu size={22} /></button>
-        <button className="project-switcher" type="button" onClick={() => onOpenSheet("projects")} data-testid="project-switcher"><span><strong>{activeProject.name}</strong><small>پروژه فعال</small></span><ChevronDown size={16} /></button>
+        <button className="project-switcher" type="button" onClick={() => onOpenSheet("projects")} data-testid="project-switcher" aria-label={`انتخاب پروژه؛ پروژهٔ فعلی ${activeProject.name}`}><strong>{activeProject.name}</strong></button>
       </header>
 
       <section className="composer-dock" style={{ bottom: bottomInset + 8 }} data-testid="composer-dock">
         <Carousel ariaLabel="اقدام‌های سریع" className="quick-actions" contentClassName="quick-actions-track">
           {quickActions.map(({ id, label, icon: Icon }) => (
-            <button className="quick-chip" type="button" key={id} onClick={() => { if (id === "purchase-request") openProjectPurchaseRequests("chat", true); else if (id === "compare-offers") openProjectProposals("chat"); else setDraft(label); }} data-testid={`quick-action-${id}`}>
-              <Icon size={16} strokeWidth={1.7} /><span>{label}</span>
+            <button className="quick-chip" type="button" key={id} onClick={() => handleQuickAction(id, label)} data-testid={`quick-action-${id}`}>
+              <Icon size={17} strokeWidth={1.8} /><span>{label}</span>
             </button>
           ))}
         </Carousel>
@@ -9235,7 +9290,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
           </div>
           <div className="project-context" data-testid="project-context">
             <button className="active-project" type="button" onClick={() => openProjectSpace(activeProject.id)} data-testid="open-project-space" aria-label={`باز کردن فضای پروژهٔ ${activeProject.name}`}>
-              <Folder size={17} /><span><small>فضای پروژه</small><strong>{activeProject.name}</strong></span><ArrowRight size={15} />
+              <strong>{activeProject.name}</strong>
             </button>
             <button className="tool-cluster" type="button" onClick={() => onOpenSheet("tools")} aria-label="نمایش ابزارهای فعال" data-testid="capability-cluster">
               <span className="tool-cluster-label">ابزارها</span>

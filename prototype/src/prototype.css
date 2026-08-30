@@ -2665,7 +2665,7 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 
 .chat-canvas {
   min-height: 100%;
-  padding: 126px 22px 332px;
+  padding: 126px 22px 290px;
 }
 
 .empty-chat {
@@ -2680,17 +2680,20 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 .empty-mark {
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
-  margin-bottom: 5px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  color: var(--copper);
-  background: var(--surface);
+  width: 76px;
+  height: 76px;
+  margin-bottom: 7px;
 }
 
-.empty-chat h1 { font-size: 21px; line-height: 1.55; }
-.empty-chat p { font-size: 12px; line-height: 1.8; }
+.empty-mark img {
+  display: block;
+  width: 76px;
+  height: 76px;
+  object-fit: contain;
+}
+
+.empty-chat h1 { font-size: 23px; line-height: 1.55; }
+.empty-chat p { font-size: 14px; line-height: 1.85; }
 .message-list { display: grid; gap: 16px; }
 .message { display: grid; gap: 5px; max-width: 88%; }
 
@@ -2702,8 +2705,8 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 }
 
 .message.assistant { justify-self: end; }
-.message p { color: var(--text); font-size: 13px; line-height: 1.85; }
-.message-label { color: var(--copper); font-size: 10px; font-weight: 600; }
+.message p { color: var(--text); font-size: 14px; line-height: 1.85; }
+.message-label { color: var(--copper); font-size: 11px; font-weight: 600; }
 
 .app-header {
   position: absolute;
@@ -2738,10 +2741,9 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
   grid-row: 1;
   justify-self: center;
   align-items: center;
-  gap: 6px;
-  max-width: 190px;
+  max-width: 230px;
   min-height: 48px;
-  padding: 0 14px;
+  padding: 0 17px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 15px;
@@ -2750,25 +2752,13 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
   backdrop-filter: blur(16px);
 }
 
-.project-switcher span {
-  display: grid;
-  gap: 1px;
+.project-switcher strong {
+  max-width: 100%;
   overflow: hidden;
+  font-size: 15px;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.project-switcher strong {
-  overflow: hidden;
-  font-size: 12px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-}
-
-.project-switcher small {
-  color: var(--text-soft);
-  font-size: 8px;
-  font-weight: 400;
 }
 
 .composer-dock {
@@ -2785,18 +2775,18 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 }
 
 .quick-actions {
-  margin-inline: 0;
+  margin-inline: -2px;
   padding: 2px;
-  direction: rtl;
+  direction: ltr;
 }
 
 .quick-actions-track {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  width: 100%;
-  min-width: 0;
-  padding-inline: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: max-content;
+  min-width: 100%;
+  padding-inline: 2px;
   direction: rtl;
 }
 
@@ -2806,22 +2796,25 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
   gap: 6px;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  min-width: 0;
-  min-height: 40px;
-  padding: 0 9px;
-  border: 1px solid var(--line);
+  width: auto;
+  min-width: max-content;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
   border-radius: 999px;
   color: var(--text);
-  background: var(--surface);
-  font-size: 10px;
-  font-weight: 500;
+  background: var(--surface-muted);
+  font-size: 12px;
+  font-weight: 600;
   line-height: 1.45;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
   text-align: center;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
 }
 
 .quick-chip svg { color: var(--copper); }
+.quick-chip:hover { border-color: var(--line-strong); background: var(--surface-strong); }
+.quick-chip:active { transform: scale(.98); }
 
 .composer-stack {
   overflow: visible;
@@ -2853,7 +2846,7 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
   border: 0;
   color: var(--text);
   background: transparent;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.75;
 }
 
@@ -2885,6 +2878,7 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 .project-context {
   position: relative;
   z-index: 1;
+  gap: 7px;
   min-height: 50px;
   margin: -1px 7px 0;
   padding: 1px 8px 2px 10px;
@@ -2898,21 +2892,21 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 .active-project {
   display: flex;
   flex: 1 1 auto;
-  gap: 8px;
   align-items: center;
   min-width: 0;
   min-height: 48px;
-  padding: 0 4px;
-  border: 0;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 11px;
   color: var(--text);
-  background: transparent;
+  background: color-mix(in srgb, var(--surface-muted) 58%, transparent);
   text-align: right;
+  transition: border-color 140ms ease, background 140ms ease;
 }
 
-.active-project > svg:first-child { color: var(--copper-strong); }
-.active-project span { display: grid; gap: 1px; min-width: 0; }
-.active-project small { color: var(--text-soft); font-size: 9px; font-weight: 500; }
-.active-project strong { max-width: 100%; overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.active-project:hover,
+.active-project:active { border-color: var(--line); background: var(--surface-muted); }
+.active-project strong { max-width: 100%; overflow: hidden; font-size: 15px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 
 .tool-cluster {
   display: flex;
@@ -2937,8 +2931,8 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 }
 
 .tool-cluster-label {
-  font-size: 10px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .tool-icons {
@@ -4698,7 +4692,7 @@ html[data-chida-theme="dark"] .sheet-description { color: #aaa39c; }
   .role-status { grid-column: 2; justify-self: start; }
   .auth-copy h1, .success-screen h1 { font-size: 25px; }
   .composer-dock { width: calc(100% - 20px); }
-  .project-switcher { max-width: 164px; }
+  .project-switcher { max-width: 190px; }
   .build-stages { grid-template-columns: 1fr; }
   .build-stages > div { grid-template-columns: 22px minmax(0, 1fr); min-height: 58px; }
 }

@@ -745,8 +745,8 @@ test("supplier stays unavailable while builder flow is prefilled and complete", 
 
   await enterBuilderHome(page);
   await expect(page.getByTestId("project-switcher")).toContainText("برج نیلوفر");
-  await expect(page.getByTestId("project-context")).toContainText("فضای پروژه");
   await expect(page.getByTestId("project-context")).toContainText("برج نیلوفر");
+  await expect(page.getByTestId("project-context")).not.toContainText("فضای پروژه");
 });
 
 test("builder creates the first project and keeps it as the active context", async ({ page }) => {
@@ -1065,19 +1065,71 @@ test("selecting an incomplete saved project opens its completion form", async ({
   await expect(page.getByTestId("project-switcher")).toContainText("برج قدیمی");
 });
 
-test("quick action chips fit without a horizontal drag trap in the RTL mobile home", async ({ page }) => {
+test("quick action chips form one readable draggable row at the RTL start", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
 
   const rail = page.getByRole("region", { name: "اقدام‌های سریع" });
   const overflow = await rail.evaluate((element) => element.scrollWidth - element.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(0);
-  await expect(rail).toHaveCSS("direction", "rtl");
-  await expect(rail.locator(".quick-chip")).toHaveCount(4);
-  for (const chip of await rail.locator(".quick-chip").all()) await expect(chip).toBeVisible();
+  expect(overflow).toBeGreaterThan(20);
+  await expect(rail).toHaveCSS("direction", "ltr");
+  await expect(rail.locator(".quick-chip")).toHaveCount(10);
+  await expect.poll(() => rail.evaluate((element) => element.scrollLeft)).toBeCloseTo(overflow, 0);
+  await expect(page.getByTestId("quick-action-purchase-request")).toContainText("درخواست قیمت");
+  await expect(page.getByTestId("quick-action-compare-offers")).toContainText("پیشنهادها");
+  await expect(page.getByTestId("quick-action-tasks")).toContainText("کار جدید");
+  await expect(page.getByTestId("quick-action-files")).toContainText("افزودن فایل");
+  await expect(page.getByTestId("quick-action-gallery")).toContainText("افزودن عکس");
+  await expect(page.getByTestId("quick-action-memory")).toContainText("ثبت حافظه");
+  await expect(page.getByTestId("quick-action-search")).toContainText("جست‌وجوی پروژه");
+  await expect(page.getByTestId("quick-action-build")).toContainText("برایم بساز");
+  await expect(page.getByTestId("quick-action-meeting-notes")).toContainText("شروع صورت‌جلسه");
+  await expect(page.getByTestId("quick-action-purchase-plan")).toContainText("چیدن برنامه خرید");
+
+  const railBox = await rail.boundingBox();
+  if (!railBox) throw new Error("Quick-action rail is not rendered");
+  await page.mouse.move(railBox.x + railBox.width * 0.45, railBox.y + railBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(railBox.x + railBox.width * 0.82, railBox.y + railBox.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(() => rail.evaluate((element) => element.scrollLeft)).toBeLessThan(overflow - 10);
   await expect(page.getByTestId("composer-input")).toHaveValue("");
-  await page.getByRole("button", { name: "برنامه خرید" }).click();
-  await expect(page.getByTestId("composer-input")).toHaveValue("برنامه خرید");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+});
+
+test("quick actions open every built project destination and label prompt starters honestly", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+
+  await page.getByTestId("quick-action-tasks").click();
+  await expect(page.getByTestId("project-tasks-view")).toBeVisible();
+  await page.getByTestId("project-tasks-back").click();
+
+  await page.getByTestId("quick-action-files").click();
+  await expect(page.getByTestId("project-files-view")).toBeVisible();
+  await page.getByTestId("project-files-back").click();
+
+  await page.getByTestId("quick-action-gallery").click();
+  await expect(page.getByTestId("project-gallery-view")).toBeVisible();
+  await page.getByTestId("project-gallery-back").click();
+
+  await page.getByTestId("quick-action-memory").click();
+  await expect(page.getByTestId("project-memory-view")).toBeVisible();
+  await page.getByTestId("project-memory-back").click();
+
+  await page.getByTestId("quick-action-search").click();
+  await expect(page.getByTestId("project-source-search-view")).toBeVisible();
+  await page.getByTestId("project-source-search-back").click();
+
+  await page.getByTestId("quick-action-build").click();
+  await expect(page.getByTestId("build-flow")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("quick-action-meeting-notes").click();
+  await expect(page.getByTestId("composer-input")).toHaveValue("شروع صورت‌جلسه");
+  await page.getByTestId("composer-input").fill("");
+  await page.getByTestId("quick-action-purchase-plan").click();
+  await expect(page.getByTestId("composer-input")).toHaveValue("چیدن برنامه خرید");
 });
 
 test("builder opens and edits the active project space without losing the chat draft", async ({ page }) => {
@@ -1801,18 +1853,19 @@ test("returning from project files restores the workspace scroll position", asyn
   await expect.poll(() => workspaceScroll.evaluate((element) => element.scrollTop)).toBeCloseTo(savedScrollTop, 0);
 });
 
-test("quick actions remain visible without horizontal scrolling after returning to chat", async ({ page }) => {
+test("quick actions realign to the RTL start after returning to chat", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   const quickActions = page.locator(".quick-actions");
-  await expect.poll(() => quickActions.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
-  await expect(page.locator(".quick-chip")).toHaveCount(4);
-  for (const chip of await page.locator(".quick-chip").all()) await expect(chip).toBeVisible();
+  const overflow = await quickActions.evaluate((element) => element.scrollWidth - element.clientWidth);
+  expect(overflow).toBeGreaterThan(20);
+  await expect.poll(() => quickActions.evaluate((element) => element.scrollLeft)).toBeCloseTo(overflow, 0);
+  await quickActions.evaluate((element) => { element.scrollLeft = 0; });
 
   await page.getByTestId("open-project-space").click();
   await page.getByTestId("project-space-back").click();
 
-  await expect.poll(() => quickActions.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  await expect.poll(() => quickActions.evaluate((element) => element.scrollLeft)).toBeCloseTo(overflow, 0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });
 
@@ -2489,6 +2542,17 @@ test("builder home keeps composer controls aligned and exposes the core sheets",
   await expect(page.getByTestId("profile-button")).toHaveCount(0);
   await expect(page.getByTestId("send-button").locator("svg.lucide-arrow-up")).toBeVisible();
   await expect(page.getByTestId("capability-cluster")).toContainText("ابزارها");
+  await expect(page.getByTestId("project-switcher")).toHaveText("برج نیلوفر");
+  await expect(page.getByTestId("project-switcher").locator("svg")).toHaveCount(0);
+  await expect(page.getByTestId("open-project-space")).toHaveText("برج نیلوفر");
+  await expect(page.getByTestId("open-project-space").locator("svg")).toHaveCount(0);
+  await expect(page.getByTestId("open-project-space")).toHaveCSS("border-top-style", "solid");
+  const assistantMark = page.getByTestId("chida-assistant-mark");
+  await expect(assistantMark).toBeVisible();
+  await expect.poll(() => assistantMark.evaluate((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0)).toBe(true);
+  expect(Number.parseFloat(await page.getByTestId("project-switcher").locator("strong").evaluate((element) => getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
+  expect(Number.parseFloat(await page.locator(".quick-chip").first().evaluate((element) => getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(12);
+  expect(Number.parseFloat(await page.locator(".empty-chat p").evaluate((element) => getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(14);
 
   await page.getByTestId("attach-button").click();
   const composerFileAttachment = page.getByTestId("composer-file-attachment");

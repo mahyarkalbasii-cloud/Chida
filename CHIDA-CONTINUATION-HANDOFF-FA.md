@@ -2,7 +2,7 @@
 
 **تاریخ تهیه:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
 **مسیر پروژه:** `/Users/mahyarkl/Desktop/ChatGPT/CHIDA`
-**نقطهٔ ادامه:** T8-UX2 با commit کد `a08c93edefad6cc79bc7bb1f83a023730a2ef06f` و prototype tree `0fe7bc7f77640e78091254e76d8d88670f002aa6` روی GitHub `main`، Cloudflare Pages deployment `c25eaefe-e43a-466f-9e7b-d268fe63bb7e` و ChatGPT Sites نسخهٔ ۲۲/deployment `appgdep_6a93f1adf4788191999f921e914d39c7` منتشر است. build/TypeScript، integrity هر ۲۸ فایل، focused امنیت فایل ۲/۲، focused T8-UX2 برابر ۶/۶، رسانه/فایل/حافظه برابر ۲۰/۲۰، app برابر ۱۵۸/۱۵۸، runtime برابر ۱۶۶/۱۶۶ و Sites برابر ۴/۴ پاس‌اند؛ QA واقعی `390 × 844` overflow افقی و console error ندارد و بازبینی مستقل finding باز P0/P1/P2 ندارد. این commit مستندی receipt انتشار کد را ثبت می‌کند؛ شناسه‌های self-referential انتشار خود receipt عمداً در نخستین commit مجاز بعدی backfill می‌شوند. مدل محلی، شبکه/ارسال واقعی و مسیر تأمین‌کننده شروع نشده‌اند.
+**نقطهٔ ادامه:** T8-UX3 برای پولیش خانهٔ سازنده در checkout اصلی پیاده‌سازی و در `390 × 844` QA شده است: کنترل‌های پروژه فقط نام را نشان می‌دهند، Quick Action یک rail افقی dragپذیر با ده اقدام صادقانه است، نشان اختصاصی CHIDA جای Sparkles را گرفته و خوانایی خانه scoped افزایش یافته است. focused نهایی ۵/۵، app برابر ۱۵۹/۱۵۹، runtime برابر ۱۶۷/۱۶۷، Sites برابر ۴/۴، build/TypeScript و integrity هر ۲۸ فایل پاس‌اند؛ بازبینی مستقل finding باز P0/P1/P2 ندارد و انتشار same-source در حال انجام است. baseline نهایی پیش از این برش T8-UX2 با receipt `8c7e5d9a46f2da1acb02456b6b55010e6037db94`، prototype tree `0fe7bc7f77640e78091254e76d8d88670f002aa6`، Cloudflare deployment `e24010be-d6bd-427d-95f5-77f2c05ec9a5` و ChatGPT Sites نسخهٔ ۲۳/deployment `appgdep_6a93f27f77c48191adc895a833c41695` در همهٔ مقصدها منتشر است. مدل محلی، شبکه/ارسال واقعی و مسیر تأمین‌کننده شروع نشده‌اند.
 
 ## مأموریت گفت‌وگوی بعدی
 
@@ -22,10 +22,10 @@
 
 1. `AGENTS.md` و `prototype/AGENTS.md` را کامل بخوان.
 2. منبع حقیقت را فقط `CHIDA-Product-Definition-FA.md` بدان؛ `BUILDER-FEATURE-BACKLOG-FA.md` فقط ترتیب اجرایی و این فایل فقط هنداف است.
-3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007، C-008، C-009، C-010 و T6-A/T6-B/T6-B2/T6-C/T6-D/T7-A/T7-B1/T7-B2/T8-A1/T8-A2/T8-A3/T8-A4/T8-A5a/T8-A5b/T8-UX1/T8-UX2، بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه فقط C-010 است.
+3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007، C-008، C-009، C-010 و T6-A/T6-B/T6-B2/T6-C/T6-D/T7-A/T7-B1/T7-B2/T8-A1/T8-A2/T8-A3/T8-A4/T8-A5a/T8-A5b/T8-UX1/T8-UX2/T8-UX3، بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه فقط C-010 است و قاعدهٔ Quick Action grid در C-010 با تصمیم صریح T8-UX3 منسوخ شده است.
 4. `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را بررسی کن.
 5. پیش‌نمایش محلی را در viewport واقعی `390 × 844` باز کن؛ فقط Mobile و Dark در دامنه است.
-6. receipt انتشار T8-UX2 را با بخش Git همین هنداف تطبیق بده؛ commit کد برابر `a08c93edefad6cc79bc7bb1f83a023730a2ef06f` و prototype tree آن `0fe7bc7f77640e78091254e76d8d88670f002aa6` است. Cloudflare deployment کد `c25eaefe-e43a-466f-9e7b-d268fe63bb7e` و Sites نسخهٔ ۲۲/deployment `appgdep_6a93f1adf4788191999f921e914d39c7` را read-only تطبیق بده؛ شناسه‌های انتشار commit مستندیِ همین receipt در نخستین commit مجاز بعدی backfill می‌شوند.
+6. receipt نهایی انتشار T8-UX2 را با بخش Git همین هنداف تطبیق بده؛ commit کد `a08c93edefad6cc79bc7bb1f83a023730a2ef06f`، receipt `8c7e5d9a46f2da1acb02456b6b55010e6037db94` و prototype tree هر دو `0fe7bc7f77640e78091254e76d8d88670f002aa6` است. Cloudflare deployment نهایی `e24010be-d6bd-427d-95f5-77f2c05ec9a5` و Sites نسخهٔ ۲۳/deployment `appgdep_6a93f27f77c48191adc895a833c41695` را read-only تطبیق بده.
 7. انتشار T8-UX2 را تطبیق بده. این برش عکس را از «فایل‌ها» جدا، سند منتخب را فقط در IndexedDB همان مرورگر قابل‌بازشدن و مسیر خرید را به ثبت نیاز، انتخاب تأمین‌کننده‌های ثبت‌شده و تأیید نهایی در «کارها» کوتاه می‌کند؛ ارسال، matching، پاسخ واقعی تأمین‌کننده، مدل محلی یا مسیر تأمین‌کننده در آن وجود ندارد.
 
 ## سلسله‌مراتب تصمیم
@@ -35,7 +35,7 @@
 - ترتیب اجرایی سازنده: `BUILDER-FEATURE-BACKLOG-FA.md` و این هنداف.
 - تصمیم صریح تازهٔ ماهیار بر تصمیم کاری قدیمی مقدم است؛ تعارض با سند مادر باید ثبت شود، نه اینکه سند مادر بی‌صدا تغییر کند.
 
-## وضعیت Git و انتشار در آخرین ممیزی T7-B1/T7-B2/T8-A1/T8-A2/T8-A3/T8-A4/T8-A5a/T8-A5b/T8-UX1/T8-UX2
+## وضعیت Git و انتشار در آخرین ممیزی T7-B1/T7-B2/T8-A1/T8-A2/T8-A3/T8-A4/T8-A5a/T8-A5b/T8-UX1/T8-UX2/T8-UX3
 
 وضعیت انتشار T7-B1، T7-B2، T8-A1 و T8-A2 در ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹:
 
@@ -67,10 +67,10 @@
 - ChatGPT Sites نسخهٔ ۲۰ با version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_8654f68344588191acae2ac8f40b2b2d`، source commit دقیق `00a97a116a0115f6ffdae06579ded8fa64eb8c60`، ۱۸ فایل و archive hash `sha256:dea74132d83b196ea3faabebc4581d25ad443ee9d9fbf5b987fd96627b0c294b` ذخیره شد. deployment خصوصی `appgdep_6a934e8632448191b455031830d69f1e` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` منتشر و دسترسی `custom`/owner-only با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
 - commit مستندی receipt نهایی `d6224bbc392fda4b07910b49c110ada4859505f0` روی local/GitHub `main` هم‌تراز شد و prototype tree آن با commit کد یکسان و برابر `b1143dda693d72666ef71f4db5f93b421b8e061f` ماند. Cloudflare Pages deployment نهایی `384cfcda-0c93-4902-aab0-0c6b36c69893` با `github:push`، شاخهٔ `main`، `commit_dirty=false` و همین source در وضعیت `success` قرار گرفت.
 - ChatGPT Sites نسخهٔ ۲۱ با version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_6be5d1e18d308191832f820e195c613e`، source commit نهایی، ۱۸ فایل و archive hash `sha256:dea74132d83b196ea3faabebc4581d25ad443ee9d9fbf5b987fd96627b0c294b` ذخیره شد؛ deployment خصوصی `appgdep_6a9351ec56688191a660aadfc1c05bcc` در وضعیت `succeeded` منتشر و دسترسی `custom`/owner-only با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد. تأیید تجربهٔ T8-A5b/T8-UX1 همچنان باز است.
-- T8-UX2 پس از درخواست صریح ماهیار برای انتشار همه‌جا با commit کد `a08c93edefad6cc79bc7bb1f83a023730a2ef06f` روی local/GitHub `main` منتشر شد؛ prototype tree آن `0fe7bc7f77640e78091254e76d8d88670f002aa6` است. suite نهایی app برابر ۱۵۸/۱۵۸، runtime برابر ۱۶۶/۱۶۶، Sites برابر ۴/۴، focused امنیت فایل ۲/۲، build/TypeScript و integrity ۲۸ فایل پاس شدند و finding باز P0/P1/P2 باقی نماند.
+- T8-UX2 پس از درخواست صریح ماهیار برای انتشار همه‌جا با commit کد `a08c93edefad6cc79bc7bb1f83a023730a2ef06f` و receipt نهایی `8c7e5d9a46f2da1acb02456b6b55010e6037db94` روی local/GitHub `main` منتشر شد؛ prototype tree هر دو `0fe7bc7f77640e78091254e76d8d88670f002aa6` است. suite نهایی app برابر ۱۵۸/۱۵۸، runtime برابر ۱۶۶/۱۶۶، Sites برابر ۴/۴، focused امنیت فایل ۲/۲، build/TypeScript و integrity ۲۸ فایل پاس شدند و finding باز P0/P1/P2 باقی نماند.
 - Cloudflare Pages deployment تولید `c25eaefe-e43a-466f-9e7b-d268fe63bb7e` با `github:push`، شاخهٔ `main`، `commit_dirty=false` و source commit دقیق T8-UX2 در وضعیت `success` قرار گرفت. canonical `https://chida-prototype.pages.dev` و immutable `https://c25eaefe.chida-prototype.pages.dev` هر دو ۲۰۰ و با build محلی یکسان بودند: HTML `9410a3cd7e2560cb1ad7a9a5ebe46ee8fa60181e9f7440aa17a03ef7cf0a24c8`، JavaScript `2b4fe095c8f83a7b6648360636853eae8c9b0554a23fc6b04527e8a801323416` و CSS `bf5cf9314d94b54ec47684748229175a7c864a59230bfce63830bc95516c2754`.
 - ChatGPT Sites نسخهٔ ۲۲ با version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_e69bfaa67138819184f741aedce28725`، source commit دقیق T8-UX2، ۱۸ فایل و archive hash `sha256:39511f6d9e5641347e371ee981aef4999be97dce4dd52d2b50564a438162eb9f` ذخیره و با deployment خصوصی `appgdep_6a93f1adf4788191999f921e914d39c7` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` منتشر شد. دسترسی `custom`/owner-only با یک مالک، صفر گروه و صفر مهمان بیرونی حفظ شد؛ پاسخ ناشناس ۴۰۱ مطابق همین حریم است.
-- commit مستندی جاری فقط receipt کد T8-UX2 را ثبت می‌کند و prototype tree را تغییر نمی‌دهد. SHA و deploymentهای انتشار خود این receipt عمداً به‌دلیل حلقهٔ self-reference در نخستین commit مجاز بعدی backfill می‌شوند.
+- receipt نهایی T8-UX2 همان prototype tree را حفظ کرد. Cloudflare deployment نهایی `e24010be-d6bd-427d-95f5-77f2c05ec9a5` از source receipt، `github:push`، شاخهٔ `main` و `commit_dirty=false` موفق شد. ChatGPT Sites نسخهٔ ۲۳ با version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_2660535ab57c81918d9f301eb74c8116`، source receipt، ۱۸ فایل و archive hash `sha256:39511f6d9e5641347e371ee981aef4999be97dce4dd52d2b50564a438162eb9f` ذخیره و با deployment خصوصی `appgdep_6a93f27f77c48191adc895a833c41695` در وضعیت `succeeded` منتشر شد؛ access `custom`/owner-only با یک مالک، صفر گروه و صفر مهمان بیرونی حفظ شد.
 
 release کد بازخوردی C-010 در ۱۴۰۵/۰۶/۰۷ — ۲۰۲۶/۰۸/۲۹ منتشر و راستی‌آزمایی شد؛ commit مستندی بعدی baseline نهایی را به `57bbf656` رساند:
 
@@ -143,7 +143,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 ## قابلیت‌های ساخته‌شده و وضعیت تأیید سمت سازنده
 
-- T1: ورود و ساخت/تکمیل پروژه با نام، محدودهٔ تهران و مرحلهٔ ساخت؛ Quick Actionها اکنون grid واکنش‌گرای بدون اسکرول افقی‌اند.
+- T1: ورود و ساخت/تکمیل پروژه با نام، محدودهٔ تهران و مرحلهٔ ساخت؛ Quick Actionها طبق تصمیم تازهٔ T8-UX3 یک rail افقی dragپذیر با overflow داخلی، محتوای RTL و بدون overflow صفحه‌اند.
 - T2: فضای پروژه و شناسنامهٔ تدریجی شامل کاربری، مساحت زمین، زیربنا، طبقات روی زمین، طبقات منفی و تعداد واحدها.
 - T3 و T3.1: شناسنامهٔ فایل‌های پروژه و گالری تصاویر مرورگرمحور با IndexedDB.
 - T4-A: حافظهٔ دستی، شفاف و پروژه‌محور.
@@ -169,6 +169,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - T8-A5b: همان قرارداد برای proposal خدمت با یک line دقیق `serviceSpecId`-محور، سه فیلد revision و سیزده فیلد line پیاده‌سازی شد. focused ۷/۷ و snapshot T8-A5b پیش از T8-UX1 با app ۱۵۳/۱۵۳، runtime ۱۶۱/۱۶۱، Sites ۴/۴، build/TypeScript و integrity ۲۸ فایل پاس بود؛ QA واقعی `390 × 844` و بازبینی مستقل بدون finding باز P0/P1/P2 پاس‌اند. snapshot یکپارچه برای مشاهده از خانه منتشر شده، اما تأیید تجربه هنوز باز است.
 - T8-UX1: بازخورد ماهیار دربارهٔ ترسناک و متنی‌شدن جریان پیشنهاد به یک بازآرایی UI-only سراسری تبدیل شد. صندوق فقط یک CTA اصلی دارد؛ فرم با حالت ساده آغاز می‌شود؛ خلاصه و اقدام بعدی پیش از تاریخچه/lineage می‌آیند و diff فقط تغییرها را پیش‌فرض نشان می‌دهد. app ۱۵۵/۱۵۵، runtime ۱۶۳/۱۶۳، Sites ۴/۴، build/TypeScript، integrity ۲۸ فایل و QA واقعی `390 × 844` پاس‌اند؛ تست gesture اصلاح‌شده نیز ۵۰/۵۰ پاس شد و runtime محافظت‌شده تغییر نکرد. snapshot یکپارچه برای مشاهده از خانه منتشر شده، اما تأیید UX هنوز باز است.
 - T8-UX2: ماهیار خلوت‌سازی عکس/فایل/حافظه و کوتاه‌شدن خرید به ثبت درخواست، انتخاب تأمین‌کننده‌های ثبت‌شده و تأیید نهایی در «کارها» را خواست. عکس از «فایل‌ها» جدا و سند منتخب در IndexedDB همان مرورگر قابل‌بازشدن می‌شود؛ جزئیات فنی در داده حفظ اما از نمای اصلی پنهان‌اند. focused برابر ۶/۶، رسانه/فایل/حافظه برابر ۲۰/۲۰، app برابر ۱۵۸/۱۵۸، runtime برابر ۱۶۶/۱۶۶ و Sites برابر ۴/۴ پاس‌اند؛ QA واقعی `390 × 844` و بازبینی مستقل finding باز P0/P1/P2 ندارند. این برش ارسال، شبکه، تطبیق تأمین‌کننده یا مجوز اقدام بیرونی نمی‌سازد و فقط لوکال است.
+- T8-UX3: ماهیار خانهٔ خواناتر و ساده‌تر خواست: کنترل‌های پروژه فقط نام، بدون فلش؛ Quick Action یک ردیف chip افقی dragپذیر و کامل بر اساس قابلیت‌های ساخته‌شده؛ نشان اختصاصی CHIDA؛ و افزایش scoped اندازهٔ متن. rail ده اقدام دارد که هشت مقصد واقعی و دو شروع‌کنندهٔ صریح Composer هستند. focused نهایی ۵/۵، app برابر ۱۵۹/۱۵۹، runtime برابر ۱۶۷/۱۶۷، Sites برابر ۴/۴، build/TypeScript، integrity ۲۸ فایل و QA واقعی `390 × 844` پاس‌اند؛ بازبینی مستقل finding باز P0/P1/P2 ندارد و انتشار same-source در حال انجام است.
 - Build و Brief: شبیه‌سازی محلی مرورگر بدون نصب، زمان‌بندی یا اثر بیرونی واقعی. ذخیرهٔ موفق Brief صفحه را می‌بندد و شکست ذخیره همان صفحه و برنامهٔ قبلی را نگه می‌دارد.
 - Settings: تصویر کاملاً فرضی و برچسب‌خوردهٔ سازنده، شمارش project-scoped رکوردهای محلی، نقش ثابت، حریم، حالت مدل، Brief، Dark-only و نسخه را صادقانه نشان می‌دهد؛ token/usage/billing/quota تا اتصال منبع معتبر عمداً unavailable هستند.
 
@@ -269,6 +270,14 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - «مرتبط‌بودن» تأمین‌کننده و ارسال واقعی تا فاز تأمین‌کننده/شبکه ساخته نشده‌اند؛ تأیید کارها همچنان شبیه‌سازی محلی بدون اثر بیرونی است.
 - وضعیت تحویل: commit کد `a08c93edefad6cc79bc7bb1f83a023730a2ef06f` در GitHub، Cloudflare deployment `c25eaefe-e43a-466f-9e7b-d268fe63bb7e` و ChatGPT Sites نسخهٔ ۲۲/deployment `appgdep_6a93f1adf4788191999f921e914d39c7` منتشر است. build/TypeScript، integrity هر ۲۸ فایل، focused امنیت فایل ۲/۲، focused T8-UX2 برابر ۶/۶، رسانه/فایل/حافظه برابر ۲۰/۲۰، app برابر ۱۵۸/۱۵۸، runtime برابر ۱۶۶/۱۶۶ و Sites برابر ۴/۴ پاس‌اند. QA واقعی `390 × 844` overflow افقی و console error ندارد و بازبینی مستقل finding باز P0/P1/P2 ندارد.
 
+### T8-UX3 — پولیش خانه و Quick Action
+
+- کنترل بالای پروژه و دکمهٔ پروژه در نوار پایین فقط نام را نشان می‌دهند؛ affordance دیداری و accessible name حفظ شده و متن‌های تکراری/فلش حذف شده‌اند.
+- Quick Action خانه یک Carousel موجود و تغییرنیافته با wrapper جهت LTR و track محتوای RTL است. rail ده chip دارد، در ورود و بازگشت به ابتدای RTL هم‌تراز می‌شود و overflow فقط داخل rail است؛ قاعدهٔ تاریخی grid در C-010 برای این خانه منسوخ است.
+- هشت مقصد واقعی عبارت‌اند از درخواست قیمت، پیشنهادها، کار جدید، افزودن فایل، افزودن عکس، ثبت حافظه، جست‌وجوی پروژه و Build کنترل‌شده. «شروع صورت‌جلسه» و «چیدن برنامه خرید» فقط draft Composer را آغاز می‌کنند و به‌عنوان workflow ساخته‌شده معرفی نمی‌شوند.
+- نشان PNG اختصاصی CHIDA جای آیکون عمومی را گرفته و متن‌های خانه scoped درشت‌تر شده‌اند. مدل، شبکه، ارسال، matching، مسیر تأمین‌کننده، runtime محافظت‌شده و قرارداد دادهٔ مقصدها تغییر نکرده‌اند.
+- وضعیت تحویل محلی: focused نهایی ۵/۵، app برابر ۱۵۹/۱۵۹، runtime برابر ۱۶۷/۱۶۷، Sites برابر ۴/۴، build/TypeScript، integrity ۲۸ فایل و QA `390 × 844` پاس‌اند؛ `design-qa.md` نتیجهٔ `passed` دارد و بازبینی مستقل finding باز P0/P1/P2 ندارد. receipt انتشار در ادامهٔ همین برش ثبت می‌شود.
+
 ### T8-B — رضایت تبادل تماس و بستن پرونده
 
 - پیش‌نمایش اطلاعات تماس، درخواست رضایت و پایان‌های معتبر پرونده نمایش داده شوند.
@@ -336,7 +345,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 - عدد پین‌شده‌ها واقعی نیست؛ «گفتگوی تازه»، پین‌ها، جست‌وجوی گفتگو و امکانات چیدا ظاهر فعال دارند اما رفتار کامل ندارند. Settings اکنون فقط وضعیت‌های واقعی را نمایش می‌دهد؛ usage/token/billing/quota تا اتصال منبع معتبر عمداً نامتصل‌اند.
 - دوربین و گالری Composer attachment نمی‌سازند؛ Voice handler ندارد.
-- Quick Action «بررسی پیشنهادها» اکنون صندوق دستی T7-A را باز می‌کند؛ «صورت‌جلسه» و «برنامهٔ خرید» هنوز فقط draft متن می‌سازند. خود گروه Quick Action و فیلترهای کار grid بدون overflow هستند و اسکرول افقی ندارند.
+- Quick Action «پیشنهادها» اکنون صندوق دستی T7-A را باز می‌کند؛ «شروع صورت‌جلسه» و «چیدن برنامه خرید» هنوز فقط draft متن می‌سازند. خود Quick Action یک rail افقی dragپذیر با overflow داخلی است؛ فیلترهای کار همچنان grid بدون overflow صفحه‌اند.
 - «دستیار فنی» در Tools رفتار واقعی ندارد.
 - draft و پیام‌های چت در نشست فعلی بر اساس پروژه جدا شده‌اند، اما persistence چت، thread واقعی و پاسخ مدل هنوز وجود ندارد و پاسخ فعلی canned است.
 - لغو/بازگشایی Approval محلی برنامهٔ ارسال در T6-D ساخته شده است؛ این چرخه به Approval محتوای درخواست یا مجوز ارسال واقعی تعمیم داده نمی‌شود.
@@ -389,7 +398,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - هر حساب دقیقاً یک نقش تغییرناپذیر دارد؛ تعارض «هر دو نقش» در سند مادر به نفع تصمیم صریح کاربر باز می‌ماند.
 - فعلاً فقط تهران؛ در onboarding آدرس دقیق گرفته نمی‌شود.
 - ترتیب مرحله‌های ساخت همان نه عنوان ثبت‌شده در `AGENTS.md` است.
-- خانه Chat-first؛ Drawer از راست، پروژهٔ فعال در بالا، Quick Action به‌صورت grid واکنش‌گرای بدون overflow، Composer خلوت و نوار پروژه/ابزار چسبیده زیر آن.
+- خانه Chat-first؛ Drawer از راست، نام پروژه در کنترل بالایی و پایینی، Quick Action به‌صورت rail افقی dragپذیر با overflow داخلی و محتوای RTL، Composer خلوت و نوار پروژه/ابزار چسبیده زیر آن. صفحهٔ اصلی خودش overflow افقی ندارد.
 - ساخت پروژه فقط از داخل مجموعهٔ «پروژه‌ها» انجام می‌شود؛ میان‌بر مستقل در header، پایین چت یا خود Drawer ساخته نمی‌شود.
 - نام mode داخل Composer نوشته نمی‌شود؛ `+` و gauge راست، میکروفون و فلش ارسال چپ.
 - فایل، حافظه، جست‌وجو، Task، درخواست، Approval و هر شیء باید project-scoped، نسخه‌دار، write-before-state و fail-closed باشند.
@@ -412,4 +421,4 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 ## متن کوتاه آماده برای آغاز گفت‌وگوی جدید
 
-> این گفت‌وگو ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز. ابتدا اسناد الزامی، C-010 و T7/T8/T8-UX1/T8-UX2 را بخوان و receiptهای baseline را تطبیق بده. T8-UX2 با commit کد `a08c93edefad6cc79bc7bb1f83a023730a2ef06f` و prototype tree `0fe7bc7f77640e78091254e76d8d88670f002aa6` در GitHub، Cloudflare deployment `c25eaefe-e43a-466f-9e7b-d268fe63bb7e` و ChatGPT Sites نسخهٔ ۲۲/deployment `appgdep_6a93f1adf4788191999f921e914d39c7` منتشر است؛ شناسه‌های انتشار commit مستندی receipt در نخستین commit مجاز بعدی backfill می‌شوند. app ۱۵۸/۱۵۸، runtime ۱۶۶/۱۶۶ و Sites ۴/۴ پاس‌اند و QA واقعی `390 × 844` و بازبینی مستقل finding باز P0/P1/P2 ندارند. مدل محلی، شبکه/ارسال واقعی یا مسیر تأمین‌کننده را شروع نکن.
+> این گفت‌وگو ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز. ابتدا اسناد الزامی، C-010 و T7/T8/T8-UX1/T8-UX2/T8-UX3 را بخوان و receiptهای baseline را تطبیق بده. baseline پیش از T8-UX3، receipt نهایی T8-UX2 برابر `8c7e5d9a46f2da1acb02456b6b55010e6037db94` با prototype tree `0fe7bc7f77640e78091254e76d8d88670f002aa6`، Cloudflare deployment `e24010be-d6bd-427d-95f5-77f2c05ec9a5` و ChatGPT Sites نسخهٔ ۲۳/deployment `appgdep_6a93f27f77c48191adc895a833c41695` است. T8-UX3 کنترل‌های فقط‌نام پروژه، rail افقی ده‌تایی Quick Action، نشان اختصاصی و خوانایی بیشتر خانه را بدون مدل/شبکه/ارسال یا مسیر تأمین‌کننده پیاده می‌کند؛ receipt انتشار آن را از بخش Git همین هنداف بخوان و بدون مجوز صریح برش بعدی را شروع نکن.
