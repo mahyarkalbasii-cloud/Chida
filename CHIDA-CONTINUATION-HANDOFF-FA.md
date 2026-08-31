@@ -1,12 +1,12 @@
 # هنداف ادامهٔ پروژهٔ CHIDA
 
-**تاریخ تهیه:** ۱۴۰۵/۰۶/۰۸ — ۲۰۲۶/۰۸/۳۰
+**تاریخ آخرین به‌روزرسانی:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
 **مسیر پروژه:** `/Users/mahyarkl/Desktop/ChatGPT/CHIDA`
-**نقطهٔ ادامه:** baseline پیش از این release commit `8b557020768b22b81b8aadbd28c6a078e26c7ee5` بود. ماهیار بستهٔ اسناد معماری، اجرای برش اول `Project Backbone` و سپس اصلاح‌های بازیابی درخواست خرید و RTL را صریحاً پیش برد و با پیام «وقتی انجام شد همه جا منتشر کن» انتشار همان snapshot آزموده را مجاز کرد. قابلیت‌ها در commit `6d71e42a89441b3499a4fe335e7bc5874feb6e36` و بستهٔ source/release در commit `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` با prototype tree برابر `1e1fd3768c0516dc83fe3a7b01844bb35f1837b8` روی GitHub منتشر شدند؛ Cloudflare deployment `5ef162d0-4521-481b-8f2a-31535c7f92e8` و ChatGPT Sites نسخهٔ ۲۷/deployment `appgdep_6a9482959f008191802cf8098160378a` نیز موفق شدند. commit مستندیِ حاوی همین رسید فقط اسناد را تغییر می‌دهد و شناسه‌های نهایی خودش برای جلوگیری از حلقهٔ self-reference در پیام تحویل ثبت می‌شوند. Memory Core، مدل، backend، شبکه/ارسال و مسیر تأمین‌کننده آغاز نشده‌اند و برش بعدی مجوز تازه می‌خواهد.
+**نقطهٔ ادامه:** baseline پیش از MC-1 commit `32f9508f6b4483d95ec1213cb6eef93ad281c2ba` است. بستهٔ معماری، Project Backbone، بازیابی درخواست خرید و RTL پیش‌تر منتشر شده‌اند. ماهیار سپس MC-1 را با پیام «خوبه بریم قدم بعد» آغاز کرد؛ پیاده‌سازی و gateهای Memory Core تکمیل شدند و او اکنون با پیام «منتشر کن» انتشار همان snapshot آزموده را در GitHub، Cloudflare Pages و ChatGPT Sites مجاز کرده است. رسید دقیق release پس از موفقیت هر سه مقصد در انتهای بخش MC-1 ثبت می‌شود. Source/Composer Intake، Task/Monitor Core، Build Lifecycle، مدل، backend، شبکه/ارسال و مسیر تأمین‌کننده آغاز نشده‌اند و هرکدام مجوز تازه می‌خواهند.
 
 ## مأموریت گفت‌وگوی بعدی
 
-**توقف پس از انتشار snapshot تأییدشده:** GitHub، Cloudflare Pages و ChatGPT Sites روی منبع تست‌شدهٔ همین برش منتشر و رسید آن ثبت شده است. اکنون هیچ برش تازه‌ای به‌صورت خودکار آغاز نمی‌شود؛ گام بعدی فقط پس از مشاهده و پیام اجرایی صریح ماهیار انتخاب می‌شود.
+**انتشار MC-1 و سپس توقف:** فقط snapshot آزموده و تأییدشدهٔ Memory Core روی GitHub، Cloudflare Pages و ChatGPT Sites منتشر و receipt آن ثبت می‌شود. پس از انتشار، هیچ برش تازه‌ای خودکار آغاز نمی‌شود؛ تسک ادامه فقط وضعیت را تطبیق می‌دهد و منتظر پیام اجرایی صریح ماهیار می‌ماند.
 
 ترتیب مشترک Sol و Codex پس از تأیید بسته:
 
@@ -14,7 +14,7 @@
 2. ماهیار بسته را صریحاً تأیید کرد؛ رسید تأیید بدون تغییر بایتی چهار Source در دفتر یادگیری و هنداف ثبت شد.
 3. تأیید اسناد implementation را خودکار آغاز نمی‌کند.
 4. ماهیار با پیام اجرایی جداگانه برش اول Project Backbone را مجاز کرد؛ پس از بازخوردهای خرید و RTL و پاس‌شدن gateها، انتشار همین snapshot را نیز صریحاً مجاز کرد.
-5. چهار برش بعدی Memory Core، Source/Composer Intake، Task/Monitor Core و Build Lifecycle Minimum هستند و هرکدام فقط پس از مشاهده/تأیید برش قبلی و پیام صریح تازه آغاز می‌شوند.
+5. برش دوم Memory Core ساخته، آزموده و توسط ماهیار برای انتشار تأیید شده است؛ سه برش بعدی Source/Composer Intake، Task/Monitor Core و Build Lifecycle Minimum هستند و هرکدام فقط پس از پیام صریح تازه آغاز می‌شوند.
 6. پس از PASS شدن Builder Prototype Architecture Gate، M1a فقط به‌صورت adapter محلی، opt-in، provider-neutral و text-only آزموده می‌شود؛ M1b برای `ContextManifest`/Memory فقط بعد از پذیرش M1a می‌آید.
 7. مسیر تأمین‌کننده، shared case واقعی، backend و شبکهٔ واقعی همچنان به gate و تأییدهای جدا نیاز دارند.
 
@@ -54,11 +54,11 @@
 1. `AGENTS.md` و `prototype/AGENTS.md` را کامل بخوان.
 2. منبع حقیقت را فقط `CHIDA-Product-Definition-FA.md` بدان؛ `BUILDER-FEATURE-BACKLOG-FA.md` فقط ترتیب اجرایی و این فایل فقط هنداف است.
 3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007 تا C-010، T7/T8، T8-UX1/T8-UX2/T8-UX3، H1 و H2 بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه C-010 است و قاعدهٔ Quick Action grid در C-010 با تصمیم صریح T8-UX3 منسوخ شده است.
-4. `CHIDA-SOL-HANDOFF-FA.md` را کامل بخوان و سپس `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را فقط read-only تطبیق بده. commit منبع release برابر `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` و prototype tree منتشرشده برابر `1e1fd3768c0516dc83fe3a7b01844bb35f1837b8` است؛ commit مستندی receipt روی آن فقط docs را تغییر می‌دهد و SHA جاری باید از `HEAD`/remote خوانده شود.
-5. Project Backbone منتشرشده را همراه بخش `PB-1` دفتر یادگیری بررسی کن؛ checkout تحویلی باید تمیز و `HEAD`/`origin/main` هم‌تراز باشد و هیچ تغییر محلی را بدون تعیین منشأ پاک نکن.
-6. preview/تست فقط برای بازبینی یا اصلاح همین برش مجاز است؛ commit، push و deploy همچنان نیازمند درخواست صریح تازه‌اند.
-7. مدل، Memory Core، Source/Composer Intake، Task/Monitor Core، Build Lifecycle، backend و مسیر تأمین‌کننده را آغاز نکن.
-8. برای مشاهده، اصلاح یا تأیید صریح Project Backbone منتظر ماهیار بمان؛ برش بعدی مجوز جدا می‌خواهد.
+4. `CHIDA-SOL-HANDOFF-FA.md` و بخش MC-1 همین هنداف را کامل بخوان و سپس `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را فقط read-only تطبیق بده. baseline پیش از MC-1 برابر `32f9508f6b4483d95ec1213cb6eef93ad281c2ba` است؛ SHA release و receipt جاری باید از `HEAD`/remote و رسید MC-1 خوانده شود.
+5. Project Backbone منتشرشده را همراه `PB-1` و Memory Core تأییدشده را همراه `MC-1` دفتر یادگیری بررسی کن؛ checkout تحویلی باید تمیز و `HEAD`/`origin/main` هم‌تراز باشد و هیچ تغییر محلی را بدون تعیین منشأ پاک نکن.
+6. MC-1 پس از مجوز صریح ماهیار منتشر می‌شود؛ در تسک ادامه preview، تست artifact‌ساز، commit، push یا deploy تازه انجام نده مگر اینکه ماهیار جداگانه بخواهد.
+7. مدل، Source/Composer Intake، Task/Monitor Core، Build Lifecycle، backend و مسیر تأمین‌کننده را آغاز نکن.
+8. MC-1 بسته و تأییدشده است؛ برای انتخاب یا اجرای برش بعدی منتظر پیام صریح ماهیار بمان.
 
 ## سلسله‌مراتب تصمیم
 
@@ -439,7 +439,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - خانه Chat-first؛ Drawer از راست، نام پروژه در کنترل بالایی و پایینی، Quick Action به‌صورت rail افقی dragپذیر با overflow داخلی و محتوای RTL، Composer خلوت و نوار پروژه/ابزار چسبیده زیر آن. صفحهٔ اصلی خودش overflow افقی ندارد.
 - ساخت پروژه فقط از داخل مجموعهٔ «پروژه‌ها» انجام می‌شود؛ میان‌بر مستقل در header، پایین چت یا خود Drawer ساخته نمی‌شود.
 - نام mode داخل Composer نوشته نمی‌شود؛ `+` و gauge راست، میکروفون و فلش ارسال چپ.
-- فایل، حافظه، جست‌وجو، Task، درخواست، Approval و هر شیء باید project-scoped، نسخه‌دار، write-before-state و fail-closed باشند.
+- هر شیء باید owner/scope معتبر و متناسب با قرارداد خودش، نسخه، write-before-state و رفتار fail-close داشته باشد. فایل، جست‌وجوی پروژه، Task، درخواست و Approval پروژه‌محورند؛ Memory Core علاوه بر `project_private` دامنهٔ `account_private` دارد و هیچ‌کدام مستقیماً shared نیستند.
 - read-error با empty state یکی نیست و mutation مخزن ناخوانده تا load موفق مسدود می‌شود.
 - `Mock` در entry، banner، card، detail و accessible name آشکار است و با دادهٔ واقعی یا چت ادغام نمی‌شود.
 - هر اقدام بیرونی preview مقصد/محتوا/نسخه و تأیید انسان می‌خواهد؛ پرداخت، قرارداد، تضمین، حمل، تحویل و حل اختلاف خارج از محصول‌اند.
@@ -459,7 +459,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 ## متن کوتاه آماده برای آغاز گفت‌وگوی جدید
 
-> این تسک ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز و از محیط local همین پروژه استفاده کن. ابتدا `AGENTS.md`، `prototype/AGENTS.md`، `CHIDA-CONTINUATION-HANDOFF-FA.md`، `CHIDA-SOL-HANDOFF-FA.md`، بخش H2 و PB-1/UX-R1 در `CHIDA-PRODUCT-LEARNINGS-FA.md`، سند مادر، backlog و بستهٔ چهار سند Proposed معماری را کامل بخوان. وضعیت Git را فقط read-only تطبیق بده؛ commit منبع release `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` و prototype tree منتشرشده `1e1fd3768c0516dc83fe3a7b01844bb35f1837b8` است و commit receipt مستندی باید همان prototype tree را حفظ کرده باشد. سپس هیچ preview، تست artifact‌ساز، commit، push، deploy، Memory Core، مدل، backend یا مسیر تأمین‌کننده را شروع نکن؛ فقط وضعیت منتشرشده و تصمیم‌های نیازمند تأیید را گزارش کن و منتظر پیام اجرایی صریح ماهیار بمان. Project Backbone و اصلاح‌های خرید/RTL منتشر شده‌اند؛ برش بعدی هنوز مجوز ندارد.
+> این تسک ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز و از محیط local همین پروژه استفاده کن. ابتدا `AGENTS.md`، `prototype/AGENTS.md`، `CHIDA-CONTINUATION-HANDOFF-FA.md`، `CHIDA-SOL-HANDOFF-FA.md`، بخش H2 و PB-1/UX-R1/MC-1 در `CHIDA-PRODUCT-LEARNINGS-FA.md`، سند مادر، backlog و بستهٔ چهار سند Proposed معماری را کامل بخوان. وضعیت Git و receiptهای انتشار MC-1 را فقط read-only با `HEAD`/`origin/main` تطبیق بده. هیچ commit، push، deploy، مدل، backend، sync، Source/Composer Intake، Task/Monitor Core، Build Lifecycle یا مسیر تأمین‌کننده را شروع نکن. MC-1 تأییدشده است؛ فقط وضعیت را گزارش کن و برای هر تغییر یا برش بعدی منتظر پیام اجرایی صریح ماهیار بمان.
 
 ## آخرین اصلاح منتشرشده — بازیابی امن درخواست خرید ناخوانا
 
@@ -485,3 +485,32 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - Cloudflare Pages deployment `5ef162d0-4521-481b-8f2a-31535c7f92e8` با trigger برابر `github:push`، شاخهٔ `main` و source commit `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` به وضعیت `success` رسید. canonical و immutable هر دو HTTP 200 و با build محلی یکسان‌اند: HTML `7f2082299414fa461afbca9a781fc7db75d039ee04b230c36041b90dd32fe889`، JavaScript `2526137571c3bfd51f36f83a5a5832cf30f76901f89fe46403c8b954bd6c5309` و CSS `a19f8e04180930ffbfe2220fcdc3d0c87d3b3c35132ffd703d52d8d4a319e566`.
 - ChatGPT Sites نسخهٔ ۲۷ با source commit همان release، ۱۹ فایل و archive hash `sha256:a2d674bf2ca803650dbc2ed7f0aea0e7cb895d59a68dc1030b20601e8797ff93` ذخیره شد؛ version ID برابر `appgprj_6a90313e390c81918572fc1b45269dac~appgver_dd4dabe662448191a1813e97a54ab503` و deployment خصوصی `appgdep_6a9482959f008191802cf8098160378a` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی `custom`/owner-only با دقیقاً یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
 - commit مستندی حاوی این رسید بدون تغییر prototype tree روی هر سه مقصد منتشر می‌شود. SHA و deployment/version خود آن به‌دلیل حلقهٔ self-reference فقط در پیام تحویل نهایی ثبت می‌شوند؛ receiptهای نسخهٔ ۲۷ برای تاریخچه حفظ می‌شوند.
+
+## MC-1 — Memory Core تأییدشده؛ انتشار مجاز
+
+- **تاریخ مجوز و اجرا:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
+- **محرک:** پس از یادآوری ترتیب بستهٔ معماری، ماهیار گفت «خوبه بریم قدم بعد»؛ این پیام فقط اجرای برش دوم یعنی Memory Core را مجاز کرد.
+- **وضعیت:** پیاده‌سازی و regressionهای متمرکز در checkout اصلی انجام شدند. ماهیار پس از مشاهده، با پیام «منتشر کن» commit، push و انتشار همین snapshot در GitHub، Cloudflare Pages و ChatGPT Sites را صریحاً مجاز کرد. رسید مقصدها پس از موفقیت در همین بخش ثبت می‌شود.
+- **مرز:** هیچ مدل، producer مدل، backend، sync، retrieval خودکار، share، Source/Composer Intake، Task/Monitor Core، Build Lifecycle، تأمین‌کننده یا اثر بیرونی آغاز نشده است.
+
+### قرارداد داده و cutover
+
+- منبع حقیقت محلی، envelope دقیق `chida-prototype-memory-core:v2` با fingerprintهای SHA-256 است. دو دامنهٔ خصوصی `account_private` و `project_private`، revision/history immutable، expectedVersion، no-op بایت‌ثابت، rollback-as-new-revision، statusهای current/superseded/disputed/disabled، پیوندهای reciprocal و tombstone حذف در آن نگه‌داری می‌شوند.
+- مهاجرت فقط نسل‌های صریح v1 snapshot/lineage/full و legacy array شناخته‌شده را می‌پذیرد. دادهٔ مبهم یا تبدیل‌ناپذیر با report ماندگار fail-close می‌شود؛ v2 خراب هیچ‌گاه با دادهٔ قدیمی جایگزین نمی‌شود و empty معتبر نیز legacy را زنده نمی‌کند.
+- cutover یک marker کوچک و بدون متن حافظه دارد. برای پنجرهٔ crash انتقال intent قدیمی، bridge موقت raw فقط تا اعمال و تأیید حذف در همهٔ storeهای هدف باقی می‌ماند و در پایان پیش از بازشدن mutation پاک می‌شود. حذف سخت محتوای رکورد و candidate پذیرفته‌شده را از canonical/prior/legacy می‌زداید؛ tombstone فقط متادیتای حذف و proof رویدادهای lineage بدون title/content/revision snapshot نگه می‌دارد.
+- مهاجرت snapshot قدیمی lineage را از graph نهایی حدس نمی‌زند: فقط pivot/peer و resolve یکتای سازگار با scope، snapshot و history پذیرفته می‌شوند؛ ناسازگاری یا ambiguity قفل می‌شود. تعارض تازه و حل تعارض رویدادهای جدا دارند و parser حذف لینک با event دروغین `disputed` را رد می‌کند.
+- proof tombstone دقیقاً به history همان رکورد در intent حذف bind است؛ lifecycle، actor و شمار migration، گزارش مهاجرت، SHA-256، تقارن conflict/supersession و chronology تاریخی در کل envelope replay می‌شوند. proof بازهش‌شده، cross-scope، مقصد tombstone نامرتبط، FNV در tombstone v2 دارای proof یا تاریخچهٔ ناممکن fail-close می‌شود.
+
+### تجربهٔ کاربری و کنترل‌ها
+
+- فضای حافظه دو تب «این پروژه» و «شخصی» دارد. Direct Remember فرم کوتاه عنوان، متن، نوع و دامنه است؛ جزئیات منشأ، نسخه، تاریخچه، lineage و کنترل‌ها پشت افشای تدریجی می‌مانند.
+- visibility، جست‌وجوی دستی و ترجیح استفاده در زمینه مستقل‌اند. automatic retrieval، model eligibility و shareability همیشه false می‌مانند؛ ترجیح روشن زمینه مجوز مصرف نیست و UI صریحاً می‌گوید مدل متصل نیست.
+- `MemoryCandidate` با متن/دامنه/version/hash دقیق از رکورد جدا می‌ماند، expiry دارد و فقط رضایت صریح سازنده می‌تواند آن را اتمیک به رکورد تازه تبدیل کند. این برش هیچ producer برای candidate ندارد؛ fixture آزمون صرفاً قرارداد آینده را می‌سنجد.
+- خطای خواندن، نبود Web Locks، conflict نسخه، شکست write و migration مبهم با empty اشتباه نمی‌شوند. storage/focus/visibility میان تب‌ها دوباره reconcile می‌شود و mutation تا load معتبر بسته می‌ماند.
+
+### نقطهٔ توقف
+
+1. gate نهایی MC-1 پاس است: focused Memory/MemoryCandidate برابر ۳۵/۳۵، app برابر ۲۱۰/۲۱۰، runtime برابر ۲۱۸/۲۱۸ و Sites برابر ۴/۴؛ build/TypeScript، `npx tsc --noEmit`، integrity هر ۲۸ فایل و `git diff --check` نیز پاس شدند. هشدار شناخته‌شدهٔ chunk جاوااسکریپت بزرگ‌تر از 500kB باقی است. Builder Architecture Gate کامل فقط پس از برش پنجم و acceptance matrix مستقل سنجیده می‌شود.
+2. QA موبایل `390 × 844` روی فهرست، دو scope، فرم/جزئیات، تاریخچه و تأیید حذف انجام شد؛ RTL، focus/keyboard، خطای قابل‌دیدن در modal و نبود overflow افقی تأیید شدند. ممیزی مستقل قرارداد پس از بستن proof/graph finding باز P0/P1/P2 نداشت.
+3. ماهیار MC-1 را تأیید و انتشار همان snapshot را مجاز کرده است؛ «منتشرشده» فقط پس از ثبت receipt هر سه مقصد گفته می‌شود.
+4. نامزد بعدی برش مستقل Source/Composer Intake است؛ این handoff و مجوز انتشار MC-1 مجوز شروع آن نیست.

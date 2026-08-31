@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 const expectedProjectStages = [
   "طراحی و اخذ مجوز",
@@ -1930,7 +1931,7 @@ test("builder manages a transparent project memory through its full local lifecy
 
   await page.getByTestId("composer-input").fill("این پیام نباید خودکار وارد حافظه شود");
   await page.getByTestId("send-button").click();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBeNull();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBeNull();
 
   await page.getByTestId("open-project-space").click();
   const memoryEntry = page.getByTestId("project-memory-entry");
@@ -1964,16 +1965,16 @@ test("builder manages a transparent project memory through its full local lifecy
   await expect(memoryCard).toHaveCount(1);
   await expect(memoryCard).toContainText("قاعدهٔ خرید بتن");
   await expect(memoryCard).toContainText("واقعیت تأییدشده توسط سازنده");
-  const storedMemory = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-memories:v1") ?? "[]"));
-  expect(storedMemory).toEqual([
+  const storedMemory = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(storedMemory.records).toEqual([
     expect.objectContaining({
       projectId: expect.any(String),
       title: "قاعدهٔ خرید بتن",
       content: "فاکتور رسمی و زمان تحویل پیش از مقایسهٔ قیمت بررسی شود.",
       kind: "واقعیت تأییدشده توسط سازنده",
-      source: "ثبت مستقیم شما",
-      visibility: "خصوصی پروژه",
-      useInContext: true,
+      sourceLabel: "ثبت مستقیم شما",
+      visibility: "visible",
+      useInContextPreference: true,
       version: 1,
     }),
   ]);
@@ -1981,9 +1982,9 @@ test("builder manages a transparent project memory through its full local lifecy
   await memoryCard.click();
   const detail = page.getByTestId("project-memory-detail-sheet");
   await expect(detail).toBeVisible();
-  await expect(detail).not.toContainText("ثبت مستقیم شما");
+  await expect(detail).toContainText("ثبت مستقیم شما");
   await expect(detail).not.toContainText("خصوصی در برج نیلوفر");
-  await expect(detail).not.toContainText("نسخهٔ ۱");
+  await expect(detail).toContainText("نسخه");
   await expect(detail).not.toContainText("این کنترل فعلاً فقط در مرورگر");
   const memoryBodyFont = await detail.locator(".project-memory-detail-content").evaluate((element) => Number.parseFloat(window.getComputedStyle(element).fontSize));
   expect(memoryBodyFont).toBeGreaterThanOrEqual(16);
@@ -2008,7 +2009,1241 @@ test("builder manages a transparent project memory through its full local lifecy
   await expect(page.getByRole("button", { name: "انصراف" })).toBeFocused();
   await page.getByTestId("project-memory-delete-confirm").click();
   await expect(page.getByTestId("project-memory-empty")).toBeVisible();
+  const afterDelete = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(afterDelete.records).toEqual([]);
+  expect(afterDelete.tombstones).toEqual([expect.objectContaining({ id: expect.any(String), priorContentHash: expect.stringMatching(/^sha256-[0-9a-f]{64}$/) })]);
+});
+
+test("memory core keeps personal and project records versioned with independent eligibility controls", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+
+  await expect(page.getByTestId("project-memory-view")).toContainText("حافظهٔ شخصی و پروژه");
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-scope-account").click();
+  await page.getByTestId("project-memory-title").fill("شیوهٔ پاسخ دلخواه من");
+  await page.getByTestId("project-memory-content").fill("پاسخ‌ها کوتاه، شفاف و اقدام‌محور باشند.");
+  await chooseProjectOption(page, "project-memory-kind", "ترجیح");
+  await page.getByTestId("project-memory-save").click();
+
+  await page.getByTestId("memory-scope-account").click();
+  const personalCard = page.getByTestId("project-memory-card");
+  await expect(personalCard).toHaveCount(1);
+  await expect(personalCard).toContainText("شیوهٔ پاسخ دلخواه من");
+  await personalCard.click();
+
+  await expect(page.getByTestId("memory-control-visibility")).toContainText("قابل مشاهده");
+  await expect(page.getByTestId("memory-control-manual-searchability")).toContainText("روشن");
+  await expect(page.getByTestId("memory-control-automatic-retrieval")).toContainText("خاموش");
+  await expect(page.getByTestId("memory-control-model-eligibility")).toContainText("خاموش");
+  await expect(page.getByTestId("memory-control-shareability")).toContainText("خاموش");
+  await expect(page.getByTestId("memory-control-context-preference")).toContainText("روشن");
+
+  const stored = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(stored).toMatchObject({ schemaVersion: 2, fingerprintVersion: "memory-v2", envelopeVersion: 1 });
+  expect(stored.records).toHaveLength(1);
+  expect(stored.records[0]).toMatchObject({
+    scopeType: "account_private",
+    scopeId: "local-builder-account",
+    memoryType: "preference",
+    provenanceClass: "direct_user",
+    status: "current",
+    visibility: "visible",
+    manualSearchability: true,
+    automaticRetrievalEligibility: false,
+    modelEligibility: false,
+    shareability: false,
+    useInContextPreference: true,
+    version: 1,
+  });
+  expect(stored.records[0].sourceRefs).toEqual([`direct-remember:${stored.records[0].id}:v1`]);
+  expect(stored.records[0].history).toHaveLength(1);
+  expect(stored.records[0].revisions).toHaveLength(1);
+  expect(stored.candidates).toEqual([]);
+  expect(stored.tombstones).toEqual([]);
+
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBeNull();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+});
+
+test("memory scope tabs and destructive confirmation are keyboard-accessible RTL controls", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("memory-scope-project").focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByTestId("memory-scope-account")).toBeFocused();
+  await expect(page.getByTestId("memory-scope-account")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "memory-scope-account-tab");
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByTestId("memory-scope-project")).toBeFocused();
+
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("حافظهٔ پنهان آزمون");
+  await page.getByTestId("project-memory-content").fill("نمای مدیریتی باید پنهان‌بودن را آشکار نشان دهد.");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("memory-control-visibility").getByRole("button").click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("project-memory-managed-toggle").click();
+  await expect(page.getByTestId("project-memory-card")).toContainText("پنهان");
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-delete").click();
+  await expect(page.getByTestId("project-memory-delete-confirmation").getByRole("button", { name: "انصراف" })).toBeFocused();
+  const deleteSheet = page.locator(".bottom-sheet").filter({ has: page.getByTestId("project-memory-delete-confirmation") });
+  await expect(deleteSheet).toHaveCSS("direction", "rtl");
+  await page.getByTestId("project-memory-delete-confirmation").getByRole("button", { name: "انصراف" }).click();
+  await expect(page.getByTestId("project-memory-delete")).toBeFocused();
+});
+
+test("memory core upgrades an early direct record to an exact versioned source reference under lock", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("حافظهٔ نیازمند ارتقای منشأ");
+  await page.getByTestId("project-memory-content").fill("نسخهٔ اولیهٔ محلی، locator مستقیم نداشت.");
+  await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-editor-sheet")).toBeHidden();
+  await page.evaluate(() => {
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stable(item)]))
+        : value;
+    const hash = (serialized: string) => {
+      let result = 2166136261;
+      for (let index = 0; index < serialized.length; index += 1) {
+        result ^= serialized.charCodeAt(index);
+        result = Math.imul(result, 16777619);
+      }
+      return (result >>> 0).toString(16).padStart(8, "0");
+    };
+    const currentKey = "chida-prototype-memory-core:v2";
+    const priorKey = "chida-prototype-memory-core:v1";
+    const envelope = JSON.parse(window.localStorage.getItem(currentKey) ?? "null");
+    envelope.schemaVersion = 1;
+    delete envelope.fingerprintVersion;
+    envelope.records[0].sourceRefs = [];
+    envelope.records[0].revisions.forEach((revision: any, index: number) => {
+      const event = envelope.records[0].history[index];
+      revision.fingerprint = `fnv1a-${hash(JSON.stringify(stable({ scopeType: envelope.records[0].scopeType, scopeId: envelope.records[0].scopeId, snapshot: revision.snapshot, event: { type: event.type, lineage: event.lineage } })))}`;
+    });
+    window.localStorage.setItem(priorKey, JSON.stringify(envelope));
+    window.localStorage.removeItem(currentKey);
+    window.localStorage.removeItem("chida-prototype-memory-core:v1:hard-delete-intent:v1");
+  });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-memory-card")).toContainText("حافظهٔ نیازمند ارتقای منشأ");
+  const upgraded = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(upgraded.records[0].sourceRefs).toEqual([`direct-remember:${upgraded.records[0].id}:v1`]);
+  expect(upgraded.records[0]).toMatchObject({ version: 2 });
+  expect(upgraded.records[0].history.at(-1)).toMatchObject({ type: "source-migrated", version: 2 });
+  expect(upgraded.envelopeVersion).toBe(2);
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-delete").click();
+  await page.getByTestId("project-memory-delete-confirm").click();
+  await expect(page.getByTestId("project-memory-empty")).toBeVisible();
+  const priorAfterDelete = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v1"));
+  expect(priorAfterDelete).not.toContain("حافظهٔ نیازمند ارتقای منشأ");
+  expect(priorAfterDelete).not.toContain("نسخهٔ اولیهٔ محلی، locator مستقیم نداشت.");
+});
+
+test("memory metadata migration recovers a pre-lineage supersession chain without reopening terminal state", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("حافظهٔ قدیمی زنجیره");
+  await page.getByTestId("project-memory-content").fill("نسخهٔ قدیمی پیش از lineage دقیق");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-supersede").click();
+  await page.getByTestId("project-memory-title").fill("حافظهٔ تازه زنجیره");
+  await page.getByTestId("project-memory-content").fill("نسخهٔ جایگزین باید پس از مهاجرت جاری بماند.");
+  await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card")).toContainText("حافظهٔ تازه زنجیره");
+
+  await page.evaluate(() => {
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stable(item)]))
+        : value;
+    const hash = (serialized: string) => {
+      let result = 2166136261;
+      for (let index = 0; index < serialized.length; index += 1) {
+        result ^= serialized.charCodeAt(index);
+        result = Math.imul(result, 16777619);
+      }
+      return (result >>> 0).toString(16).padStart(8, "0");
+    };
+    const currentKey = "chida-prototype-memory-core:v2";
+    const priorKey = "chida-prototype-memory-core:v1";
+    const envelope = JSON.parse(window.localStorage.getItem(currentKey) ?? "null");
+    envelope.schemaVersion = 1;
+    delete envelope.fingerprintVersion;
+    envelope.records.forEach((record: any) => {
+      record.sourceRefs = [];
+      record.history.forEach((event: any) => { delete event.lineage; });
+      record.revisions.forEach((revision: any) => {
+        revision.fingerprint = `fnv1a-${hash(JSON.stringify(stable({ scopeType: record.scopeType, scopeId: record.scopeId, snapshot: revision.snapshot })))}`;
+      });
+    });
+    window.localStorage.setItem(priorKey, JSON.stringify(envelope));
+    window.localStorage.removeItem(currentKey);
+    window.localStorage.removeItem("chida-prototype-memory-core:v1:hard-delete-intent:v1");
+  });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-memory-card")).toContainText("حافظهٔ تازه زنجیره");
+  const upgraded = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  const predecessor = upgraded.records.find((record: any) => record.status === "superseded");
+  const replacement = upgraded.records.find((record: any) => record.supersedesId === predecessor.id);
+  expect(predecessor).toMatchObject({ supersededById: replacement.id, status: "superseded" });
+  expect(replacement).toMatchObject({ status: "current", supersedesId: predecessor.id });
+  for (const record of upgraded.records) {
+    expect(record.sourceRefs).toEqual([`direct-remember:${record.id}:v1`]);
+    expect(record.history.every((event: any) => event.lineage && Array.isArray(event.lineage.conflictIds))).toBe(true);
+    expect(record.history.at(-1).type).toBe("source-migrated");
+  }
+});
+
+test("snapshot migration replays a resolved conflict instead of deriving history from the final graph", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  for (const content of ["نسخهٔ تعارض الف", "نسخهٔ تعارض ب"]) {
+    await page.getByTestId("project-memory-add").click();
+    await page.getByTestId("project-memory-title").fill("قاعدهٔ مهاجرت تعارض");
+    await page.getByTestId("project-memory-content").fill(content);
+    await page.getByTestId("project-memory-save").click();
+  }
+  await page.getByTestId("project-memory-card").filter({ hasText: "نسخهٔ تعارض الف" }).click();
+  await page.getByTestId("project-memory-edit").click();
+  await page.getByTestId("project-memory-title").fill("قاعدهٔ حل‌شدهٔ مهاجرت");
+  await page.getByTestId("project-memory-save").click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null").records.every((record: any) => record.conflictIds.length === 0))).toBe(true);
+
+  await page.evaluate(() => {
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stable(item)]))
+        : value;
+    const hash = (serialized: string) => {
+      let result = 2166136261;
+      for (let index = 0; index < serialized.length; index += 1) {
+        result ^= serialized.charCodeAt(index);
+        result = Math.imul(result, 16777619);
+      }
+      return (result >>> 0).toString(16).padStart(8, "0");
+    };
+    const currentKey = "chida-prototype-memory-core:v2";
+    const priorKey = "chida-prototype-memory-core:v1";
+    const envelope = JSON.parse(window.localStorage.getItem(currentKey) ?? "null");
+    envelope.schemaVersion = 1;
+    delete envelope.fingerprintVersion;
+    envelope.records.forEach((record: any) => {
+      record.history.forEach((event: any) => { delete event.lineage; });
+      record.revisions.forEach((revision: any) => {
+        revision.fingerprint = `fnv1a-${hash(JSON.stringify(stable({ scopeType: record.scopeType, scopeId: record.scopeId, snapshot: revision.snapshot })))}`;
+      });
+    });
+    window.localStorage.setItem(priorKey, JSON.stringify(envelope));
+    window.localStorage.removeItem(currentKey);
+    window.localStorage.removeItem("chida-prototype-memory-core:v1:hard-delete-intent:v1");
+  });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toHaveCount(0);
+  const migrated = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(migrated.records).toHaveLength(2);
+  for (const record of migrated.records) {
+    const disputed = record.history.find((event: any) => event.type === "disputed" && event.lineage.conflictIds.length === 1);
+    const resolved = record.history.find((event: any) => event.type === "conflicts-resolved" && event.lineage.conflictIds.length === 0);
+    expect(disputed).toBeTruthy();
+    expect(resolved).toBeTruthy();
+    expect(record.conflictIds).toEqual([]);
+    expect(record.history.at(-1).type).toBe("schema-migrated");
+  }
+});
+
+test("memory core migrates legacy aliases conservatively and never turns context preference into permission", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!projectId) throw new Error("Active project id is unavailable");
+  const timestamp = "2026-08-30T12:00:00.000Z";
+  await page.evaluate(({ ownerProjectId, storedAt }) => {
+    const common = { source: "ثبت مستقیم شما", status: "ثبت محلی", version: 1, createdAt: storedAt, updatedAt: storedAt };
+    window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([
+      { ...common, id: "legacy-project", scope: "project", projectId: ownerProjectId, title: "حافظهٔ پروژه‌ای قدیمی", content: "ترجیح زمینه روشن بود اما مجوز مدل نیست.", kind: "یادداشت سازنده", visibility: "خصوصی پروژه", useInContext: true },
+      { ...common, id: "legacy-personal", scope: "personal", title: "حافظهٔ شخصی قدیمی", content: "این مورد یک veto صریح برای زمینه دارد.", kind: "ترجیح", visibility: "خصوصی شخصی", useInContext: false },
+    ]));
+  }, { ownerProjectId: projectId, storedAt: timestamp });
+
+  await openSavedProjectMemory(page);
+  const canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(canonical.records).toHaveLength(2);
+  expect(canonical.records).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: "legacy-project", scopeType: "project_private", scopeId: projectId, useInContextPreference: true, automaticRetrievalEligibility: false, modelEligibility: false, shareability: false }),
+    expect.objectContaining({ id: "legacy-personal", scopeType: "account_private", scopeId: "local-builder-account", useInContextPreference: false, automaticRetrievalEligibility: false, modelEligibility: false, shareability: false }),
+  ]));
+  expect(canonical.migrationReports).toEqual([expect.objectContaining({ status: "migrated", migratedCount: 2, quarantined: [] })]);
+  await expect(page.getByTestId("project-memory-card")).toContainText("حافظهٔ پروژه‌ای قدیمی");
+  await page.getByTestId("memory-scope-account").click();
+  await expect(page.getByTestId("project-memory-card")).toContainText("حافظهٔ شخصی قدیمی");
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-delete").click();
+  await page.getByTestId("project-memory-delete-confirm").click();
+  await expect(page.getByTestId("project-memory-empty")).toBeVisible();
+  const legacyAfterDelete = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"));
+  expect(legacyAfterDelete).not.toContain("حافظهٔ شخصی قدیمی");
+  expect(legacyAfterDelete).not.toContain("این مورد یک veto صریح برای زمینه دارد.");
+  expect(legacyAfterDelete).toContain("حافظهٔ پروژه‌ای قدیمی");
+  const cutoverMarker = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v1:hard-delete-intent:v1"));
+  expect(JSON.parse(cutoverMarker ?? "null")).toMatchObject({ operation: "memory-core-v2-cutover", state: "cutover-committed" });
+  expect(cutoverMarker).not.toContain("حافظهٔ شخصی قدیمی");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2:hard-delete-intent:v2"))).toBeNull();
+});
+
+test("a valid empty memory envelope never resurrects legacy bytes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!projectId) throw new Error("Active project id is unavailable");
+  const emptyEnvelope = { schemaVersion: 2, fingerprintVersion: "memory-v2", envelopeVersion: 1, records: [], candidates: [], tombstones: [], migrationReports: [], updatedAt: "2026-08-30T12:00:00.000Z" };
+  await page.evaluate(({ canonical, ownerProjectId }) => {
+    window.localStorage.setItem("chida-prototype-memory-core:v2", JSON.stringify(canonical));
+    window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([{ id: "legacy-must-stay-ignored", projectId: ownerProjectId, title: "نباید زنده شود", content: "وجود marker خالی canonical مقدم است.", kind: "یادداشت سازنده", source: "ثبت مستقیم شما", visibility: "خصوصی پروژه", useInContext: true, status: "ثبت محلی", version: 1, createdAt: "2026-08-30T11:00:00.000Z", updatedAt: "2026-08-30T11:00:00.000Z" }]));
+  }, { canonical: emptyEnvelope, ownerProjectId: projectId });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-empty")).toBeVisible();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBe(JSON.stringify(emptyEnvelope));
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toContain("legacy-must-stay-ignored");
+});
+
+test("memory edit no-op is byte-stable while edit control and rollback append revisions", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("قاعدهٔ نسخه‌دار");
+  await page.getByTestId("project-memory-content").fill("نسخهٔ نخست حافظه");
+  await page.getByTestId("project-memory-save").click();
+  const bytesV1 = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"));
+
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-edit").click();
+  await page.getByTestId("project-memory-save").click();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBe(bytesV1);
+
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-edit").click();
+  await page.getByTestId("project-memory-content").fill("نسخهٔ دوم حافظه");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-use-toggle").click();
+  let canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(canonical.records[0]).toMatchObject({ version: 3, content: "نسخهٔ دوم حافظه", useInContextPreference: false });
+  expect(canonical.records[0].history).toHaveLength(3);
+  expect(canonical.records[0].revisions).toHaveLength(3);
+
+  await page.getByTestId("project-memory-history").locator("summary").click();
+  await page.getByTestId("project-memory-history").locator("li").filter({ hasText: "نسخهٔ ۱" }).getByRole("button", { name: "بازگردانی به‌عنوان نسخهٔ تازه" }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null").records[0].version)).toBe(4);
+  canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(canonical.records[0]).toMatchObject({ version: 4, content: "نسخهٔ نخست حافظه", useInContextPreference: true });
+  expect(canonical.records[0].history.at(-1)).toMatchObject({ type: "rolled-back", rollbackFromVersion: 1, version: 4 });
+});
+
+test("memory conflict is explicit and supersede keeps reciprocal lineage", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  for (const content of ["فقط برند الف مجاز است.", "برند ب نیز مجاز است."]) {
+    await page.getByTestId("project-memory-add").click();
+    await page.getByTestId("project-memory-title").fill("قاعدهٔ برند");
+    await page.getByTestId("project-memory-content").fill(content);
+    await chooseProjectOption(page, "project-memory-kind", "محدودیت");
+    await page.getByTestId("project-memory-save").click();
+  }
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(2);
+  await expect(page.getByTestId("project-memory-card").nth(0)).toContainText("نیازمند بازبینی");
+  await expect(page.getByTestId("project-memory-card").nth(1)).toContainText("نیازمند بازبینی");
+
+  await page.getByTestId("project-memory-card").nth(0).click();
+  await expect(page.getByTestId("project-memory-status-alert")).toContainText("برندهٔ پنهان");
+  await page.getByTestId("project-memory-supersede").click();
+  await page.getByTestId("project-memory-title").fill("قاعدهٔ برند بازبینی‌شده");
+  await page.getByTestId("project-memory-content").fill("فقط برندهای دارای تأیید ناظر بررسی شوند.");
+  await page.getByTestId("project-memory-save").click();
+
+  const canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  const superseded = canonical.records.find((record: any) => record.status === "superseded");
+  const replacement = canonical.records.find((record: any) => record.supersedesId === superseded?.id);
+  expect(superseded).toMatchObject({ supersededById: replacement?.id, conflictIds: [] });
+  expect(replacement).toMatchObject({ status: "current", title: "قاعدهٔ برند بازبینی‌شده", supersedesId: superseded.id });
+  await expect(page.getByText("قاعدهٔ برند بازبینی‌شده")).toBeVisible();
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(2);
+  await page.getByTestId("project-memory-managed-toggle").click();
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(3);
+  await page.getByTestId("project-memory-card").filter({ hasText: "قاعدهٔ برند بازبینی‌شده" }).click();
+  await page.getByTestId("project-memory-delete").click();
+  await page.getByTestId("project-memory-delete-confirm").click();
+  const afterReplacementDelete = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(afterReplacementDelete.records.find((record: any) => record.id === superseded.id)).toMatchObject({ status: "superseded", supersededById: replacement.id });
+  expect(afterReplacementDelete.tombstones).toEqual(expect.arrayContaining([expect.objectContaining({ id: replacement.id })]));
+});
+
+test("memory conflict replacement records resolution before addition and rejects a rehashed disputed lie", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  for (const draft of [
+    { title: "گروه تعارض اول", content: "مقدار الف" },
+    { title: "گروه تعارض اول", content: "مقدار ب" },
+    { title: "گروه تعارض دوم", content: "مقدار ج" },
+  ]) {
+    await page.getByTestId("project-memory-add").click();
+    await page.getByTestId("project-memory-title").fill(draft.title);
+    await page.getByTestId("project-memory-content").fill(draft.content);
+    await page.getByTestId("project-memory-save").click();
+  }
+  await page.getByTestId("project-memory-card").filter({ hasText: "مقدار الف" }).click();
+  await page.getByTestId("project-memory-edit").click();
+  await page.getByTestId("project-memory-title").fill("گروه تعارض دوم");
+  await page.getByTestId("project-memory-content").fill("مقدار الفِ جابه‌جا‌شده");
+  await page.getByTestId("project-memory-save").click();
+
+  let canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  const moved = canonical.records.find((record: any) => record.content === "مقدار الفِ جابه‌جا‌شده");
+  const oldPeer = canonical.records.find((record: any) => record.content === "مقدار ب");
+  const newPeer = canonical.records.find((record: any) => record.content === "مقدار ج");
+  expect(moved.history.slice(-3).map((event: any) => event.type)).toEqual(["updated", "conflicts-resolved", "disputed"]);
+  expect(moved).toMatchObject({ conflictIds: [newPeer.id], status: "disputed" });
+  expect(oldPeer.conflictIds).toEqual([]);
+  expect(newPeer.conflictIds).toEqual([moved.id]);
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toHaveCount(0);
+
+  await page.evaluate(async () => {
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stable(item)]))
+        : value;
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    const record = envelope.records.find((item: any) => item.content === "مقدار الفِ جابه‌جا‌شده");
+    const eventIndex = record.history.findLastIndex((event: any) => event.type === "conflicts-resolved");
+    const event = record.history[eventIndex];
+    const revision = record.revisions[eventIndex];
+    event.type = "disputed";
+    const recordIdentity = { id: record.id, ownerPrincipalId: record.ownerPrincipalId, accountSide: record.accountSide, scopeType: record.scopeType, scopeId: record.scopeId, projectId: record.projectId, provenanceClass: record.provenanceClass, sourceLabel: record.sourceLabel, sourceRefs: record.sourceRefs, createdAt: record.createdAt };
+    const eventIntegrity = { id: event.id, type: event.type, actor: event.actor, at: event.at, version: event.version, rollbackFromVersion: event.rollbackFromVersion, lineage: event.lineage };
+    const revisionIntegrity = { id: revision.id, version: revision.version, createdAt: revision.createdAt };
+    const bytes = new TextEncoder().encode(JSON.stringify(stable({ recordIdentity, snapshot: revision.snapshot, event: eventIntegrity, revision: revisionIntegrity })));
+    const digest = new Uint8Array(await window.crypto.subtle.digest("SHA-256", bytes));
+    revision.fingerprint = `sha256-${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+  canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(canonical.records.find((record: any) => record.content === "مقدار الفِ جابه‌جا‌شده").history.some((event: any) => event.type === "conflicts-resolved")).toBe(false);
+});
+
+test("memory refuses writes when an exclusive browser lock is unavailable", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined }));
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await expect(page.getByTestId("project-memory-read-error")).toContainText("خوانده نشد");
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBeNull();
+});
+
+test("legacy memory migration also fails closed when Web Locks are unavailable", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined });
+    window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([{ id: "legacy-no-lock", projectId: "legacy-project", title: "مهاجرت بدون قفل", content: "این بایت‌ها نباید بیرون قفل به canonical تبدیل شوند.", kind: "یادداشت سازنده", source: "ثبت مستقیم شما", visibility: "خصوصی پروژه", useInContext: true, status: "ثبت محلی", version: 1, createdAt: "2026-08-30T11:00:00.000Z", updatedAt: "2026-08-30T11:00:00.000Z" }]));
+  });
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await expect(page.getByTestId("project-memory-entry")).toContainText("بازیابی محلی کامل نشد");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBeNull();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toContain("legacy-no-lock");
+});
+
+test("a stale memory editor cannot overwrite a newer browser-tab revision", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("حافظهٔ همزمان");
+  await page.getByTestId("project-memory-content").fill("نسخهٔ پایه");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-edit").click();
+
+  const otherPage = await context.newPage();
+  await otherPage.setViewportSize({ width: 390, height: 844 });
+  await openSavedProjectMemory(otherPage);
+  await otherPage.getByTestId("project-memory-card").click();
+  await otherPage.getByTestId("project-memory-use-toggle").click();
+  await expect.poll(() => otherPage.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null").records[0].version)).toBe(2);
+
+  await page.getByTestId("project-memory-content").fill("ویرایش stale نباید ثبت شود");
+  await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-storage-error")).toContainText("نسخهٔ حافظه");
+  const canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(canonical.records[0]).toMatchObject({ version: 2, content: "نسخهٔ پایه", useInContextPreference: false });
+  await otherPage.close();
+});
+
+test("memory storage events remove stale disabled superseded and hard-deleted data across tabs", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("حافظهٔ همگام دو تب");
+  await page.getByTestId("project-memory-content").fill("این متن نباید پس از تغییر در تب دیگر قابل بازیابی بماند.");
+  await page.getByTestId("project-memory-save").click();
+
+  const otherPage = await context.newPage();
+  try {
+    await otherPage.setViewportSize({ width: 390, height: 844 });
+    await openSavedProjectMemory(otherPage);
+    await expect(otherPage.getByTestId("project-memory-card")).toContainText("حافظهٔ همگام دو تب");
+
+    await page.getByTestId("project-memory-card").click();
+    await page.getByTestId("project-memory-disable").click();
+    await expect(otherPage.getByTestId("project-memory-card")).toContainText("غیرفعال");
+
+    await page.getByTestId("project-memory-disable").click();
+    await expect(otherPage.getByTestId("project-memory-card")).not.toContainText("غیرفعال");
+    await page.getByTestId("project-memory-supersede").click();
+    await page.getByTestId("project-memory-title").fill("حافظهٔ جایگزین دو تب");
+    await page.getByTestId("project-memory-content").fill("نسخهٔ جایگزین باید تنها رکورد روزمرهٔ تب دوم باشد.");
+    await page.getByTestId("project-memory-save").click();
+    await expect(otherPage.getByTestId("project-memory-card")).toHaveCount(1);
+    await expect(otherPage.getByTestId("project-memory-card")).toContainText("حافظهٔ جایگزین دو تب");
+    await expect(otherPage.getByText("حافظهٔ همگام دو تب", { exact: true })).toHaveCount(0);
+
+    await page.getByTestId("project-memory-card").filter({ hasText: "حافظهٔ جایگزین دو تب" }).click();
+    await page.getByTestId("project-memory-delete").click();
+    await page.getByTestId("project-memory-delete-confirm").click();
+    await expect(otherPage.getByTestId("project-memory-empty")).toBeVisible();
+    await expect(otherPage.getByTestId("project-memory-card")).toHaveCount(0);
+
+    await otherPage.getByTestId("project-memory-back").click();
+    await otherPage.getByTestId("project-space-back").click();
+    await otherPage.getByTestId("capability-cluster").click();
+    await otherPage.getByTestId("source-search-tool").click();
+    await otherPage.getByTestId("project-source-search-input").fill("حافظهٔ جایگزین دو تب");
+    await expect(otherPage.getByTestId("project-source-result-memory")).toHaveCount(0);
+  } finally {
+    await otherPage.close();
+  }
+});
+
+test("memory core rejects cross-scope lineage and lifecycle tampering", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("رکورد آزمون گراف");
+  await page.getByTestId("project-memory-content").fill("پیوند دامنهٔ دیگر باید fail-close شود.");
+  await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card")).toContainText("رکورد آزمون گراف");
+
+  await page.evaluate(() => {
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    envelope.records[0].supersedesId = "foreign-account-tombstone";
+    envelope.tombstones.push({ id: "foreign-account-tombstone", ownerPrincipalId: "local-builder-account", scopeType: "account_private", scopeId: "local-builder-account", lastVersion: 1, deletedAt: envelope.updatedAt, deletedBy: "شما", reasonClass: "user_requested", priorContentHash: "fnv1a-00000000", retentionClass: "local-metadata-only" });
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  });
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+
+  await page.evaluate(() => {
+    const key = "chida-prototype-memory-core:v2";
+    window.localStorage.removeItem(key);
+    window.localStorage.removeItem("chida-prototype-project-memories:v1");
+    window.localStorage.removeItem("chida-prototype-memory-core:v1:hard-delete-intent:v1");
+    window.localStorage.removeItem("chida-prototype-memory-core:v2:hard-delete-intent:v2");
+  });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("رکورد آزمون وضعیت");
+  await page.getByTestId("project-memory-content").fill("تغییر وضعیت بدون رویداد باید رد شود.");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-disable").click();
+  await expect(page.getByTestId("project-memory-status-alert")).toContainText("غیرفعال");
+  await page.evaluate(() => {
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    envelope.records[0].status = "current";
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  });
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+});
+
+test("memory audit rejects a rehashed revision whose event type lies about its snapshot delta", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("ممیزی تغییر حافظه");
+  await page.getByTestId("project-memory-content").fill("نسخهٔ اول");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-edit").click();
+  await page.getByTestId("project-memory-content").fill("نسخهٔ دوم");
+  await page.getByTestId("project-memory-save").click();
+
+  await page.evaluate(async () => {
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stable(item)]))
+        : value;
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    const record = envelope.records[0];
+    const event = record.history.at(-1);
+    const revision = record.revisions.at(-1);
+    event.type = "disabled";
+    record.status = "disabled";
+    const recordIdentity = { id: record.id, ownerPrincipalId: record.ownerPrincipalId, accountSide: record.accountSide, scopeType: record.scopeType, scopeId: record.scopeId, projectId: record.projectId, provenanceClass: record.provenanceClass, sourceLabel: record.sourceLabel, sourceRefs: record.sourceRefs, createdAt: record.createdAt };
+    const eventIntegrity = { id: event.id, type: event.type, actor: event.actor, at: event.at, version: event.version, rollbackFromVersion: event.rollbackFromVersion, lineage: event.lineage };
+    const revisionIntegrity = { id: revision.id, version: revision.version, createdAt: revision.createdAt };
+    const bytes = new TextEncoder().encode(JSON.stringify(stable({ recordIdentity, snapshot: revision.snapshot, event: eventIntegrity, revision: revisionIntegrity })));
+    const digest = new Uint8Array(await window.crypto.subtle.digest("SHA-256", bytes));
+    revision.fingerprint = `sha256-${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+});
+
+test("memory audit rejects rehashed non-canonical whitespace in immutable lineage ids", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  for (const content of ["مقدار lineage اول", "مقدار lineage دوم"]) {
+    await page.getByTestId("project-memory-add").click();
+    await page.getByTestId("project-memory-title").fill("ممیزی شناسهٔ lineage");
+    await page.getByTestId("project-memory-content").fill(content);
+    await page.getByTestId("project-memory-save").click();
+  }
+
+  await page.evaluate(async () => {
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stable(item)]))
+        : value;
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    const record = envelope.records[0];
+    const eventIndex = record.history.findLastIndex((event: any) => event.type === "disputed");
+    const event = record.history[eventIndex];
+    const revision = record.revisions[eventIndex];
+    event.lineage.conflictIds[0] = ` ${event.lineage.conflictIds[0]} `;
+    const canonicalEvent = { ...event, lineage: { ...event.lineage, conflictIds: event.lineage.conflictIds.map((id: string) => id.trim()) } };
+    const recordIdentity = { id: record.id, ownerPrincipalId: record.ownerPrincipalId, accountSide: record.accountSide, scopeType: record.scopeType, scopeId: record.scopeId, projectId: record.projectId, provenanceClass: record.provenanceClass, sourceLabel: record.sourceLabel, sourceRefs: record.sourceRefs, createdAt: record.createdAt };
+    const eventIntegrity = { id: canonicalEvent.id, type: canonicalEvent.type, actor: canonicalEvent.actor, at: canonicalEvent.at, version: canonicalEvent.version, rollbackFromVersion: canonicalEvent.rollbackFromVersion, lineage: canonicalEvent.lineage };
+    const revisionIntegrity = { id: revision.id, version: revision.version, createdAt: revision.createdAt };
+    const bytes = new TextEncoder().encode(JSON.stringify(stable({ recordIdentity, snapshot: revision.snapshot, event: eventIntegrity, revision: revisionIntegrity })));
+    const digest = new Uint8Array(await window.crypto.subtle.digest("SHA-256", bytes));
+    revision.fingerprint = `sha256-${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+});
+
+test("memory audit rejects a resolved historical conflict that crossed private scopes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("رکورد پروژه برای ممیزی تاریخچه");
+  await page.getByTestId("project-memory-content").fill("این رکورد در دامنهٔ پروژه است.");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-scope-account").click();
+  await page.getByTestId("project-memory-title").fill("رکورد شخصی برای ممیزی تاریخچه");
+  await page.getByTestId("project-memory-content").fill("این رکورد در دامنهٔ شخصی است.");
+  await page.getByTestId("project-memory-save").click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null")?.records?.length)).toBe(2);
+
+  await page.evaluate(async () => {
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stable(item)]))
+        : value;
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    const timestamp = envelope.updatedAt;
+    const snapshotOf = (record: any) => ({ title: record.title, content: record.content, kind: record.kind, memoryType: record.memoryType, visibility: record.visibility, manualSearchability: record.manualSearchability, automaticRetrievalEligibility: record.automaticRetrievalEligibility, modelEligibility: record.modelEligibility, shareability: record.shareability, useInContextPreference: record.useInContextPreference });
+    const append = async (record: any, type: "disputed" | "conflicts-resolved", conflictIds: string[]) => {
+      const version = record.version + 1;
+      const event = { id: `historical-scope-event-${record.id}-${version}`, type, actor: "شما", at: timestamp, version, rollbackFromVersion: null, lineage: { supersedesId: record.supersedesId, supersededById: record.supersededById, conflictIds } };
+      const revision = { id: `historical-scope-revision-${record.id}-${version}`, version, createdAt: timestamp, snapshot: snapshotOf(record), fingerprint: "" };
+      const recordIdentity = { id: record.id, ownerPrincipalId: record.ownerPrincipalId, accountSide: record.accountSide, scopeType: record.scopeType, scopeId: record.scopeId, projectId: record.projectId, provenanceClass: record.provenanceClass, sourceLabel: record.sourceLabel, sourceRefs: record.sourceRefs, createdAt: record.createdAt };
+      const eventIntegrity = { id: event.id, type: event.type, actor: event.actor, at: event.at, version: event.version, rollbackFromVersion: event.rollbackFromVersion, lineage: event.lineage };
+      const revisionIntegrity = { id: revision.id, version: revision.version, createdAt: revision.createdAt };
+      const bytes = new TextEncoder().encode(JSON.stringify(stable({ recordIdentity, snapshot: revision.snapshot, event: eventIntegrity, revision: revisionIntegrity })));
+      const digest = new Uint8Array(await window.crypto.subtle.digest("SHA-256", bytes));
+      revision.fingerprint = `sha256-${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+      record.history.push(event);
+      record.revisions.push(revision);
+      record.version = version;
+      record.currentRevisionId = revision.id;
+      record.updatedAt = timestamp;
+      record.status = "disputed";
+      record.conflictIds = conflictIds;
+    };
+    const projectRecord = envelope.records.find((record: any) => record.scopeType === "project_private");
+    const accountRecord = envelope.records.find((record: any) => record.scopeType === "account_private");
+    await append(projectRecord, "disputed", [accountRecord.id]);
+    await append(accountRecord, "disputed", [projectRecord.id]);
+    await append(projectRecord, "conflicts-resolved", []);
+    await append(accountRecord, "conflicts-resolved", []);
+    envelope.envelopeVersion += 1;
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+});
+
+test("memory audit rejects retargeting a superseded record to an unrelated tombstone", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("نسخهٔ قدیمی پیوند tombstone");
+  await page.getByTestId("project-memory-content").fill("این رکورد predecessor واقعی است.");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-supersede").click();
+  await page.getByTestId("project-memory-title").fill("نسخهٔ جایگزین واقعی");
+  await page.getByTestId("project-memory-content").fill("این رکورد replacement واقعی است.");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("رکورد مستقل برای tombstone");
+  await page.getByTestId("project-memory-content").fill("این حذف نباید مقصد lineage رکورد دیگری شود.");
+  await page.getByTestId("project-memory-save").click();
+  const unrelatedId = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null").records.find((record: any) => record.title === "رکورد مستقل برای tombstone").id);
+  await page.getByTestId("project-memory-card").filter({ hasText: "رکورد مستقل برای tombstone" }).click();
+  await page.getByTestId("project-memory-delete").click();
+  await page.getByTestId("project-memory-delete-confirm").click();
+
+  await page.evaluate(async (retargetId) => {
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stable(item)]))
+        : value;
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    const record = envelope.records.find((item: any) => item.status === "superseded");
+    const eventIndex = record.history.findLastIndex((event: any) => event.type === "superseded");
+    const event = record.history[eventIndex];
+    const revision = record.revisions[eventIndex];
+    event.lineage.supersededById = retargetId;
+    record.supersededById = retargetId;
+    const recordIdentity = { id: record.id, ownerPrincipalId: record.ownerPrincipalId, accountSide: record.accountSide, scopeType: record.scopeType, scopeId: record.scopeId, projectId: record.projectId, provenanceClass: record.provenanceClass, sourceLabel: record.sourceLabel, sourceRefs: record.sourceRefs, createdAt: record.createdAt };
+    const eventIntegrity = { id: event.id, type: event.type, actor: event.actor, at: event.at, version: event.version, rollbackFromVersion: event.rollbackFromVersion, lineage: event.lineage };
+    const revisionIntegrity = { id: revision.id, version: revision.version, createdAt: revision.createdAt };
+    const bytes = new TextEncoder().encode(JSON.stringify(stable({ recordIdentity, snapshot: revision.snapshot, event: eventIntegrity, revision: revisionIntegrity })));
+    const digest = new Uint8Array(await window.crypto.subtle.digest("SHA-256", bytes));
+    revision.fingerprint = `sha256-${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  }, unrelatedId);
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+});
+
+test("memory audit rejects an impossible lifecycle inside a rehashed tombstone proof", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  for (const content of ["مقدار نخست برای تعارض واقعی.", "مقدار دوم برای تعارض واقعی."]) {
+    await page.getByTestId("project-memory-add").click();
+    await page.getByTestId("project-memory-title").fill("اثبات چرخهٔ حذف");
+    await page.getByTestId("project-memory-content").fill(content);
+    await page.getByTestId("project-memory-save").click();
+  }
+  await page.getByTestId("project-memory-card").filter({ hasText: "مقدار نخست برای تعارض واقعی." }).click();
+  await page.getByTestId("project-memory-use-toggle").click();
+  await page.getByTestId("project-memory-delete").click();
+  await page.getByTestId("project-memory-delete-confirm").click();
+
+  await page.evaluate(async () => {
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stable(item)]))
+        : value;
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    const tombstone = envelope.tombstones[0];
+    tombstone.lineageHistory[2].type = "enabled";
+    const bytes = new TextEncoder().encode(JSON.stringify(stable(tombstone.lineageHistory)));
+    const digest = new Uint8Array(await window.crypto.subtle.digest("SHA-256", bytes));
+    tombstone.lineageHistoryHash = `sha256-${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+});
+
+test("memory audit rejects a weak legacy content hash on a proof-bearing v2 tombstone", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("هش حذف نسخهٔ دوم");
+  await page.getByTestId("project-memory-content").fill("اثبات نسخهٔ دوم باید SHA-256 داشته باشد.");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-delete").click();
+  await page.getByTestId("project-memory-delete-confirm").click();
+
+  await page.evaluate(() => {
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    envelope.tombstones[0].priorContentHash = "fnv1a-00000000";
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+});
+
+test("memory envelope rejects nonempty v0 data and component timestamps newer than its update", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("رکورد آزمون chronology");
+  await page.getByTestId("project-memory-content").fill("پاکت پایه نباید دادهٔ زنده داشته باشد.");
+  await page.getByTestId("project-memory-save").click();
+  const validRaw = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"));
+  if (!validRaw) throw new Error("Valid memory fixture was not stored");
+
+  await page.evaluate(() => {
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    envelope.envelopeVersion = 0;
+    envelope.updatedAt = null;
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  });
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+
+  await page.evaluate((raw) => {
+    const key = "chida-prototype-memory-core:v2";
+    const envelope = JSON.parse(raw);
+    envelope.updatedAt = "1970-01-01T00:00:00.000Z";
+    window.localStorage.setItem(key, JSON.stringify(envelope));
+  }, validRaw);
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+});
+
+test("editing a disabled memory stays disabled and explicit enable recomputes conflicts", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("قاعدهٔ ایمنی مشترک");
+  await page.getByTestId("project-memory-content").fill("نسخهٔ غیرفعال الف");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-disable").click();
+  await page.keyboard.press("Escape");
+
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("قاعدهٔ ایمنی مشترک");
+  await page.getByTestId("project-memory-content").fill("نسخهٔ فعال ب");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").filter({ hasText: "نسخهٔ غیرفعال الف" }).click();
+  await page.getByTestId("project-memory-edit").click();
+  await page.getByTestId("project-memory-content").fill("نسخهٔ غیرفعال ویرایش‌شده");
+  await page.getByTestId("project-memory-save").click();
+  let canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  const disabled = canonical.records.find((record: any) => record.content === "نسخهٔ غیرفعال ویرایش‌شده");
+  expect(disabled).toMatchObject({ status: "disabled", conflictIds: [] });
+
+  await page.getByTestId("project-memory-back").click();
+  await page.getByTestId("capability-cluster").click();
+  await page.getByTestId("source-search-tool").click();
+  await page.getByTestId("project-source-search-input").fill("نسخهٔ غیرفعال ویرایش‌شده");
+  await expect(page.getByTestId("project-source-result-memory")).toHaveCount(0);
+  await page.getByTestId("project-source-search-back").click();
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-card").filter({ hasText: "نسخهٔ غیرفعال ویرایش‌شده" }).click();
+  await page.getByTestId("project-memory-disable").click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null").records.find((record: any) => record.content === "نسخهٔ غیرفعال ویرایش‌شده")?.status)).toBe("disputed");
+  canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  const first = canonical.records.find((record: any) => record.content === "نسخهٔ غیرفعال ویرایش‌شده");
+  const second = canonical.records.find((record: any) => record.content === "نسخهٔ فعال ب");
+  expect(first).toMatchObject({ status: "disputed", conflictIds: [second.id] });
+  expect(second).toMatchObject({ status: "disputed", conflictIds: [first.id] });
+});
+
+test("rolling back memory content recomputes conflicts instead of creating silent winners", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("عنوان قدیمی مشترک");
+  await page.getByTestId("project-memory-content").fill("متن قدیمی الف");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-edit").click();
+  await page.getByTestId("project-memory-title").fill("عنوان موقت متفاوت");
+  await page.getByTestId("project-memory-save").click();
+
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("عنوان قدیمی مشترک");
+  await page.getByTestId("project-memory-content").fill("متن فعال ب");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-card").filter({ hasText: "عنوان موقت متفاوت" }).click();
+  await page.getByTestId("project-memory-history").locator("summary").click();
+  await page.getByTestId("project-memory-history").locator("li").filter({ hasText: "نسخهٔ ۱" }).getByRole("button", { name: "بازگردانی به‌عنوان نسخهٔ تازه" }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null").records.find((record: any) => record.content === "متن قدیمی الف")?.status)).toBe("disputed");
+  const canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  const rolledBack = canonical.records.find((record: any) => record.content === "متن قدیمی الف");
+  const conflicting = canonical.records.find((record: any) => record.content === "متن فعال ب");
+  expect(rolledBack).toMatchObject({ status: "disputed", conflictIds: [conflicting.id] });
+  expect(conflicting).toMatchObject({ status: "disputed", conflictIds: [rolledBack.id] });
+  expect(rolledBack.history.slice(-2).map((event: any) => event.type)).toEqual(["rolled-back", "disputed"]);
+});
+
+test("manual project search respects scope lifecycle visibility and its own eligibility", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-memory").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("نشانهٔ جست‌وجوی مجاز");
+  await page.getByTestId("project-memory-content").fill("این متن ابتدا قابل جست‌وجوی دستی است.");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-scope-account").click();
+  await page.getByTestId("project-memory-title").fill("نشانهٔ شخصی محرمانه");
+  await page.getByTestId("project-memory-content").fill("این حافظهٔ شخصی نباید وارد جست‌وجوی پروژه شود.");
+  await page.getByTestId("project-memory-save").click();
+  await page.getByTestId("memory-scope-project").click();
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("memory-control-manual-searchability").getByRole("button").click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null").records.find((record: any) => record.title === "نشانهٔ جست‌وجوی مجاز").manualSearchability)).toBe(false);
+  await page.keyboard.press("Escape");
+  await page.getByTestId("project-memory-back").click();
+  await page.getByTestId("capability-cluster").click();
+  await page.getByTestId("source-search-tool").click();
+  const searchInput = page.getByTestId("project-source-search-input");
+  await searchInput.fill("نشانهٔ جست‌وجوی مجاز");
+  await expect(page.getByTestId("project-source-result-memory")).toHaveCount(0);
+  await searchInput.fill("نشانهٔ شخصی محرمانه");
+  await expect(page.getByTestId("project-source-result-memory")).toHaveCount(0);
+});
+
+test("failed legacy migration preserves source bytes and does not create a canonical marker", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    const legacy = JSON.stringify([{ id: "legacy-write-failure", projectId: "project-preserved", title: "بایت حفظ‌شده", content: "مهاجرت ناموفق نباید منبع را پاک کند.", kind: "یادداشت سازنده", source: "ثبت مستقیم شما", visibility: "خصوصی پروژه", useInContext: true, status: "ثبت محلی", version: 1, createdAt: "2026-08-30T11:00:00.000Z", updatedAt: "2026-08-30T11:00:00.000Z" }]);
+    window.localStorage.setItem("chida-prototype-project-memories:v1", legacy);
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (key === "chida-prototype-memory-core:v2") throw new DOMException("Quota exceeded", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await expect(page.getByTestId("project-memory-entry")).toContainText("بازیابی محلی کامل نشد");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toContain("legacy-write-failure");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBeNull();
+});
+
+test("an interrupted multi-store memory hard-delete resumes from its durable intent", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!projectId) throw new Error("Active project id is unavailable");
+  await page.evaluate((ownerProjectId) => {
+    window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([{ id: "legacy-delete-resume", projectId: ownerProjectId, title: "حذف نیمه‌تمام", content: "این متن باید پس از reload نیز از legacy پاک شود.", kind: "یادداشت سازنده", source: "ثبت مستقیم شما", visibility: "خصوصی پروژه", useInContext: true, status: "ثبت محلی", version: 1, createdAt: "2026-08-30T11:00:00.000Z", updatedAt: "2026-08-30T11:00:00.000Z" }]));
+  }, projectId);
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-card")).toContainText("حذف نیمه‌تمام");
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    let failLegacyPurgeOnce = true;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (key === "chida-prototype-project-memories:v1" && failLegacyPurgeOnce && !value.includes("legacy-delete-resume")) {
+        failLegacyPurgeOnce = false;
+        throw new DOMException("Interrupted legacy purge", "InvalidStateError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-delete").click();
+  await page.getByTestId("project-memory-delete-confirm").click();
+  await expect(page.getByTestId("project-memory-storage-error")).toContainText("ذخیره نشد");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2:hard-delete-intent:v2"))).not.toBeNull();
+  expect(JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v1:hard-delete-intent:v1")) ?? "null")).toMatchObject({ operation: "memory-core-v2-cutover", state: "cutover-committed" });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-empty")).toBeVisible();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2:hard-delete-intent:v2"))).toBeNull();
+  const cutoverMarkerAfterResume = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v1:hard-delete-intent:v1"));
+  expect(JSON.parse(cutoverMarkerAfterResume ?? "null")).toMatchObject({ operation: "memory-core-v2-cutover", state: "cutover-committed" });
+  expect(cutoverMarkerAfterResume).not.toContain("این متن باید پس از reload نیز از legacy پاک شود.");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).not.toContain("legacy-delete-resume");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).not.toContain("این متن باید پس از reload نیز از legacy پاک شود.");
+});
+
+test("a pre-cutover v2 delete intent crosses the old control key without losing the deletion", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!projectId) throw new Error("Active project id is unavailable");
+  await page.evaluate((ownerProjectId) => {
+    window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([{ id: "legacy-bridge-delete", projectId: ownerProjectId, title: "حذف پل نسل", content: "این متن نباید با جابه‌جایی کلید intent زنده شود.", kind: "یادداشت سازنده", source: "ثبت مستقیم شما", visibility: "خصوصی پروژه", useInContext: true, status: "ثبت محلی", version: 1, createdAt: "2026-08-30T11:00:00.000Z", updatedAt: "2026-08-30T11:00:00.000Z" }]));
+  }, projectId);
+  await openSavedProjectMemory(page);
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    let failLegacyPurgeOnce = true;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (key === "chida-prototype-project-memories:v1" && failLegacyPurgeOnce && !value.includes("legacy-bridge-delete")) {
+        failLegacyPurgeOnce = false;
+        throw new DOMException("Bridge interruption", "InvalidStateError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-delete").click();
+  await page.getByTestId("project-memory-delete-confirm").click();
+  await expect(page.getByTestId("project-memory-storage-error")).toBeVisible();
+
+  await page.evaluate(() => {
+    const currentIntentKey = "chida-prototype-memory-core:v2:hard-delete-intent:v2";
+    const priorControlKey = "chida-prototype-memory-core:v1:hard-delete-intent:v1";
+    const rawIntent = window.localStorage.getItem(currentIntentKey);
+    if (!rawIntent) throw new Error("Current delete intent is unavailable");
+    const intent = JSON.parse(rawIntent);
+    window.localStorage.setItem("chida-prototype-memory-core:v2", intent.previousCanonicalRaw);
+    if (intent.previousPriorCanonicalRaw === null) window.localStorage.removeItem("chida-prototype-memory-core:v1");
+    else window.localStorage.setItem("chida-prototype-memory-core:v1", intent.previousPriorCanonicalRaw);
+    if (intent.previousLegacyRaw === null) window.localStorage.removeItem("chida-prototype-project-memories:v1");
+    else window.localStorage.setItem("chida-prototype-project-memories:v1", intent.previousLegacyRaw);
+    window.localStorage.removeItem(currentIntentKey);
+    window.localStorage.setItem(priorControlKey, rawIntent);
+  });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-empty")).toBeVisible();
+  const canonical = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"));
+  expect(JSON.parse(canonical ?? "null")).toMatchObject({ records: [], tombstones: [expect.objectContaining({ id: "legacy-bridge-delete" })] });
+  expect(canonical).not.toContain("حذف پل نسل");
+  expect(canonical).not.toContain("این متن نباید با جابه‌جایی کلید intent زنده شود.");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2:hard-delete-intent:v2"))).toBeNull();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2:prior-intent-bridge:v1"))).toBeNull();
+  const committedMarker = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v1:hard-delete-intent:v1"));
+  expect(JSON.parse(committedMarker ?? "null")).toMatchObject({ operation: "memory-core-v2-cutover", state: "cutover-committed" });
+  expect(committedMarker).not.toContain("حذف پل نسل");
+});
+
+test("a pending MemoryCandidate stays separate until exact user consent promotes it", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!projectId) throw new Error("Active project id is unavailable");
+  const proposedSnapshot = { title: "پیشنهاد ثبت‌نشده", content: "این متن هنوز حافظه نیست.", kind: "یادداشت سازنده", memoryType: "note" };
+  const evidenceRefs: string[] = [];
+  const exactPayload = JSON.stringify(stableTestValue({ scopeType: "project_private", scopeId: projectId, proposedSnapshot, evidenceRefs }));
+  const payloadHash = `sha256-${createHash("sha256").update(exactPayload).digest("hex")}`;
+  await page.evaluate(({ ownerProjectId, snapshot, refs, hash }) => {
+    const timestamp = "2026-08-30T12:00:00.000Z";
+    window.localStorage.setItem("chida-prototype-memory-core:v2", JSON.stringify({
+      schemaVersion: 2,
+      fingerprintVersion: "memory-v2",
+      envelopeVersion: 1,
+      records: [],
+      candidates: [{ schemaVersion: 1, id: "candidate-pending", version: 1, ownerPrincipalId: "local-builder-account", accountSide: "builder", scopeType: "project_private", scopeId: ownerProjectId, proposedSnapshot: snapshot, evidenceRefs: refs, producerRunId: "future-run-fixture", provider: "future-provider-fixture", model: "future-model-fixture", confidence: null, payloadHash: hash, status: "pending", createdAt: timestamp, expiresAt: null, updatedAt: timestamp, acceptedMemoryId: null, decision: null, history: [{ id: "candidate-event-created", type: "created", actor: "system", at: timestamp, version: 1 }] }],
+      tombstones: [],
+      migrationReports: [],
+      updatedAt: timestamp,
+    }));
+  }, { ownerProjectId: projectId, snapshot: proposedSnapshot, refs: evidenceRefs, hash: payloadHash });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-candidate-notice")).toContainText("حافظه نیستند");
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(0);
+  await expect(page.getByTestId("project-memory-candidate-card")).toContainText("پیشنهاد ثبت‌نشده");
+  let canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(canonical.records).toEqual([]);
+  expect(canonical.candidates).toEqual([expect.objectContaining({ id: "candidate-pending", status: "pending", payloadHash })]);
+
+  await page.getByTestId("project-memory-candidate-accept").click();
+  await expect(page.getByTestId("project-memory-candidate-notice")).toHaveCount(0);
+  await expect(page.getByTestId("project-memory-card")).toContainText("پیشنهاد ثبت‌نشده");
+  canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(canonical.records).toEqual([expect.objectContaining({ scopeType: "project_private", scopeId: projectId, title: "پیشنهاد ثبت‌نشده", provenanceClass: "owner_confirmed", sourceLabel: "تأیید پیشنهاد توسط شما", sourceRefs: [expect.stringContaining(`memory-candidate:candidate-pending:v1:${payloadHash}`)] })]);
+  expect(canonical.candidates).toEqual([expect.objectContaining({ id: "candidate-pending", version: 2, status: "accepted", acceptedMemoryId: canonical.records[0].id, decision: expect.objectContaining({ action: "accepted", actor: "شما", candidateVersion: 1, payloadHash, exactPayload, scopeType: "project_private", scopeId: projectId }), history: [expect.objectContaining({ type: "created", version: 1 }), expect.objectContaining({ type: "accepted", version: 2 })] })]);
+
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-edit").click();
+  await page.getByTestId("project-memory-content").fill("این متن پس از تأیید، ویرایش نسخه‌دار شده است.");
+  await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card")).toContainText("ویرایش نسخه‌دار");
+  await page.getByTestId("project-memory-card").click();
+  await page.getByTestId("project-memory-delete").click();
+  await page.getByTestId("project-memory-delete-confirm").click();
+  canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(canonical.records).toEqual([]);
+  expect(canonical.candidates).toEqual([]);
+  expect(canonical.tombstones).toEqual([expect.objectContaining({ id: expect.any(String), priorContentHash: expect.stringMatching(/^sha256-[0-9a-f]{64}$/) })]);
+  const canonicalBytes = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"));
+  expect(canonicalBytes).not.toContain("پیشنهاد ثبت‌نشده");
+  expect(canonicalBytes).not.toContain("این متن هنوز حافظه نیست.");
+  expect(canonicalBytes).not.toContain("ویرایش نسخه‌دار شده است");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2:hard-delete-intent:v2"))).toBeNull();
+  const candidateCutoverMarker = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v1:hard-delete-intent:v1"));
+  expect(JSON.parse(candidateCutoverMarker ?? "null")).toMatchObject({ operation: "memory-core-v2-cutover", state: "cutover-committed" });
+  expect(candidateCutoverMarker).not.toContain("پیشنهاد ثبت‌نشده");
+});
+
+test("an expired MemoryCandidate transitions once under lock without becoming memory", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!projectId) throw new Error("Active project id is unavailable");
+  const proposedSnapshot = { title: "پیشنهاد منقضی", content: "این متن نباید پس از انقضا حافظه شود.", kind: "یادداشت سازنده", memoryType: "note" };
+  const evidenceRefs: string[] = [];
+  const exactPayload = JSON.stringify(stableTestValue({ scopeType: "project_private", scopeId: projectId, proposedSnapshot, evidenceRefs }));
+  const payloadHash = `sha256-${createHash("sha256").update(exactPayload).digest("hex")}`;
+  await page.evaluate(({ ownerProjectId, snapshot, refs, hash }) => {
+    const createdAt = "2026-08-30T10:00:00.000Z";
+    window.localStorage.setItem("chida-prototype-memory-core:v2", JSON.stringify({
+      schemaVersion: 2,
+      fingerprintVersion: "memory-v2",
+      envelopeVersion: 1,
+      records: [],
+      candidates: [{ schemaVersion: 1, id: "candidate-expiring", version: 1, ownerPrincipalId: "local-builder-account", accountSide: "builder", scopeType: "project_private", scopeId: ownerProjectId, proposedSnapshot: snapshot, evidenceRefs: refs, producerRunId: "expiry-run-fixture", provider: "future-provider-fixture", model: "future-model-fixture", confidence: null, payloadHash: hash, status: "pending", createdAt, expiresAt: "2026-08-30T11:00:00.000Z", updatedAt: createdAt, acceptedMemoryId: null, decision: null, history: [{ id: "candidate-expiry-created", type: "created", actor: "system", at: createdAt, version: 1 }] }],
+      tombstones: [],
+      migrationReports: [],
+      updatedAt: createdAt,
+    }));
+  }, { ownerProjectId: projectId, snapshot: proposedSnapshot, refs: evidenceRefs, hash: payloadHash });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-memory-candidate-card")).toHaveCount(0);
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(0);
+  const expired = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(expired.envelopeVersion).toBe(2);
+  expect(expired.records).toEqual([]);
+  expect(expired.candidates).toEqual([expect.objectContaining({ id: "candidate-expiring", version: 2, status: "expired", decision: null, acceptedMemoryId: null, history: [expect.objectContaining({ type: "created", version: 1 }), expect.objectContaining({ type: "expired", actor: "system", version: 2 })] })]);
+
+  await openSavedProjectMemory(page);
+  const afterReload = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(afterReload.envelopeVersion).toBe(2);
+  expect(afterReload.candidates[0].history).toHaveLength(2);
+});
+
+test("a pending MemoryCandidate whose history crossed its expiry fails closed", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!projectId) throw new Error("Active project id is unavailable");
+  const proposedSnapshot = { title: "پیشنهاد زمانی ناسازگار", content: "این پیشنهاد نباید در حالت در انتظار قابل‌استفاده بماند.", kind: "یادداشت سازنده", memoryType: "note" };
+  const evidenceRefs: string[] = [];
+  const exactPayload = JSON.stringify(stableTestValue({ scopeType: "project_private", scopeId: projectId, proposedSnapshot, evidenceRefs }));
+  const payloadHash = `sha256-${createHash("sha256").update(exactPayload).digest("hex")}`;
+  const canonical = await page.evaluate(({ ownerProjectId, snapshot, refs, hash }) => {
+    const createdAt = "2099-01-01T00:00:00.000Z";
+    const expiresAt = "2099-02-01T00:00:00.000Z";
+    const updatedAt = "2099-02-02T00:00:00.000Z";
+    const raw = JSON.stringify({
+      schemaVersion: 2,
+      fingerprintVersion: "memory-v2",
+      envelopeVersion: 2,
+      records: [],
+      candidates: [{ schemaVersion: 1, id: "candidate-pending-past-expiry", version: 2, ownerPrincipalId: "local-builder-account", accountSide: "builder", scopeType: "project_private", scopeId: ownerProjectId, proposedSnapshot: snapshot, evidenceRefs: refs, producerRunId: "expiry-chronology-run", provider: "future-provider-fixture", model: "future-model-fixture", confidence: null, payloadHash: hash, status: "pending", createdAt, expiresAt, updatedAt, acceptedMemoryId: null, decision: null, history: [{ id: "candidate-pending-past-expiry-created", type: "created", actor: "system", at: createdAt, version: 1 }, { id: "candidate-pending-past-expiry-updated", type: "updated", actor: "system", at: updatedAt, version: 2 }] }],
+      tombstones: [],
+      migrationReports: [],
+      updatedAt,
+    });
+    window.localStorage.setItem("chida-prototype-memory-core:v2", raw);
+    return raw;
+  }, { ownerProjectId: projectId, snapshot: proposedSnapshot, refs: evidenceRefs, hash: payloadHash });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+  await expect(page.getByTestId("project-memory-candidate-card")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBe(canonical);
+});
+
+test("a malformed v2 Candidate decision fails closed without falling back to valid legacy bytes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  if (!projectId) throw new Error("Active project id is unavailable");
+  const proposedSnapshot = { title: "تصمیم خراب", content: "این payload نباید canonical شود.", kind: "یادداشت سازنده", memoryType: "note" };
+  const exactPayload = JSON.stringify(stableTestValue({ scopeType: "project_private", scopeId: projectId, proposedSnapshot, evidenceRefs: [] }));
+  const payloadHash = `sha256-${createHash("sha256").update(exactPayload).digest("hex")}`;
+  const seeded = await page.evaluate(({ ownerProjectId, snapshot, hash }) => {
+    const timestamp = "2026-08-30T12:00:00.000Z";
+    const canonical = JSON.stringify({ schemaVersion: 2, fingerprintVersion: "memory-v2", envelopeVersion: 1, records: [], candidates: [{ schemaVersion: 1, id: "candidate-malformed", version: 1, ownerPrincipalId: "local-builder-account", accountSide: "builder", scopeType: "project_private", scopeId: ownerProjectId, proposedSnapshot: snapshot, evidenceRefs: [], producerRunId: "malformed-run", provider: "future-provider", model: "future-model", confidence: null, payloadHash: hash, status: "pending", createdAt: timestamp, expiresAt: null, updatedAt: timestamp, acceptedMemoryId: null, decision: { action: "accepted" }, history: [{ id: "candidate-malformed-created", type: "created", actor: "system", at: timestamp, version: 1 }] }], tombstones: [], migrationReports: [], updatedAt: timestamp });
+    const legacy = JSON.stringify([{ id: "legacy-must-not-fallback", projectId: ownerProjectId, title: "legacy معتبر اما پایین‌دست", content: "وجود v2 خراب نباید این رکورد را زنده کند.", kind: "یادداشت سازنده", source: "ثبت مستقیم شما", visibility: "خصوصی پروژه", useInContext: true, status: "ثبت محلی", version: 1, createdAt: timestamp, updatedAt: timestamp }]);
+    window.localStorage.setItem("chida-prototype-memory-core:v2", canonical);
+    window.localStorage.setItem("chida-prototype-project-memories:v1", legacy);
+    return { canonical, legacy };
+  }, { ownerProjectId: projectId, snapshot: proposedSnapshot, hash: payloadHash });
+
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBe(seeded.canonical);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBe(seeded.legacy);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v1:hard-delete-intent:v1"))).toBeNull();
 });
 
 test("project memory stays inside its owning project", async ({ page }) => {
@@ -2021,6 +3256,8 @@ test("project memory stays inside its owning project", async ({ page }) => {
   await page.getByTestId("project-memory-title").fill("تصمیم پروژهٔ اول");
   await page.getByTestId("project-memory-content").fill("این مورد فقط به پروژهٔ اول تعلق دارد.");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card")).toContainText("تصمیم پروژهٔ اول");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).not.toBeNull();
 
   await page.evaluate(() => {
     const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
@@ -2038,8 +3275,8 @@ test("project memory stays inside its owning project", async ({ page }) => {
   await expect(page.getByTestId("project-memory-empty")).toBeVisible();
   await expect(page.getByText("تصمیم پروژهٔ اول")).toHaveCount(0);
 
-  const storedMemories = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-memories:v1") ?? "[]"));
-  expect(storedMemories).toEqual([expect.objectContaining({ projectId: firstProjectId, title: "تصمیم پروژهٔ اول" })]);
+  const storedMemories = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(storedMemories.records).toEqual([expect.objectContaining({ projectId: firstProjectId, title: "تصمیم پروژهٔ اول" })]);
 });
 
 test("project memory reports storage failure instead of showing false success", async ({ page }) => {
@@ -2050,11 +3287,11 @@ test("project memory reports storage failure instead of showing false success", 
   await page.getByTestId("project-memory-add").click();
   await page.getByTestId("project-memory-title").fill("یادداشت ذخیره‌نشده");
   await page.getByTestId("project-memory-content").fill("این متن نباید فقط در state موفق دیده شود.");
-  const storageBefore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"));
+  const storageBefore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"));
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (key === "chida-prototype-project-memories:v1") throw new DOMException("Quota exceeded", "QuotaExceededError");
+      if (key === "chida-prototype-memory-core:v2") throw new DOMException("Quota exceeded", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
   });
@@ -2063,10 +3300,10 @@ test("project memory reports storage failure instead of showing false success", 
   await expect(page.getByTestId("project-memory-editor-sheet")).toBeVisible();
   await expect(page.getByTestId("project-memory-storage-error")).toContainText("ذخیره نشد");
   await expect(page.getByTestId("project-memory-card")).toHaveCount(0);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBe(storageBefore);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBe(storageBefore);
 });
 
-test("project memory parser drops malformed and duplicate records", async ({ page }) => {
+test("memory migration quarantines malformed and duplicate records without silent drop", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
@@ -2097,11 +3334,29 @@ test("project memory parser drops malformed and duplicate records", async ({ pag
     ]));
   }, { ownerProjectId: projectId, storedAt: timestamp });
 
+  const legacyBytes = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"));
   await openSavedProjectMemory(page);
-  await expect(page.getByTestId("project-memory-card")).toHaveCount(1);
+  await expect(page.getByTestId("project-memory-read-error")).toContainText("حذف نشده");
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(0);
+  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBe(legacyBytes);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBeNull();
+  expect(JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2:migration-journal:v1")) ?? "null")).toMatchObject({ schemaVersion: 1, reports: [expect.objectContaining({ status: "blocked" })] });
+
+  await page.evaluate(() => {
+    const legacy = JSON.parse(window.localStorage.getItem("chida-prototype-project-memories:v1") ?? "[]");
+    window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([legacy[0]]));
+  });
+  await openSavedProjectMemory(page);
+  await expect(page.getByTestId("project-memory-read-error")).toHaveCount(0);
   await expect(page.getByTestId("project-memory-card")).toContainText("رکورد معتبر");
-  await expect(page.getByText("شناسهٔ تکراری")).toHaveCount(0);
-  await expect(page.getByText("برداشت چیدا")).toHaveCount(0);
+  const recoveredMigration = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
+  expect(recoveredMigration.records).toEqual([expect.objectContaining({ id: "memory-valid" })]);
+  expect(recoveredMigration.migrationReports).toEqual([
+    expect.objectContaining({ status: "blocked", migratedCount: 0 }),
+    expect.objectContaining({ status: "migrated", migratedCount: 1, quarantined: [] }),
+  ]);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2:migration-journal:v1"))).toBeNull();
 });
 
 test("project memory closes its keyboard cleanly and contains an eighty-character title", async ({ page }) => {
@@ -2136,20 +3391,20 @@ test("project memory keeps persisted state when edit toggle or delete storage fa
   await page.getByTestId("project-memory-title").fill("حافظهٔ پایدار");
   await page.getByTestId("project-memory-content").fill("نسخهٔ ذخیره‌شده نباید با شکست مرورگر تغییر کند.");
   await page.getByTestId("project-memory-save").click();
-  const persistedMemory = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"));
+  const persistedMemory = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"));
 
   await page.getByTestId("project-memory-card").click();
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (key === "chida-prototype-project-memories:v1") throw new DOMException("Quota exceeded", "QuotaExceededError");
+      if (key === "chida-prototype-memory-core:v2") throw new DOMException("Quota exceeded", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
   });
   await page.getByTestId("project-memory-use-toggle").click();
   await expect(page.getByTestId("project-memory-storage-error")).toContainText("ذخیره نشد");
   await expect(page.getByTestId("project-memory-use-toggle")).toContainText("روشن");
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBe(persistedMemory);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBe(persistedMemory);
 
   await openSavedProjectMemory(page);
   await page.getByTestId("project-memory-card").click();
@@ -2158,22 +3413,22 @@ test("project memory keeps persisted state when edit toggle or delete storage fa
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (key === "chida-prototype-project-memories:v1") throw new DOMException("Quota exceeded", "QuotaExceededError");
+      if (key === "chida-prototype-memory-core:v2") throw new DOMException("Quota exceeded", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
   });
   await page.getByTestId("project-memory-save").click();
   await expect(page.getByTestId("project-memory-editor-sheet")).toBeVisible();
   await expect(page.getByTestId("project-memory-storage-error")).toContainText("ذخیره نشد");
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBe(persistedMemory);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBe(persistedMemory);
 
   await openSavedProjectMemory(page);
   await page.getByTestId("project-memory-card").click();
   await page.evaluate(() => {
-    const nativeRemoveItem = Storage.prototype.removeItem;
-    Storage.prototype.removeItem = function removeItem(key: string) {
-      if (key === "chida-prototype-project-memories:v1") throw new DOMException("Storage unavailable", "InvalidStateError");
-      return nativeRemoveItem.call(this, key);
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (key === "chida-prototype-memory-core:v2") throw new DOMException("Storage unavailable", "InvalidStateError");
+      return nativeSetItem.call(this, key, value);
     };
   });
   await page.getByTestId("project-memory-delete").click();
@@ -2181,7 +3436,7 @@ test("project memory keeps persisted state when edit toggle or delete storage fa
   await expect(page.getByTestId("project-memory-detail-sheet")).toBeVisible();
   await expect(page.getByTestId("project-memory-storage-error")).toContainText("ذخیره نشد");
   await expect(page.getByTestId("project-memory-delete-confirmation")).toBeVisible();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-memories:v1"))).toBe(persistedMemory);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBe(persistedMemory);
 });
 
 test("builder searches only local project memory and file metadata without technical card clutter", async ({ page }) => {

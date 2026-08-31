@@ -49,7 +49,7 @@ import {
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   BottomSheet,
   Carousel,
@@ -106,22 +106,210 @@ type PendingProjectFile = Pick<ProjectFileRecord, "displayName" | "originalName"
   blob: File | null;
   previewUrl: string | null;
 };
-type ProjectMemoryKind = "یادداشت سازنده" | "واقعیت تأییدشده توسط سازنده";
-type ProjectMemoryRecord = {
-  id: string;
-  projectId: string;
+type ProjectMemoryKind = "ترجیح" | "واقعیت تأییدشده توسط سازنده" | "محدودیت" | "یادداشت سازنده" | "مرجع";
+type ProjectMemoryType = "preference" | "fact" | "constraint" | "note" | "reference";
+type ProjectMemoryScopeType = "account_private" | "project_private";
+type ProjectMemoryStatus = "current" | "superseded" | "disputed" | "disabled";
+type ProjectMemoryVisibility = "visible" | "hidden";
+type ProjectMemoryEventType = "created" | "updated" | "controls-updated" | "metadata-migrated" | "source-migrated" | "schema-migrated" | "disabled" | "enabled" | "disputed" | "conflicts-resolved" | "superseding" | "superseded" | "rolled-back";
+type ProjectMemoryRevisionSnapshot = {
   title: string;
   content: string;
   kind: ProjectMemoryKind;
-  source: "ثبت مستقیم شما";
-  visibility: "خصوصی پروژه";
-  useInContext: boolean;
-  status: "ثبت محلی";
-  version: 1;
+  memoryType: ProjectMemoryType;
+  visibility: ProjectMemoryVisibility;
+  manualSearchability: boolean;
+  automaticRetrievalEligibility: boolean;
+  modelEligibility: boolean;
+  shareability: boolean;
+  useInContextPreference: boolean;
+};
+type ProjectMemoryRevision = {
+  id: string;
+  version: number;
+  createdAt: string;
+  snapshot: ProjectMemoryRevisionSnapshot;
+  fingerprint: string;
+};
+type ProjectMemoryHistoryEvent = {
+  id: string;
+  type: ProjectMemoryEventType;
+  actor: "شما" | "سیستم مهاجرت";
+  at: string;
+  version: number;
+  rollbackFromVersion: number | null;
+  lineage: {
+    supersedesId: string | null;
+    supersededById: string | null;
+    conflictIds: string[];
+  };
+};
+type ProjectMemoryRecord = ProjectMemoryRevisionSnapshot & {
+  schemaVersion: 1;
+  id: string;
+  ownerPrincipalType: "account";
+  ownerPrincipalId: "local-builder-account";
+  accountSide: "builder";
+  scopeType: ProjectMemoryScopeType;
+  scopeId: string;
+  projectId: string | null;
+  custodianService: "Memory Service";
+  sourceRefs: string[];
+  provenanceClass: "direct_user" | "owner_confirmed";
+  sourceLabel: "ثبت مستقیم شما" | "تأیید پیشنهاد توسط شما";
+  status: ProjectMemoryStatus;
+  sensitivity: "private";
+  supersedesId: string | null;
+  supersededById: string | null;
+  conflictIds: string[];
+  currentRevisionId: string;
+  version: number;
+  createdBy: "شما";
+  updatedBy: "شما";
   createdAt: string;
   updatedAt: string;
+  history: ProjectMemoryHistoryEvent[];
+  revisions: ProjectMemoryRevision[];
 };
-type ProjectMemoryDraft = Pick<ProjectMemoryRecord, "title" | "content" | "kind">;
+type ProjectMemoryCandidateHistoryEvent = {
+  id: string;
+  type: "created" | "updated" | "accepted" | "rejected" | "expired";
+  actor: "system" | "شما";
+  at: string;
+  version: number;
+};
+type ProjectMemoryCandidateDecision = {
+  action: "accepted" | "rejected";
+  actor: "شما";
+  at: string;
+  candidateId: string;
+  candidateVersion: number;
+  payloadHash: string;
+  exactPayload: string;
+  scopeType: ProjectMemoryScopeType;
+  scopeId: string;
+  idempotencyKey: string;
+};
+type ProjectMemoryCandidate = {
+  schemaVersion: 1;
+  id: string;
+  version: number;
+  ownerPrincipalId: "local-builder-account";
+  accountSide: "builder";
+  scopeType: ProjectMemoryScopeType;
+  scopeId: string;
+  proposedSnapshot: Pick<ProjectMemoryRevisionSnapshot, "title" | "content" | "kind" | "memoryType">;
+  evidenceRefs: string[];
+  producerRunId: string;
+  provider: string;
+  model: string;
+  confidence: number | null;
+  payloadHash: string;
+  status: "pending" | "accepted" | "rejected" | "expired";
+  createdAt: string;
+  expiresAt: string | null;
+  updatedAt: string;
+  acceptedMemoryId: string | null;
+  decision: ProjectMemoryCandidateDecision | null;
+  history: ProjectMemoryCandidateHistoryEvent[];
+};
+type ProjectMemoryTombstone = {
+  id: string;
+  ownerPrincipalId: "local-builder-account";
+  scopeType: ProjectMemoryScopeType;
+  scopeId: string;
+  lastVersion: number;
+  deletedAt: string;
+  deletedBy: "شما";
+  reasonClass: "user_requested";
+  priorContentHash: string;
+  retentionClass: "local-metadata-only";
+  lineageHistory: ProjectMemoryHistoryEvent[] | null;
+  lineageHistoryHash: string | null;
+};
+type ProjectMemoryMigrationQuarantine = { legacyIndex: number | null; reason: string; rawHash: string };
+type ProjectMemoryMigrationReport = {
+  id: string;
+  sourceKey: "chida-prototype-project-memories:v1" | "chida-prototype-memory-core:v1";
+  sourceGeneration: "legacy-array-v1" | "memory-core-v1-snapshot" | "memory-core-v1-lineage" | "memory-core-v1-full" | "memory-core-v1-unclassified";
+  sourceHash: string;
+  status: "migrated" | "blocked";
+  migratedCount: number;
+  quarantined: ProjectMemoryMigrationQuarantine[];
+  createdAt: string;
+};
+type ProjectMemoryEnvelope = {
+  schemaVersion: 2;
+  fingerprintVersion: "memory-v2";
+  envelopeVersion: number;
+  records: ProjectMemoryRecord[];
+  candidates: ProjectMemoryCandidate[];
+  tombstones: ProjectMemoryTombstone[];
+  migrationReports: ProjectMemoryMigrationReport[];
+  updatedAt: string | null;
+};
+type ProjectMemoryPriorEnvelope = Omit<ProjectMemoryEnvelope, "schemaVersion" | "fingerprintVersion"> & { schemaVersion: 1 };
+type ProjectMemoryLegacyGeneration = ProjectMemoryMigrationReport["sourceGeneration"];
+type ProjectMemoryPriorGeneration = Exclude<ProjectMemoryLegacyGeneration, "legacy-array-v1" | "memory-core-v1-unclassified">;
+type ProjectMemoryMigrationJournal = {
+  schemaVersion: 1;
+  reports: ProjectMemoryMigrationReport[];
+  updatedAt: string;
+};
+type ProjectMemoryCutoverPendingMarker = {
+  schemaVersion: 2;
+  operation: "memory-core-v2-cutover";
+  state: "cutover-pending";
+  sourceBinding: "live-source" | "canonical-report";
+  sourceKey: typeof priorProjectMemoriesStorageKey | typeof legacyProjectMemoriesStorageKey | null;
+  sourceGeneration: ProjectMemoryPriorGeneration | "legacy-array-v1" | null;
+  sourceHashAtCutover: string | null;
+  migrationSourceHash: string | null;
+  cutoverAt: string;
+  markerHash: string;
+};
+type ProjectMemoryCutoverCommittedMarker = {
+  schemaVersion: 2;
+  operation: "memory-core-v2-cutover";
+  state: "cutover-committed";
+  fingerprintVersion: "memory-v2";
+  sourceBinding: "live-source" | "canonical-report";
+  sourceKey: typeof priorProjectMemoriesStorageKey | typeof legacyProjectMemoriesStorageKey | null;
+  sourceGeneration: ProjectMemoryPriorGeneration | "legacy-array-v1" | null;
+  sourceHashAtCutover: string | null;
+  migrationSourceHash: string | null;
+  initialTargetHash: string;
+  initialEnvelopeVersion: number;
+  initialMigrationReportsCount: number;
+  initialMigrationReportsHash: string;
+  cutoverAt: string;
+  markerHash: string;
+};
+type ProjectMemoryCutoverMarker = ProjectMemoryCutoverPendingMarker | ProjectMemoryCutoverCommittedMarker;
+type ProjectMemoryCutoverSourceMetadata = Pick<ProjectMemoryCutoverPendingMarker, "sourceBinding" | "sourceKey" | "sourceGeneration" | "sourceHashAtCutover" | "migrationSourceHash">;
+type ProjectMemoryPriorIntentBridge = {
+  schemaVersion: 1;
+  operation: "resume-prior-memory-intent";
+  intentKind: "memory-core-v1-delete" | "memory-core-v2-delete";
+  rawIntent: string;
+  createdAt: string;
+  bridgeHash: string;
+};
+type ProjectMemoryHardDeleteIntent = {
+  schemaVersion: 2;
+  memoryId: string;
+  previousCanonicalRaw: string;
+  previousPriorCanonicalRaw: string | null;
+  previousLegacyRaw: string | null;
+  nextCanonicalRaw: string;
+  nextPriorCanonicalRaw: string | null;
+  nextLegacyRaw: string | null;
+  createdAt: string;
+  intentHash: string;
+};
+type ProjectMemoryReadResult = { envelope: ProjectMemoryEnvelope; readError: boolean; migrationBlocked: boolean };
+type ProjectMemoryMutationResult = "created" | "updated" | "unchanged" | "deleted" | "version-conflict" | "read-failure" | "write-failure" | "lock-unavailable" | "invalid";
+type ProjectMemoryDraft = Pick<ProjectMemoryRevisionSnapshot, "title" | "content" | "kind"> & { scopeType: ProjectMemoryScopeType };
 type ProjectTaskStatus = "in-progress" | "completed";
 type ProjectTaskEventType = "created" | "updated" | "completed" | "reopened";
 type ProjectTaskEvent = {
@@ -1277,7 +1465,15 @@ const legacyProjectsStorageKey = "chida-prototype-builder-projects";
 const projectsStorageKey = "chida-prototype-builder-projects:v2";
 const activeProjectStorageKey = "chida-prototype-active-project";
 const projectFilesStorageKey = "chida-prototype-project-files:v1";
-const projectMemoriesStorageKey = "chida-prototype-project-memories:v1";
+const legacyProjectMemoriesStorageKey = "chida-prototype-project-memories:v1";
+const priorProjectMemoriesStorageKey = "chida-prototype-memory-core:v1";
+const projectMemoriesStorageKey = "chida-prototype-memory-core:v2";
+const priorProjectMemoryHardDeleteIntentKey = `${priorProjectMemoriesStorageKey}:hard-delete-intent:v1`;
+const projectMemoryHardDeleteIntentKey = `${projectMemoriesStorageKey}:hard-delete-intent:v2`;
+const projectMemoryPriorIntentBridgeKey = `${projectMemoriesStorageKey}:prior-intent-bridge:v1`;
+const projectMemoryMigrationJournalKey = `${projectMemoriesStorageKey}:migration-journal:v1`;
+const projectMemoriesWriteLockName = `${priorProjectMemoriesStorageKey}:write`;
+const localBuilderAccountId = "local-builder-account" as const;
 const projectTasksStorageKey = "chida-prototype-project-tasks:v1";
 const projectBackboneStorageKey = "chida-prototype-project-backbone:v1";
 const projectBackboneWriteLockName = `${projectBackboneStorageKey}:write`;
@@ -1327,7 +1523,14 @@ const legacyProjectStageAliases: Readonly<Record<string, ProjectStage>> = {
 const projectUsages = ["مسکونی", "تجاری", "اداری", "مختلط", "سایر"] as const;
 const projectFileCategories: readonly ProjectFileCategory[] = ["نقشه", "پیش‌فاکتور", "فاکتور", "قرارداد", "صورت‌جلسه", "صفحه‌گسترده", "عکس", "سایر"];
 const projectDocumentCategories: readonly ProjectFileCategory[] = projectFileCategories.filter((category) => category !== "عکس");
-const projectMemoryKinds: readonly ProjectMemoryKind[] = ["یادداشت سازنده", "واقعیت تأییدشده توسط سازنده"];
+const projectMemoryKinds: readonly ProjectMemoryKind[] = ["ترجیح", "واقعیت تأییدشده توسط سازنده", "محدودیت", "یادداشت سازنده", "مرجع"];
+const projectMemoryTypesByKind: Readonly<Record<ProjectMemoryKind, ProjectMemoryType>> = {
+  "ترجیح": "preference",
+  "واقعیت تأییدشده توسط سازنده": "fact",
+  "محدودیت": "constraint",
+  "یادداشت سازنده": "note",
+  "مرجع": "reference",
+};
 const purchaseRequestUnits: readonly PurchaseRequestUnit[] = ["عدد", "کیلوگرم", "تن", "متر", "مترمربع", "مترمکعب", "بسته", "دستگاه"];
 const purchaseRequestAlternativeLabels = ["نامشخص", "مجاز", "غیرمجاز", "فقط با تأیید من"] as const;
 const supplierContactResponseCapabilities: readonly { id: SupplierContactResponseCapability; label: string }[] = [
@@ -1683,6 +1886,66 @@ function purchaseRequestStableHash(serialized: string) {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+const memoryCoreSha256Constants = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+] as const;
+
+function memoryCoreSha256(serialized: string) {
+  const bytes = new TextEncoder().encode(serialized);
+  const totalLength = Math.ceil((bytes.length + 9) / 64) * 64;
+  const padded = new Uint8Array(totalLength);
+  padded.set(bytes);
+  padded[bytes.length] = 0x80;
+  const bitLength = bytes.length * 8;
+  const paddedView = new DataView(padded.buffer);
+  paddedView.setUint32(totalLength - 8, Math.floor(bitLength / 0x100000000), false);
+  paddedView.setUint32(totalLength - 4, bitLength >>> 0, false);
+  const hash = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const words = new Uint32Array(64);
+  const rotateRight = (value: number, count: number) => value >>> count | value << 32 - count;
+  for (let offset = 0; offset < totalLength; offset += 64) {
+    for (let index = 0; index < 16; index += 1) words[index] = paddedView.getUint32(offset + index * 4, false);
+    for (let index = 16; index < 64; index += 1) {
+      const first = rotateRight(words[index - 15], 7) ^ rotateRight(words[index - 15], 18) ^ words[index - 15] >>> 3;
+      const second = rotateRight(words[index - 2], 17) ^ rotateRight(words[index - 2], 19) ^ words[index - 2] >>> 10;
+      words[index] = (words[index - 16] + first + words[index - 7] + second) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, h] = hash;
+    for (let index = 0; index < 64; index += 1) {
+      const sigmaOne = rotateRight(e, 6) ^ rotateRight(e, 11) ^ rotateRight(e, 25);
+      const choice = e & f ^ ~e & g;
+      const temporaryOne = (h + sigmaOne + choice + memoryCoreSha256Constants[index] + words[index]) >>> 0;
+      const sigmaZero = rotateRight(a, 2) ^ rotateRight(a, 13) ^ rotateRight(a, 22);
+      const majority = a & b ^ a & c ^ b & c;
+      const temporaryTwo = (sigmaZero + majority) >>> 0;
+      h = g;
+      g = f;
+      f = e;
+      e = (d + temporaryOne) >>> 0;
+      d = c;
+      c = b;
+      b = a;
+      a = (temporaryOne + temporaryTwo) >>> 0;
+    }
+    hash[0] = (hash[0] + a) >>> 0;
+    hash[1] = (hash[1] + b) >>> 0;
+    hash[2] = (hash[2] + c) >>> 0;
+    hash[3] = (hash[3] + d) >>> 0;
+    hash[4] = (hash[4] + e) >>> 0;
+    hash[5] = (hash[5] + f) >>> 0;
+    hash[6] = (hash[6] + g) >>> 0;
+    hash[7] = (hash[7] + h) >>> 0;
+  }
+  return hash.map((word) => word.toString(16).padStart(8, "0")).join("");
 }
 
 function purchaseRequestRevisionFingerprint(snapshot: PurchaseRequestSnapshot, shareableFields: PurchaseRequestApprovalShareableField[]) {
@@ -3380,57 +3643,2062 @@ function readStoredProjectFiles(): LocalRecordsReadResult<ProjectFileRecord> {
   }
 }
 
-function readStoredProjectMemories(): LocalRecordsReadResult<ProjectMemoryRecord> {
-  try {
-    const rawMemories = window.localStorage.getItem(projectMemoriesStorageKey);
-    if (!rawMemories) return { records: [], readError: false };
-    const parsed = JSON.parse(rawMemories);
-    if (!Array.isArray(parsed)) return { records: [], readError: true };
-    const seenIds = new Set<string>();
-    const records = parsed.flatMap((memory): ProjectMemoryRecord[] => {
-      const id = typeof memory?.id === "string" ? memory.id.trim() : "";
-      const projectId = typeof memory?.projectId === "string" ? memory.projectId.trim() : "";
-      const title = typeof memory?.title === "string" ? memory.title.trim() : "";
-      const content = typeof memory?.content === "string" ? memory.content.trim() : "";
-      const createdAt = typeof memory?.createdAt === "string" ? memory.createdAt.trim() : "";
-      const updatedAt = typeof memory?.updatedAt === "string" ? memory.updatedAt.trim() : "";
-      if (
-        !id
-        || seenIds.has(id)
-        || !projectId
-        || !title
-        || title.length > 80
-        || !content
-        || content.length > 800
-        || !projectMemoryKinds.includes(memory?.kind as ProjectMemoryKind)
-        || memory?.source !== "ثبت مستقیم شما"
-        || memory?.visibility !== "خصوصی پروژه"
-        || typeof memory?.useInContext !== "boolean"
-        || memory?.status !== "ثبت محلی"
-        || memory?.version !== 1
-        || !isValidProjectFileDate(createdAt)
-        || !isValidProjectFileDate(updatedAt)
-        || new Date(updatedAt).getTime() < new Date(createdAt).getTime()
-      ) return [];
-      seenIds.add(id);
-      return [{
-        id,
-        projectId,
-        title,
-        content,
-        kind: memory.kind as ProjectMemoryKind,
-        source: "ثبت مستقیم شما",
-        visibility: "خصوصی پروژه",
-        useInContext: memory.useInContext,
-        status: "ثبت محلی",
-        version: 1,
-        createdAt,
-        updatedAt,
-      }];
+const projectMemorySnapshotKeys = [
+  "title", "content", "kind", "memoryType", "visibility", "manualSearchability", "automaticRetrievalEligibility", "modelEligibility", "shareability", "useInContextPreference",
+] as const;
+const projectMemoryRecordKeys = [
+  "schemaVersion", "id", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "projectId", "custodianService", "sourceRefs", "provenanceClass", "sourceLabel", "status", "sensitivity", "title", "content", "kind", "memoryType", "visibility", "manualSearchability", "automaticRetrievalEligibility", "modelEligibility", "shareability", "useInContextPreference", "supersedesId", "supersededById", "conflictIds", "currentRevisionId", "version", "createdBy", "updatedBy", "createdAt", "updatedAt", "history", "revisions",
+] as const;
+
+function emptyProjectMemoryEnvelope(): ProjectMemoryEnvelope {
+  return { schemaVersion: 2, fingerprintVersion: "memory-v2", envelopeVersion: 0, records: [], candidates: [], tombstones: [], migrationReports: [], updatedAt: null };
+}
+
+function projectMemoryLegacyFingerprint(scopeType: ProjectMemoryScopeType, scopeId: string, snapshot: ProjectMemoryRevisionSnapshot) {
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ scopeType, scopeId, snapshot })))}`;
+}
+
+function projectMemoryLineageFingerprint(scopeType: ProjectMemoryScopeType, scopeId: string, snapshot: ProjectMemoryRevisionSnapshot, event: Pick<ProjectMemoryHistoryEvent, "type" | "lineage">) {
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ scopeType, scopeId, snapshot, event: { type: event.type, lineage: event.lineage } })))}`;
+}
+
+function projectMemoryFingerprint(
+  record: Pick<ProjectMemoryRecord, "id" | "ownerPrincipalId" | "accountSide" | "scopeType" | "scopeId" | "projectId" | "provenanceClass" | "sourceLabel" | "sourceRefs" | "createdAt">,
+  snapshot: ProjectMemoryRevisionSnapshot,
+  event: ProjectMemoryHistoryEvent,
+  revision: Pick<ProjectMemoryRevision, "id" | "version" | "createdAt">,
+) {
+  const recordIdentity = {
+    id: record.id,
+    ownerPrincipalId: record.ownerPrincipalId,
+    accountSide: record.accountSide,
+    scopeType: record.scopeType,
+    scopeId: record.scopeId,
+    projectId: record.projectId,
+    provenanceClass: record.provenanceClass,
+    sourceLabel: record.sourceLabel,
+    sourceRefs: record.sourceRefs,
+    createdAt: record.createdAt,
+  };
+  const eventIntegrity = { id: event.id, type: event.type, actor: event.actor, at: event.at, version: event.version, rollbackFromVersion: event.rollbackFromVersion, lineage: event.lineage };
+  const revisionIntegrity = { id: revision.id, version: revision.version, createdAt: revision.createdAt };
+  return `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue({ recordIdentity, snapshot, event: eventIntegrity, revision: revisionIntegrity })))}`;
+}
+
+function projectMemoryV1FullFingerprint(
+  record: Pick<ProjectMemoryRecord, "id" | "ownerPrincipalId" | "accountSide" | "scopeType" | "scopeId" | "projectId" | "provenanceClass" | "sourceLabel" | "sourceRefs" | "createdAt">,
+  snapshot: ProjectMemoryRevisionSnapshot,
+  event: ProjectMemoryHistoryEvent,
+  revision: Pick<ProjectMemoryRevision, "id" | "version" | "createdAt">,
+) {
+  const recordIdentity = { id: record.id, ownerPrincipalId: record.ownerPrincipalId, accountSide: record.accountSide, scopeType: record.scopeType, scopeId: record.scopeId, projectId: record.projectId, provenanceClass: record.provenanceClass, sourceLabel: record.sourceLabel, sourceRefs: record.sourceRefs, createdAt: record.createdAt };
+  const eventIntegrity = { id: event.id, type: event.type, actor: event.actor, at: event.at, version: event.version, rollbackFromVersion: event.rollbackFromVersion, lineage: event.lineage };
+  const revisionIntegrity = { id: revision.id, version: revision.version, createdAt: revision.createdAt };
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ recordIdentity, snapshot, event: eventIntegrity, revision: revisionIntegrity })))}`;
+}
+
+function projectMemoryCandidateExactPayload(candidate: Pick<ProjectMemoryCandidate, "scopeType" | "scopeId" | "proposedSnapshot" | "evidenceRefs">) {
+  return JSON.stringify(stablePurchaseRequestValue({ scopeType: candidate.scopeType, scopeId: candidate.scopeId, proposedSnapshot: candidate.proposedSnapshot, evidenceRefs: candidate.evidenceRefs }));
+}
+
+function projectMemoryCandidatePayloadHash(candidate: Pick<ProjectMemoryCandidate, "scopeType" | "scopeId" | "proposedSnapshot" | "evidenceRefs">) {
+  return `sha256-${memoryCoreSha256(projectMemoryCandidateExactPayload(candidate))}`;
+}
+
+function projectMemoryContentHash(record: ProjectMemoryRecord) {
+  return `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue({ scopeType: record.scopeType, scopeId: record.scopeId, title: record.title, content: record.content, memoryType: record.memoryType })))}`;
+}
+
+function projectMemoryV1ContentHash(record: ProjectMemoryRecord) {
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ scopeType: record.scopeType, scopeId: record.scopeId, title: record.title, content: record.content, memoryType: record.memoryType })))}`;
+}
+
+function projectMemoryTombstoneLineageHash(history: ProjectMemoryHistoryEvent[]) {
+  return `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue(history)))}`;
+}
+
+function createProjectMemoryTombstone(record: ProjectMemoryRecord, deletedAt: string, priorContentHash = projectMemoryContentHash(record), proofHistory: ProjectMemoryHistoryEvent[] = record.history): ProjectMemoryTombstone {
+  const lineageHistory = proofHistory.slice(0, record.version).map((event) => ({ ...event, lineage: { ...event.lineage, conflictIds: [...event.lineage.conflictIds] } }));
+  return {
+    id: record.id,
+    ownerPrincipalId: localBuilderAccountId,
+    scopeType: record.scopeType,
+    scopeId: record.scopeId,
+    lastVersion: record.version,
+    deletedAt,
+    deletedBy: "شما",
+    reasonClass: "user_requested",
+    priorContentHash,
+    retentionClass: "local-metadata-only",
+    lineageHistory,
+    lineageHistoryHash: projectMemoryTombstoneLineageHash(lineageHistory),
+  };
+}
+
+function parseProjectMemorySnapshot(value: any): ProjectMemoryRevisionSnapshot | null {
+  if (!hasExactObjectKeys(value, projectMemorySnapshotKeys)) return null;
+  const title = typeof value?.title === "string" ? value.title.trim() : "";
+  const content = typeof value?.content === "string" ? value.content.trim() : "";
+  const kind = value?.kind as ProjectMemoryKind;
+  const memoryType = value?.memoryType as ProjectMemoryType;
+  if (
+    !hasVisibleProjectBackboneText(title) || title !== value?.title || title.length > 80
+    || !hasVisibleProjectBackboneText(content) || content !== value?.content || content.length > 800
+    || !projectMemoryKinds.includes(kind) || projectMemoryTypesByKind[kind] !== memoryType
+    || !["visible", "hidden"].includes(value?.visibility)
+    || typeof value?.manualSearchability !== "boolean"
+    || value?.automaticRetrievalEligibility !== false
+    || value?.modelEligibility !== false
+    || value?.shareability !== false
+    || typeof value?.useInContextPreference !== "boolean"
+  ) return null;
+  return {
+    title,
+    content,
+    kind,
+    memoryType,
+    visibility: value.visibility as ProjectMemoryVisibility,
+    manualSearchability: value.manualSearchability,
+    automaticRetrievalEligibility: value.automaticRetrievalEligibility,
+    modelEligibility: value.modelEligibility,
+    shareability: value.shareability,
+    useInContextPreference: value.useInContextPreference,
+  };
+}
+
+function parseProjectMemoryLineage(value: any, recordId: string): ProjectMemoryHistoryEvent["lineage"] | null {
+  if (!hasExactObjectKeys(value, ["supersedesId", "supersededById", "conflictIds"]) || !Array.isArray(value?.conflictIds)) return null;
+  const supersedesId = value?.supersedesId === null ? null : typeof value?.supersedesId === "string" ? value.supersedesId.trim() : "";
+  const supersededById = value?.supersededById === null ? null : typeof value?.supersededById === "string" ? value.supersededById.trim() : "";
+  const conflictIds = value.conflictIds.map((conflictId: unknown) => typeof conflictId === "string" ? conflictId.trim() : "");
+  if (
+    supersedesId !== null && (!supersedesId || supersedesId !== value.supersedesId || supersedesId === recordId)
+    || supersededById !== null && (!supersededById || supersededById !== value.supersededById || supersededById === recordId)
+    || conflictIds.some((conflictId: string, index: number) => !conflictId || conflictId !== value.conflictIds[index] || conflictId === recordId)
+    || new Set(conflictIds).size !== conflictIds.length
+  ) return null;
+  return { supersedesId, supersededById, conflictIds };
+}
+
+function parseProjectMemoryRecord(value: any, legacyGeneration: ProjectMemoryPriorGeneration | null = null): ProjectMemoryRecord | null {
+  const isPriorGeneration = legacyGeneration !== null;
+  const priorAllowsEmptyDirectSourceRef = legacyGeneration === "memory-core-v1-snapshot" || legacyGeneration === "memory-core-v1-lineage";
+  if (!hasExactObjectKeys(value, projectMemoryRecordKeys) || value?.schemaVersion !== 1) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const scopeType = value?.scopeType as ProjectMemoryScopeType;
+  const scopeId = typeof value?.scopeId === "string" ? value.scopeId.trim() : "";
+  const projectId = value?.projectId === null ? null : typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const currentSnapshot = parseProjectMemorySnapshot(Object.fromEntries(projectMemorySnapshotKeys.map((key) => [key, value?.[key]])));
+  if (
+    !id || id !== value?.id
+    || value?.ownerPrincipalType !== "account" || value?.ownerPrincipalId !== localBuilderAccountId || value?.accountSide !== "builder"
+    || !["account_private", "project_private"].includes(scopeType) || !scopeId || scopeId !== value?.scopeId
+    || projectId !== value?.projectId || (scopeType === "account_private" ? scopeId !== localBuilderAccountId || projectId !== null : !projectId || projectId !== scopeId)
+    || value?.custodianService !== "Memory Service" || !Array.isArray(value?.sourceRefs)
+    || value.sourceRefs.some((sourceRef: unknown) => typeof sourceRef !== "string" || !sourceRef.trim()) || new Set(value.sourceRefs).size !== value.sourceRefs.length
+    || !["direct_user", "owner_confirmed"].includes(value?.provenanceClass)
+    || value?.provenanceClass === "direct_user" && value?.sourceLabel !== "ثبت مستقیم شما"
+    || value?.provenanceClass === "direct_user" && (value.sourceRefs.length !== 1 || value.sourceRefs[0] !== `direct-remember:${id}:v1`) && !(priorAllowsEmptyDirectSourceRef && value.sourceRefs.length === 0)
+    || value?.provenanceClass === "owner_confirmed" && value?.sourceLabel !== "تأیید پیشنهاد توسط شما"
+    || value?.provenanceClass === "owner_confirmed" && (value.sourceRefs.length !== 1 || !/^memory-candidate:[^:]+:v\d+:(?:fnv1a-[0-9a-f]{8}|sha256-[0-9a-f]{64})$/.test(value.sourceRefs[0]))
+    || !["current", "superseded", "disputed", "disabled"].includes(value?.status) || value?.sensitivity !== "private"
+    || !currentSnapshot
+    || value?.supersedesId !== null && (typeof value?.supersedesId !== "string" || !value.supersedesId.trim() || value.supersedesId === id)
+    || value?.supersededById !== null && (typeof value?.supersededById !== "string" || !value.supersededById.trim() || value.supersededById === id)
+    || !Array.isArray(value?.conflictIds) || value.conflictIds.some((conflictId: unknown) => typeof conflictId !== "string" || !conflictId.trim() || conflictId === id) || new Set(value.conflictIds).size !== value.conflictIds.length
+    || value?.status === "superseded" && value?.supersededById === null || value?.status !== "superseded" && value?.supersededById !== null
+    || !currentRevisionId || currentRevisionId !== value?.currentRevisionId
+    || !Number.isInteger(value?.version) || value.version < 1
+    || value?.createdBy !== "شما" || value?.updatedBy !== "شما"
+    || !isValidProjectFileDate(createdAt) || createdAt !== value?.createdAt
+    || !isValidProjectFileDate(updatedAt) || updatedAt !== value?.updatedAt || new Date(updatedAt).getTime() < new Date(createdAt).getTime()
+    || !Array.isArray(value?.history) || !Array.isArray(value?.revisions) || value.history.length !== value.version || value.revisions.length !== value.version
+  ) return null;
+
+  const historyIds = new Set<string>();
+  const history: ProjectMemoryHistoryEvent[] = value.history.flatMap((event: any, index: number): ProjectMemoryHistoryEvent[] => {
+    const hasLineage = hasExactObjectKeys(event, ["id", "type", "actor", "at", "version", "rollbackFromVersion", "lineage"]);
+    const hasPriorSnapshotShape = legacyGeneration === "memory-core-v1-snapshot" && hasExactObjectKeys(event, ["id", "type", "actor", "at", "version", "rollbackFromVersion"]);
+    const lineageShapeMatchesGeneration = legacyGeneration === "memory-core-v1-snapshot" ? hasPriorSnapshotShape : hasLineage;
+    if (!lineageShapeMatchesGeneration) return [];
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as ProjectMemoryEventType;
+    const lineage = hasLineage ? parseProjectMemoryLineage(event?.lineage, id) : { supersedesId: null, supersededById: null, conflictIds: [] };
+    const rollbackFromVersion = event?.rollbackFromVersion;
+    const rollbackIsValid = type === "rolled-back"
+      ? Number.isInteger(rollbackFromVersion) && rollbackFromVersion >= 1 && rollbackFromVersion <= index
+      : rollbackFromVersion === null;
+    const isMigrationEvent = ["metadata-migrated", "source-migrated", "schema-migrated"].includes(type);
+    const actorIsValid = isPriorGeneration
+      ? isMigrationEvent ? ["شما", "سیستم مهاجرت"].includes(event?.actor) : event?.actor === "شما"
+      : isMigrationEvent ? event?.actor === "سیستم مهاجرت" : event?.actor === "شما";
+    if (
+      !eventId || eventId !== event?.id || historyIds.has(eventId)
+      || !["created", "updated", "controls-updated", "metadata-migrated", "source-migrated", "schema-migrated", "disabled", "enabled", "disputed", "conflicts-resolved", "superseding", "superseded", "rolled-back"].includes(type)
+      || !actorIsValid || event?.version !== index + 1 || !isValidProjectFileDate(at) || at !== event?.at
+      || index === 0 && type !== "created" || index > 0 && type === "created" || !rollbackIsValid || !lineage
+    ) return [];
+    historyIds.add(eventId);
+    return [{ id: eventId, type, actor: event.actor as ProjectMemoryHistoryEvent["actor"], at, version: index + 1, rollbackFromVersion: rollbackFromVersion as number | null, lineage }];
+  });
+  if (history.length !== value.history.length || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())) return null;
+  if (legacyGeneration !== "memory-core-v1-snapshot") {
+    const emptyLineage: ProjectMemoryHistoryEvent["lineage"] = { supersedesId: null, supersededById: null, conflictIds: [] };
+    const sameLineage = (first: ProjectMemoryHistoryEvent["lineage"], second: ProjectMemoryHistoryEvent["lineage"]) => JSON.stringify(stablePurchaseRequestValue(first)) === JSON.stringify(stablePurchaseRequestValue(second));
+    let replayedLineage = emptyLineage;
+    let replayedLineageStatus: ProjectMemoryStatus = "current";
+    let lineageLifecycleValid = sameLineage(history[0]?.lineage, emptyLineage);
+    let metadataMigrationCount = 0;
+    let sourceMigrationCount = 0;
+    let schemaMigrationCount = 0;
+    for (const event of history.slice(1)) {
+      const nextLineage = event.lineage;
+      if (event.type === "metadata-migrated" || event.type === "source-migrated" || event.type === "schema-migrated") {
+        if (event.type === "metadata-migrated") metadataMigrationCount += 1;
+        else if (event.type === "source-migrated") sourceMigrationCount += 1;
+        else schemaMigrationCount += 1;
+        if (metadataMigrationCount > 1 || sourceMigrationCount > 1 || schemaMigrationCount > 1) lineageLifecycleValid = false;
+        if (
+          replayedLineage.supersedesId !== null && nextLineage.supersedesId !== replayedLineage.supersedesId
+          || replayedLineage.supersededById !== null && nextLineage.supersededById !== replayedLineage.supersededById
+          || replayedLineage.conflictIds.some((conflictId) => !nextLineage.conflictIds.includes(conflictId))
+          || isPriorGeneration && !sameLineage(nextLineage, replayedLineage)
+        ) lineageLifecycleValid = false;
+      } else if (["updated", "controls-updated", "rolled-back"].includes(event.type)) {
+        const priorConflictCleanup = isPriorGeneration && event.type === "updated"
+          && nextLineage.supersedesId === replayedLineage.supersedesId
+          && nextLineage.supersededById === replayedLineage.supersededById
+          && nextLineage.conflictIds.length < replayedLineage.conflictIds.length
+          && nextLineage.conflictIds.every((conflictId) => replayedLineage.conflictIds.includes(conflictId));
+        if (!sameLineage(nextLineage, replayedLineage) && !priorConflictCleanup) lineageLifecycleValid = false;
+      } else if (event.type === "disabled") {
+        if (nextLineage.supersedesId !== replayedLineage.supersedesId || nextLineage.supersededById !== replayedLineage.supersededById || nextLineage.conflictIds.length !== 0) lineageLifecycleValid = false;
+        replayedLineageStatus = "disabled";
+      } else if (event.type === "enabled") {
+        if (!sameLineage(nextLineage, replayedLineage)) lineageLifecycleValid = false;
+        replayedLineageStatus = "current";
+      } else if (event.type === "disputed") {
+        const preservesExistingConflicts = replayedLineage.conflictIds.every((conflictId) => nextLineage.conflictIds.includes(conflictId));
+        const addsConflict = nextLineage.conflictIds.some((conflictId) => !replayedLineage.conflictIds.includes(conflictId));
+        if (
+          nextLineage.supersedesId !== replayedLineage.supersedesId || nextLineage.supersededById !== replayedLineage.supersededById
+          || !preservesExistingConflicts || replayedLineageStatus === "disputed" && !addsConflict
+        ) lineageLifecycleValid = false;
+        replayedLineageStatus = "disputed";
+      } else if (event.type === "conflicts-resolved") {
+        if (
+          nextLineage.supersedesId !== replayedLineage.supersedesId || nextLineage.supersededById !== replayedLineage.supersededById
+          || nextLineage.conflictIds.some((conflictId) => !replayedLineage.conflictIds.includes(conflictId))
+          || nextLineage.conflictIds.length >= replayedLineage.conflictIds.length
+        ) lineageLifecycleValid = false;
+      } else if (event.type === "superseding") {
+        if (replayedLineage.supersedesId !== null || nextLineage.supersedesId === null || nextLineage.supersededById !== replayedLineage.supersededById || JSON.stringify(nextLineage.conflictIds) !== JSON.stringify(replayedLineage.conflictIds)) lineageLifecycleValid = false;
+      } else if (event.type === "superseded") {
+        if (replayedLineage.supersededById !== null || nextLineage.supersededById === null || nextLineage.supersedesId !== replayedLineage.supersedesId || nextLineage.conflictIds.length !== 0) lineageLifecycleValid = false;
+        replayedLineageStatus = "superseded";
+      }
+      replayedLineage = nextLineage;
+    }
+    const currentLineage = { supersedesId: value.supersedesId, supersededById: value.supersededById, conflictIds: value.conflictIds };
+    const latestLineage = history[history.length - 1]?.lineage;
+    const migrationEvents = history.filter((event) => event.type === "metadata-migrated" || event.type === "source-migrated" || event.type === "schema-migrated");
+    const hasSupersedesBinding = history.some((event) => event.type === "superseding" && event.lineage.supersedesId === value.supersedesId)
+      || migrationEvents.some((event) => event.lineage.supersedesId === value.supersedesId);
+    const hasSupersededByBinding = history.some((event) => event.type === "superseded" && event.lineage.supersededById === value.supersededById)
+      || migrationEvents.some((event) => event.lineage.supersededById === value.supersededById);
+    if (
+      !lineageLifecycleValid || !sameLineage(latestLineage, currentLineage)
+      || history.some((event) => event.type === "superseding" && event.lineage.supersedesId !== value.supersedesId)
+      || history.some((event) => event.type === "superseded" && event.lineage.supersededById !== value.supersededById)
+      || value.supersedesId !== null && !hasSupersedesBinding
+      || value.supersedesId === null && history.some((event) => event.type === "superseding")
+      || value.supersededById !== null && !hasSupersededByBinding
+      || value.supersededById === null && history.some((event) => event.type === "superseded")
+    ) return null;
+  }
+
+  const revisionIds = new Set<string>();
+  const revisions: ProjectMemoryRevision[] = value.revisions.flatMap((revision: any, index: number): ProjectMemoryRevision[] => {
+    if (!hasExactObjectKeys(revision, ["id", "version", "createdAt", "snapshot", "fingerprint"])) return [];
+    const revisionId = typeof revision?.id === "string" ? revision.id.trim() : "";
+    const revisionCreatedAt = typeof revision?.createdAt === "string" ? revision.createdAt.trim() : "";
+    const snapshot = parseProjectMemorySnapshot(revision?.snapshot);
+    const revisionIdentity = { id: revisionId, version: index + 1, createdAt: revisionCreatedAt };
+    const expectedFingerprint = snapshot && history[index] ? projectMemoryFingerprint(value, snapshot, history[index], revisionIdentity) : "";
+    const priorFullFingerprint = snapshot && history[index] ? projectMemoryV1FullFingerprint(value, snapshot, history[index], revisionIdentity) : "";
+    const legacyFingerprint = snapshot ? projectMemoryLegacyFingerprint(scopeType, scopeId, snapshot) : "";
+    const lineageFingerprint = snapshot && history[index] ? projectMemoryLineageFingerprint(scopeType, scopeId, snapshot, history[index]) : "";
+    if (
+      !revisionId || revisionId !== revision?.id || revisionIds.has(revisionId) || revision?.version !== index + 1
+      || !isValidProjectFileDate(revisionCreatedAt) || revisionCreatedAt !== revision?.createdAt || revisionCreatedAt !== history[index]?.at
+      || !snapshot
+      || legacyGeneration === "memory-core-v1-snapshot" && revision?.fingerprint !== legacyFingerprint
+      || legacyGeneration === "memory-core-v1-lineage" && revision?.fingerprint !== lineageFingerprint
+      || legacyGeneration === null && revision?.fingerprint !== expectedFingerprint
+      || legacyGeneration === "memory-core-v1-full" && revision?.fingerprint !== priorFullFingerprint
+    ) return [];
+    revisionIds.add(revisionId);
+    return [{ id: revisionId, version: index + 1, createdAt: revisionCreatedAt, snapshot, fingerprint: revision.fingerprint }];
+  });
+  if (
+    revisions.length !== value.revisions.length || history[0]?.at !== createdAt || history[history.length - 1]?.at !== updatedAt
+    || revisions[revisions.length - 1]?.id !== currentRevisionId
+    || JSON.stringify(stablePurchaseRequestValue(revisions[revisions.length - 1]?.snapshot)) !== JSON.stringify(stablePurchaseRequestValue(currentSnapshot))
+  ) return null;
+  for (let index = 1; index < revisions.length; index += 1) {
+    const event = history[index];
+    const previousSnapshot = revisions[index - 1].snapshot;
+    const nextSnapshot = revisions[index].snapshot;
+    const changedKeys = projectMemorySnapshotKeys.filter((key) => previousSnapshot[key] !== nextSnapshot[key]);
+    if (event.type === "rolled-back") {
+      const target = revisions[history[index].rollbackFromVersion! - 1];
+      if (!target || changedKeys.length === 0 || JSON.stringify(stablePurchaseRequestValue(target.snapshot)) !== JSON.stringify(stablePurchaseRequestValue(nextSnapshot))) return null;
+    } else if (!isPriorGeneration && event.type === "updated") {
+      if (changedKeys.length === 0 || changedKeys.some((key) => !["title", "content", "kind", "memoryType"].includes(key))) return null;
+    } else if (!isPriorGeneration && event.type === "controls-updated") {
+      if (changedKeys.length !== 1 || !["visibility", "manualSearchability", "useInContextPreference"].includes(changedKeys[0])) return null;
+    } else if (!isPriorGeneration && changedKeys.length > 0) {
+      return null;
+    }
+  }
+  let replayedStatus: ProjectMemoryStatus = "current";
+  let lifecycleValid = true;
+  for (const event of history.slice(1)) {
+    if (replayedStatus === "superseded") {
+      if (event.type === "metadata-migrated" || event.type === "source-migrated" || event.type === "schema-migrated") continue;
+      lifecycleValid = false;
+      break;
+    }
+    if (event.type === "disabled") {
+      if (replayedStatus === "disabled") lifecycleValid = false;
+      replayedStatus = "disabled";
+    } else if (event.type === "enabled") {
+      if (replayedStatus !== "disabled" && replayedStatus !== "disputed") lifecycleValid = false;
+      replayedStatus = "current";
+    } else if (event.type === "disputed") {
+      if (replayedStatus === "disabled") lifecycleValid = false;
+      replayedStatus = "disputed";
+    } else if (event.type === "superseded") replayedStatus = "superseded";
+  }
+  if (!lifecycleValid || replayedStatus !== value.status || value.conflictIds.length > 0 && value.status !== "disputed") return null;
+  return {
+    schemaVersion: 1,
+    id,
+    ownerPrincipalType: "account",
+    ownerPrincipalId: localBuilderAccountId,
+    accountSide: "builder",
+    scopeType,
+    scopeId,
+    projectId: projectId as string | null,
+    custodianService: "Memory Service",
+    sourceRefs: [...value.sourceRefs],
+    provenanceClass: value.provenanceClass as ProjectMemoryRecord["provenanceClass"],
+    sourceLabel: value.sourceLabel as ProjectMemoryRecord["sourceLabel"],
+    status: value.status as ProjectMemoryStatus,
+    sensitivity: "private",
+    ...currentSnapshot,
+    supersedesId: value.supersedesId,
+    supersededById: value.supersededById,
+    conflictIds: [...value.conflictIds],
+    currentRevisionId,
+    version: value.version,
+    createdBy: "شما",
+    updatedBy: "شما",
+    createdAt,
+    updatedAt,
+    history,
+    revisions,
+  };
+}
+
+function parseProjectMemoryCandidate(value: any, legacyGeneration: ProjectMemoryPriorGeneration | null = null): ProjectMemoryCandidate | null {
+  if (!hasExactObjectKeys(value, ["schemaVersion", "id", "version", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "proposedSnapshot", "evidenceRefs", "producerRunId", "provider", "model", "confidence", "payloadHash", "status", "createdAt", "expiresAt", "updatedAt", "acceptedMemoryId", "decision", "history"]) || value?.schemaVersion !== 1) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const scopeType = value?.scopeType as ProjectMemoryScopeType;
+  const scopeId = typeof value?.scopeId === "string" ? value.scopeId.trim() : "";
+  const proposed = value?.proposedSnapshot;
+  const kind = proposed?.kind as ProjectMemoryKind;
+  const proposedSnapshot = hasExactObjectKeys(proposed, ["title", "content", "kind", "memoryType"])
+    && typeof proposed.title === "string" && proposed.title.trim() === proposed.title && hasVisibleProjectBackboneText(proposed.title) && proposed.title.length <= 80
+    && typeof proposed.content === "string" && proposed.content.trim() === proposed.content && hasVisibleProjectBackboneText(proposed.content) && proposed.content.length <= 800
+    && projectMemoryKinds.includes(kind) && projectMemoryTypesByKind[kind] === proposed.memoryType
+    ? { title: proposed.title, content: proposed.content, kind, memoryType: proposed.memoryType as ProjectMemoryType }
+    : null;
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const expiresAt = value?.expiresAt === null ? null : typeof value?.expiresAt === "string" ? value.expiresAt.trim() : "";
+  const acceptedMemoryId = value?.acceptedMemoryId === null ? null : typeof value?.acceptedMemoryId === "string" ? value.acceptedMemoryId.trim() : "";
+  const decision: ProjectMemoryCandidateDecision | null = value?.decision === null ? null : (() => {
+    const item = value?.decision;
+    const hasCurrentShape = hasExactObjectKeys(item, ["action", "actor", "at", "candidateId", "candidateVersion", "payloadHash", "exactPayload", "scopeType", "scopeId", "idempotencyKey"]);
+    const hasPriorShape = legacyGeneration !== null && hasExactObjectKeys(item, ["action", "actor", "at", "candidateId", "candidateVersion", "payloadHash", "scopeType", "scopeId", "idempotencyKey"]);
+    if (!hasCurrentShape && !hasPriorShape) return null;
+    const at = typeof item?.at === "string" ? item.at.trim() : "";
+    const idempotencyKey = typeof item?.idempotencyKey === "string" ? item.idempotencyKey.trim() : "";
+    const expectedIdempotencyKey = `candidate-consent:${id}:v${item?.candidateVersion}:${item?.payloadHash}:${item?.action}`;
+    const exactPayload = projectMemoryCandidateExactPayload({ scopeType, scopeId, proposedSnapshot: proposedSnapshot ?? { title: "", content: "", kind: "یادداشت سازنده", memoryType: "note" }, evidenceRefs: Array.isArray(value?.evidenceRefs) ? value.evidenceRefs : [] });
+    if (!['accepted', 'rejected'].includes(item?.action) || item?.actor !== "شما" || !isValidProjectFileDate(at) || at !== item?.at || item?.candidateId !== id || !Number.isInteger(item?.candidateVersion) || item.candidateVersion < 1 || item?.payloadHash !== value?.payloadHash || hasCurrentShape && item.exactPayload !== exactPayload || item?.scopeType !== scopeType || item?.scopeId !== scopeId || idempotencyKey !== expectedIdempotencyKey) return null;
+    return { action: item.action, actor: "شما", at, candidateId: id, candidateVersion: item.candidateVersion, payloadHash: item.payloadHash, exactPayload, scopeType, scopeId, idempotencyKey };
+  })();
+  if (!Array.isArray(value?.history)) return null;
+  const historyIds = new Set<string>();
+  const history: ProjectMemoryCandidateHistoryEvent[] = value.history.flatMap((event: any, index: number): ProjectMemoryCandidateHistoryEvent[] => {
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"])) return [];
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as ProjectMemoryCandidateHistoryEvent["type"];
+    const actor = event?.actor as ProjectMemoryCandidateHistoryEvent["actor"];
+    if (!eventId || eventId !== event?.id || historyIds.has(eventId) || !["created", "updated", "accepted", "rejected", "expired"].includes(type) || !["system", "شما"].includes(actor) || event?.version !== index + 1 || !isValidProjectFileDate(at) || at !== event?.at || index === 0 && (type !== "created" || actor !== "system") || index > 0 && type === "created" || ["accepted", "rejected"].includes(type) && actor !== "شما" || ["updated", "expired"].includes(type) && actor !== "system") return [];
+    historyIds.add(eventId);
+    return [{ id: eventId, type, actor, at, version: index + 1 }];
+  });
+  let candidateLifecycle: ProjectMemoryCandidate["status"] = "pending";
+  let candidateLifecycleValid = true;
+  history.forEach((event, index) => {
+    if (index === 0) return;
+    if (candidateLifecycle !== "pending") {
+      candidateLifecycleValid = false;
+      return;
+    }
+    if (event.type === "updated") return;
+    if (event.type === "accepted" || event.type === "rejected" || event.type === "expired") candidateLifecycle = event.type;
+    else candidateLifecycleValid = false;
+  });
+  if (
+    !id || id !== value?.id || id.includes(":") || acceptedMemoryId !== value?.acceptedMemoryId || !Number.isInteger(value?.version) || value.version < 1 || value?.ownerPrincipalId !== localBuilderAccountId || value?.accountSide !== "builder"
+    || !["account_private", "project_private"].includes(scopeType) || !scopeId || scopeId !== value?.scopeId || scopeType === "account_private" && scopeId !== localBuilderAccountId
+    || !proposedSnapshot || !Array.isArray(value?.evidenceRefs) || value.evidenceRefs.some((ref: unknown) => typeof ref !== "string" || !ref.trim()) || new Set(value.evidenceRefs).size !== value.evidenceRefs.length
+    || typeof value?.producerRunId !== "string" || !value.producerRunId.trim() || typeof value?.provider !== "string" || !value.provider.trim() || typeof value?.model !== "string" || !value.model.trim()
+    || value?.confidence !== null && (typeof value?.confidence !== "number" || value.confidence < 0 || value.confidence > 1)
+    || value?.decision !== null && decision === null
+    || !["pending", "accepted", "rejected", "expired"].includes(value?.status)
+    || !isValidProjectFileDate(createdAt) || createdAt !== value?.createdAt || !isValidProjectFileDate(updatedAt) || updatedAt !== value?.updatedAt || new Date(updatedAt).getTime() < new Date(createdAt).getTime()
+    || expiresAt !== null && (!isValidProjectFileDate(expiresAt) || new Date(expiresAt).getTime() <= new Date(createdAt).getTime())
+    || history.length !== value.history.length || history.length !== value.version || history[0]?.at !== createdAt || history[history.length - 1]?.at !== updatedAt
+    || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime()) || !candidateLifecycleValid || candidateLifecycle !== value.status
+    || value?.status === "pending" && (decision !== null || acceptedMemoryId !== null || !["created", "updated"].includes(history[history.length - 1]?.type) || expiresAt !== null && new Date(updatedAt).getTime() >= new Date(expiresAt).getTime())
+    || value?.status === "accepted" && (!decision || decision.action !== "accepted" || decision.at !== updatedAt || decision.candidateVersion !== value.version - 1 || !acceptedMemoryId || history[history.length - 1]?.type !== "accepted" || expiresAt !== null && new Date(decision.at).getTime() >= new Date(expiresAt).getTime())
+    || value?.status === "rejected" && (!decision || decision.action !== "rejected" || decision.at !== updatedAt || decision.candidateVersion !== value.version - 1 || acceptedMemoryId !== null || history[history.length - 1]?.type !== "rejected" || expiresAt !== null && new Date(decision.at).getTime() >= new Date(expiresAt).getTime())
+    || value?.status === "expired" && (decision !== null || acceptedMemoryId !== null || history[history.length - 1]?.type !== "expired" || expiresAt === null || new Date(updatedAt).getTime() < new Date(expiresAt).getTime())
+  ) return null;
+  const candidate = { ...value, id, scopeType, scopeId, proposedSnapshot, evidenceRefs: [...value.evidenceRefs], createdAt, updatedAt, expiresAt, acceptedMemoryId, decision, history } as ProjectMemoryCandidate;
+  const expectedPayloadHash = legacyGeneration === null ? projectMemoryCandidatePayloadHash(candidate) : `fnv1a-${purchaseRequestStableHash(projectMemoryCandidateExactPayload(candidate))}`;
+  if (candidate.payloadHash !== expectedPayloadHash) return null;
+  return candidate;
+}
+
+function parseProjectMemoryTombstoneLineageHistory(value: unknown, recordId: string, lastVersion: number, deletedAt: string) {
+  if (!Array.isArray(value) || value.length !== lastVersion) return null;
+  const historyIds = new Set<string>();
+  const history: ProjectMemoryHistoryEvent[] = [];
+  let replayedLineage: ProjectMemoryHistoryEvent["lineage"] = { supersedesId: null, supersededById: null, conflictIds: [] };
+  let replayedStatus: ProjectMemoryStatus = "current";
+  let metadataMigrationCount = 0;
+  let sourceMigrationCount = 0;
+  let schemaMigrationCount = 0;
+  const sameLineage = (first: ProjectMemoryHistoryEvent["lineage"], second: ProjectMemoryHistoryEvent["lineage"]) => JSON.stringify(stablePurchaseRequestValue(first)) === JSON.stringify(stablePurchaseRequestValue(second));
+  for (let index = 0; index < value.length; index += 1) {
+    const event: any = value[index];
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version", "rollbackFromVersion", "lineage"])) return null;
+    const id = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const type = event?.type as ProjectMemoryEventType;
+    const lineage = parseProjectMemoryLineage(event?.lineage, recordId);
+    const rollbackFromVersion = event?.rollbackFromVersion;
+    const isMigrationEvent = ["metadata-migrated", "source-migrated", "schema-migrated"].includes(type);
+    const actorIsValid = isMigrationEvent ? event?.actor === "سیستم مهاجرت" : event?.actor === "شما";
+    if (
+      !id || id !== event?.id || historyIds.has(id) || !lineage || !actorIsValid
+      || !["created", "updated", "controls-updated", "metadata-migrated", "source-migrated", "schema-migrated", "disabled", "enabled", "disputed", "conflicts-resolved", "superseding", "superseded", "rolled-back"].includes(type)
+      || event?.version !== index + 1 || !isValidProjectFileDate(at) || at !== event?.at || new Date(at).getTime() > new Date(deletedAt).getTime()
+      || index === 0 && (type !== "created" || !sameLineage(lineage, { supersedesId: null, supersededById: null, conflictIds: [] }))
+      || index > 0 && (type === "created" || new Date(at).getTime() < new Date(history[index - 1].at).getTime())
+      || (type === "rolled-back" ? !(Number.isInteger(rollbackFromVersion) && rollbackFromVersion >= 1 && rollbackFromVersion <= index) : rollbackFromVersion !== null)
+    ) return null;
+    if (index > 0) {
+      if (replayedStatus === "superseded" && !isMigrationEvent) return null;
+      if (isMigrationEvent) {
+        if (type === "metadata-migrated") metadataMigrationCount += 1;
+        else if (type === "source-migrated") sourceMigrationCount += 1;
+        else schemaMigrationCount += 1;
+        if (
+          metadataMigrationCount > 1 || sourceMigrationCount > 1 || schemaMigrationCount > 1
+          || replayedLineage.supersedesId !== null && lineage.supersedesId !== replayedLineage.supersedesId
+          || replayedLineage.supersededById !== null && lineage.supersededById !== replayedLineage.supersededById
+          || replayedLineage.conflictIds.some((conflictId) => !lineage.conflictIds.includes(conflictId))
+        ) return null;
+      } else if (["updated", "controls-updated", "rolled-back"].includes(type)) {
+        if (!sameLineage(lineage, replayedLineage)) return null;
+      } else if (type === "disabled") {
+        if (lineage.supersedesId !== replayedLineage.supersedesId || lineage.supersededById !== replayedLineage.supersededById || lineage.conflictIds.length !== 0 || replayedStatus === "disabled") return null;
+        replayedStatus = "disabled";
+      } else if (type === "enabled") {
+        if (!sameLineage(lineage, replayedLineage) || replayedStatus !== "disabled" && replayedStatus !== "disputed") return null;
+        replayedStatus = "current";
+      } else if (type === "disputed") {
+        const preservesExisting = replayedLineage.conflictIds.every((conflictId) => lineage.conflictIds.includes(conflictId));
+        const addsConflict = lineage.conflictIds.some((conflictId) => !replayedLineage.conflictIds.includes(conflictId));
+        if (lineage.supersedesId !== replayedLineage.supersedesId || lineage.supersededById !== replayedLineage.supersededById || !preservesExisting || replayedStatus === "disabled" || replayedStatus === "disputed" && !addsConflict) return null;
+        replayedStatus = "disputed";
+      } else if (type === "conflicts-resolved") {
+        if (lineage.supersedesId !== replayedLineage.supersedesId || lineage.supersededById !== replayedLineage.supersededById || lineage.conflictIds.some((conflictId) => !replayedLineage.conflictIds.includes(conflictId)) || lineage.conflictIds.length >= replayedLineage.conflictIds.length) return null;
+      } else if (type === "superseding") {
+        if (replayedLineage.supersedesId !== null || lineage.supersedesId === null || lineage.supersededById !== replayedLineage.supersededById || JSON.stringify(lineage.conflictIds) !== JSON.stringify(replayedLineage.conflictIds)) return null;
+      } else if (type === "superseded") {
+        if (replayedLineage.supersededById !== null || lineage.supersededById === null || lineage.supersedesId !== replayedLineage.supersedesId || lineage.conflictIds.length !== 0) return null;
+        replayedStatus = "superseded";
+      }
+    }
+    historyIds.add(id);
+    replayedLineage = lineage;
+    history.push({ id, type, actor: event.actor, at, version: index + 1, rollbackFromVersion: rollbackFromVersion as number | null, lineage });
+  }
+  if (
+    replayedLineage.conflictIds.length > 0 && replayedStatus !== "disputed"
+    || (replayedLineage.supersededById !== null) !== (replayedStatus === "superseded")
+  ) return null;
+  return history;
+}
+
+function parseProjectMemoryTombstone(value: any): ProjectMemoryTombstone | null {
+  const priorShape = hasExactObjectKeys(value, ["id", "ownerPrincipalId", "scopeType", "scopeId", "lastVersion", "deletedAt", "deletedBy", "reasonClass", "priorContentHash", "retentionClass"]);
+  const currentShape = hasExactObjectKeys(value, ["id", "ownerPrincipalId", "scopeType", "scopeId", "lastVersion", "deletedAt", "deletedBy", "reasonClass", "priorContentHash", "retentionClass", "lineageHistory", "lineageHistoryHash"]);
+  if (!priorShape && !currentShape) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const scopeType = value?.scopeType as ProjectMemoryScopeType;
+  const scopeId = typeof value?.scopeId === "string" ? value.scopeId.trim() : "";
+  const deletedAt = typeof value?.deletedAt === "string" ? value.deletedAt.trim() : "";
+  if (!id || id !== value?.id || value?.ownerPrincipalId !== localBuilderAccountId || !["account_private", "project_private"].includes(scopeType) || !scopeId || scopeId !== value?.scopeId || scopeType === "account_private" && scopeId !== localBuilderAccountId || !Number.isInteger(value?.lastVersion) || value.lastVersion < 1 || !isValidProjectFileDate(deletedAt) || deletedAt !== value?.deletedAt || value?.deletedBy !== "شما" || value?.reasonClass !== "user_requested" || typeof value?.priorContentHash !== "string" || !/^(?:fnv1a-[0-9a-f]{8}|sha256-[0-9a-f]{64})$/.test(value.priorContentHash) || value?.retentionClass !== "local-metadata-only") return null;
+  if (priorShape) return { id, ownerPrincipalId: localBuilderAccountId, scopeType, scopeId, lastVersion: value.lastVersion, deletedAt, deletedBy: "شما", reasonClass: "user_requested", priorContentHash: value.priorContentHash, retentionClass: "local-metadata-only", lineageHistory: null, lineageHistoryHash: null };
+  if (value?.lineageHistory === null || value?.lineageHistoryHash === null) {
+    if (value?.lineageHistory !== null || value?.lineageHistoryHash !== null) return null;
+    return { id, ownerPrincipalId: localBuilderAccountId, scopeType, scopeId, lastVersion: value.lastVersion, deletedAt, deletedBy: "شما", reasonClass: "user_requested", priorContentHash: value.priorContentHash, retentionClass: "local-metadata-only", lineageHistory: null, lineageHistoryHash: null };
+  }
+  const lineageHistory = parseProjectMemoryTombstoneLineageHistory(value.lineageHistory, id, value.lastVersion, deletedAt);
+  if (!lineageHistory || !/^sha256-[0-9a-f]{64}$/.test(value.priorContentHash) || typeof value.lineageHistoryHash !== "string" || value.lineageHistoryHash !== projectMemoryTombstoneLineageHash(lineageHistory)) return null;
+  return { id, ownerPrincipalId: localBuilderAccountId, scopeType, scopeId, lastVersion: value.lastVersion, deletedAt, deletedBy: "شما", reasonClass: "user_requested", priorContentHash: value.priorContentHash, retentionClass: "local-metadata-only", lineageHistory, lineageHistoryHash: value.lineageHistoryHash };
+}
+
+function parseProjectMemoryMigrationReport(value: any, allowPriorShape = false): ProjectMemoryMigrationReport | null {
+  const hasCurrentShape = hasExactObjectKeys(value, ["id", "sourceKey", "sourceGeneration", "sourceHash", "status", "migratedCount", "quarantined", "createdAt"]);
+  const hasPriorShape = allowPriorShape && hasExactObjectKeys(value, ["id", "sourceKey", "sourceHash", "status", "migratedCount", "quarantined", "createdAt"]);
+  if (!hasCurrentShape && !hasPriorShape) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const sourceGeneration = hasPriorShape ? "legacy-array-v1" : value?.sourceGeneration as ProjectMemoryLegacyGeneration;
+  const sourceKey = value?.sourceKey as ProjectMemoryMigrationReport["sourceKey"];
+  const sourceGenerationMatchesKey = sourceKey === legacyProjectMemoriesStorageKey
+    ? sourceGeneration === "legacy-array-v1"
+    : sourceKey === priorProjectMemoriesStorageKey && ["memory-core-v1-snapshot", "memory-core-v1-lineage", "memory-core-v1-full", "memory-core-v1-unclassified"].includes(sourceGeneration);
+  if (!id || id !== value?.id || !sourceGenerationMatchesKey || typeof value?.sourceHash !== "string" || !/^fnv1a-[0-9a-f]{8}$/.test(value.sourceHash) || !["migrated", "blocked"].includes(value?.status) || !Number.isInteger(value?.migratedCount) || value.migratedCount < 0 || !Array.isArray(value?.quarantined) || !isValidProjectFileDate(createdAt) || createdAt !== value?.createdAt) return null;
+  const quarantined: ProjectMemoryMigrationQuarantine[] = value.quarantined.flatMap((item: any): ProjectMemoryMigrationQuarantine[] => {
+    if (!hasExactObjectKeys(item, ["legacyIndex", "reason", "rawHash"]) || item?.legacyIndex !== null && (!Number.isInteger(item?.legacyIndex) || item.legacyIndex < 0) || typeof item?.reason !== "string" || !item.reason.trim() || typeof item?.rawHash !== "string" || !/^fnv1a-[0-9a-f]{8}$/.test(item.rawHash)) return [];
+    return [{ legacyIndex: item.legacyIndex, reason: item.reason, rawHash: item.rawHash }];
+  });
+  if (quarantined.length !== value.quarantined.length || value.status === "migrated" && quarantined.length > 0 || value.status === "blocked" && quarantined.length === 0) return null;
+  return { id, sourceKey, sourceGeneration, sourceHash: value.sourceHash, status: value.status, migratedCount: value.migratedCount, quarantined, createdAt };
+}
+
+function parseProjectMemoryEnvelope(value: any): ProjectMemoryEnvelope | null;
+function parseProjectMemoryEnvelope(value: any, legacyGeneration: ProjectMemoryPriorGeneration): ProjectMemoryPriorEnvelope | null;
+function parseProjectMemoryEnvelope(value: any, legacyGeneration: ProjectMemoryPriorGeneration | null = null): ProjectMemoryEnvelope | ProjectMemoryPriorEnvelope | null {
+  const isPriorGeneration = legacyGeneration !== null;
+  const expectedKeys = isPriorGeneration
+    ? ["schemaVersion", "envelopeVersion", "records", "candidates", "tombstones", "migrationReports", "updatedAt"]
+    : ["schemaVersion", "fingerprintVersion", "envelopeVersion", "records", "candidates", "tombstones", "migrationReports", "updatedAt"];
+  if (
+    !hasExactObjectKeys(value, expectedKeys)
+    || (isPriorGeneration ? value?.schemaVersion !== 1 : value?.schemaVersion !== 2 || value?.fingerprintVersion !== "memory-v2")
+    || !Number.isInteger(value?.envelopeVersion) || value.envelopeVersion < 0 || !Array.isArray(value?.records) || !Array.isArray(value?.candidates) || !Array.isArray(value?.tombstones) || !Array.isArray(value?.migrationReports)
+  ) return null;
+  const updatedAt = value?.updatedAt === null ? null : typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  if (
+    value.envelopeVersion === 0
+      ? updatedAt !== null || value.records.length > 0 || value.candidates.length > 0 || value.tombstones.length > 0 || value.migrationReports.length > 0
+      : !isValidProjectFileDate(updatedAt)
+  ) return null;
+  const records = value.records.map((record: unknown) => parseProjectMemoryRecord(record, legacyGeneration));
+  const candidates = value.candidates.map((candidate: unknown) => parseProjectMemoryCandidate(candidate, legacyGeneration));
+  const tombstones = value.tombstones.map(parseProjectMemoryTombstone);
+  const migrationReports = value.migrationReports.map((report: unknown) => parseProjectMemoryMigrationReport(report, isPriorGeneration));
+  if (records.some((record: unknown) => !record) || candidates.some((candidate: unknown) => !candidate) || tombstones.some((tombstone: unknown) => !tombstone) || migrationReports.some((report: unknown) => !report)) return null;
+  const parsedRecords = records as ProjectMemoryRecord[];
+  const parsedCandidates = candidates as ProjectMemoryCandidate[];
+  const parsedTombstones = tombstones as ProjectMemoryTombstone[];
+  const parsedMigrationReports = migrationReports as ProjectMemoryMigrationReport[];
+  if (!isPriorGeneration && parsedTombstones.some((tombstone) => tombstone.lineageHistory === null && !parsedMigrationReports.some((report) => report.status === "migrated" && new Date(report.createdAt).getTime() >= new Date(tombstone.deletedAt).getTime()))) return null;
+  const canonicalLineageHistories = [
+    ...parsedRecords.map((record) => record.history),
+    ...parsedTombstones.flatMap((tombstone) => tombstone.lineageHistory ? [tombstone.lineageHistory] : []),
+  ];
+  if (!isPriorGeneration && canonicalLineageHistories.some((history) => history.some((event, eventIndex) => {
+    if (!["metadata-migrated", "source-migrated", "schema-migrated"].includes(event.type)) return false;
+    const matchingReports = parsedMigrationReports.filter((report) => report.status === "migrated" && (
+      event.type === "metadata-migrated"
+        ? report.sourceKey === legacyProjectMemoriesStorageKey && new Date(report.createdAt).getTime() >= new Date(event.at).getTime()
+          || report.sourceKey === priorProjectMemoriesStorageKey && report.createdAt === event.at
+        : report.sourceKey === priorProjectMemoriesStorageKey && report.createdAt === event.at
+    ));
+    if (matchingReports.length !== 1) return true;
+    const previousLineage = history[eventIndex - 1]?.lineage;
+    const lineageChanged = previousLineage && JSON.stringify(stablePurchaseRequestValue(previousLineage)) !== JSON.stringify(stablePurchaseRequestValue(event.lineage));
+    return Boolean(lineageChanged && matchingReports[0].sourceGeneration !== "memory-core-v1-snapshot");
+  }))) return null;
+  const hasMigrationEvidenceAt = (timestamp: string) => parsedMigrationReports.some((report) => report.status === "migrated" && report.sourceKey === priorProjectMemoriesStorageKey && report.createdAt === timestamp);
+  if (updatedAt !== null) {
+    const envelopeTime = new Date(updatedAt).getTime();
+    const componentDates = [
+      ...parsedRecords.map((record) => record.updatedAt),
+      ...parsedCandidates.map((candidate) => candidate.updatedAt),
+      ...parsedTombstones.map((tombstone) => tombstone.deletedAt),
+      ...parsedMigrationReports.map((report) => report.createdAt),
+    ];
+    if (componentDates.some((date) => new Date(date).getTime() > envelopeTime)) return null;
+  }
+  const allObjectIds = [...parsedRecords.map((record) => record.id), ...parsedCandidates.map((candidate) => candidate.id), ...parsedTombstones.map((tombstone) => tombstone.id)];
+  if (
+    new Set(allObjectIds).size !== allObjectIds.length
+    || new Set(parsedMigrationReports.map((report) => report.id)).size !== parsedMigrationReports.length
+    || parsedMigrationReports.some((report, index) => index > 0 && new Date(report.createdAt).getTime() < new Date(parsedMigrationReports[index - 1].createdAt).getTime())
+  ) return null;
+  const candidateDecisionKeys = parsedCandidates.flatMap((candidate) => candidate.decision ? [candidate.decision.idempotencyKey] : []);
+  if (new Set(candidateDecisionKeys).size !== candidateDecisionKeys.length) return null;
+  const recordsById = new Map(parsedRecords.map((record) => [record.id, record]));
+  const tombstonesById = new Map(parsedTombstones.map((tombstone) => [tombstone.id, tombstone]));
+  const sameMemoryScope = (first: Pick<ProjectMemoryRecord, "scopeType" | "scopeId">, second: Pick<ProjectMemoryRecord | ProjectMemoryTombstone, "scopeType" | "scopeId">) => first.scopeType === second.scopeType && first.scopeId === second.scopeId;
+  if (!isPriorGeneration) {
+    const emptyLineage: ProjectMemoryHistoryEvent["lineage"] = { supersedesId: null, supersededById: null, conflictIds: [] };
+    const historicalNodes = [
+      ...parsedRecords.map((record) => ({ id: record.id, scopeType: record.scopeType, scopeId: record.scopeId, history: record.history, deletedAt: null as string | null })),
+      ...parsedTombstones.flatMap((tombstone) => tombstone.lineageHistory ? [{ id: tombstone.id, scopeType: tombstone.scopeType, scopeId: tombstone.scopeId, history: tombstone.lineageHistory, deletedAt: tombstone.deletedAt }] : []),
+    ];
+    const historicalNodesById = new Map(historicalNodes.map((node) => [node.id, node]));
+    const priorLineageAt = (node: (typeof historicalNodes)[number], index: number) => index > 0 ? node.history[index - 1].lineage : emptyLineage;
+    const conflictTransitionAt = (node: (typeof historicalNodes)[number], peerId: string, timestamp: string, direction: "added" | "removed") => node.history.some((event, index) => {
+      if (event.at !== timestamp) return false;
+      const previous = priorLineageAt(node, index).conflictIds.includes(peerId);
+      const next = event.lineage.conflictIds.includes(peerId);
+      return direction === "added" ? !previous && next : previous && !next;
     });
-    return { records, readError: false };
+    const supersessionTransitionAt = (node: (typeof historicalNodes)[number], field: "supersedesId" | "supersededById", peerId: string, timestamp: string) => node.history.some((event, index) => event.at === timestamp && priorLineageAt(node, index)[field] === null && event.lineage[field] === peerId);
+    for (const node of historicalNodes) {
+      for (let index = 0; index < node.history.length; index += 1) {
+        const event = node.history[index];
+        const previous = priorLineageAt(node, index);
+        const addedConflicts = event.lineage.conflictIds.filter((conflictId) => !previous.conflictIds.includes(conflictId));
+        const removedConflicts = previous.conflictIds.filter((conflictId) => !event.lineage.conflictIds.includes(conflictId));
+        for (const conflictId of addedConflicts) {
+          const peer = historicalNodesById.get(conflictId);
+          if (!peer || peer.scopeType !== node.scopeType || peer.scopeId !== node.scopeId || !conflictTransitionAt(peer, node.id, event.at, "added")) return null;
+        }
+        for (const conflictId of removedConflicts) {
+          const peer = historicalNodesById.get(conflictId);
+          const reciprocalRemoval = peer && peer.scopeType === node.scopeType && peer.scopeId === node.scopeId && conflictTransitionAt(peer, node.id, event.at, "removed");
+          const deletionRemoval = peer && peer.scopeType === node.scopeType && peer.scopeId === node.scopeId && peer.deletedAt === event.at && peer.history.at(-1)?.lineage.conflictIds.includes(node.id);
+          if (!reciprocalRemoval && !deletionRemoval) return null;
+        }
+        if (previous.supersedesId === null && event.lineage.supersedesId !== null) {
+          const predecessor = historicalNodesById.get(event.lineage.supersedesId);
+          if (!predecessor || predecessor.scopeType !== node.scopeType || predecessor.scopeId !== node.scopeId || !supersessionTransitionAt(predecessor, "supersededById", node.id, event.at)) return null;
+        }
+        if (previous.supersededById === null && event.lineage.supersededById !== null) {
+          const replacement = historicalNodesById.get(event.lineage.supersededById);
+          if (!replacement || replacement.scopeType !== node.scopeType || replacement.scopeId !== node.scopeId || !supersessionTransitionAt(replacement, "supersedesId", node.id, event.at)) return null;
+        }
+      }
+      const latest = node.history.at(-1)?.lineage;
+      if (!latest) return null;
+      if (latest.supersedesId !== null) {
+        const predecessor = historicalNodesById.get(latest.supersedesId);
+        if (!predecessor || predecessor.scopeType !== node.scopeType || predecessor.scopeId !== node.scopeId || predecessor.history.at(-1)?.lineage.supersededById !== node.id) return null;
+      }
+      if (latest.supersededById !== null) {
+        const replacement = historicalNodesById.get(latest.supersededById);
+        if (!replacement || replacement.scopeType !== node.scopeType || replacement.scopeId !== node.scopeId || replacement.history.at(-1)?.lineage.supersedesId !== node.id) return null;
+      }
+      const visited = new Set<string>([node.id]);
+      let predecessorId = latest.supersedesId;
+      while (predecessorId !== null) {
+        if (visited.has(predecessorId)) return null;
+        visited.add(predecessorId);
+        predecessorId = historicalNodesById.get(predecessorId)?.history.at(-1)?.lineage.supersedesId ?? null;
+      }
+    }
+  }
+  for (const record of parsedRecords) {
+    if (record.supersedesId !== null && record.supersedesId === record.supersededById) return null;
+    const visited = new Set<string>([record.id]);
+    let predecessorId = record.supersedesId;
+    while (predecessorId !== null) {
+      if (visited.has(predecessorId)) return null;
+      visited.add(predecessorId);
+      predecessorId = recordsById.get(predecessorId)?.supersedesId ?? null;
+    }
+  }
+  for (const record of parsedRecords) {
+    if (record.supersedesId) {
+      const predecessor = recordsById.get(record.supersedesId);
+      const predecessorTombstone = tombstonesById.get(record.supersedesId);
+      if (!predecessor && !predecessorTombstone || predecessor && (!sameMemoryScope(record, predecessor) || predecessor.supersededById !== record.id || new Date(record.createdAt).getTime() < new Date(predecessor.createdAt).getTime()) || predecessorTombstone && !sameMemoryScope(record, predecessorTombstone)) return null;
+      if (!isPriorGeneration) {
+        const supersedingEvents = record.history.filter((event) => ["superseding", "metadata-migrated", "source-migrated", "schema-migrated"].includes(event.type) && event.lineage.supersedesId === record.supersedesId);
+        if (
+          predecessor && !supersedingEvents.some((event) => predecessor.history.some((peerEvent) => ["superseded", "metadata-migrated", "source-migrated", "schema-migrated"].includes(peerEvent.type) && peerEvent.at === event.at && peerEvent.lineage.supersededById === record.id))
+          || predecessorTombstone && !supersedingEvents.some((event) => new Date(event.at).getTime() <= new Date(predecessorTombstone.deletedAt).getTime() || ["metadata-migrated", "source-migrated", "schema-migrated"].includes(event.type) && hasMigrationEvidenceAt(event.at))
+        ) return null;
+      }
+    }
+    if (record.supersededById) {
+      const replacement = recordsById.get(record.supersededById);
+      const replacementTombstone = tombstonesById.get(record.supersededById);
+      if (!replacement && !replacementTombstone || replacement && (!sameMemoryScope(record, replacement) || replacement.supersedesId !== record.id) || replacementTombstone && !sameMemoryScope(record, replacementTombstone)) return null;
+      if (!isPriorGeneration && replacementTombstone && !record.history.some((event) => ["superseded", "metadata-migrated", "source-migrated", "schema-migrated"].includes(event.type) && event.lineage.supersededById === record.supersededById && (new Date(event.at).getTime() <= new Date(replacementTombstone.deletedAt).getTime() || ["metadata-migrated", "source-migrated", "schema-migrated"].includes(event.type) && hasMigrationEvidenceAt(event.at)))) return null;
+    }
+    if (record.conflictIds.some((conflictId) => {
+      const conflict = recordsById.get(conflictId);
+      if (!conflict || !sameMemoryScope(record, conflict) || !conflict.conflictIds.includes(record.id)) return true;
+      return !isPriorGeneration && !record.history.some((event) => ["disputed", "metadata-migrated", "source-migrated", "schema-migrated"].includes(event.type) && event.lineage.conflictIds.includes(conflict.id) && conflict.history.some((peerEvent) => ["disputed", "metadata-migrated", "source-migrated", "schema-migrated"].includes(peerEvent.type) && peerEvent.at === event.at && peerEvent.lineage.conflictIds.includes(record.id)));
+    })) return null;
+  }
+  for (const candidate of parsedCandidates) {
+    if (!candidate.acceptedMemoryId) continue;
+    const acceptedMemory = recordsById.get(candidate.acceptedMemoryId);
+    if (!acceptedMemory || candidate.status !== "accepted" || !candidate.decision || !sameMemoryScope(acceptedMemory, candidate)) return null;
+    const exactSourceRef = `memory-candidate:${candidate.id}:v${candidate.decision.candidateVersion}:${candidate.payloadHash}`;
+    const acceptedSnapshot = acceptedMemory.revisions[0]?.snapshot;
+    if (
+      acceptedMemory.provenanceClass !== "owner_confirmed" || acceptedMemory.sourceRefs.length !== 1 || acceptedMemory.sourceRefs[0] !== exactSourceRef
+      || acceptedMemory.createdAt !== candidate.decision.at || acceptedMemory.history[0]?.at !== candidate.decision.at || acceptedMemory.revisions[0]?.createdAt !== candidate.decision.at
+      || acceptedSnapshot?.title !== candidate.proposedSnapshot.title || acceptedSnapshot?.content !== candidate.proposedSnapshot.content
+      || acceptedSnapshot?.kind !== candidate.proposedSnapshot.kind || acceptedSnapshot?.memoryType !== candidate.proposedSnapshot.memoryType
+      || acceptedSnapshot?.visibility !== "visible" || acceptedSnapshot?.manualSearchability !== true || acceptedSnapshot?.useInContextPreference !== true
+      || acceptedSnapshot?.automaticRetrievalEligibility !== false || acceptedSnapshot?.modelEligibility !== false || acceptedSnapshot?.shareability !== false
+    ) return null;
+  }
+  for (const record of parsedRecords) {
+    if (record.provenanceClass === "owner_confirmed" && parsedCandidates.filter((candidate) => candidate.status === "accepted" && candidate.acceptedMemoryId === record.id).length !== 1) return null;
+  }
+  return isPriorGeneration
+    ? { schemaVersion: 1, envelopeVersion: value.envelopeVersion, records: parsedRecords, candidates: parsedCandidates, tombstones: parsedTombstones, migrationReports: parsedMigrationReports, updatedAt }
+    : { schemaVersion: 2, fingerprintVersion: "memory-v2", envelopeVersion: value.envelopeVersion, records: parsedRecords, candidates: parsedCandidates, tombstones: parsedTombstones, migrationReports: parsedMigrationReports, updatedAt };
+}
+
+function projectMemoryHardDeleteIntentHash(intent: Omit<ProjectMemoryHardDeleteIntent, "intentHash">) {
+  return `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue(intent)))}`;
+}
+
+function projectMemoryCutoverMarkerHash(marker: Record<string, unknown>) {
+  return `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue(marker)))}`;
+}
+
+function projectMemoryCutoverSourceMetadata() {
+  try {
+    const priorRaw = window.localStorage.getItem(priorProjectMemoriesStorageKey);
+    if (priorRaw !== null) {
+      const prior = parsePriorProjectMemoryEnvelope(priorRaw);
+      if (!prior) return null;
+      return {
+        sourceBinding: "live-source",
+        sourceKey: priorProjectMemoriesStorageKey,
+        sourceGeneration: prior.generation,
+        sourceHashAtCutover: `sha256-${memoryCoreSha256(priorRaw)}`,
+        migrationSourceHash: `fnv1a-${purchaseRequestStableHash(priorRaw)}`,
+      } as const;
+    }
+    const legacyRaw = window.localStorage.getItem(legacyProjectMemoriesStorageKey);
+    if (legacyRaw !== null) {
+      const parsed = JSON.parse(legacyRaw);
+      if (!Array.isArray(parsed)) return null;
+      return {
+        sourceBinding: "live-source",
+        sourceKey: legacyProjectMemoriesStorageKey,
+        sourceGeneration: "legacy-array-v1",
+        sourceHashAtCutover: `sha256-${memoryCoreSha256(legacyRaw)}`,
+        migrationSourceHash: `fnv1a-${purchaseRequestStableHash(legacyRaw)}`,
+      } as const;
+    }
+    return { sourceBinding: "live-source", sourceKey: null, sourceGeneration: null, sourceHashAtCutover: null, migrationSourceHash: null } as const;
   } catch {
-    return { records: [], readError: true };
+    return null;
+  }
+}
+
+function projectMemoryCutoverMetadataForExistingEnvelope(canonicalRaw: string): ProjectMemoryCutoverSourceMetadata | null {
+  try {
+    const envelope = parseProjectMemoryEnvelope(JSON.parse(canonicalRaw));
+    if (!envelope) return null;
+    const migratedReports = envelope.migrationReports.filter((report) => report.status === "migrated");
+    const report = [...migratedReports].reverse().find((item) => item.sourceKey === priorProjectMemoriesStorageKey)
+      ?? [...migratedReports].reverse().find((item) => item.sourceKey === legacyProjectMemoriesStorageKey)
+      ?? null;
+    if (!report) return { sourceBinding: "canonical-report", sourceKey: null, sourceGeneration: null, sourceHashAtCutover: null, migrationSourceHash: null };
+    return {
+      sourceBinding: "canonical-report",
+      sourceKey: report.sourceKey,
+      sourceGeneration: report.sourceGeneration as ProjectMemoryPriorGeneration | "legacy-array-v1",
+      sourceHashAtCutover: `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue({ sourceKey: report.sourceKey, sourceGeneration: report.sourceGeneration, sourceHash: report.sourceHash })))}`,
+      migrationSourceHash: report.sourceHash,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function projectMemoryCutoverSourceIsBound(marker: ProjectMemoryCutoverSourceMetadata, envelope: ProjectMemoryEnvelope | null, requireLiveSource: boolean) {
+  if (marker.sourceKey === null) return marker.sourceGeneration === null && marker.sourceHashAtCutover === null && marker.migrationSourceHash === null;
+  if (marker.sourceGeneration === null || marker.sourceHashAtCutover === null || marker.migrationSourceHash === null) return false;
+  if (requireLiveSource) {
+    if (marker.sourceBinding !== "live-source") return false;
+    try {
+      const raw = window.localStorage.getItem(marker.sourceKey);
+      if (raw === null || `sha256-${memoryCoreSha256(raw)}` !== marker.sourceHashAtCutover || `fnv1a-${purchaseRequestStableHash(raw)}` !== marker.migrationSourceHash) return false;
+      if (marker.sourceKey === priorProjectMemoriesStorageKey) {
+        if (parsePriorProjectMemoryEnvelope(raw)?.generation !== marker.sourceGeneration) return false;
+      } else {
+        const legacy = JSON.parse(raw);
+        if (marker.sourceGeneration !== "legacy-array-v1" || !Array.isArray(legacy)) return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return envelope === null || envelope.migrationReports.some((report) => report.status === "migrated" && report.sourceKey === marker.sourceKey && report.sourceGeneration === marker.sourceGeneration && report.sourceHash === marker.migrationSourceHash);
+}
+
+function parseProjectMemoryCutoverMarker(raw: string): ProjectMemoryCutoverMarker | null {
+  try {
+    const value = JSON.parse(raw);
+    if (value?.state === "cutover-pending") {
+      if (!hasExactObjectKeys(value, ["schemaVersion", "operation", "state", "sourceBinding", "sourceKey", "sourceGeneration", "sourceHashAtCutover", "migrationSourceHash", "cutoverAt", "markerHash"])) return null;
+      const markerWithoutHash = {
+        schemaVersion: 2,
+        operation: "memory-core-v2-cutover",
+        state: "cutover-pending",
+        sourceBinding: value.sourceBinding,
+        sourceKey: value.sourceKey,
+        sourceGeneration: value.sourceGeneration,
+        sourceHashAtCutover: value.sourceHashAtCutover,
+        migrationSourceHash: value.migrationSourceHash,
+        cutoverAt: value.cutoverAt,
+      } satisfies Omit<ProjectMemoryCutoverPendingMarker, "markerHash">;
+      if (
+        value?.schemaVersion !== 2 || value?.operation !== "memory-core-v2-cutover"
+        || !["live-source", "canonical-report"].includes(value?.sourceBinding)
+        || ![null, priorProjectMemoriesStorageKey, legacyProjectMemoriesStorageKey].includes(value?.sourceKey)
+        || ![null, "legacy-array-v1", "memory-core-v1-snapshot", "memory-core-v1-lineage", "memory-core-v1-full"].includes(value?.sourceGeneration)
+        || value?.sourceHashAtCutover !== null && !/^sha256-[0-9a-f]{64}$/.test(value.sourceHashAtCutover)
+        || value?.migrationSourceHash !== null && !/^fnv1a-[0-9a-f]{8}$/.test(value.migrationSourceHash)
+        || typeof value?.cutoverAt !== "string" || !isValidProjectFileDate(value.cutoverAt)
+        || typeof value?.markerHash !== "string" || value.markerHash !== projectMemoryCutoverMarkerHash(markerWithoutHash)
+        || !projectMemoryCutoverSourceIsBound(markerWithoutHash, null, false)
+      ) return null;
+      return { ...markerWithoutHash, markerHash: value.markerHash };
+    }
+    if (value?.state === "cutover-committed") {
+      if (!hasExactObjectKeys(value, ["schemaVersion", "operation", "state", "fingerprintVersion", "sourceBinding", "sourceKey", "sourceGeneration", "sourceHashAtCutover", "migrationSourceHash", "initialTargetHash", "initialEnvelopeVersion", "initialMigrationReportsCount", "initialMigrationReportsHash", "cutoverAt", "markerHash"])) return null;
+      const markerWithoutHash = {
+        schemaVersion: 2,
+        operation: "memory-core-v2-cutover",
+        state: "cutover-committed",
+        fingerprintVersion: "memory-v2",
+        sourceBinding: value.sourceBinding,
+        sourceKey: value.sourceKey,
+        sourceGeneration: value.sourceGeneration,
+        sourceHashAtCutover: value.sourceHashAtCutover,
+        migrationSourceHash: value.migrationSourceHash,
+        initialTargetHash: value.initialTargetHash,
+        initialEnvelopeVersion: value.initialEnvelopeVersion,
+        initialMigrationReportsCount: value.initialMigrationReportsCount,
+        initialMigrationReportsHash: value.initialMigrationReportsHash,
+        cutoverAt: value.cutoverAt,
+      } satisfies Omit<ProjectMemoryCutoverCommittedMarker, "markerHash">;
+      if (
+        value?.schemaVersion !== 2 || value?.operation !== "memory-core-v2-cutover" || value?.fingerprintVersion !== "memory-v2"
+        || !["live-source", "canonical-report"].includes(value?.sourceBinding)
+        || ![null, priorProjectMemoriesStorageKey, legacyProjectMemoriesStorageKey].includes(value?.sourceKey)
+        || ![null, "legacy-array-v1", "memory-core-v1-snapshot", "memory-core-v1-lineage", "memory-core-v1-full"].includes(value?.sourceGeneration)
+        || value?.sourceHashAtCutover !== null && !/^sha256-[0-9a-f]{64}$/.test(value.sourceHashAtCutover)
+        || value?.migrationSourceHash !== null && !/^fnv1a-[0-9a-f]{8}$/.test(value.migrationSourceHash)
+        || !/^sha256-[0-9a-f]{64}$/.test(value?.initialTargetHash)
+        || !Number.isInteger(value?.initialEnvelopeVersion) || value.initialEnvelopeVersion < 0
+        || !Number.isInteger(value?.initialMigrationReportsCount) || value.initialMigrationReportsCount < 0
+        || !/^sha256-[0-9a-f]{64}$/.test(value?.initialMigrationReportsHash)
+        || typeof value?.cutoverAt !== "string" || !isValidProjectFileDate(value.cutoverAt)
+        || typeof value?.markerHash !== "string" || value.markerHash !== projectMemoryCutoverMarkerHash(markerWithoutHash)
+        || !projectMemoryCutoverSourceIsBound(markerWithoutHash, null, false)
+      ) return null;
+      return { ...markerWithoutHash, markerHash: value.markerHash };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function projectMemoryEnvelopeMatchesCommittedCutover(currentRaw: string, marker: ProjectMemoryCutoverCommittedMarker) {
+  try {
+    const current = parseProjectMemoryEnvelope(JSON.parse(currentRaw));
+    if (!current || current.envelopeVersion < marker.initialEnvelopeVersion || !projectMemoryCutoverSourceIsBound(marker, current, false)) return false;
+    if (current.envelopeVersion === marker.initialEnvelopeVersion && `sha256-${memoryCoreSha256(currentRaw)}` !== marker.initialTargetHash) return false;
+    if (current.migrationReports.length !== marker.initialMigrationReportsCount) return false;
+    return `sha256-${memoryCoreSha256(JSON.stringify(current.migrationReports))}` === marker.initialMigrationReportsHash;
+  } catch {
+    return false;
+  }
+}
+
+function commitProjectMemoryCutoverMarker(pending: ProjectMemoryCutoverPendingMarker, canonicalRaw: string) {
+  try {
+    const envelope = parseProjectMemoryEnvelope(JSON.parse(canonicalRaw));
+    if (!envelope || !projectMemoryCutoverSourceIsBound(pending, envelope, false)) return false;
+    const committedWithoutHash = {
+      schemaVersion: 2,
+      operation: "memory-core-v2-cutover",
+      state: "cutover-committed",
+      fingerprintVersion: "memory-v2",
+      sourceBinding: pending.sourceBinding,
+      sourceKey: pending.sourceKey,
+      sourceGeneration: pending.sourceGeneration,
+      sourceHashAtCutover: pending.sourceHashAtCutover,
+      migrationSourceHash: pending.migrationSourceHash,
+      initialTargetHash: `sha256-${memoryCoreSha256(canonicalRaw)}`,
+      initialEnvelopeVersion: envelope.envelopeVersion,
+      initialMigrationReportsCount: envelope.migrationReports.length,
+      initialMigrationReportsHash: `sha256-${memoryCoreSha256(JSON.stringify(envelope.migrationReports))}`,
+      cutoverAt: pending.cutoverAt,
+    } satisfies Omit<ProjectMemoryCutoverCommittedMarker, "markerHash">;
+    const committed = { ...committedWithoutHash, markerHash: projectMemoryCutoverMarkerHash(committedWithoutHash) } satisfies ProjectMemoryCutoverCommittedMarker;
+    const committedRaw = JSON.stringify(committed);
+    if (!parseProjectMemoryCutoverMarker(committedRaw)) return false;
+    window.localStorage.setItem(priorProjectMemoryHardDeleteIntentKey, committedRaw);
+    return window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey) === committedRaw && projectMemoryEnvelopeMatchesCommittedCutover(canonicalRaw, committed);
+  } catch {
+    return false;
+  }
+}
+
+function resumeProjectMemoryCutoverMarker(rawMarker: string) {
+  const marker = parseProjectMemoryCutoverMarker(rawMarker);
+  if (!marker) return false;
+  try {
+    const canonicalRaw = window.localStorage.getItem(projectMemoriesStorageKey);
+    if (marker.state === "cutover-committed") return canonicalRaw !== null && projectMemoryEnvelopeMatchesCommittedCutover(canonicalRaw, marker);
+    if (canonicalRaw === null) return projectMemoryCutoverSourceIsBound(marker, null, true);
+    const envelope = parseProjectMemoryEnvelope(JSON.parse(canonicalRaw));
+    if (!envelope || !projectMemoryCutoverSourceIsBound(marker, envelope, false)) return false;
+    if (window.localStorage.getItem(projectMemoryMigrationJournalKey) !== null) window.localStorage.removeItem(projectMemoryMigrationJournalKey);
+    if (window.localStorage.getItem(projectMemoryMigrationJournalKey) !== null) return false;
+    return commitProjectMemoryCutoverMarker(marker, canonicalRaw);
+  } catch {
+    return false;
+  }
+}
+
+function persistPendingProjectMemoryCutoverMarker(metadata: ProjectMemoryCutoverSourceMetadata, expectedControlRaw: string | null = null) {
+  try {
+    if (window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey) !== expectedControlRaw) return false;
+    const pendingWithoutHash = {
+      schemaVersion: 2,
+      operation: "memory-core-v2-cutover",
+      state: "cutover-pending",
+      ...metadata,
+      cutoverAt: new Date().toISOString(),
+    } satisfies Omit<ProjectMemoryCutoverPendingMarker, "markerHash">;
+    const pending = { ...pendingWithoutHash, markerHash: projectMemoryCutoverMarkerHash(pendingWithoutHash) } satisfies ProjectMemoryCutoverPendingMarker;
+    const pendingRaw = JSON.stringify(pending);
+    if (!parseProjectMemoryCutoverMarker(pendingRaw)) return false;
+    window.localStorage.setItem(priorProjectMemoryHardDeleteIntentKey, pendingRaw);
+    return window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey) === pendingRaw;
+  } catch {
+    return false;
+  }
+}
+
+function ensureProjectMemoryCutoverMarker(nextCanonicalRaw: string) {
+  try {
+    const existingRaw = window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey);
+    if (existingRaw !== null) {
+      const marker = parseProjectMemoryCutoverMarker(existingRaw);
+      if (!marker) return false;
+      const currentRaw = window.localStorage.getItem(projectMemoriesStorageKey);
+      if (marker.state === "cutover-committed") return currentRaw !== null && projectMemoryEnvelopeMatchesCommittedCutover(currentRaw, marker);
+      if (currentRaw !== null && !resumeProjectMemoryCutoverMarker(existingRaw)) return false;
+      return true;
+    }
+    const currentCanonicalRaw = window.localStorage.getItem(projectMemoriesStorageKey);
+    const metadata = currentCanonicalRaw === null ? projectMemoryCutoverSourceMetadata() : projectMemoryCutoverMetadataForExistingEnvelope(currentCanonicalRaw);
+    if (!metadata || !parseProjectMemoryEnvelope(JSON.parse(nextCanonicalRaw))) return false;
+    if (!persistPendingProjectMemoryCutoverMarker(metadata)) return false;
+    const pendingRaw = window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey);
+    return pendingRaw !== null && (window.localStorage.getItem(projectMemoriesStorageKey) === null || resumeProjectMemoryCutoverMarker(pendingRaw));
+  } catch {
+    return false;
+  }
+}
+
+function projectMemoryPriorRevisionFingerprint(generation: ProjectMemoryPriorGeneration, record: ProjectMemoryRecord, revision: ProjectMemoryRevision, event: ProjectMemoryHistoryEvent) {
+  if (generation === "memory-core-v1-snapshot") return projectMemoryLegacyFingerprint(record.scopeType, record.scopeId, revision.snapshot);
+  if (generation === "memory-core-v1-lineage") return projectMemoryLineageFingerprint(record.scopeType, record.scopeId, revision.snapshot, event);
+  return projectMemoryV1FullFingerprint(record, revision.snapshot, event, revision);
+}
+
+function serializeProjectMemoryRecordForPriorGeneration(record: ProjectMemoryRecord, generation: ProjectMemoryPriorGeneration) {
+  const revisions = record.revisions.map((revision, index) => ({ ...revision, fingerprint: projectMemoryPriorRevisionFingerprint(generation, record, revision, record.history[index]) }));
+  const history = generation === "memory-core-v1-snapshot"
+    ? record.history.map(({ lineage: _lineage, ...event }) => event)
+    : record.history;
+  return { ...record, history, revisions };
+}
+
+function buildPriorProjectMemoryHardDeleteRaw(priorRaw: string | null, memoryId: string, timestamp: string, proofHistory?: ProjectMemoryHistoryEvent[]) {
+  if (priorRaw === null) return null;
+  const parsed = parsePriorProjectMemoryEnvelope(priorRaw);
+  if (!parsed) return undefined;
+  try {
+    const rawValue = JSON.parse(priorRaw);
+    const target = parsed.envelope.records.find((record) => record.id === memoryId);
+    const removesCandidate = parsed.envelope.candidates.some((candidate) => candidate.acceptedMemoryId === memoryId);
+    if (!target && !removesCandidate) return priorRaw;
+    const recordsById = new Map(parsed.envelope.records.map((record) => [record.id, record]));
+    const records = rawValue.records.flatMap((rawRecord: any): any[] => {
+      if (rawRecord?.id === memoryId) return [];
+      const record = recordsById.get(rawRecord?.id);
+      if (!record || !target || !record.conflictIds.includes(memoryId)) return [rawRecord];
+      const nextRecord = appendProjectMemoryRevision(record, projectMemorySnapshot(record), "conflicts-resolved", timestamp, { conflictIds: record.conflictIds.filter((conflictId) => conflictId !== memoryId) });
+      return [serializeProjectMemoryRecordForPriorGeneration(nextRecord, parsed.generation)];
+    });
+    const candidates = rawValue.candidates.filter((candidate: any) => candidate?.acceptedMemoryId !== memoryId);
+    const tombstones = target ? [...rawValue.tombstones, createProjectMemoryTombstone(target, timestamp, projectMemoryContentHash(target), proofHistory ?? target.history)] : rawValue.tombstones;
+    const nextValue = { ...rawValue, envelopeVersion: rawValue.envelopeVersion + 1, records, candidates, tombstones, updatedAt: timestamp };
+    if (!parseProjectMemoryEnvelope(nextValue, parsed.generation)) return undefined;
+    return JSON.stringify(nextValue);
+  } catch {
+    return undefined;
+  }
+}
+
+function projectMemoryPriorHardDeleteDeltaIsExact(
+  previous: { envelope: ProjectMemoryPriorEnvelope; generation: ProjectMemoryPriorGeneration },
+  next: ProjectMemoryPriorEnvelope,
+  memoryId: string,
+  timestamp: string,
+  expectedContentHash: string,
+  allowedPeerEventTypes: readonly ProjectMemoryEventType[],
+  expectedProofHistory: ProjectMemoryHistoryEvent[] | null,
+) {
+  const target = previous.envelope.records.find((record) => record.id === memoryId);
+  if (!target) return false;
+  const expectedTombstone = expectedProofHistory === null
+    ? {
+        id: target.id,
+        ownerPrincipalId: localBuilderAccountId,
+        scopeType: target.scopeType,
+        scopeId: target.scopeId,
+        lastVersion: target.version,
+        deletedAt: timestamp,
+        deletedBy: "شما",
+        reasonClass: "user_requested",
+        priorContentHash: expectedContentHash,
+        retentionClass: "local-metadata-only",
+        lineageHistory: null,
+        lineageHistoryHash: null,
+      } satisfies ProjectMemoryTombstone
+    : createProjectMemoryTombstone(target, timestamp, expectedContentHash, expectedProofHistory);
+  if (
+    next.envelopeVersion !== previous.envelope.envelopeVersion + 1
+    || next.updatedAt !== timestamp
+    || new Date(timestamp).getTime() < new Date(previous.envelope.updatedAt ?? target.updatedAt).getTime()
+    || next.records.some((record) => record.id === memoryId)
+    || next.candidates.some((candidate) => candidate.acceptedMemoryId === memoryId)
+    || JSON.stringify(next.records.map((record) => record.id)) !== JSON.stringify(previous.envelope.records.filter((record) => record.id !== memoryId).map((record) => record.id))
+    || JSON.stringify(next.candidates) !== JSON.stringify(previous.envelope.candidates.filter((candidate) => candidate.acceptedMemoryId !== memoryId))
+    || JSON.stringify(next.tombstones) !== JSON.stringify([...previous.envelope.tombstones, expectedTombstone])
+    || JSON.stringify(next.migrationReports) !== JSON.stringify(previous.envelope.migrationReports)
+  ) return false;
+  for (const previousPeer of previous.envelope.records) {
+    if (previousPeer.id === memoryId) continue;
+    const nextPeer = next.records.find((record) => record.id === previousPeer.id);
+    if (!nextPeer) return false;
+    if (!previousPeer.conflictIds.includes(memoryId)) {
+      if (JSON.stringify(nextPeer) !== JSON.stringify(previousPeer)) return false;
+      continue;
+    }
+    const { history: previousHistory, revisions: previousRevisions, conflictIds: previousConflictIds, version: previousVersion, currentRevisionId: _previousCurrentRevisionId, updatedAt: _previousUpdatedAt, ...previousStable } = previousPeer;
+    const { history: nextHistory, revisions: nextRevisions, conflictIds: nextConflictIds, version: nextVersion, currentRevisionId: nextCurrentRevisionId, updatedAt: nextUpdatedAt, ...nextStable } = nextPeer;
+    const expectedConflictIds = previousConflictIds.filter((conflictId) => conflictId !== memoryId);
+    const appendedEvent = nextHistory.at(-1);
+    const appendedRevision = nextRevisions.at(-1);
+    const expectedEventLineage = previous.generation === "memory-core-v1-snapshot"
+      ? { supersedesId: null, supersededById: null, conflictIds: [] }
+      : { supersedesId: previousPeer.supersedesId, supersededById: previousPeer.supersededById, conflictIds: expectedConflictIds };
+    if (
+      JSON.stringify(nextStable) !== JSON.stringify(previousStable)
+      || nextVersion !== previousVersion + 1 || nextUpdatedAt !== timestamp
+      || JSON.stringify(nextConflictIds) !== JSON.stringify(expectedConflictIds)
+      || JSON.stringify(nextHistory.slice(0, -1)) !== JSON.stringify(previousHistory)
+      || JSON.stringify(nextRevisions.slice(0, -1)) !== JSON.stringify(previousRevisions)
+      || !appendedEvent || !allowedPeerEventTypes.includes(appendedEvent.type) || appendedEvent.actor !== "شما" || appendedEvent.at !== timestamp || appendedEvent.version !== nextVersion || appendedEvent.rollbackFromVersion !== null
+      || JSON.stringify(appendedEvent.lineage) !== JSON.stringify(expectedEventLineage)
+      || !appendedRevision || nextCurrentRevisionId !== appendedRevision.id || appendedRevision.version !== nextVersion || appendedRevision.createdAt !== timestamp
+      || JSON.stringify(appendedRevision.snapshot) !== JSON.stringify(projectMemorySnapshot(previousPeer))
+      || appendedRevision.fingerprint !== projectMemoryPriorRevisionFingerprint(previous.generation, nextPeer, appendedRevision, appendedEvent)
+    ) return false;
+  }
+  return true;
+}
+
+function parseProjectMemoryHardDeleteIntent(raw: string): ProjectMemoryHardDeleteIntent | null {
+  try {
+    const value = JSON.parse(raw);
+    if (!hasExactObjectKeys(value, ["schemaVersion", "memoryId", "previousCanonicalRaw", "previousPriorCanonicalRaw", "previousLegacyRaw", "nextCanonicalRaw", "nextPriorCanonicalRaw", "nextLegacyRaw", "createdAt", "intentHash"]) || value?.schemaVersion !== 2) return null;
+    const memoryId = typeof value?.memoryId === "string" ? value.memoryId.trim() : "";
+    const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+    if (!memoryId || memoryId !== value?.memoryId || typeof value?.previousCanonicalRaw !== "string" || typeof value?.nextCanonicalRaw !== "string" || value?.previousPriorCanonicalRaw !== null && typeof value?.previousPriorCanonicalRaw !== "string" || value?.nextPriorCanonicalRaw !== null && typeof value?.nextPriorCanonicalRaw !== "string" || value?.previousLegacyRaw !== null && typeof value?.previousLegacyRaw !== "string" || value?.nextLegacyRaw !== null && typeof value?.nextLegacyRaw !== "string" || !isValidProjectFileDate(createdAt) || createdAt !== value?.createdAt || typeof value?.intentHash !== "string") return null;
+    const intent = { schemaVersion: 2, memoryId, previousCanonicalRaw: value.previousCanonicalRaw, previousPriorCanonicalRaw: value.previousPriorCanonicalRaw, previousLegacyRaw: value.previousLegacyRaw, nextCanonicalRaw: value.nextCanonicalRaw, nextPriorCanonicalRaw: value.nextPriorCanonicalRaw, nextLegacyRaw: value.nextLegacyRaw, createdAt } satisfies Omit<ProjectMemoryHardDeleteIntent, "intentHash">;
+    if (value.intentHash !== projectMemoryHardDeleteIntentHash(intent)) return null;
+    const previousEnvelope = parseProjectMemoryEnvelope(JSON.parse(intent.previousCanonicalRaw));
+    const nextEnvelope = parseProjectMemoryEnvelope(JSON.parse(intent.nextCanonicalRaw));
+    const previousRecord = previousEnvelope?.records.find((record) => record.id === memoryId);
+    const expectedCanonicalTombstone = previousRecord ? createProjectMemoryTombstone(previousRecord, intent.createdAt) : null;
+    if (
+      !previousEnvelope || !nextEnvelope || !previousRecord
+      || nextEnvelope.records.some((record) => record.id === memoryId)
+      || nextEnvelope.candidates.some((candidate) => candidate.acceptedMemoryId === memoryId)
+      || !expectedCanonicalTombstone
+      || nextEnvelope.updatedAt !== intent.createdAt
+      || new Date(intent.createdAt).getTime() < new Date(previousEnvelope.updatedAt ?? previousRecord.updatedAt).getTime()
+      || new Date(intent.createdAt).getTime() < new Date(previousRecord.updatedAt).getTime()
+      || nextEnvelope.envelopeVersion !== previousEnvelope.envelopeVersion + 1
+      || JSON.stringify(nextEnvelope.migrationReports) !== JSON.stringify(previousEnvelope.migrationReports)
+      || JSON.stringify(nextEnvelope.candidates) !== JSON.stringify(previousEnvelope.candidates.filter((candidate) => candidate.acceptedMemoryId !== memoryId))
+      || JSON.stringify(nextEnvelope.tombstones) !== JSON.stringify([...previousEnvelope.tombstones, expectedCanonicalTombstone])
+    ) return null;
+    const expectedRecordIds = previousEnvelope.records.filter((record) => record.id !== memoryId).map((record) => record.id);
+    if (JSON.stringify(nextEnvelope.records.map((record) => record.id)) !== JSON.stringify(expectedRecordIds)) return null;
+    for (const previousPeer of previousEnvelope.records) {
+      if (previousPeer.id === memoryId) continue;
+      const nextPeer = nextEnvelope.records.find((record) => record.id === previousPeer.id);
+      if (!nextPeer) return null;
+      if (!previousPeer.conflictIds.includes(memoryId)) {
+        if (JSON.stringify(nextPeer) !== JSON.stringify(previousPeer)) return null;
+        continue;
+      }
+      const { history: previousHistory, revisions: previousRevisions, conflictIds: previousConflictIds, version: previousVersion, currentRevisionId: previousCurrentRevisionId, updatedAt: previousUpdatedAt, ...previousStable } = previousPeer;
+      const { history: nextHistory, revisions: nextRevisions, conflictIds: nextConflictIds, version: nextVersion, currentRevisionId: nextCurrentRevisionId, updatedAt: nextUpdatedAt, ...nextStable } = nextPeer;
+      const expectedConflictIds = previousConflictIds.filter((conflictId) => conflictId !== memoryId);
+      const appendedEvent = nextHistory[nextHistory.length - 1];
+      const appendedRevision = nextRevisions[nextRevisions.length - 1];
+      if (
+        JSON.stringify(nextStable) !== JSON.stringify(previousStable)
+        || nextVersion !== previousVersion + 1
+        || nextUpdatedAt !== intent.createdAt
+        || nextCurrentRevisionId !== appendedRevision?.id
+        || JSON.stringify(nextConflictIds) !== JSON.stringify(expectedConflictIds)
+        || JSON.stringify(nextHistory.slice(0, -1)) !== JSON.stringify(previousHistory)
+        || JSON.stringify(nextRevisions.slice(0, -1)) !== JSON.stringify(previousRevisions)
+        || appendedEvent?.type !== "conflicts-resolved"
+        || appendedEvent?.at !== intent.createdAt
+        || appendedEvent?.version !== nextVersion
+        || appendedEvent?.lineage.supersedesId !== previousPeer.supersedesId
+        || appendedEvent?.lineage.supersededById !== previousPeer.supersededById
+        || JSON.stringify(appendedEvent?.lineage.conflictIds) !== JSON.stringify(expectedConflictIds)
+        || appendedRevision?.createdAt !== intent.createdAt
+        || appendedRevision?.version !== nextVersion
+        || JSON.stringify(appendedRevision?.snapshot) !== JSON.stringify(projectMemorySnapshot(previousPeer))
+      ) return null;
+      void previousCurrentRevisionId;
+      void previousUpdatedAt;
+    }
+    const previousPrior = intent.previousPriorCanonicalRaw === null ? null : parsePriorProjectMemoryEnvelope(intent.previousPriorCanonicalRaw);
+    const nextPriorEnvelope = previousPrior && intent.nextPriorCanonicalRaw !== null
+      ? (() => { try { return parseProjectMemoryEnvelope(JSON.parse(intent.nextPriorCanonicalRaw!), previousPrior.generation); } catch { return null; } })()
+      : null;
+    const nextPrior = previousPrior && nextPriorEnvelope ? { envelope: nextPriorEnvelope, generation: previousPrior.generation } : null;
+    if (intent.previousPriorCanonicalRaw === null ? intent.nextPriorCanonicalRaw !== null : !previousPrior || !nextPrior) return null;
+    if (previousPrior && nextPrior) {
+      const priorTarget = previousPrior.envelope.records.find((record) => record.id === memoryId);
+      if (!priorTarget) {
+        if (intent.nextPriorCanonicalRaw !== intent.previousPriorCanonicalRaw) return null;
+      } else if (!projectMemoryPriorHardDeleteDeltaIsExact(
+        previousPrior,
+        nextPrior.envelope,
+        memoryId,
+        intent.createdAt,
+        projectMemoryContentHash(priorTarget),
+        ["conflicts-resolved"],
+        previousRecord.history.slice(0, priorTarget.version),
+      )) return null;
+    }
+    const parseLegacy = (legacyRaw: string | null) => {
+      if (legacyRaw === null) return null;
+      const legacy = JSON.parse(legacyRaw);
+      return Array.isArray(legacy) ? legacy : undefined;
+    };
+    const previousLegacy = parseLegacy(intent.previousLegacyRaw);
+    const nextLegacy = parseLegacy(intent.nextLegacyRaw);
+    if (previousLegacy === undefined || nextLegacy === undefined) return null;
+    const expectedNextLegacyRaw = previousLegacy === null
+      ? null
+      : JSON.stringify(previousLegacy.filter((legacy) => typeof legacy?.id !== "string" || legacy.id.trim() !== memoryId));
+    if (
+      intent.nextLegacyRaw !== expectedNextLegacyRaw
+      || nextLegacy?.some((legacy) => typeof legacy?.id === "string" && legacy.id.trim() === memoryId)
+    ) return null;
+    return { ...intent, intentHash: value.intentHash };
+  } catch {
+    return null;
+  }
+}
+
+function resumeProjectMemoryHardDeleteIntent(rawIntent: string, intentKey = projectMemoryHardDeleteIntentKey, clearIntent = true) {
+  const intent = parseProjectMemoryHardDeleteIntent(rawIntent);
+  if (!intent) return false;
+  try {
+    const currentCanonicalRaw = window.localStorage.getItem(projectMemoriesStorageKey);
+    const currentPriorCanonicalRaw = window.localStorage.getItem(priorProjectMemoriesStorageKey);
+    const currentLegacyRaw = window.localStorage.getItem(legacyProjectMemoriesStorageKey);
+    if (currentCanonicalRaw !== intent.previousCanonicalRaw && currentCanonicalRaw !== intent.nextCanonicalRaw) return false;
+    if (currentPriorCanonicalRaw !== intent.previousPriorCanonicalRaw && currentPriorCanonicalRaw !== intent.nextPriorCanonicalRaw) return false;
+    if (currentLegacyRaw !== intent.previousLegacyRaw && currentLegacyRaw !== intent.nextLegacyRaw) return false;
+    window.localStorage.setItem(projectMemoriesStorageKey, intent.nextCanonicalRaw);
+    if (window.localStorage.getItem(projectMemoriesStorageKey) !== intent.nextCanonicalRaw) return false;
+    if (intent.nextPriorCanonicalRaw !== null) {
+      window.localStorage.setItem(priorProjectMemoriesStorageKey, intent.nextPriorCanonicalRaw);
+      if (window.localStorage.getItem(priorProjectMemoriesStorageKey) !== intent.nextPriorCanonicalRaw) return false;
+    } else if (window.localStorage.getItem(priorProjectMemoriesStorageKey) !== null) {
+      return false;
+    }
+    if (intent.nextLegacyRaw !== null) {
+      window.localStorage.setItem(legacyProjectMemoriesStorageKey, intent.nextLegacyRaw);
+      if (window.localStorage.getItem(legacyProjectMemoriesStorageKey) !== intent.nextLegacyRaw) return false;
+    } else if (window.localStorage.getItem(legacyProjectMemoriesStorageKey) !== null) {
+      return false;
+    }
+    if (clearIntent) window.localStorage.removeItem(intentKey);
+    return clearIntent ? window.localStorage.getItem(intentKey) === null : true;
+  } catch {
+    return false;
+  }
+}
+
+function resumePriorProjectMemoryHardDeleteIntent(rawIntent: string, intentKey = priorProjectMemoryHardDeleteIntentKey, clearIntent = true) {
+  try {
+    const value = JSON.parse(rawIntent);
+    if (!hasExactObjectKeys(value, ["schemaVersion", "memoryId", "previousCanonicalRaw", "previousLegacyRaw", "nextCanonicalRaw", "nextLegacyRaw", "createdAt", "intentHash"]) || value?.schemaVersion !== 1) return false;
+    const memoryId = typeof value?.memoryId === "string" ? value.memoryId.trim() : "";
+    const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+    if (!memoryId || memoryId !== value?.memoryId || typeof value?.previousCanonicalRaw !== "string" || typeof value?.nextCanonicalRaw !== "string" || value?.previousLegacyRaw !== null && typeof value?.previousLegacyRaw !== "string" || value?.nextLegacyRaw !== null && typeof value?.nextLegacyRaw !== "string" || !isValidProjectFileDate(createdAt) || createdAt !== value?.createdAt) return false;
+    const withoutHash = { schemaVersion: 1, memoryId, previousCanonicalRaw: value.previousCanonicalRaw, previousLegacyRaw: value.previousLegacyRaw, nextCanonicalRaw: value.nextCanonicalRaw, nextLegacyRaw: value.nextLegacyRaw, createdAt };
+    const expectedHash = `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue(withoutHash)))}`;
+    if (value?.intentHash !== expectedHash) return false;
+    const previousPrior = parsePriorProjectMemoryEnvelope(value.previousCanonicalRaw);
+    if (!previousPrior) return false;
+    const nextPriorEnvelope = parseProjectMemoryEnvelope(JSON.parse(value.nextCanonicalRaw), previousPrior.generation);
+    const previousTarget = previousPrior.envelope.records.find((record) => record.id === memoryId);
+    if (!nextPriorEnvelope || !previousTarget || !projectMemoryPriorHardDeleteDeltaIsExact(
+      previousPrior,
+      nextPriorEnvelope,
+      memoryId,
+      createdAt,
+      projectMemoryV1ContentHash(previousTarget),
+      ["updated", "conflicts-resolved"],
+      null,
+    )) return false;
+    const parseLegacyArray = (raw: string | null) => raw === null ? null : (() => { const parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed : undefined; })();
+    const previousLegacy = parseLegacyArray(value.previousLegacyRaw);
+    const nextLegacy = parseLegacyArray(value.nextLegacyRaw);
+    if (previousLegacy === undefined || nextLegacy === undefined) return false;
+    const expectedNextLegacyRaw = previousLegacy === null ? null : JSON.stringify(previousLegacy.filter((legacy) => typeof legacy?.id !== "string" || legacy.id.trim() !== memoryId));
+    if (value.nextLegacyRaw !== expectedNextLegacyRaw) return false;
+    const currentPriorRaw = window.localStorage.getItem(priorProjectMemoriesStorageKey);
+    const currentLegacyRaw = window.localStorage.getItem(legacyProjectMemoriesStorageKey);
+    if (currentPriorRaw !== value.previousCanonicalRaw && currentPriorRaw !== value.nextCanonicalRaw || currentLegacyRaw !== value.previousLegacyRaw && currentLegacyRaw !== value.nextLegacyRaw) return false;
+    window.localStorage.setItem(priorProjectMemoriesStorageKey, value.nextCanonicalRaw);
+    if (window.localStorage.getItem(priorProjectMemoriesStorageKey) !== value.nextCanonicalRaw) return false;
+    if (value.nextLegacyRaw !== null) {
+      window.localStorage.setItem(legacyProjectMemoriesStorageKey, value.nextLegacyRaw);
+      if (window.localStorage.getItem(legacyProjectMemoriesStorageKey) !== value.nextLegacyRaw) return false;
+    } else if (window.localStorage.getItem(legacyProjectMemoriesStorageKey) !== null) return false;
+    if (clearIntent) window.localStorage.removeItem(intentKey);
+    return clearIntent ? window.localStorage.getItem(intentKey) === null : true;
+  } catch {
+    return false;
+  }
+}
+
+function inspectPriorProjectMemoryHardDeleteIntent(rawIntent: string) {
+  try {
+    const value = JSON.parse(rawIntent);
+    if (value?.schemaVersion !== 1 || typeof value?.memoryId !== "string" || typeof value?.previousCanonicalRaw !== "string" || typeof value?.createdAt !== "string") return null;
+    const previous = parsePriorProjectMemoryEnvelope(value.previousCanonicalRaw);
+    const target = previous?.envelope.records.find((record) => record.id === value.memoryId);
+    const next = previous && typeof value?.nextCanonicalRaw === "string" ? parseProjectMemoryEnvelope(JSON.parse(value.nextCanonicalRaw), previous.generation) : null;
+    const nextTombstone = next?.tombstones.find((tombstone) => tombstone.id === value.memoryId);
+    if (!previous || !target || !nextTombstone) return null;
+    return {
+      memoryId: target.id,
+      scopeType: target.scopeType,
+      scopeId: target.scopeId,
+      lastVersion: target.version,
+      deletedAt: nextTombstone.deletedAt,
+      priorContentHash: nextTombstone.priorContentHash,
+      cutoverMetadata: {
+        sourceBinding: "live-source",
+        sourceKey: priorProjectMemoriesStorageKey,
+        sourceGeneration: previous.generation,
+        sourceHashAtCutover: `sha256-${memoryCoreSha256(value.previousCanonicalRaw)}`,
+        migrationSourceHash: `fnv1a-${purchaseRequestStableHash(value.previousCanonicalRaw)}`,
+      } satisfies ProjectMemoryCutoverSourceMetadata,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function inspectProjectMemoryHardDeleteIntentCutoverMetadata(rawIntent: string): ProjectMemoryCutoverSourceMetadata | null {
+  const intent = parseProjectMemoryHardDeleteIntent(rawIntent);
+  if (!intent) return null;
+  try {
+    if (intent.previousPriorCanonicalRaw !== null) {
+      const prior = parsePriorProjectMemoryEnvelope(intent.previousPriorCanonicalRaw);
+      if (!prior) return null;
+      return {
+        sourceBinding: "live-source",
+        sourceKey: priorProjectMemoriesStorageKey,
+        sourceGeneration: prior.generation,
+        sourceHashAtCutover: `sha256-${memoryCoreSha256(intent.previousPriorCanonicalRaw)}`,
+        migrationSourceHash: `fnv1a-${purchaseRequestStableHash(intent.previousPriorCanonicalRaw)}`,
+      };
+    }
+    if (intent.previousLegacyRaw !== null) {
+      const legacy = JSON.parse(intent.previousLegacyRaw);
+      if (!Array.isArray(legacy)) return null;
+      return {
+        sourceBinding: "live-source",
+        sourceKey: legacyProjectMemoriesStorageKey,
+        sourceGeneration: "legacy-array-v1",
+        sourceHashAtCutover: `sha256-${memoryCoreSha256(intent.previousLegacyRaw)}`,
+        migrationSourceHash: `fnv1a-${purchaseRequestStableHash(intent.previousLegacyRaw)}`,
+      };
+    }
+    return { sourceBinding: "live-source", sourceKey: null, sourceGeneration: null, sourceHashAtCutover: null, migrationSourceHash: null };
+  } catch {
+    return null;
+  }
+}
+
+function currentProjectMemoryEnvelopeProvesPriorDelete(rawCanonical: string, proof: NonNullable<ReturnType<typeof inspectPriorProjectMemoryHardDeleteIntent>>) {
+  try {
+    const envelope = parseProjectMemoryEnvelope(JSON.parse(rawCanonical));
+    const tombstone = envelope?.tombstones.find((item) => item.id === proof.memoryId);
+    return Boolean(
+      envelope
+      && !envelope.records.some((record) => record.id === proof.memoryId)
+      && !envelope.candidates.some((candidate) => candidate.acceptedMemoryId === proof.memoryId)
+      && tombstone
+      && tombstone.scopeType === proof.scopeType
+      && tombstone.scopeId === proof.scopeId
+      && tombstone.lastVersion === proof.lastVersion
+      && tombstone.deletedAt === proof.deletedAt
+      && tombstone.priorContentHash === proof.priorContentHash
+    );
+  } catch {
+    return false;
+  }
+}
+
+function projectMemoryPriorIntentBridgeHash(bridge: Omit<ProjectMemoryPriorIntentBridge, "bridgeHash">) {
+  return `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue(bridge)))}`;
+}
+
+function parseProjectMemoryPriorIntentBridge(raw: string): ProjectMemoryPriorIntentBridge | null {
+  try {
+    const value = JSON.parse(raw);
+    if (!hasExactObjectKeys(value, ["schemaVersion", "operation", "intentKind", "rawIntent", "createdAt", "bridgeHash"]) || value?.schemaVersion !== 1 || value?.operation !== "resume-prior-memory-intent" || !["memory-core-v1-delete", "memory-core-v2-delete"].includes(value?.intentKind) || typeof value?.rawIntent !== "string" || typeof value?.createdAt !== "string" || !isValidProjectFileDate(value.createdAt) || typeof value?.bridgeHash !== "string") return null;
+    const bridge = { schemaVersion: 1, operation: "resume-prior-memory-intent", intentKind: value.intentKind, rawIntent: value.rawIntent, createdAt: value.createdAt } satisfies Omit<ProjectMemoryPriorIntentBridge, "bridgeHash">;
+    if (value.bridgeHash !== projectMemoryPriorIntentBridgeHash(bridge)) return null;
+    return { ...bridge, bridgeHash: value.bridgeHash };
+  } catch {
+    return null;
+  }
+}
+
+function persistProjectMemoryPriorIntentBridge(rawIntent: string, intentKind: ProjectMemoryPriorIntentBridge["intentKind"]) {
+  try {
+    const existingRaw = window.localStorage.getItem(projectMemoryPriorIntentBridgeKey);
+    if (existingRaw !== null) {
+      const existing = parseProjectMemoryPriorIntentBridge(existingRaw);
+      return Boolean(existing && existing.rawIntent === rawIntent && existing.intentKind === intentKind);
+    }
+    const bridgeWithoutHash = { schemaVersion: 1, operation: "resume-prior-memory-intent", intentKind, rawIntent, createdAt: new Date().toISOString() } satisfies Omit<ProjectMemoryPriorIntentBridge, "bridgeHash">;
+    const bridge = { ...bridgeWithoutHash, bridgeHash: projectMemoryPriorIntentBridgeHash(bridgeWithoutHash) } satisfies ProjectMemoryPriorIntentBridge;
+    const bridgeRaw = JSON.stringify(bridge);
+    if (!parseProjectMemoryPriorIntentBridge(bridgeRaw)) return false;
+    window.localStorage.setItem(projectMemoryPriorIntentBridgeKey, bridgeRaw);
+    return window.localStorage.getItem(projectMemoryPriorIntentBridgeKey) === bridgeRaw;
+  } catch {
+    return false;
+  }
+}
+
+function resumeProjectMemoryPriorIntentBridge(rawBridge: string) {
+  const bridge = parseProjectMemoryPriorIntentBridge(rawBridge);
+  if (!bridge) return false;
+  try {
+    const controlRaw = window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey);
+    if (controlRaw !== bridge.rawIntent && (controlRaw === null || !parseProjectMemoryCutoverMarker(controlRaw))) return false;
+    let historicalMetadata: ProjectMemoryCutoverSourceMetadata | null = null;
+    if (bridge.intentKind === "memory-core-v2-delete") {
+      historicalMetadata = inspectProjectMemoryHardDeleteIntentCutoverMetadata(bridge.rawIntent);
+      if (!historicalMetadata || !resumeProjectMemoryHardDeleteIntent(bridge.rawIntent, priorProjectMemoryHardDeleteIntentKey, false)) return false;
+    } else {
+      const priorProof = inspectPriorProjectMemoryHardDeleteIntent(bridge.rawIntent);
+      if (!priorProof) return false;
+      const canonicalBefore = window.localStorage.getItem(projectMemoriesStorageKey);
+      if (canonicalBefore !== null && !currentProjectMemoryEnvelopeProvesPriorDelete(canonicalBefore, priorProof)) return false;
+      if (!resumePriorProjectMemoryHardDeleteIntent(bridge.rawIntent, priorProjectMemoryHardDeleteIntentKey, false)) return false;
+      historicalMetadata = canonicalBefore === null ? projectMemoryCutoverSourceMetadata() : priorProof.cutoverMetadata;
+    }
+    if (!historicalMetadata) return false;
+    const markerBefore = window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey);
+    if (markerBefore === bridge.rawIntent && !persistPendingProjectMemoryCutoverMarker(historicalMetadata, bridge.rawIntent)) return false;
+    const markerRaw = window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey);
+    if (markerRaw === null || !resumeProjectMemoryCutoverMarker(markerRaw)) return false;
+    window.localStorage.removeItem(projectMemoryPriorIntentBridgeKey);
+    return window.localStorage.getItem(projectMemoryPriorIntentBridgeKey) === null;
+  } catch {
+    return false;
+  }
+}
+
+function createProjectMemoryRecord(id: string, scopeType: ProjectMemoryScopeType, scopeId: string, projectId: string | null, draft: Pick<ProjectMemoryDraft, "title" | "content" | "kind">, timestamp: string, useInContextPreference = true, provenanceClass: ProjectMemoryRecord["provenanceClass"] = "direct_user", sourceRefs: string[] = []): ProjectMemoryRecord {
+  const snapshot = {
+    title: draft.title,
+    content: draft.content,
+    kind: draft.kind,
+    memoryType: projectMemoryTypesByKind[draft.kind],
+    visibility: "visible",
+    manualSearchability: true,
+    automaticRetrievalEligibility: false,
+    modelEligibility: false,
+    shareability: false,
+    useInContextPreference,
+  } satisfies ProjectMemoryRevisionSnapshot;
+  const revisionId = `memory-revision-${window.crypto.randomUUID()}`;
+  const createdEvent = { id: `memory-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1, rollbackFromVersion: null, lineage: { supersedesId: null, supersededById: null, conflictIds: [] } } satisfies ProjectMemoryHistoryEvent;
+  const resolvedSourceRefs = provenanceClass === "direct_user" && sourceRefs.length === 0 ? [`direct-remember:${id}:v1`] : sourceRefs;
+  const sourceLabel = provenanceClass === "direct_user" ? "ثبت مستقیم شما" : "تأیید پیشنهاد توسط شما";
+  const fingerprintRecord = { id, ownerPrincipalId: localBuilderAccountId, accountSide: "builder", scopeType, scopeId, projectId, provenanceClass, sourceLabel, sourceRefs: resolvedSourceRefs, createdAt: timestamp } satisfies Pick<ProjectMemoryRecord, "id" | "ownerPrincipalId" | "accountSide" | "scopeType" | "scopeId" | "projectId" | "provenanceClass" | "sourceLabel" | "sourceRefs" | "createdAt">;
+  const initialRevision = { id: revisionId, version: 1, createdAt: timestamp, snapshot, fingerprint: "" } satisfies ProjectMemoryRevision;
+  return {
+    schemaVersion: 1,
+    id,
+    ownerPrincipalType: "account",
+    ownerPrincipalId: localBuilderAccountId,
+    accountSide: "builder",
+    scopeType,
+    scopeId,
+    projectId,
+    custodianService: "Memory Service",
+    sourceRefs: resolvedSourceRefs,
+    provenanceClass,
+    sourceLabel,
+    status: "current",
+    sensitivity: "private",
+    ...snapshot,
+    supersedesId: null,
+    supersededById: null,
+    conflictIds: [],
+    currentRevisionId: revisionId,
+    version: 1,
+    createdBy: "شما",
+    updatedBy: "شما",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    history: [createdEvent],
+    revisions: [{ ...initialRevision, fingerprint: projectMemoryFingerprint(fingerprintRecord, snapshot, createdEvent, initialRevision) }],
+  };
+}
+
+function migrateLegacyProjectMemory(value: any, timestamp: string): ProjectMemoryRecord | null {
+  const originalProjectKeys = ["id", "projectId", "title", "content", "kind", "source", "visibility", "useInContext", "status", "version", "createdAt", "updatedAt"];
+  const scopedProjectKeys = [...originalProjectKeys, "scope"];
+  const scopedPersonalKeys = ["id", "scope", "title", "content", "kind", "source", "visibility", "useInContext", "status", "version", "createdAt", "updatedAt"];
+  const knownShape = value?.scope === undefined
+    ? hasExactObjectKeys(value, originalProjectKeys)
+    : value?.scope === "project"
+      ? hasExactObjectKeys(value, scopedProjectKeys)
+      : value?.scope === "personal" && hasExactObjectKeys(value, scopedPersonalKeys);
+  if (!knownShape) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const legacyScope = value?.scope === undefined ? "project" : value.scope;
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const title = typeof value?.title === "string" ? value.title.trim() : "";
+  const content = typeof value?.content === "string" ? value.content.trim() : "";
+  const kind = value?.kind as ProjectMemoryKind;
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  if (
+    !id || id !== value?.id || !["personal", "project"].includes(legacyScope)
+    || projectId !== (value?.projectId ?? "") || title !== value?.title || content !== value?.content
+    || legacyScope === "project" && (!projectId || value?.visibility !== "خصوصی پروژه")
+    || legacyScope === "personal" && (projectId || value?.visibility !== "خصوصی شخصی")
+    || !hasVisibleProjectBackboneText(title) || title.length > 80 || !hasVisibleProjectBackboneText(content) || content.length > 800
+    || !projectMemoryKinds.includes(kind) || value?.source !== "ثبت مستقیم شما" || typeof value?.useInContext !== "boolean" || value?.status !== "ثبت محلی" || value?.version !== 1
+    || !isValidProjectFileDate(createdAt) || createdAt !== value?.createdAt || !isValidProjectFileDate(updatedAt) || updatedAt !== value?.updatedAt || new Date(updatedAt).getTime() < new Date(createdAt).getTime()
+  ) return null;
+  const scopeType: ProjectMemoryScopeType = legacyScope === "personal" ? "account_private" : "project_private";
+  const scopeId = scopeType === "account_private" ? localBuilderAccountId : projectId;
+  let migrated = createProjectMemoryRecord(id, scopeType, scopeId, scopeType === "project_private" ? projectId : null, { title, content, kind }, createdAt || timestamp, value.useInContext);
+  if (updatedAt !== createdAt) {
+    migrated = appendProjectMemoryRevision(migrated, projectMemorySnapshot(migrated), "metadata-migrated", updatedAt);
+  }
+  return migrated;
+}
+
+function buildLegacyProjectMemoryMigration(legacyRaw: string): ProjectMemoryReadResult {
+  let timestamp = new Date().toISOString();
+  const sourceHash = `fnv1a-${purchaseRequestStableHash(legacyRaw)}`;
+  const quarantined: ProjectMemoryMigrationQuarantine[] = [];
+  let parsed: any[] = [];
+  try {
+    const legacyParsed = JSON.parse(legacyRaw);
+    if (!Array.isArray(legacyParsed)) quarantined.push({ legacyIndex: null, reason: "legacy-root-not-array", rawHash: sourceHash });
+    else parsed = legacyParsed;
+  } catch {
+    quarantined.push({ legacyIndex: null, reason: "legacy-json-unreadable", rawHash: sourceHash });
+  }
+  timestamp = nextProjectMemoryTimestamp(...parsed.flatMap((legacy) => [typeof legacy?.createdAt === "string" ? legacy.createdAt : null, typeof legacy?.updatedAt === "string" ? legacy.updatedAt : null]));
+  const records: ProjectMemoryRecord[] = [];
+  const seenIds = new Set<string>();
+  parsed.forEach((legacy, index) => {
+    const rawHash = `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue(legacy)))}`;
+    const migrated = migrateLegacyProjectMemory(legacy, timestamp);
+    if (!migrated) {
+      quarantined.push({ legacyIndex: index, reason: "legacy-record-invalid", rawHash });
+      return;
+    }
+    if (seenIds.has(migrated.id)) {
+      quarantined.push({ legacyIndex: index, reason: "legacy-duplicate-id", rawHash });
+      return;
+    }
+    seenIds.add(migrated.id);
+    records.push(migrated);
+  });
+  const blocked = quarantined.length > 0;
+  const report: ProjectMemoryMigrationReport = {
+    id: `memory-migration-${window.crypto.randomUUID()}`,
+    sourceKey: legacyProjectMemoriesStorageKey,
+    sourceGeneration: "legacy-array-v1",
+    sourceHash,
+    status: blocked ? "blocked" : "migrated",
+    migratedCount: blocked ? 0 : records.length,
+    quarantined,
+    createdAt: timestamp,
+  };
+  const envelope: ProjectMemoryEnvelope = { schemaVersion: 2, fingerprintVersion: "memory-v2", envelopeVersion: 1, records: blocked ? [] : records, candidates: [], tombstones: [], migrationReports: [report], updatedAt: timestamp };
+  const validatedEnvelope = parseProjectMemoryEnvelope(envelope);
+  if (validatedEnvelope) return { envelope: validatedEnvelope, readError: blocked, migrationBlocked: blocked };
+  const invalidEnvelopeReport: ProjectMemoryMigrationReport = {
+    ...report,
+    status: "blocked",
+    migratedCount: 0,
+    quarantined: [...report.quarantined, { legacyIndex: null, reason: "canonical-envelope-invalid", rawHash: sourceHash }],
+  };
+  const blockedEnvelope: ProjectMemoryEnvelope = { schemaVersion: 2, fingerprintVersion: "memory-v2", envelopeVersion: 1, records: [], candidates: [], tombstones: [], migrationReports: [invalidEnvelopeReport], updatedAt: timestamp };
+  const validatedBlockedEnvelope = parseProjectMemoryEnvelope(blockedEnvelope);
+  return { envelope: validatedBlockedEnvelope ?? emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+}
+
+function parseProjectMemoryMigrationJournal(raw: string): ProjectMemoryMigrationJournal | null {
+  try {
+    const value = JSON.parse(raw);
+    if (!hasExactObjectKeys(value, ["schemaVersion", "reports", "updatedAt"]) || value?.schemaVersion !== 1 || !Array.isArray(value?.reports) || value.reports.length === 0) return null;
+    const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+    const reports = value.reports.map((report: unknown) => parseProjectMemoryMigrationReport(report));
+    if (
+      !isValidProjectFileDate(updatedAt) || updatedAt !== value?.updatedAt
+      || reports.some((report: ProjectMemoryMigrationReport | null) => !report || report.status !== "blocked")
+      || new Set((reports as ProjectMemoryMigrationReport[]).map((report) => report.id)).size !== reports.length
+      || (reports as ProjectMemoryMigrationReport[]).some((report) => new Date(report.createdAt).getTime() > new Date(updatedAt).getTime())
+    ) return null;
+    return { schemaVersion: 1, reports: reports as ProjectMemoryMigrationReport[], updatedAt };
+  } catch {
+    return null;
+  }
+}
+
+function readProjectMemoryMigrationJournal() {
+  try {
+    const raw = window.localStorage.getItem(projectMemoryMigrationJournalKey);
+    if (raw === null) return { reports: [] as ProjectMemoryMigrationReport[], readError: false };
+    const journal = parseProjectMemoryMigrationJournal(raw);
+    return journal ? { reports: journal.reports, readError: false } : { reports: [] as ProjectMemoryMigrationReport[], readError: true };
+  } catch {
+    return { reports: [] as ProjectMemoryMigrationReport[], readError: true };
+  }
+}
+
+function persistBlockedProjectMemoryMigrationReport(report: ProjectMemoryMigrationReport) {
+  const parsedReport = parseProjectMemoryMigrationReport(report);
+  if (!parsedReport || parsedReport.status !== "blocked") return false;
+  try {
+    const existingRaw = window.localStorage.getItem(projectMemoryMigrationJournalKey);
+    const existing = existingRaw === null ? null : parseProjectMemoryMigrationJournal(existingRaw);
+    if (existingRaw !== null && !existing) return false;
+    if (existing?.reports.some((item) => item.sourceKey === report.sourceKey && item.sourceHash === report.sourceHash && item.status === report.status)) return true;
+    const reports = [...(existing?.reports ?? []), parsedReport];
+    const updatedAt = nextProjectMemoryTimestamp(existing?.updatedAt, parsedReport.createdAt);
+    const nextJournal = { schemaVersion: 1, reports, updatedAt } satisfies ProjectMemoryMigrationJournal;
+    const nextRaw = JSON.stringify(nextJournal);
+    if (!parseProjectMemoryMigrationJournal(nextRaw)) return false;
+    window.localStorage.setItem(projectMemoryMigrationJournalKey, nextRaw);
+    return window.localStorage.getItem(projectMemoryMigrationJournalKey) === nextRaw;
+  } catch {
+    return false;
+  }
+}
+
+function parsePriorProjectMemoryEnvelope(raw: string): { envelope: ProjectMemoryPriorEnvelope; generation: ProjectMemoryPriorGeneration } | null {
+  try {
+    const value = JSON.parse(raw);
+    const generations: ProjectMemoryPriorGeneration[] = Array.isArray(value?.records) && value.records.length === 0
+      ? ["memory-core-v1-full"]
+      : ["memory-core-v1-snapshot", "memory-core-v1-lineage", "memory-core-v1-full"];
+    const matches = generations.flatMap((generation) => {
+      const envelope = parseProjectMemoryEnvelope(value, generation);
+      return envelope ? [{ envelope, generation }] : [];
+    });
+    return matches.length === 1 ? matches[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeProjectMemoryMigrationReports(...groups: ProjectMemoryMigrationReport[][]) {
+  const reports: ProjectMemoryMigrationReport[] = [];
+  const semanticKeys = new Set<string>();
+  const ids = new Set<string>();
+  for (const report of groups.flat()) {
+    const semanticKey = JSON.stringify(stablePurchaseRequestValue({ sourceKey: report.sourceKey, sourceGeneration: report.sourceGeneration, sourceHash: report.sourceHash, status: report.status, migratedCount: report.migratedCount, quarantined: report.quarantined }));
+    if (semanticKeys.has(semanticKey)) continue;
+    if (ids.has(report.id)) return null;
+    semanticKeys.add(semanticKey);
+    ids.add(report.id);
+    reports.push(report);
+  }
+  return reports;
+}
+
+function reconstructSnapshotProjectMemoryHistory(record: ProjectMemoryRecord, envelope: ProjectMemoryPriorEnvelope) {
+  const emptyLineage: ProjectMemoryHistoryEvent["lineage"] = { supersedesId: null, supersededById: null, conflictIds: [] };
+  const sameScope = (peer: ProjectMemoryRecord | ProjectMemoryTombstone) => peer.scopeType === record.scopeType && peer.scopeId === record.scopeId;
+  const snapshotChangedAt = (peer: ProjectMemoryRecord, index: number) => index > 0
+    && JSON.stringify(stablePurchaseRequestValue(peer.revisions[index - 1]?.snapshot)) !== JSON.stringify(stablePurchaseRequestValue(peer.revisions[index]?.snapshot));
+  const snapshotsConflict = (first: ProjectMemoryRevisionSnapshot, second: ProjectMemoryRevisionSnapshot) => normalizeProjectSearchText(first.title) === normalizeProjectSearchText(second.title)
+    && normalizeProjectSearchText(first.content) !== normalizeProjectSearchText(second.content);
+  const disputeEntriesAt = (timestamp: string) => envelope.records.flatMap((peer) => peer.history.flatMap((peerEvent, peerIndex) => {
+    if (peerEvent.type !== "disputed" || peerEvent.at !== timestamp || !sameScope(peer)) return [];
+    const hasPivotEvent = peer.history.slice(0, peerIndex).some((priorEvent, priorIndex) => priorEvent.at === timestamp && (
+      priorEvent.type === "created" || priorEvent.type === "rolled-back" || priorEvent.type === "enabled" || priorEvent.type === "updated" && snapshotChangedAt(peer, priorIndex)
+    ));
+    return [{ peer, peerIndex, snapshot: peer.revisions[peerIndex]!.snapshot, hasPivotEvent }];
+  }));
+  const tombstoneStarts = new Map<number, string[]>();
+  const tombstoneCleanups = new Map<number, string[]>();
+  for (let index = 0; index < record.history.length; index += 1) {
+    const event = record.history[index];
+    const couldBeDeleteCleanup = event.type === "conflicts-resolved" || event.type === "updated" && !snapshotChangedAt(record, index);
+    if (!couldBeDeleteCleanup) continue;
+    const deletedIds = envelope.tombstones.filter((tombstone) => sameScope(tombstone) && tombstone.deletedAt === event.at).map((tombstone) => tombstone.id);
+    if (deletedIds.length === 0) continue;
+    if (deletedIds.length !== 1 || envelope.records.some((peer) => peer.id === deletedIds[0])) return null;
+    const candidateDisputeIndices = record.history.slice(0, index).flatMap((priorEvent, disputeIndex): number[] => {
+      if (priorEvent.type !== "disputed" || record.history.slice(disputeIndex + 1, index).some((betweenEvent) => betweenEvent.type === "disabled" || betweenEvent.type === "superseded")) return [];
+      const entries = disputeEntriesAt(priorEvent.at);
+      if (new Set(entries.map((entry) => entry.peer.id)).size !== entries.length) return [];
+      const currentEntry = entries.find((entry) => entry.peer.id === record.id && entry.peerIndex === disputeIndex);
+      if (!currentEntry) return [];
+      const pivots = entries.filter((entry) => entry.hasPivotEvent);
+      if (currentEntry.hasPivotEvent) {
+        const competingPivot = pivots.some((pivot) => pivot.peer.id !== record.id && snapshotsConflict(pivot.snapshot, currentEntry.snapshot));
+        const explainedPeers = entries.filter((entry) => entry.peer.id !== record.id && !entry.hasPivotEvent && snapshotsConflict(currentEntry.snapshot, entry.snapshot));
+        return !competingPivot && explainedPeers.length === 0 ? [disputeIndex] : [];
+      }
+      const matchingPivots = pivots.filter((pivot) => snapshotsConflict(pivot.snapshot, currentEntry.snapshot));
+      const unexplainedPeer = entries.some((entry) => entry.peer.id !== record.id && snapshotsConflict(entry.snapshot, currentEntry.snapshot));
+      return matchingPivots.length === 0 && !unexplainedPeer ? [disputeIndex] : [];
+    });
+    if (candidateDisputeIndices.length !== 1) return null;
+    const disputeIndex = candidateDisputeIndices[0];
+    if (tombstoneStarts.has(disputeIndex)) return null;
+    tombstoneStarts.set(disputeIndex, Array.from(new Set([...(tombstoneStarts.get(disputeIndex) ?? []), ...deletedIds])));
+    tombstoneCleanups.set(index, deletedIds);
+  }
+
+  let replayedLineage = emptyLineage;
+  let replayedStatus: ProjectMemoryStatus = "current";
+  const activeDeletedConflicts = new Set<string>();
+  const history: ProjectMemoryHistoryEvent[] = [];
+  for (let index = 0; index < record.history.length; index += 1) {
+    const event = record.history[index];
+    for (const deletedId of tombstoneStarts.get(index) ?? []) activeDeletedConflicts.add(deletedId);
+    let type = event.type;
+    if (type === "superseding") replayedLineage = { ...replayedLineage, supersedesId: record.supersedesId };
+    if (type === "superseded") replayedLineage = { ...replayedLineage, supersededById: record.supersededById, conflictIds: [] };
+    if (type === "disputed") {
+      const entries = disputeEntriesAt(event.at);
+      if (new Set(entries.map((entry) => entry.peer.id)).size !== entries.length) return null;
+      const currentEntry = entries.find((entry) => entry.peer.id === record.id && entry.peerIndex === index);
+      if (!currentEntry) return null;
+      const pivots = entries.filter((entry) => entry.hasPivotEvent);
+      let peerIds: string[] = [];
+      if (currentEntry.hasPivotEvent) {
+        if (pivots.some((entry) => entry.peer.id !== record.id && snapshotsConflict(entry.snapshot, currentEntry.snapshot))) return null;
+        peerIds = entries.filter((entry) => entry.peer.id !== record.id && !entry.hasPivotEvent && snapshotsConflict(currentEntry.snapshot, entry.snapshot)).map((entry) => entry.peer.id);
+        if (peerIds.some((peerId) => {
+          const peerEntry = entries.find((entry) => entry.peer.id === peerId)!;
+          return pivots.filter((pivot) => snapshotsConflict(pivot.snapshot, peerEntry.snapshot)).length !== 1;
+        })) return null;
+        if (peerIds.length === 0 && activeDeletedConflicts.size === 0) return null;
+      } else {
+        const matchingPivots = pivots.filter((pivot) => snapshotsConflict(pivot.snapshot, currentEntry.snapshot));
+        if (matchingPivots.length > 1) return null;
+        if (matchingPivots.length === 1) peerIds = [matchingPivots[0].peer.id];
+        else if (entries.some((entry) => entry.peer.id !== record.id && snapshotsConflict(entry.snapshot, currentEntry.snapshot)) || replayedStatus === "disputed" && activeDeletedConflicts.size === 0) return null;
+      }
+      replayedLineage = { ...replayedLineage, conflictIds: Array.from(new Set([...replayedLineage.conflictIds, ...peerIds, ...activeDeletedConflicts])) };
+      replayedStatus = "disputed";
+    }
+    const deletedIds = tombstoneCleanups.get(index) ?? [];
+    if (type === "conflicts-resolved" || type === "updated" && deletedIds.length > 0 && !snapshotChangedAt(record, index)) {
+      const peerIds = deletedIds.length > 0 ? [] : replayedLineage.conflictIds.filter((conflictId) => envelope.records.some((peer) => peer.id === conflictId && sameScope(peer) && peer.history.some((peerEvent) => ["conflicts-resolved", "disabled", "superseded"].includes(peerEvent.type) && peerEvent.at === event.at)));
+      const resolvedIds = new Set([...peerIds, ...deletedIds].filter((conflictId) => replayedLineage.conflictIds.includes(conflictId)));
+      if (resolvedIds.size === 0) return null;
+      replayedLineage = { ...replayedLineage, conflictIds: replayedLineage.conflictIds.filter((conflictId) => !resolvedIds.has(conflictId)) };
+      if (type === "updated" && deletedIds.length > 0) type = "conflicts-resolved";
+      deletedIds.forEach((deletedId) => activeDeletedConflicts.delete(deletedId));
+    }
+    if (type === "disabled") {
+      replayedLineage = { ...replayedLineage, conflictIds: [] };
+      replayedStatus = "disabled";
+    } else if (type === "enabled") replayedStatus = "current";
+    else if (type === "superseded") replayedStatus = "superseded";
+    const actor: ProjectMemoryHistoryEvent["actor"] = type === "metadata-migrated" || type === "source-migrated" || type === "schema-migrated" ? "سیستم مهاجرت" : "شما";
+    history.push({ ...event, type, actor, lineage: { ...replayedLineage, conflictIds: [...replayedLineage.conflictIds] } });
+  }
+  if (
+    replayedLineage.supersedesId !== record.supersedesId || replayedLineage.supersededById !== record.supersededById
+    || JSON.stringify(replayedLineage.conflictIds) !== JSON.stringify(record.conflictIds)
+  ) return null;
+  return { history, replayedLineage };
+}
+
+function migratePriorProjectMemoryEnvelope(raw: string, parsedPrior: { envelope: ProjectMemoryPriorEnvelope; generation: ProjectMemoryPriorGeneration }, journalReports: ProjectMemoryMigrationReport[]) {
+  const sourceHash = `fnv1a-${purchaseRequestStableHash(raw)}`;
+  const timestamp = nextProjectMemoryTimestamp(parsedPrior.envelope.updatedAt, ...parsedPrior.envelope.records.map((record) => record.updatedAt), ...journalReports.map((report) => report.createdAt));
+  const migratedCandidates = parsedPrior.envelope.candidates.map((candidate): ProjectMemoryCandidate => {
+    const exactPayload = projectMemoryCandidateExactPayload(candidate);
+    const payloadHash = projectMemoryCandidatePayloadHash(candidate);
+    const decision = candidate.decision ? {
+      ...candidate.decision,
+      payloadHash,
+      exactPayload,
+      idempotencyKey: `candidate-consent:${candidate.id}:v${candidate.decision.candidateVersion}:${payloadHash}:${candidate.decision.action}`,
+    } : null;
+    return { ...candidate, payloadHash, decision };
+  });
+  const acceptedCandidateByMemoryId = new Map(migratedCandidates.flatMap((candidate) => candidate.acceptedMemoryId ? [[candidate.acceptedMemoryId, candidate] as const] : []));
+  const reconstructedRecords = parsedPrior.envelope.records.map((record): ProjectMemoryRecord | null => {
+    let replayedLineage: ProjectMemoryHistoryEvent["lineage"] = { supersedesId: null, supersededById: null, conflictIds: [] };
+    const reconstructSnapshotLineage = parsedPrior.generation === "memory-core-v1-snapshot";
+    const reconstructedSnapshot = reconstructSnapshotLineage ? reconstructSnapshotProjectMemoryHistory(record, parsedPrior.envelope) : null;
+    if (reconstructSnapshotLineage && !reconstructedSnapshot) return null;
+    if (reconstructedSnapshot) replayedLineage = reconstructedSnapshot.replayedLineage;
+    const history = reconstructedSnapshot?.history ?? record.history.map((event) => {
+      const lineage = reconstructSnapshotLineage ? replayedLineage : event.lineage;
+      const normalizesLegacyConflictCleanup = !reconstructSnapshotLineage && event.type === "updated"
+        && lineage.supersedesId === replayedLineage.supersedesId && lineage.supersededById === replayedLineage.supersededById
+        && lineage.conflictIds.length < replayedLineage.conflictIds.length && lineage.conflictIds.every((conflictId) => replayedLineage.conflictIds.includes(conflictId));
+      const type: ProjectMemoryEventType = normalizesLegacyConflictCleanup ? "conflicts-resolved" : event.type;
+      const actor: ProjectMemoryHistoryEvent["actor"] = type === "metadata-migrated" || type === "source-migrated" || type === "schema-migrated" ? "سیستم مهاجرت" : "شما";
+      replayedLineage = { ...lineage, conflictIds: [...lineage.conflictIds] };
+      return { ...event, type, actor, lineage: replayedLineage };
+    });
+    const acceptedCandidate = acceptedCandidateByMemoryId.get(record.id);
+    const sourceRefs = record.provenanceClass === "direct_user"
+      ? [`direct-remember:${record.id}:v1`]
+      : acceptedCandidate?.decision
+        ? [`memory-candidate:${acceptedCandidate.id}:v${acceptedCandidate.decision.candidateVersion}:${acceptedCandidate.payloadHash}`]
+        : record.sourceRefs;
+    const sourceNeedsMigration = JSON.stringify(sourceRefs) !== JSON.stringify(record.sourceRefs);
+    const fingerprintRecord = { ...record, sourceRefs } satisfies ProjectMemoryRecord;
+    const revisions = record.revisions.map((revision, index) => ({ ...revision, fingerprint: projectMemoryFingerprint(fingerprintRecord, revision.snapshot, history[index], revision) }));
+    let reconstructed = {
+      ...fingerprintRecord,
+      supersedesId: replayedLineage.supersedesId,
+      supersededById: replayedLineage.supersededById,
+      conflictIds: [...replayedLineage.conflictIds],
+      history,
+      revisions,
+    } satisfies ProjectMemoryRecord;
+    return appendProjectMemoryRevision(reconstructed, projectMemorySnapshot(reconstructed), sourceNeedsMigration ? "source-migrated" : "schema-migrated", timestamp, {
+      supersedesId: record.supersedesId,
+      supersededById: record.supersededById,
+      conflictIds: [...record.conflictIds],
+    });
+  });
+  if (reconstructedRecords.some((record) => record === null)) return null;
+  const validReconstructedRecords = reconstructedRecords as ProjectMemoryRecord[];
+  const report = {
+    id: `memory-migration-${window.crypto.randomUUID()}`,
+    sourceKey: priorProjectMemoriesStorageKey,
+    sourceGeneration: parsedPrior.generation,
+    sourceHash,
+    status: "migrated",
+    migratedCount: validReconstructedRecords.length,
+    quarantined: [],
+    createdAt: timestamp,
+  } satisfies ProjectMemoryMigrationReport;
+  const migrationReports = mergeProjectMemoryMigrationReports(parsedPrior.envelope.migrationReports, journalReports, [report]);
+  if (!migrationReports) return null;
+  return parseProjectMemoryEnvelope({
+    schemaVersion: 2,
+    fingerprintVersion: "memory-v2",
+    envelopeVersion: parsedPrior.envelope.envelopeVersion + 1,
+    records: validReconstructedRecords,
+    candidates: migratedCandidates,
+    tombstones: parsedPrior.envelope.tombstones,
+    migrationReports,
+    updatedAt: timestamp,
+  });
+}
+
+function readStoredProjectMemories(): ProjectMemoryReadResult {
+  try {
+    if (window.localStorage.getItem(projectMemoryHardDeleteIntentKey) !== null || window.localStorage.getItem(projectMemoryPriorIntentBridgeKey) !== null) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+    const cutoverRaw = window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey);
+    const cutover = cutoverRaw === null ? null : parseProjectMemoryCutoverMarker(cutoverRaw);
+    const canonicalRaw = window.localStorage.getItem(projectMemoriesStorageKey);
+    if (canonicalRaw !== null) {
+      if (!canonicalRaw.trim()) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+      const envelope = parseProjectMemoryEnvelope(JSON.parse(canonicalRaw));
+      if (
+        !envelope || window.localStorage.getItem(projectMemoryHardDeleteIntentKey) !== null || window.localStorage.getItem(projectMemoryPriorIntentBridgeKey) !== null
+        || !cutover || cutover.state !== "cutover-committed"
+        || !projectMemoryEnvelopeMatchesCommittedCutover(canonicalRaw, cutover)
+      ) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+      const migrationSourceRank = (report: ProjectMemoryMigrationReport) => report.sourceKey === priorProjectMemoriesStorageKey ? 2 : 1;
+      const unresolvedBlockedReport = envelope.migrationReports.some((report, index) => report.status === "blocked" && !envelope.migrationReports.slice(index + 1).some((later) => later.status === "migrated" && migrationSourceRank(later) >= migrationSourceRank(report)));
+      return { envelope, readError: unresolvedBlockedReport, migrationBlocked: unresolvedBlockedReport };
+    }
+    if (window.localStorage.getItem(projectMemoryHardDeleteIntentKey) !== null || window.localStorage.getItem(projectMemoryPriorIntentBridgeKey) !== null || cutoverRaw !== null && (!cutover || cutover.state === "cutover-committed")) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+    const hasMigrationSource = window.localStorage.getItem(priorProjectMemoriesStorageKey) !== null || window.localStorage.getItem(legacyProjectMemoriesStorageKey) !== null || window.localStorage.getItem(projectMemoryMigrationJournalKey) !== null;
+    return { envelope: emptyProjectMemoryEnvelope(), readError: hasMigrationSource, migrationBlocked: hasMigrationSource };
+  } catch {
+    return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+  }
+}
+
+function expireDueProjectMemoryCandidates(canonicalRaw: string, envelope: ProjectMemoryEnvelope): ProjectMemoryEnvelope | null {
+  const dueCandidates = envelope.candidates.filter((candidate) => candidate.status === "pending" && candidate.expiresAt !== null && new Date(candidate.expiresAt).getTime() <= Date.now());
+  if (dueCandidates.length === 0) return envelope;
+  const timestamp = nextProjectMemoryTimestamp(envelope.updatedAt, ...dueCandidates.map((candidate) => candidate.expiresAt));
+  const dueIds = new Set(dueCandidates.map((candidate) => candidate.id));
+  const candidates = envelope.candidates.map((candidate): ProjectMemoryCandidate => {
+    if (!dueIds.has(candidate.id)) return candidate;
+    const version = candidate.version + 1;
+    return {
+      ...candidate,
+      version,
+      status: "expired",
+      updatedAt: timestamp,
+      decision: null,
+      acceptedMemoryId: null,
+      history: [...candidate.history, { id: `memory-candidate-event-${window.crypto.randomUUID()}`, type: "expired", actor: "system", at: timestamp, version }],
+    };
+  });
+  const nextEnvelope = parseProjectMemoryEnvelope({ ...envelope, envelopeVersion: envelope.envelopeVersion + 1, candidates, updatedAt: timestamp });
+  if (!nextEnvelope || window.localStorage.getItem(projectMemoriesStorageKey) !== canonicalRaw) return null;
+  const nextRaw = JSON.stringify(nextEnvelope);
+  window.localStorage.setItem(projectMemoriesStorageKey, nextRaw);
+  return window.localStorage.getItem(projectMemoriesStorageKey) === nextRaw ? nextEnvelope : null;
+}
+
+async function migrateStoredProjectMemoriesWithLock(): Promise<ProjectMemoryReadResult> {
+  try {
+    const lockManager = window.navigator.locks;
+    if (!lockManager?.request) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+    return await lockManager.request(projectMemoriesWriteLockName, { mode: "exclusive" }, () => {
+      const latestIntent = window.localStorage.getItem(projectMemoryHardDeleteIntentKey);
+      if (latestIntent !== null && !resumeProjectMemoryHardDeleteIntent(latestIntent)) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+
+      const existingBridgeRaw = window.localStorage.getItem(projectMemoryPriorIntentBridgeKey);
+      if (existingBridgeRaw !== null && !resumeProjectMemoryPriorIntentBridge(existingBridgeRaw)) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+
+      const priorControlRaw = window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey);
+      if (priorControlRaw !== null) {
+        const cutover = parseProjectMemoryCutoverMarker(priorControlRaw);
+        if (cutover) {
+          if (!resumeProjectMemoryCutoverMarker(priorControlRaw)) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+        } else {
+          const currentIntentMetadata = inspectProjectMemoryHardDeleteIntentCutoverMetadata(priorControlRaw);
+          const priorIntentProof = inspectPriorProjectMemoryHardDeleteIntent(priorControlRaw);
+          const intentKind = currentIntentMetadata !== null ? "memory-core-v2-delete" : priorIntentProof !== null ? "memory-core-v1-delete" : null;
+          if (!intentKind || !persistProjectMemoryPriorIntentBridge(priorControlRaw, intentKind)) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+          const bridgeRaw = window.localStorage.getItem(projectMemoryPriorIntentBridgeKey);
+          if (bridgeRaw === null || !resumeProjectMemoryPriorIntentBridge(bridgeRaw)) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+        }
+      }
+
+      const latestCanonicalRaw = window.localStorage.getItem(projectMemoriesStorageKey);
+      if (latestCanonicalRaw !== null) {
+        if (!ensureProjectMemoryCutoverMarker(latestCanonicalRaw)) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+        const latest = readStoredProjectMemories();
+        if (latest.readError) return latest;
+        const reconciled = expireDueProjectMemoryCandidates(latestCanonicalRaw, latest.envelope);
+        return reconciled ? { envelope: reconciled, readError: false, migrationBlocked: false } : { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+      }
+
+      const journal = readProjectMemoryMigrationJournal();
+      if (journal.readError) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+
+      const latestPriorRaw = window.localStorage.getItem(priorProjectMemoriesStorageKey);
+      if (latestPriorRaw !== null) {
+        const parsedPrior = parsePriorProjectMemoryEnvelope(latestPriorRaw);
+        if (!parsedPrior) {
+          const timestamp = nextProjectMemoryTimestamp(...journal.reports.map((report) => report.createdAt));
+          const blockedReport = {
+            id: `memory-migration-${window.crypto.randomUUID()}`,
+            sourceKey: priorProjectMemoriesStorageKey,
+            sourceGeneration: "memory-core-v1-unclassified",
+            sourceHash: `fnv1a-${purchaseRequestStableHash(latestPriorRaw)}`,
+            status: "blocked",
+            migratedCount: 0,
+            quarantined: [{ legacyIndex: null, reason: "memory-core-v1-invalid", rawHash: `fnv1a-${purchaseRequestStableHash(latestPriorRaw)}` }],
+            createdAt: timestamp,
+          } satisfies ProjectMemoryMigrationReport;
+          persistBlockedProjectMemoryMigrationReport(blockedReport);
+          return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+        }
+        const migratedEnvelope = migratePriorProjectMemoryEnvelope(latestPriorRaw, parsedPrior, journal.reports);
+        if (!migratedEnvelope) {
+          const timestamp = nextProjectMemoryTimestamp(parsedPrior.envelope.updatedAt, ...journal.reports.map((report) => report.createdAt));
+          const sourceHash = `fnv1a-${purchaseRequestStableHash(latestPriorRaw)}`;
+          persistBlockedProjectMemoryMigrationReport({ id: `memory-migration-${window.crypto.randomUUID()}`, sourceKey: priorProjectMemoriesStorageKey, sourceGeneration: parsedPrior.generation, sourceHash, status: "blocked", migratedCount: 0, quarantined: [{ legacyIndex: null, reason: "memory-core-v1-transformation-invalid", rawHash: sourceHash }], createdAt: timestamp });
+          return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+        }
+        if (window.localStorage.getItem(projectMemoriesStorageKey) !== null || window.localStorage.getItem(priorProjectMemoriesStorageKey) !== latestPriorRaw) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+        const canonicalRaw = JSON.stringify(migratedEnvelope);
+        if (!ensureProjectMemoryCutoverMarker(canonicalRaw)) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+        if (window.localStorage.getItem(projectMemoriesStorageKey) !== null || window.localStorage.getItem(priorProjectMemoriesStorageKey) !== latestPriorRaw) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+        window.localStorage.setItem(projectMemoriesStorageKey, canonicalRaw);
+        if (window.localStorage.getItem(projectMemoriesStorageKey) !== canonicalRaw) throw new Error("Memory v1 migration verification failed");
+        const cutoverRaw = window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey);
+        if (cutoverRaw === null || !resumeProjectMemoryCutoverMarker(cutoverRaw)) throw new Error("Memory v1 cutover verification failed");
+        return readStoredProjectMemories();
+      }
+
+      if (journal.reports.some((report) => report.sourceKey === priorProjectMemoriesStorageKey && report.status === "blocked")) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+      const latestLegacyRaw = window.localStorage.getItem(legacyProjectMemoriesStorageKey);
+      if (latestLegacyRaw === null) return journal.reports.length > 0 ? { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true } : { envelope: emptyProjectMemoryEnvelope(), readError: false, migrationBlocked: false };
+      const result = buildLegacyProjectMemoryMigration(latestLegacyRaw);
+      const resultReport = result.envelope.migrationReports[result.envelope.migrationReports.length - 1];
+      if (result.migrationBlocked || result.readError) {
+        if (resultReport) persistBlockedProjectMemoryMigrationReport(resultReport);
+        return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+      }
+      const migrationReports = mergeProjectMemoryMigrationReports(journal.reports, result.envelope.migrationReports);
+      const validatedEnvelope = migrationReports ? parseProjectMemoryEnvelope({ ...result.envelope, migrationReports }) : null;
+      if (!validatedEnvelope || validatedEnvelope.envelopeVersion === 0 || window.localStorage.getItem(projectMemoriesStorageKey) !== null || window.localStorage.getItem(legacyProjectMemoriesStorageKey) !== latestLegacyRaw) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+      const canonicalRaw = JSON.stringify(validatedEnvelope);
+      if (!ensureProjectMemoryCutoverMarker(canonicalRaw)) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+      if (window.localStorage.getItem(projectMemoriesStorageKey) !== null || window.localStorage.getItem(legacyProjectMemoriesStorageKey) !== latestLegacyRaw) return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: true };
+      window.localStorage.setItem(projectMemoriesStorageKey, canonicalRaw);
+      if (window.localStorage.getItem(projectMemoriesStorageKey) !== canonicalRaw) throw new Error("Memory legacy migration verification failed");
+      const cutoverRaw = window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey);
+      if (cutoverRaw === null || !resumeProjectMemoryCutoverMarker(cutoverRaw)) throw new Error("Memory legacy cutover verification failed");
+      return readStoredProjectMemories();
+    });
+  } catch {
+    return { envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false };
+  }
+}
+
+function projectMemorySnapshot(record: ProjectMemoryRecord): ProjectMemoryRevisionSnapshot {
+  return {
+    title: record.title,
+    content: record.content,
+    kind: record.kind,
+    memoryType: record.memoryType,
+    visibility: record.visibility,
+    manualSearchability: record.manualSearchability,
+    automaticRetrievalEligibility: record.automaticRetrievalEligibility,
+    modelEligibility: record.modelEligibility,
+    shareability: record.shareability,
+    useInContextPreference: record.useInContextPreference,
+  };
+}
+
+function nextProjectMemoryTimestamp(...dates: (string | null | undefined)[]) {
+  const latest = dates.reduce((maximum, date) => date && isValidProjectFileDate(date) ? Math.max(maximum, new Date(date).getTime()) : maximum, 0);
+  return new Date(Math.max(Date.now(), latest)).toISOString();
+}
+
+function appendProjectMemoryRevision(
+  record: ProjectMemoryRecord,
+  snapshot: ProjectMemoryRevisionSnapshot,
+  eventType: Exclude<ProjectMemoryEventType, "created">,
+  timestamp: string,
+  overrides: Partial<Pick<ProjectMemoryRecord, "status" | "supersedesId" | "supersededById" | "conflictIds">> = {},
+  rollbackFromVersion: number | null = null,
+): ProjectMemoryRecord {
+  const version = record.version + 1;
+  const revisionId = `memory-revision-${window.crypto.randomUUID()}`;
+  const lineage = {
+    supersedesId: Object.prototype.hasOwnProperty.call(overrides, "supersedesId") ? overrides.supersedesId ?? null : record.supersedesId,
+    supersededById: Object.prototype.hasOwnProperty.call(overrides, "supersededById") ? overrides.supersededById ?? null : record.supersededById,
+    conflictIds: Object.prototype.hasOwnProperty.call(overrides, "conflictIds") ? [...(overrides.conflictIds ?? [])] : [...record.conflictIds],
+  } satisfies ProjectMemoryHistoryEvent["lineage"];
+  const actor: ProjectMemoryHistoryEvent["actor"] = eventType === "metadata-migrated" || eventType === "source-migrated" || eventType === "schema-migrated" ? "سیستم مهاجرت" : "شما";
+  const historyEvent = { id: `memory-event-${window.crypto.randomUUID()}`, type: eventType, actor, at: timestamp, version, rollbackFromVersion, lineage } satisfies ProjectMemoryHistoryEvent;
+  const revisionBase = { id: revisionId, version, createdAt: timestamp, snapshot, fingerprint: "" } satisfies ProjectMemoryRevision;
+  return {
+    ...record,
+    ...snapshot,
+    ...overrides,
+    currentRevisionId: revisionId,
+    version,
+    updatedAt: timestamp,
+    history: [...record.history, historyEvent],
+    revisions: [...record.revisions, { ...revisionBase, fingerprint: projectMemoryFingerprint({ ...record, ...overrides }, snapshot, historyEvent, revisionBase) }],
+  };
+}
+
+function replaceProjectMemoryRecord(envelope: ProjectMemoryEnvelope, record: ProjectMemoryRecord): ProjectMemoryEnvelope {
+  return { ...envelope, records: envelope.records.map((item) => item.id === record.id ? record : item) };
+}
+
+function projectMemoryDraftIsValid(draft: ProjectMemoryDraft) {
+  const title = draft.title.trim();
+  const content = draft.content.trim();
+  return hasVisibleProjectBackboneText(title) && title.length <= 80
+    && hasVisibleProjectBackboneText(content) && content.length <= 800
+    && projectMemoryKinds.includes(draft.kind)
+    && ["account_private", "project_private"].includes(draft.scopeType);
+}
+
+async function withProjectMemoryWriteLock(operation: () => ProjectMemoryMutationResult): Promise<ProjectMemoryMutationResult> {
+  try {
+    const lockManager = window.navigator.locks;
+    if (!lockManager?.request) return "lock-unavailable";
+    return await lockManager.request(projectMemoriesWriteLockName, { mode: "exclusive" }, operation);
+  } catch {
+    return "lock-unavailable";
   }
 }
 
@@ -7401,6 +9669,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const pendingPurchaseRequestsReturnFocus = useRef<PurchaseRequestsReturnView | null>(null);
   const pendingProposalsReturnFocus = useRef<ProposalsReturnView | null>(null);
   const pendingHomeQuickActionFocus = useRef<QuickActionId | null>(null);
+  const pendingProjectSearchInputFocus = useRef(false);
   const [view, setView] = useState<HomeView>("chat");
   const [filesReturnView, setFilesReturnView] = useState<FilesReturnView>("project");
   const [galleryReturnView, setGalleryReturnView] = useState<GalleryReturnView>("project");
@@ -7419,7 +9688,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [draftsByProject, setDraftsByProject] = useState<Record<string, string>>({});
   const [messagesByProject, setMessagesByProject] = useState<Record<string, ChatMessage[]>>({});
   const [initialProjectFiles] = useState<LocalRecordsReadResult<ProjectFileRecord>>(readStoredProjectFiles);
-  const [initialProjectMemories] = useState<LocalRecordsReadResult<ProjectMemoryRecord>>(readStoredProjectMemories);
+  const [initialProjectMemories] = useState<ProjectMemoryReadResult>(() => ({ envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false }));
   const [initialProjectTasks] = useState<LocalRecordsReadResult<ProjectTaskRecord>>(readStoredProjectTasks);
   const [initialProjectBackbone] = useState<ProjectBackboneReadResult>(readStoredProjectBackbone);
   const [initialProjectPurchaseRequests] = useState<LocalRecordsReadResult<ProjectPurchaseRequestRecord>>(readStoredProjectPurchaseRequests);
@@ -7437,7 +9706,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [initialBuilderManualNegotiationResponseReviews] = useState<LocalRecordsReadResult<BuilderManualNegotiationResponseReviewRecord>>(() => readStoredBuilderManualNegotiationResponseReviews(initialBuilderManualNegotiationResponses));
   const [initialBuilderManualNegotiationConditionImpacts] = useState<LocalRecordsReadResult<BuilderManualNegotiationConditionImpactRecord>>(() => readStoredBuilderManualNegotiationConditionImpacts(initialBuilderManualNegotiationResponses));
   const [projectFiles, setProjectFiles] = useState<ProjectFileRecord[]>(initialProjectFiles.records);
-  const [projectMemories, setProjectMemories] = useState<ProjectMemoryRecord[]>(initialProjectMemories.records);
+  const [projectMemoryEnvelope, setProjectMemoryEnvelope] = useState<ProjectMemoryEnvelope>(initialProjectMemories.envelope);
+  const projectMemories = projectMemoryEnvelope.records;
   const [projectTasks, setProjectTasks] = useState<ProjectTaskRecord[]>(initialProjectTasks.records);
   const [projectBackbone, setProjectBackbone] = useState<ProjectBackboneEnvelope>(initialProjectBackbone.envelope);
   const [projectPurchaseRequests, setProjectPurchaseRequests] = useState<ProjectPurchaseRequestRecord[]>(initialProjectPurchaseRequests.records);
@@ -7455,7 +9725,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [builderManualNegotiationResponseReviews, setBuilderManualNegotiationResponseReviews] = useState<BuilderManualNegotiationResponseReviewRecord[]>(initialBuilderManualNegotiationResponseReviews.records);
   const [builderManualNegotiationConditionImpacts, setBuilderManualNegotiationConditionImpacts] = useState<BuilderManualNegotiationConditionImpactRecord[]>(initialBuilderManualNegotiationConditionImpacts.records);
   const [projectFilesReadError] = useState(initialProjectFiles.readError);
-  const [projectMemoriesReadError] = useState(initialProjectMemories.readError);
+  const [projectMemoriesReadError, setProjectMemoriesReadError] = useState(initialProjectMemories.readError);
   const [projectTasksReadError] = useState(initialProjectTasks.readError);
   const [projectBackboneReadError, setProjectBackboneReadError] = useState(initialProjectBackbone.readError);
   const [projectPurchaseRequestsReadError, setProjectPurchaseRequestsReadError] = useState(initialProjectPurchaseRequests.readError);
@@ -7574,6 +9844,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     document.querySelector<HTMLElement>(`[data-testid="${targetTestId}"]`)?.focus();
   }, [view]);
 
+  useLayoutEffect(() => {
+    if (view !== "search" || !pendingProjectSearchInputFocus.current) return;
+    pendingProjectSearchInputFocus.current = false;
+    window.requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-testid="project-source-search-input"]')?.focus());
+  }, [view]);
+
   const activeProjectMeta = projectMeta(activeProject);
   const activeProjectFiles = useMemo(
     () => projectFiles.filter((file) => file.projectId === activeProject.id),
@@ -7587,9 +9863,21 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     () => activeProjectFiles.filter((file) => !isProjectImage(file)),
     [activeProjectFiles],
   );
-  const activeProjectMemories = useMemo(
-    () => projectMemories.filter((memory) => memory.projectId === activeProject.id),
+  const activeProjectMemoryRecords = useMemo(
+    () => projectMemories.filter((memory) => memory.scopeType === "project_private" && memory.scopeId === activeProject.id),
     [activeProject.id, projectMemories],
+  );
+  const accountMemoryRecords = useMemo(
+    () => projectMemories.filter((memory) => memory.scopeType === "account_private" && memory.scopeId === localBuilderAccountId),
+    [projectMemories],
+  );
+  const activeProjectMemories = useMemo(
+    () => activeProjectMemoryRecords.filter((memory) => memory.status !== "superseded" && memory.visibility === "visible"),
+    [activeProjectMemoryRecords],
+  );
+  const searchableProjectMemories = useMemo(
+    () => activeProjectMemoryRecords.filter((memory) => memory.status !== "superseded" && memory.status !== "disabled" && memory.visibility === "visible" && memory.manualSearchability),
+    [activeProjectMemoryRecords],
   );
   const activeProjectTasks = useMemo(
     () => projectTasks.filter((task) => task.projectId === activeProject.id),
@@ -7941,54 +10229,439 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return persistProjectFiles(nextFiles);
   };
 
-  const persistProjectMemories = (nextMemories: ProjectMemoryRecord[]) => {
-    if (projectMemoriesReadError) return false;
+  const projectMemoryIsAccessible = (memory: ProjectMemoryRecord) => memory.ownerPrincipalId === localBuilderAccountId
+    && (memory.scopeType === "account_private" && memory.scopeId === localBuilderAccountId
+      || memory.scopeType === "project_private" && memory.scopeId === activeProject.id);
+
+  const writeProjectMemoryEnvelope = (nextEnvelope: ProjectMemoryEnvelope) => {
+    const parsed = parseProjectMemoryEnvelope(nextEnvelope);
+    if (!parsed) return false;
+    const canonicalRaw = JSON.stringify(parsed);
     try {
-      if (nextMemories.length === 0) window.localStorage.removeItem(projectMemoriesStorageKey);
-      else window.localStorage.setItem(projectMemoriesStorageKey, JSON.stringify(nextMemories));
+      const previousCanonicalRaw = window.localStorage.getItem(projectMemoriesStorageKey);
+      if (!ensureProjectMemoryCutoverMarker(previousCanonicalRaw ?? canonicalRaw)) return false;
+      window.localStorage.setItem(projectMemoriesStorageKey, canonicalRaw);
+      if (window.localStorage.getItem(projectMemoriesStorageKey) !== canonicalRaw) return false;
+      const cutoverRaw = window.localStorage.getItem(priorProjectMemoryHardDeleteIntentKey);
+      if (cutoverRaw === null || !resumeProjectMemoryCutoverMarker(cutoverRaw)) return false;
     } catch {
       return false;
     }
-    setProjectMemories(nextMemories);
+    setProjectMemoryEnvelope(parsed);
+    setProjectMemoriesReadError(false);
     return true;
   };
 
-  const createProjectMemory = (memoryDraft: ProjectMemoryDraft) => {
-    const timestamp = new Date().toISOString();
-    const record = {
-      id: `memory-${window.crypto.randomUUID()}`,
-      projectId: activeProject.id,
-      title: memoryDraft.title.trim(),
-      content: memoryDraft.content.trim(),
-      kind: memoryDraft.kind,
-      source: "ثبت مستقیم شما",
-      visibility: "خصوصی پروژه",
-      useInContext: true,
-      status: "ثبت محلی",
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    } satisfies ProjectMemoryRecord;
-    return persistProjectMemories([...projectMemories, record]);
+  const writeProjectMemoryHardDelete = (nextEnvelope: ProjectMemoryEnvelope, memoryId: string) => {
+    const parsed = parseProjectMemoryEnvelope(nextEnvelope);
+    if (!parsed) return false;
+    let canonicalRaw: string;
+    let priorCanonicalRaw: string | null;
+    let nextPriorCanonicalRaw: string | null;
+    let legacyRaw: string | null;
+    let nextLegacyRaw: string | null = null;
+    try {
+      const storedCanonicalRaw = window.localStorage.getItem(projectMemoriesStorageKey);
+      if (storedCanonicalRaw === null) return false;
+      canonicalRaw = storedCanonicalRaw;
+      const previousCanonical = parseProjectMemoryEnvelope(JSON.parse(canonicalRaw));
+      const previousCanonicalTarget = previousCanonical?.records.find((record) => record.id === memoryId);
+      if (!previousCanonical || !previousCanonicalTarget) return false;
+      priorCanonicalRaw = window.localStorage.getItem(priorProjectMemoriesStorageKey);
+      const builtPriorRaw = buildPriorProjectMemoryHardDeleteRaw(priorCanonicalRaw, memoryId, nextEnvelope.updatedAt ?? new Date().toISOString(), previousCanonicalTarget.history);
+      if (builtPriorRaw === undefined) return false;
+      nextPriorCanonicalRaw = builtPriorRaw;
+      legacyRaw = window.localStorage.getItem(legacyProjectMemoriesStorageKey);
+      if (legacyRaw !== null) {
+        const legacyParsed = JSON.parse(legacyRaw);
+        if (!Array.isArray(legacyParsed)) return false;
+        nextLegacyRaw = JSON.stringify(legacyParsed.filter((legacy) => typeof legacy?.id !== "string" || legacy.id.trim() !== memoryId));
+      }
+    } catch {
+      return false;
+    }
+
+    const nextCanonicalRaw = JSON.stringify(nextEnvelope);
+    const intentWithoutHash = {
+      schemaVersion: 2,
+      memoryId,
+      previousCanonicalRaw: canonicalRaw,
+      previousPriorCanonicalRaw: priorCanonicalRaw,
+      previousLegacyRaw: legacyRaw,
+      nextCanonicalRaw,
+      nextPriorCanonicalRaw,
+      nextLegacyRaw,
+      createdAt: nextEnvelope.updatedAt ?? new Date().toISOString(),
+    } satisfies Omit<ProjectMemoryHardDeleteIntent, "intentHash">;
+    const intent = { ...intentWithoutHash, intentHash: projectMemoryHardDeleteIntentHash(intentWithoutHash) } satisfies ProjectMemoryHardDeleteIntent;
+    const intentRaw = JSON.stringify(intent);
+    try {
+      if (window.localStorage.getItem(projectMemoriesStorageKey) !== canonicalRaw || window.localStorage.getItem(priorProjectMemoriesStorageKey) !== priorCanonicalRaw || window.localStorage.getItem(legacyProjectMemoriesStorageKey) !== legacyRaw) return false;
+      window.localStorage.setItem(projectMemoryHardDeleteIntentKey, intentRaw);
+      if (window.localStorage.getItem(projectMemoryHardDeleteIntentKey) !== intentRaw || !resumeProjectMemoryHardDeleteIntent(intentRaw)) throw new Error("Memory hard-delete did not complete");
+    } catch {
+      setProjectMemoriesReadError(true);
+      return false;
+    }
+
+    setProjectMemoryEnvelope(parsed);
+    setProjectMemoriesReadError(false);
+    return true;
   };
 
-  const updateProjectMemory = (memoryId: string, memoryDraft: ProjectMemoryDraft) => {
-    const nextMemories = projectMemories.map((memory) => memory.id === memoryId && memory.projectId === activeProject.id
-      ? { ...memory, title: memoryDraft.title.trim(), content: memoryDraft.content.trim(), kind: memoryDraft.kind, updatedAt: new Date().toISOString() }
-      : memory);
-    return persistProjectMemories(nextMemories);
+  const finalizeProjectMemoryEnvelope = (envelope: ProjectMemoryEnvelope, records: ProjectMemoryRecord[], timestamp: string, extra: Partial<Pick<ProjectMemoryEnvelope, "candidates" | "tombstones">> = {}) => ({
+    ...envelope,
+    ...extra,
+    envelopeVersion: envelope.envelopeVersion + 1,
+    records,
+    updatedAt: timestamp,
+  } satisfies ProjectMemoryEnvelope);
+
+  const refreshProjectMemoryStateAfterConflict = (latest: ProjectMemoryReadResult) => {
+    setProjectMemoryEnvelope(latest.envelope);
+    setProjectMemoriesReadError(latest.readError);
   };
 
-  const toggleProjectMemoryUse = (memoryId: string) => {
-    const nextMemories = projectMemories.map((memory) => memory.id === memoryId && memory.projectId === activeProject.id
-      ? { ...memory, useInContext: !memory.useInContext, updatedAt: new Date().toISOString() }
-      : memory);
-    return persistProjectMemories(nextMemories);
+  useEffect(() => {
+    let active = true;
+    let latestReconciliation = 0;
+    const reconcileProjectMemoryStorage = () => {
+      const reconciliation = ++latestReconciliation;
+      setProjectMemoryEnvelope(emptyProjectMemoryEnvelope());
+      setProjectMemoriesReadError(true);
+      void migrateStoredProjectMemoriesWithLock().then((result) => {
+        if (active && reconciliation === latestReconciliation) refreshProjectMemoryStateAfterConflict(result);
+      });
+    };
+    const handleProjectMemoryStorage = (event: StorageEvent) => {
+      if (event.storageArea && event.storageArea !== window.localStorage) return;
+      if (event.key !== null && ![projectMemoriesStorageKey, priorProjectMemoriesStorageKey, legacyProjectMemoriesStorageKey, projectMemoryHardDeleteIntentKey, priorProjectMemoryHardDeleteIntentKey, projectMemoryPriorIntentBridgeKey, projectMemoryMigrationJournalKey].includes(event.key)) return;
+      reconcileProjectMemoryStorage();
+    };
+    const handleProjectMemoryFocus = () => reconcileProjectMemoryStorage();
+    const handleProjectMemoryVisibility = () => {
+      if (document.visibilityState === "visible") reconcileProjectMemoryStorage();
+    };
+    reconcileProjectMemoryStorage();
+    window.addEventListener("storage", handleProjectMemoryStorage);
+    window.addEventListener("focus", handleProjectMemoryFocus);
+    document.addEventListener("visibilitychange", handleProjectMemoryVisibility);
+    return () => {
+      active = false;
+      window.removeEventListener("storage", handleProjectMemoryStorage);
+      window.removeEventListener("focus", handleProjectMemoryFocus);
+      document.removeEventListener("visibilitychange", handleProjectMemoryVisibility);
+    };
+  }, []);
+
+  const createProjectMemory = async (memoryDraft: ProjectMemoryDraft): Promise<ProjectMemoryMutationResult> => {
+    const normalizedDraft = { ...memoryDraft, title: memoryDraft.title.trim(), content: memoryDraft.content.trim() };
+    if (!projectMemoryDraftIsValid(normalizedDraft) || projectMemoriesReadError) return projectMemoriesReadError ? "read-failure" : "invalid";
+    return withProjectMemoryWriteLock(() => {
+      const latest = readStoredProjectMemories();
+      if (latest.readError) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "read-failure";
+      }
+      const scopeId = normalizedDraft.scopeType === "account_private" ? localBuilderAccountId : activeProject.id;
+      const timestamp = nextProjectMemoryTimestamp(latest.envelope.updatedAt);
+      let record = createProjectMemoryRecord(`memory-${window.crypto.randomUUID()}`, normalizedDraft.scopeType, scopeId, normalizedDraft.scopeType === "project_private" ? activeProject.id : null, normalizedDraft, timestamp);
+      const conflicts = latest.envelope.records.filter((item) => item.scopeType === record.scopeType && item.scopeId === record.scopeId && item.status !== "superseded" && item.status !== "disabled" && normalizeProjectSearchText(item.title) === normalizeProjectSearchText(record.title) && normalizeProjectSearchText(item.content) !== normalizeProjectSearchText(record.content));
+      let records = [...latest.envelope.records];
+      if (conflicts.length > 0) {
+        record = appendProjectMemoryRevision(record, projectMemorySnapshot(record), "disputed", timestamp, { status: "disputed", conflictIds: conflicts.map((item) => item.id) });
+        records = records.map((item) => {
+          if (!conflicts.some((conflict) => conflict.id === item.id)) return item;
+          const conflictIds = Array.from(new Set([...item.conflictIds, record.id]));
+          return appendProjectMemoryRevision(item, projectMemorySnapshot(item), "disputed", timestamp, { status: "disputed", conflictIds });
+        });
+      }
+      records.push(record);
+      const nextEnvelope = finalizeProjectMemoryEnvelope(latest.envelope, records, timestamp);
+      return writeProjectMemoryEnvelope(nextEnvelope) ? "created" : "write-failure";
+    });
   };
 
-  const deleteProjectMemory = (memoryId: string) => persistProjectMemories(
-    projectMemories.filter((memory) => memory.id !== memoryId || memory.projectId !== activeProject.id),
-  );
+  const decideProjectMemoryCandidate = async (candidateId: string, action: "accepted" | "rejected", expectedVersion: number, expectedPayloadHash: string, expectedExactPayload: string, idempotencyKey: string): Promise<ProjectMemoryMutationResult> => {
+    if (projectMemoriesReadError) return "read-failure";
+    return withProjectMemoryWriteLock(() => {
+      const latest = readStoredProjectMemories();
+      if (latest.readError) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "read-failure";
+      }
+      const candidate = latest.envelope.candidates.find((item) => item.id === candidateId);
+      const scopeAccessible = candidate?.scopeType === "account_private" && candidate.scopeId === localBuilderAccountId
+        || candidate?.scopeType === "project_private" && candidate.scopeId === activeProject.id;
+      if (!candidate || !scopeAccessible || candidate.version !== expectedVersion || candidate.status !== "pending") {
+        refreshProjectMemoryStateAfterConflict(latest);
+        if (
+          scopeAccessible
+          && candidate?.decision?.idempotencyKey === idempotencyKey
+          && expectedVersion === candidate.decision.candidateVersion
+          && candidate.decision.action === action
+          && candidate.decision.payloadHash === expectedPayloadHash
+          && candidate.decision.exactPayload === expectedExactPayload
+          && projectMemoryCandidateExactPayload(candidate) === expectedExactPayload
+        ) return "unchanged";
+        return "version-conflict";
+      }
+      if (
+        projectMemoryCandidateExactPayload(candidate) !== expectedExactPayload
+        || candidate.payloadHash !== expectedPayloadHash
+        || candidate.payloadHash !== projectMemoryCandidatePayloadHash(candidate)
+        || candidate.expiresAt && new Date(candidate.expiresAt).getTime() <= Date.now()
+      ) return "invalid";
+      const timestamp = nextProjectMemoryTimestamp(latest.envelope.updatedAt, candidate.updatedAt);
+      let records = [...latest.envelope.records];
+      let acceptedMemoryId: string | null = null;
+      if (action === "accepted") {
+        const draft = { title: candidate.proposedSnapshot.title, content: candidate.proposedSnapshot.content, kind: candidate.proposedSnapshot.kind };
+        let record = createProjectMemoryRecord(`memory-${window.crypto.randomUUID()}`, candidate.scopeType, candidate.scopeId, candidate.scopeType === "project_private" ? candidate.scopeId : null, draft, timestamp, true, "owner_confirmed", [`memory-candidate:${candidate.id}:v${candidate.version}:${candidate.payloadHash}`]);
+        const conflicts = records.filter((item) => item.scopeType === record.scopeType && item.scopeId === record.scopeId && item.status !== "superseded" && item.status !== "disabled" && normalizeProjectSearchText(item.title) === normalizeProjectSearchText(record.title) && normalizeProjectSearchText(item.content) !== normalizeProjectSearchText(record.content));
+        if (conflicts.length > 0) {
+          record = appendProjectMemoryRevision(record, projectMemorySnapshot(record), "disputed", timestamp, { status: "disputed", conflictIds: conflicts.map((item) => item.id) });
+          records = records.map((item) => conflicts.some((conflict) => conflict.id === item.id)
+            ? appendProjectMemoryRevision(item, projectMemorySnapshot(item), "disputed", timestamp, { status: "disputed", conflictIds: Array.from(new Set([...item.conflictIds, record.id])) })
+            : item);
+        }
+        acceptedMemoryId = record.id;
+        records.push(record);
+      }
+      const nextCandidateVersion = candidate.version + 1;
+      const decision = { action, actor: "شما", at: timestamp, candidateId: candidate.id, candidateVersion: candidate.version, payloadHash: candidate.payloadHash, exactPayload: projectMemoryCandidateExactPayload(candidate), scopeType: candidate.scopeType, scopeId: candidate.scopeId, idempotencyKey } satisfies ProjectMemoryCandidateDecision;
+      const updatedCandidate = {
+        ...candidate,
+        version: nextCandidateVersion,
+        status: action,
+        updatedAt: timestamp,
+        acceptedMemoryId,
+        decision,
+        history: [...candidate.history, { id: `memory-candidate-event-${window.crypto.randomUUID()}`, type: action, actor: "شما", at: timestamp, version: nextCandidateVersion }],
+      } satisfies ProjectMemoryCandidate;
+      const candidates = latest.envelope.candidates.map((item) => item.id === candidate.id ? updatedCandidate : item);
+      const nextEnvelope = finalizeProjectMemoryEnvelope(latest.envelope, records, timestamp, { candidates });
+      return writeProjectMemoryEnvelope(nextEnvelope) ? action === "accepted" ? "created" : "updated" : "write-failure";
+    });
+  };
+
+  const updateProjectMemory = async (memoryId: string, memoryDraft: ProjectMemoryDraft, expectedVersion: number): Promise<ProjectMemoryMutationResult> => {
+    const normalizedDraft = { ...memoryDraft, title: memoryDraft.title.trim(), content: memoryDraft.content.trim() };
+    if (!projectMemoryDraftIsValid(normalizedDraft) || projectMemoriesReadError) return projectMemoriesReadError ? "read-failure" : "invalid";
+    return withProjectMemoryWriteLock(() => {
+      const latest = readStoredProjectMemories();
+      if (latest.readError) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "read-failure";
+      }
+      const existing = latest.envelope.records.find((memory) => memory.id === memoryId);
+      if (!existing || !projectMemoryIsAccessible(existing) || existing.version !== expectedVersion || existing.status === "superseded" || existing.scopeType !== normalizedDraft.scopeType) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "version-conflict";
+      }
+      const snapshot = { ...projectMemorySnapshot(existing), title: normalizedDraft.title, content: normalizedDraft.content, kind: normalizedDraft.kind, memoryType: projectMemoryTypesByKind[normalizedDraft.kind] } satisfies ProjectMemoryRevisionSnapshot;
+      if (JSON.stringify(stablePurchaseRequestValue(snapshot)) === JSON.stringify(stablePurchaseRequestValue(projectMemorySnapshot(existing)))) {
+        setProjectMemoryEnvelope(latest.envelope);
+        return "unchanged";
+      }
+      const timestamp = nextProjectMemoryTimestamp(latest.envelope.updatedAt, existing.updatedAt);
+      const conflicts = existing.status === "disabled" ? [] : latest.envelope.records.filter((item) => item.id !== existing.id && item.scopeType === existing.scopeType && item.scopeId === existing.scopeId && item.status !== "superseded" && item.status !== "disabled" && normalizeProjectSearchText(item.title) === normalizeProjectSearchText(snapshot.title) && normalizeProjectSearchText(item.content) !== normalizeProjectSearchText(snapshot.content));
+      const nextConflictIds = conflicts.map((item) => item.id);
+      const addsConflict = nextConflictIds.some((conflictId) => !existing.conflictIds.includes(conflictId));
+      const removesConflict = existing.conflictIds.some((conflictId) => !nextConflictIds.includes(conflictId));
+      let records = latest.envelope.records.map((item) => {
+        if (item.id === existing.id) {
+          let updated = appendProjectMemoryRevision(existing, snapshot, "updated", timestamp);
+          if (existing.status === "disputed" && removesConflict) {
+            const retainedConflictIds = existing.conflictIds.filter((conflictId) => nextConflictIds.includes(conflictId));
+            updated = appendProjectMemoryRevision(updated, projectMemorySnapshot(updated), "conflicts-resolved", timestamp, { conflictIds: retainedConflictIds });
+          }
+          if (conflicts.length > 0 && (existing.status === "current" || addsConflict)) {
+            updated = appendProjectMemoryRevision(updated, projectMemorySnapshot(updated), "disputed", timestamp, { status: "disputed", conflictIds: nextConflictIds });
+          }
+          return updated;
+        }
+        const hadExistingConflict = item.conflictIds.includes(existing.id);
+        const nowConflicts = conflicts.some((conflict) => conflict.id === item.id);
+        if (!hadExistingConflict && !nowConflicts) return item;
+        if (hadExistingConflict && nowConflicts) return item;
+        const conflictIds = nowConflicts ? Array.from(new Set([...item.conflictIds, existing.id])) : item.conflictIds.filter((id) => id !== existing.id);
+        const status: ProjectMemoryStatus = nowConflicts ? "disputed" : item.status;
+        return appendProjectMemoryRevision(item, projectMemorySnapshot(item), nowConflicts ? "disputed" : "conflicts-resolved", timestamp, { status, conflictIds });
+      });
+      const nextEnvelope = finalizeProjectMemoryEnvelope(latest.envelope, records, timestamp);
+      return writeProjectMemoryEnvelope(nextEnvelope) ? "updated" : "write-failure";
+    });
+  };
+
+  const updateProjectMemoryControl = async (memoryId: string, control: "visibility" | "manualSearchability" | "useInContextPreference", value: boolean, expectedVersion: number): Promise<ProjectMemoryMutationResult> => {
+    if (projectMemoriesReadError) return "read-failure";
+    return withProjectMemoryWriteLock(() => {
+      const latest = readStoredProjectMemories();
+      if (latest.readError) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "read-failure";
+      }
+      const existing = latest.envelope.records.find((memory) => memory.id === memoryId);
+      if (!existing || !projectMemoryIsAccessible(existing) || existing.version !== expectedVersion || existing.status === "superseded") {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "version-conflict";
+      }
+      const snapshot = { ...projectMemorySnapshot(existing), [control]: control === "visibility" ? value ? "visible" : "hidden" : value } as ProjectMemoryRevisionSnapshot;
+      if (JSON.stringify(stablePurchaseRequestValue(snapshot)) === JSON.stringify(stablePurchaseRequestValue(projectMemorySnapshot(existing)))) return "unchanged";
+      const timestamp = nextProjectMemoryTimestamp(latest.envelope.updatedAt, existing.updatedAt);
+      const updated = appendProjectMemoryRevision(existing, snapshot, "controls-updated", timestamp);
+      const nextEnvelope = finalizeProjectMemoryEnvelope(latest.envelope, latest.envelope.records.map((item) => item.id === existing.id ? updated : item), timestamp);
+      return writeProjectMemoryEnvelope(nextEnvelope) ? "updated" : "write-failure";
+    });
+  };
+
+  const changeProjectMemoryStatus = async (memoryId: string, action: "disable" | "enable" | "dispute", expectedVersion: number): Promise<ProjectMemoryMutationResult> => {
+    if (projectMemoriesReadError) return "read-failure";
+    return withProjectMemoryWriteLock(() => {
+      const latest = readStoredProjectMemories();
+      if (latest.readError) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "read-failure";
+      }
+      const existing = latest.envelope.records.find((memory) => memory.id === memoryId);
+      if (!existing || !projectMemoryIsAccessible(existing) || existing.version !== expectedVersion || existing.status === "superseded") {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "version-conflict";
+      }
+      if (existing.status === "disabled" && action === "dispute") return "invalid";
+      const timestamp = nextProjectMemoryTimestamp(latest.envelope.updatedAt, existing.updatedAt);
+      const enablingConflicts = action === "enable" ? latest.envelope.records.filter((item) => item.id !== existing.id && item.scopeType === existing.scopeType && item.scopeId === existing.scopeId && item.status !== "superseded" && item.status !== "disabled" && normalizeProjectSearchText(item.title) === normalizeProjectSearchText(existing.title) && normalizeProjectSearchText(item.content) !== normalizeProjectSearchText(existing.content)) : [];
+      const nextStatus: ProjectMemoryStatus = action === "disable" ? "disabled" : action === "dispute" || enablingConflicts.length > 0 ? "disputed" : "current";
+      const nextConflictIds = action === "disable" ? [] : action === "enable" ? enablingConflicts.map((item) => item.id) : existing.conflictIds;
+      if (existing.status === nextStatus && JSON.stringify(existing.conflictIds) === JSON.stringify(nextConflictIds)) return "unchanged";
+      const eventType: Exclude<ProjectMemoryEventType, "created"> = action === "disable" ? "disabled" : nextStatus === "disputed" ? "disputed" : "enabled";
+      const records = latest.envelope.records.map((item) => {
+        if (item.id === existing.id) {
+          if (action === "enable" && existing.status === "disabled" && nextStatus === "disputed") {
+            const enabled = appendProjectMemoryRevision(existing, projectMemorySnapshot(existing), "enabled", timestamp, { status: "current", conflictIds: [] });
+            return appendProjectMemoryRevision(enabled, projectMemorySnapshot(enabled), "disputed", timestamp, { status: "disputed", conflictIds: nextConflictIds });
+          }
+          return appendProjectMemoryRevision(existing, projectMemorySnapshot(existing), eventType, timestamp, { status: nextStatus, conflictIds: nextConflictIds });
+        }
+        const hadConflict = item.conflictIds.includes(existing.id);
+        const nowConflicts = enablingConflicts.some((conflict) => conflict.id === item.id);
+        if (!hadConflict && !nowConflicts) return item;
+        const conflictIds = nowConflicts ? Array.from(new Set([...item.conflictIds, existing.id])) : item.conflictIds.filter((id) => id !== existing.id);
+        return appendProjectMemoryRevision(item, projectMemorySnapshot(item), nowConflicts ? "disputed" : "conflicts-resolved", timestamp, { status: nowConflicts ? "disputed" : item.status, conflictIds });
+      });
+      const nextEnvelope = finalizeProjectMemoryEnvelope(latest.envelope, records, timestamp);
+      return writeProjectMemoryEnvelope(nextEnvelope) ? "updated" : "write-failure";
+    });
+  };
+
+  const supersedeProjectMemory = async (memoryId: string, memoryDraft: ProjectMemoryDraft, expectedVersion: number): Promise<ProjectMemoryMutationResult> => {
+    const normalizedDraft = { ...memoryDraft, title: memoryDraft.title.trim(), content: memoryDraft.content.trim() };
+    if (!projectMemoryDraftIsValid(normalizedDraft) || projectMemoriesReadError) return projectMemoriesReadError ? "read-failure" : "invalid";
+    return withProjectMemoryWriteLock(() => {
+      const latest = readStoredProjectMemories();
+      if (latest.readError) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "read-failure";
+      }
+      const existing = latest.envelope.records.find((memory) => memory.id === memoryId);
+      if (!existing || !projectMemoryIsAccessible(existing) || existing.version !== expectedVersion || existing.status === "superseded" || existing.scopeType !== normalizedDraft.scopeType) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "version-conflict";
+      }
+      const timestamp = nextProjectMemoryTimestamp(latest.envelope.updatedAt, existing.updatedAt);
+      let replacement = createProjectMemoryRecord(`memory-${window.crypto.randomUUID()}`, existing.scopeType, existing.scopeId, existing.projectId, normalizedDraft, timestamp);
+      replacement = appendProjectMemoryRevision(replacement, projectMemorySnapshot(replacement), "superseding", timestamp, { supersedesId: existing.id });
+      let records = latest.envelope.records.map((item) => {
+        if (item.id === existing.id) return appendProjectMemoryRevision(existing, projectMemorySnapshot(existing), "superseded", timestamp, { status: "superseded", supersededById: replacement.id, conflictIds: [] });
+        if (!item.conflictIds.includes(existing.id)) return item;
+        return appendProjectMemoryRevision(item, projectMemorySnapshot(item), "conflicts-resolved", timestamp, { conflictIds: item.conflictIds.filter((id) => id !== existing.id) });
+      });
+      const conflicts = records.filter((item) => item.id !== existing.id && item.scopeType === replacement.scopeType && item.scopeId === replacement.scopeId && item.status !== "superseded" && item.status !== "disabled" && normalizeProjectSearchText(item.title) === normalizeProjectSearchText(replacement.title) && normalizeProjectSearchText(item.content) !== normalizeProjectSearchText(replacement.content));
+      if (conflicts.length > 0) {
+        replacement = appendProjectMemoryRevision(replacement, projectMemorySnapshot(replacement), "disputed", timestamp, { status: "disputed", conflictIds: conflicts.map((item) => item.id) });
+        records = records.map((item) => conflicts.some((conflict) => conflict.id === item.id)
+          ? appendProjectMemoryRevision(item, projectMemorySnapshot(item), "disputed", timestamp, { status: "disputed", conflictIds: Array.from(new Set([...item.conflictIds, replacement.id])) })
+          : item);
+      }
+      records.push(replacement);
+      const nextEnvelope = finalizeProjectMemoryEnvelope(latest.envelope, records, timestamp);
+      return writeProjectMemoryEnvelope(nextEnvelope) ? "updated" : "write-failure";
+    });
+  };
+
+  const rollbackProjectMemory = async (memoryId: string, targetVersion: number, expectedVersion: number): Promise<ProjectMemoryMutationResult> => {
+    if (projectMemoriesReadError) return "read-failure";
+    return withProjectMemoryWriteLock(() => {
+      const latest = readStoredProjectMemories();
+      if (latest.readError) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "read-failure";
+      }
+      const existing = latest.envelope.records.find((memory) => memory.id === memoryId);
+      const target = existing?.revisions.find((revision) => revision.version === targetVersion);
+      if (!existing || !projectMemoryIsAccessible(existing) || existing.version !== expectedVersion || existing.status === "superseded") {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "version-conflict";
+      }
+      if (!target || targetVersion >= existing.version) return "invalid";
+      if (JSON.stringify(stablePurchaseRequestValue(target.snapshot)) === JSON.stringify(stablePurchaseRequestValue(projectMemorySnapshot(existing)))) return "unchanged";
+      const timestamp = nextProjectMemoryTimestamp(latest.envelope.updatedAt, existing.updatedAt);
+      const conflicts = existing.status === "disabled" ? [] : latest.envelope.records.filter((item) => item.id !== existing.id && item.scopeType === existing.scopeType && item.scopeId === existing.scopeId && item.status !== "superseded" && item.status !== "disabled" && normalizeProjectSearchText(item.title) === normalizeProjectSearchText(target.snapshot.title) && normalizeProjectSearchText(item.content) !== normalizeProjectSearchText(target.snapshot.content));
+      const nextConflictIds = conflicts.map((item) => item.id);
+      const nextStatus: ProjectMemoryStatus = existing.status === "disabled" ? "disabled" : conflicts.length > 0 ? "disputed" : existing.status;
+      const addsConflict = nextConflictIds.some((conflictId) => !existing.conflictIds.includes(conflictId));
+      const removesConflict = existing.conflictIds.some((conflictId) => !nextConflictIds.includes(conflictId));
+      const records = latest.envelope.records.map((item) => {
+        if (item.id === existing.id) {
+          let rolledBack = appendProjectMemoryRevision(existing, target.snapshot, "rolled-back", timestamp, {}, targetVersion);
+          if (existing.status === "disputed" && removesConflict) {
+            const retainedConflictIds = existing.conflictIds.filter((conflictId) => nextConflictIds.includes(conflictId));
+            rolledBack = appendProjectMemoryRevision(rolledBack, projectMemorySnapshot(rolledBack), "conflicts-resolved", timestamp, { conflictIds: retainedConflictIds });
+          }
+          if (nextStatus !== existing.status || nextStatus === "disputed" && addsConflict) {
+            rolledBack = appendProjectMemoryRevision(rolledBack, projectMemorySnapshot(rolledBack), nextStatus === "disputed" ? "disputed" : nextStatus === "disabled" ? "disabled" : "enabled", timestamp, { status: nextStatus, conflictIds: nextConflictIds });
+          }
+          return rolledBack;
+        }
+        const hadConflict = item.conflictIds.includes(existing.id);
+        const nowConflicts = conflicts.some((conflict) => conflict.id === item.id);
+        if (!hadConflict && !nowConflicts) return item;
+        if (hadConflict && nowConflicts) return item;
+        const conflictIds = nowConflicts ? Array.from(new Set([...item.conflictIds, existing.id])) : item.conflictIds.filter((id) => id !== existing.id);
+        return appendProjectMemoryRevision(item, projectMemorySnapshot(item), nowConflicts ? "disputed" : "conflicts-resolved", timestamp, { status: nowConflicts ? "disputed" : item.status, conflictIds });
+      });
+      const nextEnvelope = finalizeProjectMemoryEnvelope(latest.envelope, records, timestamp);
+      return writeProjectMemoryEnvelope(nextEnvelope) ? "updated" : "write-failure";
+    });
+  };
+
+  const deleteProjectMemory = async (memoryId: string, expectedVersion: number): Promise<ProjectMemoryMutationResult> => {
+    if (projectMemoriesReadError) return "read-failure";
+    return withProjectMemoryWriteLock(() => {
+      const latest = readStoredProjectMemories();
+      if (latest.readError) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "read-failure";
+      }
+      const existing = latest.envelope.records.find((memory) => memory.id === memoryId);
+      if (!existing || !projectMemoryIsAccessible(existing) || existing.version !== expectedVersion) {
+        refreshProjectMemoryStateAfterConflict(latest);
+        return "version-conflict";
+      }
+      const timestamp = nextProjectMemoryTimestamp(latest.envelope.updatedAt, existing.updatedAt);
+      const records = latest.envelope.records.filter((item) => item.id !== existing.id).map((item) => {
+        if (!item.conflictIds.includes(existing.id)) return item;
+        return appendProjectMemoryRevision(item, projectMemorySnapshot(item), "conflicts-resolved", timestamp, { conflictIds: item.conflictIds.filter((id) => id !== existing.id) });
+      });
+      const tombstone = createProjectMemoryTombstone(existing, timestamp);
+      const nextEnvelope = finalizeProjectMemoryEnvelope(latest.envelope, records, timestamp, {
+        candidates: latest.envelope.candidates.filter((candidate) => candidate.acceptedMemoryId !== existing.id),
+        tombstones: [...latest.envelope.tombstones, tombstone],
+      });
+      return writeProjectMemoryHardDelete(nextEnvelope, existing.id) ? "deleted" : "write-failure";
+    });
+  };
 
   const persistProjectTasks = (nextTasks: ProjectTaskRecord[]) => {
     if (projectTasksReadError) return false;
@@ -9735,14 +12408,20 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return (
       <ProjectMemoryView
         project={activeProject}
-        memories={activeProjectMemories}
+        memories={[...activeProjectMemoryRecords, ...accountMemoryRecords]}
+        candidates={projectMemoryEnvelope.candidates}
         storageLocked={projectMemoriesReadError}
         initialSelectedId={focusedMemoryId}
         backLabel={memoryReturnView === "search" ? "بازگشت به جست‌وجو" : memoryReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
         onBack={() => { setFocusedMemoryId(null); setView(memoryReturnView); }}
+        onSelectionInvalidated={memoryReturnView === "search" ? () => { setFocusedMemoryId(null); pendingProjectSearchInputFocus.current = true; setView("search"); } : undefined}
         onCreate={createProjectMemory}
+        onDecideCandidate={decideProjectMemoryCandidate}
         onUpdate={updateProjectMemory}
-        onToggleUse={toggleProjectMemoryUse}
+        onUpdateControl={updateProjectMemoryControl}
+        onChangeStatus={changeProjectMemoryStatus}
+        onSupersede={supersedeProjectMemory}
+        onRollback={rollbackProjectMemory}
         onDelete={deleteProjectMemory}
       />
     );
@@ -9752,7 +12431,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return (
       <ProjectSourceSearchView
         project={activeProject}
-        memories={activeProjectMemories}
+        memories={searchableProjectMemories}
         files={activeProjectDocuments}
         query={projectSearchQuery}
         readError={projectFilesReadError || projectMemoriesReadError}
@@ -13126,6 +15805,7 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
 function ProjectSourceSearchView({ project, memories, files, query, readError, onQueryChange, onBack, onOpenMemory, onOpenFile }: { project: BuilderProject; memories: ProjectMemoryRecord[]; files: ProjectFileRecord[]; query: string; readError: boolean; onQueryChange: (query: string) => void; onBack: () => void; onOpenMemory: (memoryId: string) => void; onOpenFile: (fileId: string) => void }) {
   const keyboard = useKeyboard();
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const focusedMemoryResultIdRef = useRef<string | null>(null);
   const normalizedQuery = normalizeProjectSearchText(query);
   const matchingMemories = useMemo(() => {
     if (!normalizedQuery) return [];
@@ -13141,6 +15821,13 @@ function ProjectSourceSearchView({ project, memories, files, query, readError, o
   }, [files, normalizedQuery, project.id, query]);
   const resultCount = matchingMemories.length + matchingFiles.length;
   const corpusCount = memories.filter((memory) => memory.projectId === project.id).length + files.filter((file) => file.projectId === project.id).length;
+
+  useEffect(() => {
+    const focusedMemoryId = focusedMemoryResultIdRef.current;
+    if (!focusedMemoryId || !readError && matchingMemories.some((memory) => memory.id === focusedMemoryId)) return;
+    focusedMemoryResultIdRef.current = null;
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  }, [matchingMemories, readError]);
 
   return (
     <div className="chida-app project-source-search-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-source-search-view">
@@ -13206,7 +15893,7 @@ function ProjectSourceSearchView({ project, memories, files, query, readError, o
                   <ul>
                     {matchingMemories.map((memory) => (
                       <li key={memory.id} data-testid="project-source-result">
-                        <button className="project-source-result-card" type="button" onClick={() => onOpenMemory(memory.id)} data-testid="project-source-result-memory">
+                        <button className="project-source-result-card" type="button" data-memory-id={memory.id} onFocus={() => { focusedMemoryResultIdRef.current = memory.id; }} onBlur={(event) => { if (event.relatedTarget) focusedMemoryResultIdRef.current = null; }} onClick={() => onOpenMemory(memory.id)} data-testid="project-source-result-memory">
                           <span className="project-source-result-icon"><BrainCircuit size={20} strokeWidth={1.65} /></span>
                           <span className="project-source-result-copy">
                             <span className="project-source-result-topline"><small>حافظه · {memory.kind}</small><small>{formatProjectFileDate(memory.updatedAt)}</small></span>
@@ -13371,29 +16058,74 @@ function ProjectSourceAnswerDemoView({ project, onBack }: { project: BuilderProj
   );
 }
 
-function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId = null, backLabel = "بازگشت به فضای پروژه", onBack, onCreate, onUpdate, onToggleUse, onDelete }: { project: BuilderProject; memories: ProjectMemoryRecord[]; storageLocked: boolean; initialSelectedId?: string | null; backLabel?: string; onBack: () => void; onCreate: (draft: ProjectMemoryDraft) => boolean; onUpdate: (memoryId: string, draft: ProjectMemoryDraft) => boolean; onToggleUse: (memoryId: string) => boolean; onDelete: (memoryId: string) => boolean }) {
+function ProjectMemoryView({ project, memories, candidates, storageLocked, initialSelectedId = null, backLabel = "بازگشت به فضای پروژه", onBack, onSelectionInvalidated, onCreate, onDecideCandidate, onUpdate, onUpdateControl, onChangeStatus, onSupersede, onRollback, onDelete }: {
+  project: BuilderProject;
+  memories: ProjectMemoryRecord[];
+  candidates: ProjectMemoryCandidate[];
+  storageLocked: boolean;
+  initialSelectedId?: string | null;
+  backLabel?: string;
+  onBack: () => void;
+  onSelectionInvalidated?: () => void;
+  onCreate: (draft: ProjectMemoryDraft) => Promise<ProjectMemoryMutationResult>;
+  onDecideCandidate: (candidateId: string, action: "accepted" | "rejected", expectedVersion: number, expectedPayloadHash: string, expectedExactPayload: string, idempotencyKey: string) => Promise<ProjectMemoryMutationResult>;
+  onUpdate: (memoryId: string, draft: ProjectMemoryDraft, expectedVersion: number) => Promise<ProjectMemoryMutationResult>;
+  onUpdateControl: (memoryId: string, control: "visibility" | "manualSearchability" | "useInContextPreference", value: boolean, expectedVersion: number) => Promise<ProjectMemoryMutationResult>;
+  onChangeStatus: (memoryId: string, action: "disable" | "enable" | "dispute", expectedVersion: number) => Promise<ProjectMemoryMutationResult>;
+  onSupersede: (memoryId: string, draft: ProjectMemoryDraft, expectedVersion: number) => Promise<ProjectMemoryMutationResult>;
+  onRollback: (memoryId: string, targetVersion: number, expectedVersion: number) => Promise<ProjectMemoryMutationResult>;
+  onDelete: (memoryId: string, expectedVersion: number) => Promise<ProjectMemoryMutationResult>;
+}) {
   const keyboard = useKeyboard();
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
+  const initialSelectedMemory = initialSelectedId ? memories.find((memory) => memory.id === initialSelectedId) ?? null : null;
+  const [scope, setScope] = useState<ProjectMemoryScopeType>(initialSelectedMemory?.scopeType ?? "project_private");
+  const [showManagedRecords, setShowManagedRecords] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [memoryDraft, setMemoryDraft] = useState<ProjectMemoryDraft>({ title: "", content: "", kind: "یادداشت سازنده" });
+  const [editorMode, setEditorMode] = useState<"create" | "edit" | "supersede">("create");
+  const [editingExpectedVersion, setEditingExpectedVersion] = useState(0);
+  const [memoryDraft, setMemoryDraft] = useState<ProjectMemoryDraft>({ title: "", content: "", kind: "یادداشت سازنده", scopeType: "project_private" });
   const [fieldErrors, setFieldErrors] = useState({ title: "", content: "" });
   const [storageError, setStorageError] = useState("");
+  const [candidateError, setCandidateError] = useState("");
+  const [candidateMutationId, setCandidateMutationId] = useState<string | null>(null);
+  const [mutationPending, setMutationPending] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState(false);
   const deleteTriggerRef = useRef<HTMLButtonElement>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const selectedMemory = selectedId ? memories.find((memory) => memory.id === selectedId) ?? null : null;
   const orderedMemories = useMemo(
-    () => [...memories].sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
-    [memories],
+    () => memories
+      .filter((memory) => scope === "account_private"
+        ? memory.scopeType === "account_private" && memory.scopeId === localBuilderAccountId
+        : memory.scopeType === "project_private" && memory.scopeId === project.id)
+      .filter((memory) => showManagedRecords || memory.visibility === "visible" && memory.status !== "superseded")
+      .sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
+    [memories, project.id, scope, showManagedRecords],
   );
+  const currentScopeCandidates = candidates.filter((candidate) => candidate.status === "pending" && (scope === "account_private" ? candidate.scopeType === "account_private" && candidate.scopeId === localBuilderAccountId : candidate.scopeType === "project_private" && candidate.scopeId === project.id));
+
+  const statusLabel = (status: ProjectMemoryStatus) => status === "current" ? "جاری" : status === "disputed" ? "نیازمند بازبینی" : status === "disabled" ? "غیرفعال" : "جایگزین‌شده";
+
+  const mutationError = (result: ProjectMemoryMutationResult) => {
+    if (result === "version-conflict") return "نسخهٔ حافظه در جای دیگری تغییر کرده است. فهرست تازه شد؛ دوباره بررسی کن.";
+    if (result === "lock-unavailable") return "قفل امن مرورگر در دسترس نیست؛ برای جلوگیری از بازنویسی، تغییری ثبت نشد.";
+    if (result === "read-failure") return "حافظهٔ محلی کامل خوانده نشد و هیچ تغییری ثبت نشد.";
+    if (result === "invalid") return "این تغییر با قرارداد حافظه سازگار نیست.";
+    return "حافظه ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.";
+  };
 
   useEffect(() => {
     if (selectedId && !selectedMemory) {
+      if (onSelectionInvalidated) {
+        onSelectionInvalidated();
+        return;
+      }
       setSelectedId(null);
       setDeleteConfirmation(false);
     }
-  }, [selectedId, selectedMemory]);
+  }, [onSelectionInvalidated, selectedId, selectedMemory]);
 
   useEffect(() => {
     if (!deleteConfirmation) return;
@@ -13403,7 +16135,9 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
 
   const openCreateEditor = () => {
     setEditingId(null);
-    setMemoryDraft({ title: "", content: "", kind: "یادداشت سازنده" });
+    setEditorMode("create");
+    setEditingExpectedVersion(0);
+    setMemoryDraft({ title: "", content: "", kind: "یادداشت سازنده", scopeType: scope });
     setFieldErrors({ title: "", content: "" });
     setStorageError("");
     setEditorOpen(true);
@@ -13413,7 +16147,21 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
     setSelectedId(null);
     setDeleteConfirmation(false);
     setEditingId(memory.id);
-    setMemoryDraft({ title: memory.title, content: memory.content, kind: memory.kind });
+    setEditorMode("edit");
+    setEditingExpectedVersion(memory.version);
+    setMemoryDraft({ title: memory.title, content: memory.content, kind: memory.kind, scopeType: memory.scopeType });
+    setFieldErrors({ title: "", content: "" });
+    setStorageError("");
+    setEditorOpen(true);
+  };
+
+  const openSupersedeEditor = (memory: ProjectMemoryRecord) => {
+    setSelectedId(null);
+    setDeleteConfirmation(false);
+    setEditingId(memory.id);
+    setEditorMode("supersede");
+    setEditingExpectedVersion(memory.version);
+    setMemoryDraft({ title: memory.title, content: memory.content, kind: memory.kind, scopeType: memory.scopeType });
     setFieldErrors({ title: "", content: "" });
     setStorageError("");
     setEditorOpen(true);
@@ -13427,7 +16175,7 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
     setStorageError("");
   };
 
-  const saveMemory = () => {
+  const saveMemory = async () => {
     const title = memoryDraft.title.trim();
     const content = memoryDraft.content.trim();
     const nextErrors = {
@@ -13443,9 +16191,17 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
 
     keyboard.hide();
     const normalizedDraft = { ...memoryDraft, title, content };
-    const saved = editingId ? onUpdate(editingId, normalizedDraft) : onCreate(normalizedDraft);
-    if (!saved) {
-      setStorageError("حافظه ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
+    setMutationPending(true);
+    const result = editorMode === "create"
+      ? await onCreate(normalizedDraft)
+      : editorMode === "supersede" && editingId
+        ? await onSupersede(editingId, normalizedDraft, editingExpectedVersion)
+        : editingId
+          ? await onUpdate(editingId, normalizedDraft, editingExpectedVersion)
+          : "invalid";
+    setMutationPending(false);
+    if (!["created", "updated", "unchanged"].includes(result)) {
+      setStorageError(mutationError(result));
       return;
     }
     setEditorOpen(false);
@@ -13453,19 +16209,40 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
     setStorageError("");
   };
 
-  const toggleSelectedMemoryUse = () => {
-    if (!selectedMemory) return;
-    if (!onToggleUse(selectedMemory.id)) {
-      setStorageError("تغییر وضعیت ذخیره نشد. دوباره تلاش کن.");
-      return;
-    }
-    setStorageError("");
+  const updateSelectedMemoryControl = async (control: "visibility" | "manualSearchability" | "useInContextPreference", value: boolean) => {
+    if (!selectedMemory || mutationPending) return;
+    setMutationPending(true);
+    const result = await onUpdateControl(selectedMemory.id, control, value, selectedMemory.version);
+    setMutationPending(false);
+    if (!["updated", "unchanged"].includes(result)) setStorageError(mutationError(result));
+    else setStorageError("");
   };
 
-  const deleteSelectedMemory = () => {
+  const updateSelectedMemoryStatus = async (action: "disable" | "enable" | "dispute") => {
+    if (!selectedMemory || mutationPending) return;
+    setMutationPending(true);
+    const result = await onChangeStatus(selectedMemory.id, action, selectedMemory.version);
+    setMutationPending(false);
+    if (!["updated", "unchanged"].includes(result)) setStorageError(mutationError(result));
+    else setStorageError("");
+  };
+
+  const rollbackSelectedMemory = async (targetVersion: number) => {
+    if (!selectedMemory || mutationPending) return;
+    setMutationPending(true);
+    const result = await onRollback(selectedMemory.id, targetVersion, selectedMemory.version);
+    setMutationPending(false);
+    if (!["updated", "unchanged"].includes(result)) setStorageError(mutationError(result));
+    else setStorageError("");
+  };
+
+  const deleteSelectedMemory = async () => {
     if (!selectedMemory) return;
-    if (!onDelete(selectedMemory.id)) {
-      setStorageError("حذف حافظه ذخیره نشد. دوباره تلاش کن.");
+    setMutationPending(true);
+    const result = await onDelete(selectedMemory.id, selectedMemory.version);
+    setMutationPending(false);
+    if (result !== "deleted") {
+      setStorageError(mutationError(result));
       return;
     }
     setSelectedId(null);
@@ -13473,11 +16250,34 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
     setStorageError("");
   };
 
+  const decideCandidate = async (candidate: ProjectMemoryCandidate, action: "accepted" | "rejected") => {
+    if (candidateMutationId) return;
+    setCandidateMutationId(candidate.id);
+    setCandidateError("");
+    const idempotencyKey = `candidate-consent:${candidate.id}:v${candidate.version}:${candidate.payloadHash}:${action}`;
+    const result = await onDecideCandidate(candidate.id, action, candidate.version, candidate.payloadHash, projectMemoryCandidateExactPayload(candidate), idempotencyKey);
+    setCandidateMutationId(null);
+    if (action === "accepted" ? !["created", "unchanged"].includes(result) : !["updated", "unchanged"].includes(result)) setCandidateError(mutationError(result));
+  };
+
+  const selectMemoryScope = (nextScope: ProjectMemoryScopeType, focusTab = false) => {
+    setScope(nextScope);
+    setShowManagedRecords(false);
+    if (focusTab) window.requestAnimationFrame(() => document.getElementById(nextScope === "project_private" ? "memory-scope-project-tab" : "memory-scope-account-tab")?.focus());
+  };
+
+  const handleMemoryScopeKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const nextScope = event.key === "Home" ? "project_private" : event.key === "End" ? "account_private" : scope === "project_private" ? "account_private" : "project_private";
+    selectMemoryScope(nextScope, true);
+  };
+
   return (
     <div className="chida-app project-memory-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-memory-view">
       <header className="project-workspace-header">
         <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label={backLabel} data-testid="project-memory-back"><ArrowRight size={21} /></button>
-        <span className="project-workspace-title"><small>حافظهٔ پروژه</small><strong>{project.name}</strong></span>
+        <span className="project-workspace-title"><small>حافظهٔ شخصی و پروژه</small><strong>{scope === "project_private" ? project.name : "حساب سازنده"}</strong></span>
         <span className="project-workspace-header-spacer" aria-hidden="true" />
       </header>
 
@@ -13485,41 +16285,57 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
         <main className="project-memory-content">
           <section className="project-memory-heading">
             <span className="project-memory-mark"><BrainCircuit size={24} strokeWidth={1.65} /></span>
-            <div><span className="eyebrow">حافظهٔ همین پروژه</span><h1>چیدا چه می‌داند</h1></div>
+            <div><span className="eyebrow">ثبت مستقیم و قابل‌کنترل</span><h1>چیدا چه می‌داند</h1></div>
           </section>
 
-          <button className="primary-button project-memory-add" type="button" onClick={openCreateEditor} disabled={storageLocked} data-testid="project-memory-add"><Plus size={18} /> افزودن به حافظه</button>
+          <div className="project-memory-scope-tabs" role="tablist" aria-label="دامنهٔ حافظه">
+            <button id="memory-scope-project-tab" type="button" role="tab" aria-selected={scope === "project_private"} aria-controls="project-memory-scope-panel" tabIndex={scope === "project_private" ? 0 : -1} onKeyDown={handleMemoryScopeKeyDown} onClick={() => selectMemoryScope("project_private")} data-testid="memory-scope-project">این پروژه</button>
+            <button id="memory-scope-account-tab" type="button" role="tab" aria-selected={scope === "account_private"} aria-controls="project-memory-scope-panel" tabIndex={scope === "account_private" ? 0 : -1} onKeyDown={handleMemoryScopeKeyDown} onClick={() => selectMemoryScope("account_private")} data-testid="memory-scope-account">شخصی</button>
+          </div>
 
-          {storageLocked ? (
-            <p className="project-storage-recovery-alert" role="alert" data-testid="project-memory-read-error"><ShieldCheck size={17} /><span><strong>حافظهٔ محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، افزودن و ویرایش تا بارگذاری موفق بعدی غیرفعال است.</span></p>
-          ) : null}
+          <section id="project-memory-scope-panel" className="project-memory-scope-panel" role="tabpanel" aria-labelledby={scope === "project_private" ? "memory-scope-project-tab" : "memory-scope-account-tab"}>
+            <p className="project-memory-boundary"><ShieldCheck size={16} /><span>{scope === "project_private" ? `فقط در ${project.name}` : "فقط در حساب سازنده"} · اتصال مدل فعال نیست.</span></p>
 
-          {storageLocked ? null : orderedMemories.length === 0 ? (
-            <section className="project-memory-empty" data-testid="project-memory-empty">
-              <span><BrainCircuit size={25} strokeWidth={1.65} /></span>
-              <h2>هنوز چیزی ثبت نشده</h2>
-            </section>
-          ) : (
-            <section className="project-memory-list" aria-label="موارد حافظهٔ پروژه">
-              <div className="project-memory-list-title"><strong>موارد ثبت‌شده</strong><span>{orderedMemories.length.toLocaleString("fa-IR")}</span></div>
-              {orderedMemories.map((memory) => (
-                <button className="project-memory-card" type="button" key={memory.id} onClick={() => { setStorageError(""); setDeleteConfirmation(false); setSelectedId(memory.id); }} data-testid="project-memory-card">
-                  <span className="project-memory-card-icon"><BrainCircuit size={20} strokeWidth={1.65} /></span>
-                  <span className="project-memory-card-copy">
-                    <span className="project-memory-card-topline"><small>{memory.kind}</small><small>{formatProjectFileDate(memory.updatedAt)}</small></span>
-                    <strong>{memory.title}</strong>
-                    <span>{memory.content}</span>
-                  </span>
-                  <ArrowRight size={17} aria-hidden="true" />
-                </button>
-              ))}
-            </section>
-          )}
+            <button className="primary-button project-memory-add" type="button" onClick={openCreateEditor} disabled={storageLocked} data-testid="project-memory-add"><Plus size={18} /> افزودن به حافظه</button>
+
+            {storageLocked ? (
+              <p className="project-storage-recovery-alert" role="alert" data-testid="project-memory-read-error"><ShieldCheck size={17} /><span><strong>حافظهٔ محلی کامل خوانده نشد.</strong> رکورد خراب یا مهاجرت ناقص حذف نشده است؛ برای جلوگیری از بازنویسی داده‌های قبلی، همهٔ تغییرها قفل‌اند.</span></p>
+            ) : null}
+
+            {!storageLocked && currentScopeCandidates.length > 0 ? <section className="project-memory-candidate-notice" data-testid="project-memory-candidate-notice"><strong>{currentScopeCandidates.length.toLocaleString("fa-IR")} پیشنهاد جداگانه</strong><span>این موارد هنوز حافظه نیستند. فقط تأیید صریح همین متن و همین دامنه، رکورد تازه می‌سازد؛ هیچ پذیرش خودکاری وجود ندارد.</span>{currentScopeCandidates.map((candidate) => <article className="project-memory-candidate-card" key={candidate.id} data-testid="project-memory-candidate-card"><small>{candidate.proposedSnapshot.kind} · دامنهٔ {candidate.scopeType === "project_private" ? project.name : "شخصی"}</small><strong>{candidate.proposedSnapshot.title}</strong><p>{candidate.proposedSnapshot.content}</p><details><summary>منشأ پیشنهادی</summary><span>run: {candidate.producerRunId} · provider: {candidate.provider} · model: {candidate.model}</span></details><div><button type="button" onClick={() => decideCandidate(candidate, "rejected")} disabled={candidateMutationId !== null}>رد همین پیشنهاد</button><button type="button" onClick={() => decideCandidate(candidate, "accepted")} disabled={candidateMutationId !== null} data-testid="project-memory-candidate-accept">تأیید همین متن و دامنه</button></div></article>)}{candidateError ? <p className="project-memory-storage-error" role="alert" data-testid="project-memory-candidate-error">{candidateError}</p> : null}</section> : null}
+
+            {storageLocked ? null : orderedMemories.length === 0 ? (
+              <section className="project-memory-empty" data-testid="project-memory-empty">
+                <span><BrainCircuit size={25} strokeWidth={1.65} /></span>
+                <h2>هنوز چیزی ثبت نشده</h2>
+              </section>
+            ) : (
+              <section className="project-memory-list" aria-label={scope === "project_private" ? "موارد حافظهٔ پروژه" : "موارد حافظهٔ شخصی"}>
+                <div className="project-memory-list-title"><strong>موارد ثبت‌شده</strong><span>{orderedMemories.length.toLocaleString("fa-IR")}</span></div>
+                {orderedMemories.map((memory) => (
+                  <button className="project-memory-card" type="button" key={memory.id} onClick={() => { setScope(memory.scopeType); setStorageError(""); setDeleteConfirmation(false); setSelectedId(memory.id); }} data-testid="project-memory-card">
+                    <span className="project-memory-card-icon"><BrainCircuit size={20} strokeWidth={1.65} /></span>
+                    <span className="project-memory-card-copy">
+                      <span className="project-memory-card-topline"><small>{memory.kind} · {statusLabel(memory.status)}{memory.visibility === "hidden" ? " · پنهان" : ""}</small><small>{formatProjectFileDate(memory.updatedAt)}</small></span>
+                      <strong>{memory.title}</strong>
+                      <span>{memory.content}</span>
+                    </span>
+                    <ArrowRight size={17} aria-hidden="true" />
+                  </button>
+                ))}
+              </section>
+            )}
+            {!storageLocked && memories.some((memory) => (scope === "account_private" ? memory.scopeType === "account_private" : memory.scopeType === "project_private" && memory.scopeId === project.id) && (memory.visibility === "hidden" || memory.status === "superseded")) ? <button className="project-memory-managed-toggle" type="button" aria-pressed={showManagedRecords} onClick={() => setShowManagedRecords((current) => !current)} data-testid="project-memory-managed-toggle">{showManagedRecords ? "پنهان‌کردن موارد مدیریتی" : "نمایش پنهان‌ها و تاریخچه"}</button> : null}
+          </section>
         </main>
       </MobileScroll>
 
-      <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open) { keyboard.hide(); setEditorOpen(false); setStorageError(""); } }} title={editingId ? "ویرایش حافظه" : "افزودن به حافظه"} description="متن و نوع مورد را وارد کن." snap={0.94}>
+      <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open && !mutationPending) { keyboard.hide(); setEditorOpen(false); setStorageError(""); } }} title={editorMode === "edit" ? "ویرایش حافظه" : editorMode === "supersede" ? "جایگزینی با حافظهٔ تازه" : "افزودن به حافظه"} description="دامنه، نوع و متن دقیق را تأیید کن." snap={0.94}>
         <form className="project-memory-editor-sheet" dir="rtl" data-testid="project-memory-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveMemory(); }}>
+          {editorMode === "create" ? <div className="project-memory-editor-scope" role="group" aria-label="دامنهٔ ثبت حافظه">
+            <button type="button" aria-pressed={memoryDraft.scopeType === "project_private"} onClick={() => changeMemoryDraft("scopeType", "project_private")} data-testid="project-memory-scope-project">این پروژه</button>
+            <button type="button" aria-pressed={memoryDraft.scopeType === "account_private"} onClick={() => changeMemoryDraft("scopeType", "account_private")} data-testid="project-memory-scope-account">شخصی</button>
+          </div> : <p className="project-memory-editor-fixed-scope"><ShieldCheck size={15} /> دامنه ثابت است: {memoryDraft.scopeType === "project_private" ? project.name : "شخصی"}</p>}
           <label className="field-control" htmlFor="project-memory-title">
             <span>عنوان کوتاه</span>
             <KeyboardInput id="project-memory-title" data-testid="project-memory-title" value={memoryDraft.title} maxLength={80} placeholder="مثلاً قاعدهٔ خرید بتن" onChange={(event) => changeMemoryDraft("title", event.target.value)} aria-invalid={Boolean(fieldErrors.title)} aria-describedby={fieldErrors.title ? "project-memory-title-error" : undefined} />
@@ -13538,7 +16354,7 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
           </div>
 
           {storageError ? <p className="project-memory-storage-error" role="alert" data-testid="project-memory-storage-error">{storageError}</p> : null}
-          <button className="primary-button" type="submit" data-testid="project-memory-save">{editingId ? "ذخیرهٔ ویرایش" : "ثبت در حافظهٔ پروژه"}</button>
+          <button className="primary-button" type="submit" disabled={mutationPending} data-testid="project-memory-save">{mutationPending ? "در حال ثبت…" : editorMode === "edit" ? "ذخیرهٔ ویرایش" : editorMode === "supersede" ? "ثبت جایگزین تازه" : memoryDraft.scopeType === "project_private" ? "ثبت در حافظهٔ پروژه" : "ثبت در حافظهٔ شخصی"}</button>
         </form>
       </BottomSheet>
 
@@ -13547,28 +16363,49 @@ function ProjectMemoryView({ project, memories, storageLocked, initialSelectedId
           <section className="project-memory-detail-sheet" dir="rtl" data-testid="project-memory-detail-sheet">
             <div className="project-memory-detail-title"><span><BrainCircuit size={21} /></span><div><small>{selectedMemory.kind}</small><strong>{selectedMemory.title}</strong></div></div>
             <p className="project-memory-detail-content">{selectedMemory.content}</p>
+            {selectedMemory.status !== "current" ? <p className="project-memory-status-alert" data-status={selectedMemory.status} data-testid="project-memory-status-alert"><strong>{statusLabel(selectedMemory.status)}</strong><span>{selectedMemory.status === "disputed" ? "این مورد تا بازبینی، برندهٔ پنهان یا مبنای خودکار ندارد." : selectedMemory.status === "disabled" ? "متن حفظ شده اما برای استفادهٔ خودکار واجد شرایط نیست." : "نسخهٔ تازه‌تری جای این مورد را گرفته است."}</span></p> : null}
             <dl className="project-memory-meta">
+              <div><dt>دامنه</dt><dd>{selectedMemory.scopeType === "project_private" ? project.name : "شخصی"}</dd></div>
+              <div><dt>نسخه</dt><dd>{selectedMemory.version.toLocaleString("fa-IR")}</dd></div>
               <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(selectedMemory.createdAt)}</dd></div>
               <div><dt>آخرین ویرایش</dt><dd>{formatProjectFileDate(selectedMemory.updatedAt)}</dd></div>
             </dl>
 
-            <div className="project-memory-context-control" data-active={selectedMemory.useInContext ? "true" : "false"}>
-              <strong>استفاده در پاسخ‌ها</strong>
-              <button type="button" onClick={toggleSelectedMemoryUse} disabled={storageLocked} data-testid="project-memory-use-toggle">{selectedMemory.useInContext ? "روشن" : "خاموش"}</button>
-            </div>
-            {storageError ? <p className="project-memory-storage-error" role="alert" data-testid="project-memory-storage-error">{storageError}</p> : null}
+            <details className="project-memory-controls" open>
+              <summary>کنترل‌های استفاده</summary>
+              <div className="project-memory-context-control" data-active={selectedMemory.visibility === "visible" ? "true" : "false"} data-testid="memory-control-visibility"><span><strong>قابل مشاهده</strong><small>در نمای روزمرهٔ حافظه</small></span><button type="button" aria-pressed={selectedMemory.visibility === "visible"} onClick={() => updateSelectedMemoryControl("visibility", selectedMemory.visibility !== "visible")} disabled={storageLocked || mutationPending}>{selectedMemory.visibility === "visible" ? "روشن" : "خاموش"}</button></div>
+              <div className="project-memory-context-control" data-active={selectedMemory.manualSearchability ? "true" : "false"} data-testid="memory-control-manual-searchability"><span><strong>جست‌وجوی دستی</strong><small>فقط جست‌وجوی قطعی همین دامنه</small></span><button type="button" aria-pressed={selectedMemory.manualSearchability} onClick={() => updateSelectedMemoryControl("manualSearchability", !selectedMemory.manualSearchability)} disabled={storageLocked || mutationPending}>{selectedMemory.manualSearchability ? "روشن" : "خاموش"}</button></div>
+              <div className="project-memory-context-control" data-active="false" data-testid="memory-control-automatic-retrieval"><span><strong>بازیابی خودکار</strong><small>مصرف‌کننده‌ای متصل نیست</small></span><button type="button" disabled>خاموش</button></div>
+              <div className="project-memory-context-control" data-active="false" data-testid="memory-control-model-eligibility"><span><strong>ورود به زمینهٔ مدل</strong><small>مدل متصل نیست</small></span><button type="button" disabled>خاموش</button></div>
+              <div className="project-memory-context-control" data-active="false" data-testid="memory-control-shareability"><span><strong>واجد شرایط اشتراک صریح</strong><small>مسیر اشتراک ساخته نشده</small></span><button type="button" disabled>خاموش</button></div>
+              <div className="project-memory-context-control" data-active={selectedMemory.useInContextPreference ? "true" : "false"} data-testid="memory-control-context-preference"><span><strong>ترجیح استفاده در زمینه</strong><small>روشن بودن مجوز مدل یا بازیابی نیست</small></span><button type="button" aria-pressed={selectedMemory.useInContextPreference} onClick={() => updateSelectedMemoryControl("useInContextPreference", !selectedMemory.useInContextPreference)} disabled={storageLocked || mutationPending} data-testid="project-memory-use-toggle">{selectedMemory.useInContextPreference ? "روشن" : "خاموش"}</button></div>
+            </details>
+            {storageError && !deleteConfirmation ? <p className="project-memory-storage-error" role="alert" data-testid="project-memory-storage-error">{storageError}</p> : null}
 
             <div className="project-memory-detail-actions">
-              <button type="button" onClick={() => openEditEditor(selectedMemory)} disabled={storageLocked} data-testid="project-memory-edit"><PencilLine size={17} /> ویرایش</button>
-              <button ref={deleteTriggerRef} className="project-memory-delete" type="button" onClick={() => setDeleteConfirmation(true)} disabled={storageLocked} data-testid="project-memory-delete">حذف</button>
+              <button type="button" onClick={() => openEditEditor(selectedMemory)} disabled={storageLocked || mutationPending || selectedMemory.status === "superseded"} data-testid="project-memory-edit"><PencilLine size={17} /> ویرایش</button>
+              <button type="button" onClick={() => updateSelectedMemoryStatus(selectedMemory.status === "disabled" ? "enable" : "disable")} disabled={storageLocked || mutationPending || selectedMemory.status === "superseded"} data-testid="project-memory-disable">{selectedMemory.status === "disabled" ? "فعال‌کردن" : "غیرفعال‌کردن"}</button>
+              <button type="button" onClick={() => updateSelectedMemoryStatus(selectedMemory.status === "disputed" ? "enable" : "dispute")} disabled={storageLocked || mutationPending || selectedMemory.status === "superseded" || selectedMemory.status === "disabled" || selectedMemory.status === "disputed" && selectedMemory.conflictIds.length > 0} data-testid="project-memory-dispute">{selectedMemory.status === "disputed" ? selectedMemory.conflictIds.length > 0 ? "تعارض باز است" : "تأیید به‌عنوان جاری" : "نیازمند بازبینی"}</button>
+              <button type="button" onClick={() => openSupersedeEditor(selectedMemory)} disabled={storageLocked || mutationPending || selectedMemory.status === "superseded"} data-testid="project-memory-supersede">جایگزینی</button>
+              <button ref={deleteTriggerRef} className="project-memory-delete" type="button" onClick={() => setDeleteConfirmation(true)} disabled={storageLocked || mutationPending} data-testid="project-memory-delete">حذف</button>
             </div>
 
-            {deleteConfirmation ? (
-              <div className="project-memory-delete-confirmation" role="alertdialog" aria-modal="false" aria-labelledby="project-memory-delete-title" aria-describedby="project-memory-delete-description" data-testid="project-memory-delete-confirmation">
-                <div><strong id="project-memory-delete-title">حذف دائمی از این مرورگر</strong><small id="project-memory-delete-description">این مورد از حافظهٔ {project.name} پاک می‌شود و در این نسخه امکان بازگردانی ندارد.</small></div>
-                <div><button ref={deleteCancelRef} type="button" onClick={() => { setDeleteConfirmation(false); window.requestAnimationFrame(() => deleteTriggerRef.current?.focus()); }}>انصراف</button><button type="button" onClick={deleteSelectedMemory} data-testid="project-memory-delete-confirm">حذف حافظه</button></div>
-              </div>
-            ) : null}
+            <details className="project-memory-history" data-testid="project-memory-history">
+              <summary>تاریخچه و منشأ</summary>
+              <p>منشأ: {selectedMemory.sourceLabel} · خصوصی · ذخیرهٔ محلی</p>
+              <ol>{[...selectedMemory.revisions].reverse().map((revision) => <li key={revision.id}><span>نسخهٔ {revision.version.toLocaleString("fa-IR")} · {formatProjectFileDate(revision.createdAt)}</span>{revision.version < selectedMemory.version && selectedMemory.status !== "superseded" ? <button type="button" onClick={() => rollbackSelectedMemory(revision.version)} disabled={storageLocked || mutationPending}>بازگردانی به‌عنوان نسخهٔ تازه</button> : null}</li>)}</ol>
+            </details>
+
+          </section>
+        ) : null}
+      </BottomSheet>
+
+      <BottomSheet open={deleteConfirmation} onOpenChange={(open) => { if (!open && !mutationPending) { setDeleteConfirmation(false); window.requestAnimationFrame(() => deleteTriggerRef.current?.focus()); } }} title="حذف حافظه" description="این اقدام متن خام را از همین مرورگر پاک می‌کند." snap={0.46}>
+        {selectedMemory ? (
+          <section className="project-memory-delete-confirmation" dir="rtl" aria-labelledby="project-memory-delete-title" aria-describedby="project-memory-delete-description" data-testid="project-memory-delete-confirmation">
+            <div><strong id="project-memory-delete-title">حذف دائمی از این مرورگر</strong><small id="project-memory-delete-description">متن خام پاک می‌شود؛ فقط tombstone فنیِ بدون متن برای جلوگیری از احیای ناخواسته باقی می‌ماند.</small></div>
+            {storageError ? <p className="project-memory-storage-error" role="alert" data-testid="project-memory-storage-error">{storageError}</p> : null}
+            <div><button ref={deleteCancelRef} type="button" onClick={() => { setDeleteConfirmation(false); window.requestAnimationFrame(() => deleteTriggerRef.current?.focus()); }}>انصراف</button><button type="button" onClick={deleteSelectedMemory} disabled={mutationPending} data-testid="project-memory-delete-confirm">حذف حافظه</button></div>
           </section>
         ) : null}
       </BottomSheet>

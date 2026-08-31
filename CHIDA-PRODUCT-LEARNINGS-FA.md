@@ -1535,3 +1535,43 @@
 - Cloudflare Pages deployment `5ef162d0-4521-481b-8f2a-31535c7f92e8` از source release با `github:push` روی `main` به وضعیت `success` رسید. canonical و immutable هر دو HTTP 200 و با build محلی یکسان‌اند: HTML `7f2082299414fa461afbca9a781fc7db75d039ee04b230c36041b90dd32fe889`، JavaScript `2526137571c3bfd51f36f83a5a5832cf30f76901f89fe46403c8b954bd6c5309` و CSS `a19f8e04180930ffbfe2220fcdc3d0c87d3b3c35132ffd703d52d8d4a319e566`.
 - ChatGPT Sites نسخهٔ ۲۷ با source commit release، ۱۹ فایل و archive hash `sha256:a2d674bf2ca803650dbc2ed7f0aea0e7cb895d59a68dc1030b20601e8797ff93` ذخیره شد؛ version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_dd4dabe662448191a1813e97a54ab503` و deployment خصوصی `appgdep_6a9482959f008191802cf8098160378a` در وضعیت `succeeded` است. دسترسی `custom`/owner-only با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
 - commit مستندیِ حاوی همین رسید prototype tree را تغییر نمی‌دهد و دوباره روی هر سه مقصد همسان می‌شود. شناسه‌های خود receipt نهایی به‌دلیل self-reference در پیام تحویل ثبت می‌شوند؛ Memory Core، مدل، backend، شبکه، مسیر تأمین‌کننده و برش بعدی آغاز نشده‌اند.
+
+## MC-1 — هستهٔ حافظهٔ خصوصی سازنده
+
+- **تاریخ تصمیم و اجرای محلی:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
+- **وضعیت:** ماهیار با پیام «خوبه بریم قدم بعد» فقط این برش را مجاز کرد. پس از تکمیل، مشاهده و دریافت نتایج، با پیام «منتشر کن» commit، push و انتشار همان snapshot در GitHub، Cloudflare Pages و ChatGPT Sites را صریحاً مجاز کرد. این مجوز Source/Composer Intake یا هیچ برش دیگری را آغاز نمی‌کند؛ receipt انتشار پس از هم‌ترازشدن مقصدها ثبت می‌شود.
+
+### تجربهٔ مشاهده‌شده
+
+- حافظه وقتی در یک فهرست تخت دیده می‌شد، تفاوت «دانستهٔ شخصی سازنده» و «دانستهٔ همین پروژه» را روشن نمی‌کرد. دو تب با نام روزمرهٔ «شخصی» و «این پروژه» این تفاوت را بدون نمایش اصطلاحات معماری آشکار می‌کنند.
+- نمایش هم‌زمان منشأ، scope، نسخه، lineage، eligibility و وضعیت ذخیره‌سازی روی کارت روزمره محیط را شلوغ می‌کرد. کارت content-first و جزئیات/تاریخچهٔ بازشونده، کنترل را نگه می‌دارد اما بار شناختی را پایین می‌آورد.
+- عبارت سادهٔ «استفاده در پاسخ‌ها» می‌توانست اتصال یا مجوز مدل را القا کند. تجربهٔ درست باید آن را صرفاً ترجیح آینده نشان دهد و همان‌جا بگوید مدل متصل نیست.
+
+### شکاف یا ابهام سند مادر
+
+- سند مادر حافظه را عمدتاً پروژه‌محور و دستی تعریف می‌کند، اما قرارداد دقیق `account_private` در کنار `project_private`، ownership/custody، تفاوت visibility با retrieval/model/share و معنای veto/ترجیح context را کامل تفکیک نمی‌کند.
+- `MemoryCandidate`، رضایت exact روی payload/version/hash، expiry و رابطهٔ آن با Direct Remember در سند مادر تعریف نشده‌اند؛ بدون این تفکیک، خروجی آیندهٔ مدل می‌تواند ناخواسته با حافظهٔ ثبت‌شده اشتباه شود.
+- نسل‌بندی migration، canonical marker، crash-safe cutover، tombstone و رفتار fail-close در ambiguity یا corruption هنوز قرارداد محصولی صریح ندارند.
+
+### تصمیم و قرارداد این برش
+
+- فقط دو scope خصوصی پذیرفته می‌شوند: حساب سازنده و پروژهٔ جاری. Direct Remember تنها producer روزمره است؛ پیام، فایل و خروجی مدل هیچ‌گاه خودکار حافظه نمی‌شوند.
+- Candidate شیئی جدا و غیرقابل‌مصرف است. پذیرش فقط برای همان candidate در همان scope، نسخه، payload دقیق و hash معتبر انجام می‌شود؛ candidate منقضی، stale، malformed یا خارج از پروژه هیچ موفقیت ظاهری نمی‌گیرد.
+- visibility، manual searchability، automatic retrieval eligibility، model eligibility، shareability و `useInContextPreference` کنترل‌های مستقل‌اند. سه قابلیت retrieval/model/share در این برش خاموش و preference به‌تنهایی فاقد مجوز است.
+- تعارض، حل تعارض، supersede، rollback و حذف تاریخچهٔ صریح دارند. هر کاهش conflict باید `conflicts-resolved` باشد؛ `disputed` فقط وضعیت دستی تازه یا افزودن conflict را بیان می‌کند و نمی‌تواند حذف را پنهان کند.
+- canonical v2 از SHA-256، parser exact، Web Locks، commit-time reread، expectedVersion، no-op بایت‌ثابت و write-before-state استفاده می‌کند. v1/legacy فقط با نسل شناخته‌شده و تبدیل یکتا مهاجرت می‌کنند؛ ambiguity یا خطا به empty/fallback تبدیل نمی‌شود.
+
+### وضعیت پیاده‌سازی و شواهد
+
+- UI ساخت/ویرایش، کنترل‌های مستقل، تاریخچه/rollback، conflict/supersede، حذف تأییدی، candidate consent و دو scope ساخته شده‌اند. همگام‌سازی storage/focus/visibility و fail-close نبود lock یا read/write/migration failure نیز پوشش داده شده است.
+- hard delete با intent ماندگار، bridge موقت برای intent نسل قبلی و marker cutover بدون متن حافظه، canonical/prior/legacy را هماهنگ می‌کند. tombstone متادیتای حذف و proof رویدادهای lineage بدون title/content/revision snapshot را نگه می‌دارد؛ proof دقیقاً به history همان رکورد bind است و raw متن پس از موفقیت در marker/intent باقی نمی‌ماند.
+- ممیزی کل envelope افزایش/کاهش conflict و supersession را در live record و tombstone به‌صورت reciprocal، هم‌scope و chronological replay می‌کند. actor/lifecycle/count/report رویدادهای migration، terminal state، hash SHA-256 و content hash proof نیز exact هستند؛ تاریخچهٔ بازهش‌شده اما ناممکن، cross-scope یا retargetشده fail-close می‌شود.
+- regressionهای متمرکز شامل migration نسل‌ها، resolved-conflict replay، exact Candidate/expiry، tamper و canonical IDs، تعویض تعارض B→C، crash-resume حذف، cross-tab، scope، proof tombstone و failure states هستند. focused Memory/MemoryCandidate برابر ۳۵/۳۵، app برابر ۲۱۰/۲۱۰، runtime برابر ۲۱۸/۲۱۸ و Sites برابر ۴/۴ پاس شدند؛ build/TypeScript، `npx tsc --noEmit`، integrity هر ۲۸ فایل و `git diff --check` نیز پاس شدند. هشدار شناخته‌شدهٔ chunk جاوااسکریپت بزرگ‌تر از 500kB باقی است.
+- QA موبایل `390 × 844` فهرست و دو scope، فرم/جزئیات، تاریخچه و modal حذف را از نظر RTL، focus/keyboard، خطای قابل‌دیدن و overflow بررسی کرد. ممیزی مستقل قرارداد پس از اصلاح graph replay و proof tombstone finding باز P0/P1/P2 نداشت.
+- این شواهد فقط prototype محلی را پوشش می‌دهند؛ هیچ backend، sync، بازیابی ابری، مدل، retrieval خودکار، اشتراک یا اثر بیرونی وجود ندارد.
+
+### پیشنهاد برای تکمیل سند مادر
+
+- یک فصل رسمی Memory Core با تعریف `MemoryRecord`، `MemoryCandidate`، scope/owner/custodian، provenance/source refs، revision/history/fingerprint، lifecycle، conflict/supersede، retention/tombstone و deletion semantics افزوده شود.
+- ماتریس کنترل‌ها صریح کند که visibility، manual search، retrieval، model eligibility، shareability و preference زمینه معادل هم نیستند؛ consent آینده نیز باید manifest دقیق context را جداگانه تأیید کند.
+- معیار پذیرش migration و recovery شامل نسل‌های شناخته‌شده، exact parser، عدم fallback از canonical خراب، valid-empty precedence، cutover marker کمینه، intent/bridge crash-safe و fail-close در transformation ambiguity باشد.
