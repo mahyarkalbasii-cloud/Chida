@@ -1534,12 +1534,12 @@
 - gateهای release شامل Project Backbone برابر ۱۱/۱۱، app برابر ۱۷۸/۱۷۸، runtime برابر ۱۸۶/۱۸۶، Sites برابر ۴/۴، build/TypeScript، integrity هر ۲۸ فایل و بازبینی مستقل بدون finding باز P0/P1/P2 پاس شدند. پس از اصلاح test-only انتظار focus مسیر خرید، focused آن ۱/۱ و app کامل دوباره ۱۷۸/۱۷۸ پاس شد؛ runtime محافظت‌شده تغییر نکرد و اجرای تازهٔ هشت تست آن ۸/۸ بود.
 - Cloudflare Pages deployment `5ef162d0-4521-481b-8f2a-31535c7f92e8` از source release با `github:push` روی `main` به وضعیت `success` رسید. canonical و immutable هر دو HTTP 200 و با build محلی یکسان‌اند: HTML `7f2082299414fa461afbca9a781fc7db75d039ee04b230c36041b90dd32fe889`، JavaScript `2526137571c3bfd51f36f83a5a5832cf30f76901f89fe46403c8b954bd6c5309` و CSS `a19f8e04180930ffbfe2220fcdc3d0c87d3b3c35132ffd703d52d8d4a319e566`.
 - ChatGPT Sites نسخهٔ ۲۷ با source commit release، ۱۹ فایل و archive hash `sha256:a2d674bf2ca803650dbc2ed7f0aea0e7cb895d59a68dc1030b20601e8797ff93` ذخیره شد؛ version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_dd4dabe662448191a1813e97a54ab503` و deployment خصوصی `appgdep_6a9482959f008191802cf8098160378a` در وضعیت `succeeded` است. دسترسی `custom`/owner-only با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
-- commit مستندیِ حاوی همین رسید prototype tree را تغییر نمی‌دهد و دوباره روی هر سه مقصد همسان می‌شود. شناسه‌های خود receipt نهایی به‌دلیل self-reference در پیام تحویل ثبت می‌شوند؛ Memory Core، مدل، backend، شبکه، مسیر تأمین‌کننده و برش بعدی آغاز نشده‌اند.
+- **[وضعیت تاریخی هنگام release PB-1/UX-R1]** commit مستندیِ حاوی همین رسید prototype tree را تغییر نمی‌داد و دوباره روی هر سه مقصد همسان شد. در همان لحظه Memory Core، مدل، backend، شبکه، مسیر تأمین‌کننده و برش بعدی آغاز نشده بودند؛ وضعیت جاری Memory Core در بخش MC-1 زیر ثبت شده است.
 
 ## MC-1 — هستهٔ حافظهٔ خصوصی سازنده
 
 - **تاریخ تصمیم و اجرای محلی:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
-- **وضعیت:** ماهیار با پیام «خوبه بریم قدم بعد» فقط این برش را مجاز کرد. پس از تکمیل، مشاهده و دریافت نتایج، با پیام «منتشر کن» commit، push و انتشار همان snapshot در GitHub، Cloudflare Pages و ChatGPT Sites را صریحاً مجاز کرد. این مجوز Source/Composer Intake یا هیچ برش دیگری را آغاز نمی‌کند؛ receipt انتشار پس از هم‌ترازشدن مقصدها ثبت می‌شود.
+- **وضعیت:** ماهیار با پیام «خوبه بریم قدم بعد» فقط این برش را مجاز کرد. پس از تکمیل، مشاهده و دریافت نتایج، با پیام «منتشر کن» انتشار همان snapshot را صریحاً مجاز کرد؛ commit قابلیت `6169035074b4262b7576df638fa4a657f04fdee7` در GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۲۹ با موفقیت منتشر شد. این مجوز Source/Composer Intake یا هیچ برش دیگری را آغاز نمی‌کند.
 
 ### تجربهٔ مشاهده‌شده
 
@@ -1575,3 +1575,10 @@
 - یک فصل رسمی Memory Core با تعریف `MemoryRecord`، `MemoryCandidate`، scope/owner/custodian، provenance/source refs، revision/history/fingerprint، lifecycle، conflict/supersede، retention/tombstone و deletion semantics افزوده شود.
 - ماتریس کنترل‌ها صریح کند که visibility، manual search، retrieval، model eligibility، shareability و preference زمینه معادل هم نیستند؛ consent آینده نیز باید manifest دقیق context را جداگانه تأیید کند.
 - معیار پذیرش migration و recovery شامل نسل‌های شناخته‌شده، exact parser، عدم fallback از canonical خراب، valid-empty precedence، cutover marker کمینه، intent/bridge crash-safe و fail-close در transformation ambiguity باشد.
+
+### رسید انتشار MC-1
+
+- commit قابلیت `6169035074b4262b7576df638fa4a657f04fdee7` با prototype tree `a831c16ffb049bbbacd79aee533935eea33aa078` روی GitHub `main` منتشر شد. gate تازهٔ release شامل focused برابر ۳۵/۳۵، app برابر ۲۱۰/۲۱۰، runtime برابر ۲۱۸/۲۱۸، Sites برابر ۴/۴، build/TypeScript، `npx tsc --noEmit`، integrity هر ۲۸ فایل، `git diff --check` و ممیزی مستقل بدون finding باز P0/P1/P2 پاس شد.
+- Cloudflare Pages deployment `6d59d990-f82b-4f76-b5e8-7ad46c09ecda` از همین source با `github:push` روی `main` و `commit_dirty=false` به وضعیت `success` رسید. canonical و immutable هر دو HTTP 200 و با build محلی یکسان‌اند: HTML `ea15863272858e53ad1036f6b3a3be91b90ac57162f86a49346a5726fafa499e`، JavaScript `0f6e02bb244327f2935a38e3ab211d8f3a45ea457c58947753974f5df49fccd6` و CSS `683758425f5aebacaf0be2fd353418bf216e7f221185768cd5bb4c86903767a6`.
+- ChatGPT Sites نسخهٔ ۲۹ با source commit release، ۱۹ فایل و archive hash `sha256:a540f36f4447d3a200ad04295f967602366e3ea4025c4faf5bace206c8c89e0d` ذخیره شد؛ version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_43b1a0eaf8888191af729ef9a417fdb7` و deployment خصوصی `appgdep_6a94f2d1bebc8191a46ffa27d1d1b76c` در وضعیت `succeeded` است. دسترسی `custom`/owner-only با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
+- commit مستندی حاوی همین receipt prototype tree را تغییر نمی‌دهد و دوباره روی هر سه مقصد همسان می‌شود. شناسه‌های خود receipt نهایی به‌دلیل self-reference در پیام تحویل و handoff تسک تازه ثبت می‌شوند؛ Source/Composer Intake، مدل، backend، شبکه و مسیر تأمین‌کننده آغاز نشده‌اند.
