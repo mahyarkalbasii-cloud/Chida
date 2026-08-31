@@ -63,7 +63,7 @@ import {
 type Screen = "role" | "invite" | "phone" | "otp" | "success" | "home";
 type SheetName = "supplier" | "models" | "attach" | "tools" | "build" | "brief" | "projects" | "new-project" | "settings" | null;
 type ModelMode = "خودکار" | "سریع" | "عمیق";
-type ChatMessage = { id: number; role: "user" | "assistant"; text: string };
+type ChatMessage = { id: string; role: "user" | "assistant"; text: string; sourceIds: string[] };
 type BuildStep = "define" | "preview" | "installed";
 type BriefFrequency = "daily" | "weekly";
 type BriefSchedule = { frequency: BriefFrequency; weekday: string; time: string };
@@ -106,6 +106,69 @@ type PendingProjectFile = Pick<ProjectFileRecord, "displayName" | "originalName"
   blob: File | null;
   previewUrl: string | null;
 };
+type ProjectSourceType = "composer-text" | "composer-file" | "composer-photo";
+type ProjectSourceAssetRef = { kind: "project-file" | "project-photo"; fileId: string; fileVersion: 1 };
+type ProjectSourceRecord = {
+  schemaVersion: 1;
+  id: string;
+  intakeId: string;
+  ownerPrincipalId: typeof localBuilderAccountId;
+  accountSide: "builder";
+  scopeType: "project_private";
+  scopeId: string;
+  projectId: string;
+  sourceType: ProjectSourceType;
+  assetRef: ProjectSourceAssetRef | null;
+  textContent: string | null;
+  version: 1;
+  provenance: "direct_user_composer";
+  capturedAt: string;
+  sourceDate: string | null;
+  locatorCapability: "record" | "asset";
+  excerptCapability: "full-text" | "none";
+  contentHash: string;
+  readStatus: "available";
+  sensitivity: "project-private";
+  visibility: "visible";
+  manualSearchability: false;
+  automaticRetrievalEligibility: false;
+  modelEligibility: false;
+  shareability: false;
+  useInContextPreference: false;
+  fingerprint: string;
+};
+type ProjectSourceIntakeRecord = {
+  id: string;
+  projectId: string;
+  sourceIds: string[];
+  version: 1;
+  createdAt: string;
+  fingerprint: string;
+};
+type ProjectSourceEnvelope = {
+  schemaVersion: 1;
+  envelopeVersion: number;
+  records: ProjectSourceRecord[];
+  intakes: ProjectSourceIntakeRecord[];
+  updatedAt: string | null;
+};
+type ProjectSourceReadResult = { envelope: ProjectSourceEnvelope; readError: boolean };
+type ProjectSourceIntakeIntent = {
+  schemaVersion: 1;
+  id: string;
+  previousFilesRaw: string | null;
+  nextFilesRaw: string | null;
+  previousSourcesRaw: string | null;
+  nextSourcesRaw: string;
+  fileId: string | null;
+  storageMode: "browser-image" | "browser-file" | null;
+  contentHash: string | null;
+  createdAt: string;
+  intentHash: string;
+};
+type ProjectSourceMutationResult =
+  | { status: "created"; envelope: ProjectSourceEnvelope; files: ProjectFileRecord[] }
+  | { status: "invalid" | "read-failure" | "version-conflict" | "write-failure" | "lock-unavailable" };
 type ProjectMemoryKind = "ترجیح" | "واقعیت تأییدشده توسط سازنده" | "محدودیت" | "یادداشت سازنده" | "مرجع";
 type ProjectMemoryType = "preference" | "fact" | "constraint" | "note" | "reference";
 type ProjectMemoryScopeType = "account_private" | "project_private";
@@ -417,10 +480,107 @@ type ProjectBackboneDraft = {
   decisionReason: string;
   taskTitle: string;
   taskNextStep: string;
+  taskDueAt: string;
 };
 type ProjectBackboneExpectedVersions = { milestone: number; decision: number; task: number };
 type ProjectBackboneMutationResult = "created" | "updated" | "rolled-back" | "unchanged" | "invalid" | "read-failure" | "version-conflict" | "write-failure" | "lock-unavailable";
 type ProjectBackboneReturnView = "chat" | "project" | "tasks";
+type ProjectTaskMonitorStatus = "watching" | "attention" | "failed" | "disabled";
+type ProjectTaskMonitorFailureCode = "dependency-stale" | "deadline-missing";
+type ProjectTaskMonitorOrigin = {
+  objectType: "project-backbone-task";
+  taskId: string;
+  taskVersion: number;
+  taskRevisionId: string;
+  taskRevisionFingerprint: string;
+};
+type ProjectTaskMonitorFailure = {
+  code: ProjectTaskMonitorFailureCode;
+  message: string;
+  at: string;
+};
+type ProjectTaskMonitorSnapshot = {
+  reason: string;
+  origin: ProjectTaskMonitorOrigin;
+  trigger: {
+    kind: "deadline";
+    dueAt: string;
+    timezone: "Asia/Tehran";
+    source: "browser-clock-and-project-backbone-task";
+  };
+  notificationCondition: "task-open-at-or-after-deadline";
+  enabled: boolean;
+  status: ProjectTaskMonitorStatus;
+  lastCheckAt: string | null;
+  nextCheckAt: string | null;
+  lastRunId: string | null;
+  failure: ProjectTaskMonitorFailure | null;
+};
+type ProjectTaskMonitorRevision = {
+  id: string;
+  version: number;
+  createdAt: string;
+  snapshot: ProjectTaskMonitorSnapshot;
+  fingerprint: string;
+};
+type ProjectTaskMonitorHistoryEventType = "created" | "checked" | "deadline-reached" | "failed" | "retried" | "disabled" | "enabled";
+type ProjectTaskMonitorHistoryEvent = {
+  id: string;
+  type: ProjectTaskMonitorHistoryEventType;
+  actor: "شما" | "بررسی محلی مرورگر";
+  at: string;
+  version: number;
+  runId: string | null;
+};
+type ProjectTaskMonitorRecord = {
+  schemaVersion: 1;
+  id: string;
+  projectId: string;
+  ownerPrincipalType: "project";
+  ownerPrincipalId: string;
+  accountSide: "builder";
+  scopeType: "project_private";
+  scopeId: string;
+  custodianService: "Task/Run Domain Service";
+  sourceRefs: string[];
+  sensitivity: "private";
+  lifecycleState: "active";
+  browserExecution: "tasks-view-open-and-visible";
+  version: number;
+  currentRevisionId: string;
+  createdAt: string;
+  updatedAt: string;
+  history: ProjectTaskMonitorHistoryEvent[];
+  revisions: ProjectTaskMonitorRevision[];
+};
+type ProjectTaskMonitorRunState = "succeeded" | "failed";
+type ProjectTaskMonitorRunResultKind = "not-due" | "deadline-reached" | "task-completed";
+type ProjectTaskMonitorRun = {
+  schemaVersion: 1;
+  id: string;
+  monitorId: string;
+  monitorVersion: number;
+  projectId: string;
+  ownerPrincipalType: "project";
+  ownerPrincipalId: string;
+  accountSide: "builder";
+  scopeType: "project_private";
+  scopeId: string;
+  custodianService: "Task/Run Domain Service";
+  origin: ProjectTaskMonitorOrigin;
+  scheduledFor: string;
+  attempt: number;
+  state: ProjectTaskMonitorRunState;
+  startedAt: string;
+  endedAt: string;
+  result: { kind: ProjectTaskMonitorRunResultKind; dueAt: string; taskStatus: ProjectTaskStatus } | null;
+  failure: ProjectTaskMonitorFailure | null;
+  effectState: "none";
+};
+type ProjectTaskMonitorEnvelope = { schemaVersion: 1; monitors: ProjectTaskMonitorRecord[]; runs: ProjectTaskMonitorRun[] };
+type ProjectTaskMonitorReadResult = { envelope: ProjectTaskMonitorEnvelope; readError: boolean };
+type ProjectTaskMonitorMutationStatus = "created" | "updated" | "unchanged" | "read-failure" | "dependency-read-failure" | "dependency-missing" | "deadline-missing" | "version-conflict" | "write-failure" | "lock-unavailable";
+type ProjectTaskMonitorMutationResult = { status: ProjectTaskMonitorMutationStatus; monitorId: string | null };
 type PurchaseRequestStatus = "draft" | "ready-for-review";
 type PurchaseRequestEventType = "created" | "updated" | "marked-ready-for-review" | "returned-to-draft";
 type PurchaseRequestUnit = "عدد" | "کیلوگرم" | "تن" | "متر" | "مترمربع" | "مترمکعب" | "بسته" | "دستگاه";
@@ -1465,6 +1625,9 @@ const legacyProjectsStorageKey = "chida-prototype-builder-projects";
 const projectsStorageKey = "chida-prototype-builder-projects:v2";
 const activeProjectStorageKey = "chida-prototype-active-project";
 const projectFilesStorageKey = "chida-prototype-project-files:v1";
+const projectSourcesStorageKey = "chida-prototype-project-sources:v1";
+const projectAssetsWriteLockName = "chida-prototype-project-assets-and-sources:write";
+const projectSourceIntakeIntentKey = `${projectSourcesStorageKey}:intake-intent:v1`;
 const legacyProjectMemoriesStorageKey = "chida-prototype-project-memories:v1";
 const priorProjectMemoriesStorageKey = "chida-prototype-memory-core:v1";
 const projectMemoriesStorageKey = "chida-prototype-memory-core:v2";
@@ -1477,6 +1640,8 @@ const localBuilderAccountId = "local-builder-account" as const;
 const projectTasksStorageKey = "chida-prototype-project-tasks:v1";
 const projectBackboneStorageKey = "chida-prototype-project-backbone:v1";
 const projectBackboneWriteLockName = `${projectBackboneStorageKey}:write`;
+const projectTaskMonitorsStorageKey = "chida-prototype-project-task-monitors:v1";
+const projectTaskMonitorsWriteLockName = `${projectTaskMonitorsStorageKey}:write`;
 const projectPurchaseRequestsStorageKey = "chida-prototype-project-purchase-requests:v1";
 const projectPurchaseRequestsRecoveryBackupPrefix = `${projectPurchaseRequestsStorageKey}:recovery-backup:`;
 const projectPurchaseRequestsRecoveryIntentKey = `${projectPurchaseRequestsStorageKey}:recovery-intent:v1`;
@@ -1677,8 +1842,8 @@ const projectTaskEmptyCopy: Readonly<Record<ProjectTaskFilter, { title: string; 
   active: { title: "هنوز کار در حال انجامی ثبت نشده", description: "اولین کار پروژه را ثبت کن." },
   approval: { title: "نسخه‌ای منتظر تأیید نیست", description: "وقتی یک درخواست آمادهٔ بازبینی را صریحاً برای تأیید ثبت کنی، همان نسخه اینجا ظاهر می‌شود." },
   completed: { title: "هنوز کار یا تصمیمی تمام نشده", description: "کارهای تکمیل‌شده و تصمیم‌های ثبت‌شده با نسخه و تاریخچهٔ واقعی در این بخش می‌مانند." },
-  failed: { title: "کار ناموفقی ثبت نشده", description: "خطا و تلاش دوباره فقط برای اجرای واقعی ثبت می‌شوند؛ شکست مصنوعی نمایش داده نمی‌شود." },
-  monitor: { title: "پایش واقعی هنوز به این مرکز وصل نیست", description: "پایش و اعلان زمان‌دار در تسک مستقل و پس از اتصال اجرای واقعی اضافه می‌شوند." },
+  failed: { title: "بررسی ناموفقی ثبت نشده", description: "اگر نسخهٔ کار برنامه قدیمی شود یا موعد آن برداشته شود، شکست قابل‌بازیابی و مسیر تلاش مجدد اینجا دیده می‌شود؛ دادهٔ ناخوانا جداگانه و بسته نمایش داده می‌شود." },
+  monitor: { title: "هنوز پایش موعدی ثبت نشده", description: "برای Task متصل به برنامهٔ پروژه یک موعد دقیق ثبت کن و پایش محلی همان مرورگر را بساز." },
 };
 function emptyProductRequestItemDraft(id = ""): ProductRequestItemDraft {
   return { id, itemName: "", quantity: "", unit: "", brandOrGrade: "", specification: "", alternatives: "نامشخص" };
@@ -1886,6 +2051,297 @@ function purchaseRequestStableHash(serialized: string) {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function emptyProjectSourceEnvelope(): ProjectSourceEnvelope {
+  return { schemaVersion: 1, envelopeVersion: 0, records: [], intakes: [], updatedAt: null };
+}
+
+function projectSourceRecordFingerprint(record: Omit<ProjectSourceRecord, "fingerprint"> | ProjectSourceRecord) {
+  const { fingerprint: _fingerprint, ...fingerprintPayload } = record as ProjectSourceRecord;
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue(fingerprintPayload)))}`;
+}
+
+function projectSourceIntakeFingerprint(intake: Omit<ProjectSourceIntakeRecord, "fingerprint"> | ProjectSourceIntakeRecord) {
+  const { fingerprint: _fingerprint, ...fingerprintPayload } = intake as ProjectSourceIntakeRecord;
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue(fingerprintPayload)))}`;
+}
+
+function projectSourceIntentHash(intent: Omit<ProjectSourceIntakeIntent, "intentHash"> | ProjectSourceIntakeIntent) {
+  const { intentHash: _intentHash, ...intentPayload } = intent as ProjectSourceIntakeIntent;
+  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue(intentPayload)))}`;
+}
+
+function parseProjectSourceIntent(raw: string): ProjectSourceIntakeIntent | null {
+  try {
+    const value = JSON.parse(raw);
+    if (!hasExactObjectKeys(value, ["schemaVersion", "id", "previousFilesRaw", "nextFilesRaw", "previousSourcesRaw", "nextSourcesRaw", "fileId", "storageMode", "contentHash", "createdAt", "intentHash"]) || value.schemaVersion !== 1) return null;
+    const id = typeof value.id === "string" ? value.id.trim() : "";
+    const fileId = value.fileId === null ? null : typeof value.fileId === "string" ? value.fileId.trim() : "";
+    const createdAt = typeof value.createdAt === "string" ? value.createdAt.trim() : "";
+    const stringOrNullFields = [value.previousFilesRaw, value.nextFilesRaw, value.previousSourcesRaw];
+    if (!id || id !== value.id || stringOrNullFields.some((field) => field !== null && typeof field !== "string") || typeof value.nextSourcesRaw !== "string" || !value.nextSourcesRaw || fileId !== value.fileId || ![null, "browser-image", "browser-file"].includes(value.storageMode) || (fileId === null) !== (value.storageMode === null) || (fileId === null) !== (value.contentHash === null) || value.contentHash !== null && !/^sha256-[0-9a-f]{64}$/.test(value.contentHash) || !isValidProjectFileDate(createdAt) || createdAt !== value.createdAt || typeof value.intentHash !== "string") return null;
+    const intent = { schemaVersion: 1, id, previousFilesRaw: value.previousFilesRaw, nextFilesRaw: value.nextFilesRaw, previousSourcesRaw: value.previousSourcesRaw, nextSourcesRaw: value.nextSourcesRaw, fileId, storageMode: value.storageMode, contentHash: value.contentHash, createdAt, intentHash: value.intentHash } satisfies ProjectSourceIntakeIntent;
+    return intent.intentHash === projectSourceIntentHash(intent) && projectSourceIntentHasValidDelta(intent) ? intent : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeExactLocalStorageValue(key: string, value: string | null) {
+  try {
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+    return window.localStorage.getItem(key) === value;
+  } catch {
+    return false;
+  }
+}
+
+function clearProjectSourceIntentAtSnapshot(intentRaw: string, expectedFilesRaw: string | null, expectedSourcesRaw: string | null) {
+  const restoreOwnedIntent = () => {
+    try {
+      const currentIntent = window.localStorage.getItem(projectSourceIntakeIntentKey);
+      return (currentIntent === null || currentIntent === intentRaw) && writeExactLocalStorageValue(projectSourceIntakeIntentKey, intentRaw);
+    } catch {
+      return false;
+    }
+  };
+  try {
+    const snapshotMatches = () => window.localStorage.getItem(projectSourceIntakeIntentKey) === intentRaw
+      && window.localStorage.getItem(projectFilesStorageKey) === expectedFilesRaw
+      && window.localStorage.getItem(projectSourcesStorageKey) === expectedSourcesRaw;
+    if (!snapshotMatches() || !writeExactLocalStorageValue(projectSourceIntakeIntentKey, null)) return false;
+    const committedSnapshotSurvivedClear = window.localStorage.getItem(projectSourceIntakeIntentKey) === null
+      && window.localStorage.getItem(projectFilesStorageKey) === expectedFilesRaw
+      && window.localStorage.getItem(projectSourcesStorageKey) === expectedSourcesRaw;
+    if (committedSnapshotSurvivedClear) return true;
+    restoreOwnedIntent();
+    return false;
+  } catch {
+    restoreOwnedIntent();
+    return false;
+  }
+}
+
+function createProjectSourceRecord({ id, intakeId, projectId, sourceType, textContent, assetRef, contentHash, capturedAt }: { id: string; intakeId: string; projectId: string; sourceType: ProjectSourceType; textContent: string | null; assetRef: ProjectSourceAssetRef | null; contentHash: string; capturedAt: string }): ProjectSourceRecord {
+  const recordBase = {
+    schemaVersion: 1,
+    id,
+    intakeId,
+    ownerPrincipalId: localBuilderAccountId,
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: projectId,
+    projectId,
+    sourceType,
+    assetRef,
+    textContent,
+    version: 1,
+    provenance: "direct_user_composer",
+    capturedAt,
+    sourceDate: sourceType === "composer-text" ? capturedAt : null,
+    locatorCapability: sourceType === "composer-text" ? "record" : "asset",
+    excerptCapability: sourceType === "composer-text" ? "full-text" : "none",
+    contentHash,
+    readStatus: "available",
+    sensitivity: "project-private",
+    visibility: "visible",
+    manualSearchability: false,
+    automaticRetrievalEligibility: false,
+    modelEligibility: false,
+    shareability: false,
+    useInContextPreference: false,
+  } satisfies Omit<ProjectSourceRecord, "fingerprint">;
+  return { ...recordBase, fingerprint: projectSourceRecordFingerprint(recordBase) };
+}
+
+function createProjectSourceIntake(id: string, projectId: string, sourceIds: string[], createdAt: string): ProjectSourceIntakeRecord {
+  const intakeBase = { id, projectId, sourceIds, version: 1, createdAt } satisfies Omit<ProjectSourceIntakeRecord, "fingerprint">;
+  return { ...intakeBase, fingerprint: projectSourceIntakeFingerprint(intakeBase) };
+}
+
+function parseProjectSourceRecord(value: any): ProjectSourceRecord | null {
+  if (!hasExactObjectKeys(value, [
+    "schemaVersion", "id", "intakeId", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "projectId",
+    "sourceType", "assetRef", "textContent", "version", "provenance", "capturedAt", "sourceDate",
+    "locatorCapability", "excerptCapability", "contentHash", "readStatus", "sensitivity", "visibility",
+    "manualSearchability", "automaticRetrievalEligibility", "modelEligibility", "shareability",
+    "useInContextPreference", "fingerprint",
+  ])) return null;
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const intakeId = typeof value.intakeId === "string" ? value.intakeId.trim() : "";
+  const scopeId = typeof value.scopeId === "string" ? value.scopeId.trim() : "";
+  const projectId = typeof value.projectId === "string" ? value.projectId.trim() : "";
+  const sourceType = value.sourceType as ProjectSourceType;
+  const capturedAt = typeof value.capturedAt === "string" ? value.capturedAt.trim() : "";
+  const sourceDate = value.sourceDate === null ? null : typeof value.sourceDate === "string" ? value.sourceDate.trim() : "";
+  const textContent = value.textContent === null ? null : typeof value.textContent === "string" ? value.textContent : "";
+  let assetRef: ProjectSourceAssetRef | null = null;
+  if (value.assetRef !== null) {
+    const fileId = typeof value.assetRef?.fileId === "string" ? value.assetRef.fileId.trim() : "";
+    if (!hasExactObjectKeys(value.assetRef, ["kind", "fileId", "fileVersion"]) || !fileId || fileId !== value.assetRef.fileId || value.assetRef.fileVersion !== 1 || !["project-file", "project-photo"].includes(value.assetRef.kind)) return null;
+    assetRef = { kind: value.assetRef.kind, fileId, fileVersion: 1 } as ProjectSourceAssetRef;
+  }
+  const commonIsValid = value.schemaVersion === 1
+    && id && id === value.id
+    && intakeId && intakeId === value.intakeId
+    && value.ownerPrincipalId === localBuilderAccountId
+    && value.accountSide === "builder"
+    && value.scopeType === "project_private"
+    && scopeId && scopeId === value.scopeId
+    && projectId && projectId === value.projectId && scopeId === projectId
+    && ["composer-text", "composer-file", "composer-photo"].includes(sourceType)
+    && value.version === 1
+    && value.provenance === "direct_user_composer"
+    && isValidProjectFileDate(capturedAt) && capturedAt === value.capturedAt
+    && (sourceDate === null || isValidProjectFileDate(sourceDate) && sourceDate === value.sourceDate)
+    && /^sha256-[0-9a-f]{64}$/.test(value.contentHash)
+    && value.readStatus === "available"
+    && value.sensitivity === "project-private"
+    && value.visibility === "visible"
+    && value.manualSearchability === false
+    && value.automaticRetrievalEligibility === false
+    && value.modelEligibility === false
+    && value.shareability === false
+    && value.useInContextPreference === false
+    && typeof value.fingerprint === "string";
+  if (!commonIsValid) return null;
+  const typeIsValid = sourceType === "composer-text"
+    ? assetRef === null
+      && textContent !== null && textContent.length <= 4000 && hasVisibleProjectTaskText(textContent)
+      && value.contentHash === `sha256-${memoryCoreSha256(textContent)}`
+      && sourceDate === capturedAt
+      && value.locatorCapability === "record" && value.excerptCapability === "full-text"
+    : textContent === null
+      && assetRef?.kind === (sourceType === "composer-photo" ? "project-photo" : "project-file")
+      && value.locatorCapability === "asset" && value.excerptCapability === "none";
+  if (!typeIsValid) return null;
+  const record = {
+    schemaVersion: 1,
+    id,
+    intakeId,
+    ownerPrincipalId: localBuilderAccountId,
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId,
+    projectId,
+    sourceType,
+    assetRef,
+    textContent,
+    version: 1,
+    provenance: "direct_user_composer",
+    capturedAt,
+    sourceDate,
+    locatorCapability: value.locatorCapability,
+    excerptCapability: value.excerptCapability,
+    contentHash: value.contentHash,
+    readStatus: "available",
+    sensitivity: "project-private",
+    visibility: "visible",
+    manualSearchability: false,
+    automaticRetrievalEligibility: false,
+    modelEligibility: false,
+    shareability: false,
+    useInContextPreference: false,
+    fingerprint: value.fingerprint,
+  } satisfies ProjectSourceRecord;
+  return record.fingerprint === projectSourceRecordFingerprint(record) ? record : null;
+}
+
+function parseProjectSourceIntake(value: any): ProjectSourceIntakeRecord | null {
+  if (!hasExactObjectKeys(value, ["id", "projectId", "sourceIds", "version", "createdAt", "fingerprint"])) return null;
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const projectId = typeof value.projectId === "string" ? value.projectId.trim() : "";
+  const createdAt = typeof value.createdAt === "string" ? value.createdAt.trim() : "";
+  const sourceIds = Array.isArray(value.sourceIds) ? value.sourceIds.map((sourceId: unknown) => typeof sourceId === "string" ? sourceId.trim() : "") : [];
+  if (!id || id !== value.id || !projectId || projectId !== value.projectId || sourceIds.length < 1 || sourceIds.length > 2 || sourceIds.some((sourceId: string, index: number) => !sourceId || sourceId !== value.sourceIds[index]) || new Set(sourceIds).size !== sourceIds.length || value.version !== 1 || !isValidProjectFileDate(createdAt) || createdAt !== value.createdAt || typeof value.fingerprint !== "string") return null;
+  const intake = { id, projectId, sourceIds, version: 1, createdAt, fingerprint: value.fingerprint } satisfies ProjectSourceIntakeRecord;
+  return intake.fingerprint === projectSourceIntakeFingerprint(intake) ? intake : null;
+}
+
+function parseProjectSourceEnvelope(value: any): ProjectSourceEnvelope | null {
+  if (!hasExactObjectKeys(value, ["schemaVersion", "envelopeVersion", "records", "intakes", "updatedAt"]) || value.schemaVersion !== 1 || !Number.isInteger(value.envelopeVersion) || value.envelopeVersion < 0 || !Array.isArray(value.records) || !Array.isArray(value.intakes) || value.records.length > 2000 || value.intakes.length > 1000) return null;
+  const records = value.records.map(parseProjectSourceRecord);
+  const intakes = value.intakes.map(parseProjectSourceIntake);
+  if (records.some((record: ProjectSourceRecord | null) => record === null) || intakes.some((intake: ProjectSourceIntakeRecord | null) => intake === null)) return null;
+  const parsedRecords = records as ProjectSourceRecord[];
+  const parsedIntakes = intakes as ProjectSourceIntakeRecord[];
+  const recordIds = parsedRecords.map((record) => record.id);
+  const intakeIds = parsedIntakes.map((intake) => intake.id);
+  const referencedSourceIds = parsedIntakes.flatMap((intake) => intake.sourceIds);
+  if (new Set(recordIds).size !== recordIds.length || new Set(intakeIds).size !== intakeIds.length || new Set(referencedSourceIds).size !== referencedSourceIds.length || referencedSourceIds.length !== parsedRecords.length || referencedSourceIds.some((sourceId) => !recordIds.includes(sourceId)) || value.envelopeVersion !== parsedIntakes.length) return null;
+  for (let index = 0; index < parsedIntakes.length; index += 1) {
+    const intake = parsedIntakes[index];
+    const sources = intake.sourceIds.map((sourceId) => parsedRecords.find((record) => record.id === sourceId)!);
+    const textSources = sources.filter((source) => source.sourceType === "composer-text");
+    const assetSources = sources.filter((source) => source.sourceType !== "composer-text");
+    if (sources.some((source) => source.intakeId !== intake.id || source.projectId !== intake.projectId || source.capturedAt !== intake.createdAt) || textSources.length > 1 || assetSources.length > 1 || textSources.length + assetSources.length !== sources.length || (textSources.length === 1 && sources[0]?.sourceType !== "composer-text") || index > 0 && new Date(intake.createdAt).getTime() < new Date(parsedIntakes[index - 1].createdAt).getTime()) return null;
+  }
+  const updatedAt = value.updatedAt === null ? null : typeof value.updatedAt === "string" ? value.updatedAt.trim() : "";
+  if (parsedIntakes.length === 0 ? value.envelopeVersion !== 0 || parsedRecords.length !== 0 || updatedAt !== null : !isValidProjectFileDate(updatedAt as string) || updatedAt !== value.updatedAt || updatedAt !== parsedIntakes[parsedIntakes.length - 1].createdAt) return null;
+  return { schemaVersion: 1, envelopeVersion: value.envelopeVersion, records: parsedRecords, intakes: parsedIntakes, updatedAt };
+}
+
+function readStoredProjectSources(): ProjectSourceReadResult {
+  try {
+    const raw = window.localStorage.getItem(projectSourcesStorageKey);
+    if (raw === null) return { envelope: emptyProjectSourceEnvelope(), readError: false };
+    if (!raw) return { envelope: emptyProjectSourceEnvelope(), readError: true };
+    const envelope = parseProjectSourceEnvelope(JSON.parse(raw));
+    return envelope ? { envelope, readError: false } : { envelope: emptyProjectSourceEnvelope(), readError: true };
+  } catch {
+    return { envelope: emptyProjectSourceEnvelope(), readError: true };
+  }
+}
+
+function projectSourceAssetsMatchFiles(envelope: ProjectSourceEnvelope, files: ProjectFileRecord[]) {
+  const filesById = new Map(files.map((file) => [file.id, file]));
+  return envelope.records.every((source) => {
+    if (!source.assetRef) return true;
+    const file = filesById.get(source.assetRef.fileId);
+    if (!file || file.projectId !== source.projectId || file.version !== source.assetRef.fileVersion) return false;
+    if (source.sourceType === "composer-photo") {
+      return source.assetRef.kind === "project-photo" && file.storageMode === "browser-image" && isProjectImage(file);
+    }
+    return source.sourceType === "composer-file"
+      && source.assetRef.kind === "project-file"
+      && file.storageMode === "browser-file"
+      && !isProjectImage(file);
+  });
+}
+
+function validateProjectSourceAggregate(sources: ProjectSourceReadResult, files: LocalRecordsReadResult<ProjectFileRecord>): ProjectSourceReadResult {
+  const hasAssetSources = sources.envelope.records.some((source) => source.assetRef !== null);
+  return {
+    envelope: sources.envelope,
+    readError: sources.readError || hasAssetSources && (files.readError || !projectSourceAssetsMatchFiles(sources.envelope, files.records)),
+  };
+}
+
+function nextProjectSourceTimestamp(previousTimestamp: string | null) {
+  const now = Date.now();
+  const previous = previousTimestamp ? new Date(previousTimestamp).getTime() : Number.NEGATIVE_INFINITY;
+  return new Date(Math.max(now, Number.isFinite(previous) ? previous + 1 : now)).toISOString();
+}
+
+async function sha256ProjectSourceBlob(blob: Blob) {
+  const digest = await window.crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return `sha256-${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function withProjectAssetsWriteLock<Result>(fallback: Result, operation: () => Promise<Result>): Promise<Result> {
+  try {
+    const lockManager = window.navigator.locks;
+    if (!lockManager?.request) return fallback;
+    return await lockManager.request(projectAssetsWriteLockName, { mode: "exclusive" }, operation);
+  } catch {
+    return fallback;
+  }
+}
+
+async function withProjectSourceWriteLock(operation: () => Promise<ProjectSourceMutationResult>): Promise<ProjectSourceMutationResult> {
+  return withProjectAssetsWriteLock<ProjectSourceMutationResult>({ status: "lock-unavailable" }, operation);
 }
 
 const memoryCoreSha256Constants = [
@@ -3581,20 +4037,27 @@ function readStoredProjects(): BuilderProject[] {
   }
 }
 
-function readStoredProjectFiles(): LocalRecordsReadResult<ProjectFileRecord> {
+function parseStoredProjectFiles(rawFiles: string | null): LocalRecordsReadResult<ProjectFileRecord> {
   try {
-    const rawFiles = window.localStorage.getItem(projectFilesStorageKey);
-    if (!rawFiles) return { records: [], readError: false };
+    if (rawFiles === null) return { records: [], readError: false };
+    if (!rawFiles) return { records: [], readError: true };
     const parsed = JSON.parse(rawFiles);
     if (!Array.isArray(parsed)) return { records: [], readError: true };
+    const requiredKeys = ["id", "projectId", "displayName", "originalName", "mimeType", "size", "category", "source", "status", "version", "createdAt"];
+    const allowedKeys = new Set([...requiredKeys, "projectStage", "visibility", "storageMode", "sourceModifiedAt"]);
     const seenIds = new Set<string>();
-    const records = parsed.flatMap((file): ProjectFileRecord[] => {
+    const records: ProjectFileRecord[] = [];
+    for (const file of parsed) {
+      if (!file || typeof file !== "object" || Array.isArray(file)) return { records: [], readError: true };
+      const fileKeys = Object.keys(file);
+      if (requiredKeys.some((key) => !Object.prototype.hasOwnProperty.call(file, key)) || fileKeys.some((key) => !allowedKeys.has(key))) return { records: [], readError: true };
       const id = typeof file?.id === "string" ? file.id.trim() : "";
       const projectId = typeof file?.projectId === "string" ? file.projectId.trim() : "";
       const displayName = typeof file?.displayName === "string" ? file.displayName.trim() : "";
-      const originalName = typeof file?.originalName === "string" ? file.originalName.trim() : "";
+      const originalName = typeof file?.originalName === "string" ? file.originalName : "";
       const mimeType = typeof file?.mimeType === "string" ? file.mimeType.trim() : "";
       const createdAt = typeof file?.createdAt === "string" ? file.createdAt.trim() : "";
+      const rawProjectStage = typeof file?.projectStage === "string" ? file.projectStage.trim() : "";
       if (
         !id
         || seenIds.has(id)
@@ -3608,14 +4071,30 @@ function readStoredProjectFiles(): LocalRecordsReadResult<ProjectFileRecord> {
         || file.size < 0
         || !projectFileCategories.includes(file?.category as ProjectFileCategory)
         || (file?.source !== "انتخاب مستقیم از دستگاه" && file?.source !== "دوربین دستگاه")
+        || file?.status !== "ثبت محلی"
         || file?.version !== 1
         || !isValidProjectFileDate(createdAt)
-      ) return [];
-      seenIds.add(id);
+        || Object.prototype.hasOwnProperty.call(file, "projectStage") && typeof file.projectStage !== "string"
+        || rawProjectStage && !isKnownProjectStage(rawProjectStage) && !Object.prototype.hasOwnProperty.call(legacyProjectStageAliases, rawProjectStage)
+        || Object.prototype.hasOwnProperty.call(file, "visibility") && file.visibility !== "خصوصی پروژه"
+        || Object.prototype.hasOwnProperty.call(file, "storageMode") && !["metadata-only", "browser-image", "browser-file"].includes(file.storageMode)
+        || Object.prototype.hasOwnProperty.call(file, "sourceModifiedAt") && file.sourceModifiedAt !== null && (typeof file.sourceModifiedAt !== "string" || !isValidProjectFileDate(file.sourceModifiedAt.trim()))
+      ) return { records: [], readError: true };
       const isImage = isProjectImage({ mimeType, originalName });
       const documentMimeCompatible = Boolean(projectDocumentExtension(originalName)) && hasCompatibleProjectDocumentMime(originalName, mimeType);
+      if (!isImage && !documentMimeCompatible) return { records: [], readError: true };
+      const requestedStorageMode = file.storageMode ?? "metadata-only";
+      const storageMode = requestedStorageMode === "metadata-only"
+        ? "metadata-only"
+        : isImage && requestedStorageMode === "browser-image"
+          ? "browser-image"
+          : !isImage && documentMimeCompatible && requestedStorageMode === "browser-file"
+            ? "browser-file"
+            : null;
+      if (storageMode === null) return { records: [], readError: true };
+      seenIds.add(id);
       const storedMimeType = !isImage && documentMimeCompatible ? projectDocumentCanonicalMime(originalName) : mimeType;
-      return [{
+      records.push({
         id,
         projectId,
         displayName,
@@ -3626,20 +4105,101 @@ function readStoredProjectFiles(): LocalRecordsReadResult<ProjectFileRecord> {
         source: file.source,
         status: "ثبت محلی",
         version: 1,
-        projectStage: normalizeStoredProjectStage(file.projectStage),
+        projectStage: normalizeStoredProjectStage(rawProjectStage),
         visibility: "خصوصی پروژه",
-        storageMode: isImage && file.storageMode === "browser-image"
-          ? "browser-image"
-          : !isImage && documentMimeCompatible && file.storageMode === "browser-file"
-            ? "browser-file"
-            : "metadata-only",
+        storageMode,
         sourceModifiedAt: typeof file.sourceModifiedAt === "string" && isValidProjectFileDate(file.sourceModifiedAt.trim()) ? file.sourceModifiedAt.trim() : null,
         createdAt,
-      }];
-    });
+      });
+    }
     return { records, readError: false };
   } catch {
     return { records: [], readError: true };
+  }
+}
+
+function readStoredProjectFiles(): LocalRecordsReadResult<ProjectFileRecord> {
+  try {
+    return parseStoredProjectFiles(window.localStorage.getItem(projectFilesStorageKey));
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
+function parseStoredProjectFilesForMutationRaw(raw: string | null): LocalRecordsReadResult<ProjectFileRecord> {
+  return parseStoredProjectFiles(raw);
+}
+
+function readStoredProjectFilesForMutation(): LocalRecordsReadResult<ProjectFileRecord> {
+  try {
+    return parseStoredProjectFilesForMutationRaw(window.localStorage.getItem(projectFilesStorageKey));
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
+function projectSourceIntentHasValidDelta(intent: ProjectSourceIntakeIntent) {
+  try {
+    const previousEnvelope = intent.previousSourcesRaw === null
+      ? emptyProjectSourceEnvelope()
+      : parseProjectSourceEnvelope(JSON.parse(intent.previousSourcesRaw));
+    const nextEnvelope = parseProjectSourceEnvelope(JSON.parse(intent.nextSourcesRaw));
+    const previousFiles = parseStoredProjectFilesForMutationRaw(intent.previousFilesRaw);
+    const nextFiles = parseStoredProjectFilesForMutationRaw(intent.nextFilesRaw);
+    if (!previousEnvelope || !nextEnvelope || previousFiles.readError || nextFiles.readError) return false;
+
+    const stableEquals = (left: unknown, right: unknown) => JSON.stringify(stablePurchaseRequestValue(left)) === JSON.stringify(stablePurchaseRequestValue(right));
+    const newIntakes = nextEnvelope.intakes.slice(previousEnvelope.intakes.length);
+    const newRecords = nextEnvelope.records.slice(previousEnvelope.records.length);
+    if (
+      nextEnvelope.envelopeVersion !== previousEnvelope.envelopeVersion + 1
+      || nextEnvelope.intakes.length !== previousEnvelope.intakes.length + 1
+      || newIntakes.length !== 1
+      || newRecords.length < 1
+      || newRecords.length > 2
+      || !stableEquals(nextEnvelope.intakes.slice(0, previousEnvelope.intakes.length), previousEnvelope.intakes)
+      || !stableEquals(nextEnvelope.records.slice(0, previousEnvelope.records.length), previousEnvelope.records)
+      || !projectSourceAssetsMatchFiles(previousEnvelope, previousFiles.records)
+      || !projectSourceAssetsMatchFiles(nextEnvelope, nextFiles.records)
+    ) return false;
+
+    const intake = newIntakes[0];
+    if (
+      intake.id !== intent.id
+      || intake.createdAt !== intent.createdAt
+      || nextEnvelope.updatedAt !== intent.createdAt
+      || !stableEquals(intake.sourceIds, newRecords.map((record) => record.id))
+      || newRecords.some((record) => record.intakeId !== intent.id || record.projectId !== intake.projectId || record.capturedAt !== intent.createdAt)
+    ) return false;
+
+    const textSources = newRecords.filter((record) => record.sourceType === "composer-text");
+    const assetSources = newRecords.filter((record) => record.sourceType !== "composer-text");
+    if (intent.fileId === null) {
+      return intent.nextFilesRaw === intent.previousFilesRaw
+        && stableEquals(nextFiles.records, previousFiles.records)
+        && textSources.length === 1
+        && assetSources.length === 0;
+    }
+
+    if (
+      intent.nextFilesRaw === null
+      || nextFiles.records.length !== previousFiles.records.length + 1
+      || !stableEquals(nextFiles.records.slice(0, previousFiles.records.length), previousFiles.records)
+      || textSources.length > 1
+      || assetSources.length !== 1
+    ) return false;
+    const file = nextFiles.records[nextFiles.records.length - 1];
+    const assetSource = assetSources[0];
+    return file.id === intent.fileId
+      && file.projectId === intake.projectId
+      && file.storageMode === intent.storageMode
+      && file.createdAt === intent.createdAt
+      && assetSource.assetRef?.fileId === file.id
+      && assetSource.assetRef.fileVersion === file.version
+      && assetSource.contentHash === intent.contentHash
+      && assetSource.sourceType === (intent.storageMode === "browser-image" ? "composer-photo" : "composer-file");
+  } catch {
+    return false;
   }
 }
 
@@ -6025,7 +6585,58 @@ function normalizeProjectBackboneDraft(draft: ProjectBackboneDraft): ProjectBack
     decisionReason: draft.decisionReason.trim(),
     taskTitle: draft.taskTitle.trim(),
     taskNextStep: draft.taskNextStep.trim(),
+    taskDueAt: draft.taskDueAt.trim(),
   };
+}
+
+function tehranDateTimeLocalToIso(value: string) {
+  const normalized = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(normalized)) return null;
+  const parsed = new Date(`${normalized}:00+03:30`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const roundTrip = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tehran",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(parsed).reduce<Record<string, string>>((parts, part) => ({ ...parts, [part.type]: part.value }), {});
+  if (`${roundTrip.year}-${roundTrip.month}-${roundTrip.day}T${roundTrip.hour}:${roundTrip.minute}` !== normalized) return null;
+  return parsed.toISOString();
+}
+
+function isoToTehranDateTimeLocal(value: string | null) {
+  if (!value || !isValidProjectFileDate(value)) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tehran",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(value)).reduce<Record<string, string>>((result, part) => ({ ...result, [part.type]: part.value }), {});
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+function formatTehranDateTime(value: string | null) {
+  if (!value || !isValidProjectFileDate(value)) return "ثبت نشده";
+  return new Intl.DateTimeFormat("fa-IR", {
+    timeZone: "Asia/Tehran",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function isCanonicalIsoDate(value: string) {
+  if (!isValidProjectFileDate(value)) return false;
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    return false;
+  }
 }
 
 function projectBackboneDraftIsValid(draft: ProjectBackboneDraft) {
@@ -6033,7 +6644,8 @@ function projectBackboneDraftIsValid(draft: ProjectBackboneDraft) {
     && hasVisibleProjectBackboneText(draft.decisionStatement) && draft.decisionStatement.length <= 500
     && hasVisibleProjectBackboneText(draft.decisionReason) && draft.decisionReason.length <= 500
     && hasVisibleProjectBackboneText(draft.taskTitle) && draft.taskTitle.length <= 80
-    && hasVisibleProjectBackboneText(draft.taskNextStep) && draft.taskNextStep.length <= 300;
+    && hasVisibleProjectBackboneText(draft.taskNextStep) && draft.taskNextStep.length <= 300
+    && (!draft.taskDueAt || tehranDateTimeLocalToIso(draft.taskDueAt) !== null);
 }
 
 async function withProjectBackboneWriteLock(operation: () => ProjectBackboneMutationResult): Promise<ProjectBackboneMutationResult> {
@@ -6050,7 +6662,7 @@ function projectBackboneDraftFromGraph(graph: ProjectBackboneGraph): ProjectBack
   const milestone = projectBackboneCurrentSnapshot(graph.milestone) as ProjectMilestoneSnapshot;
   const decision = projectBackboneCurrentSnapshot(graph.decision) as ProjectDecisionSnapshot;
   const task = projectBackboneCurrentSnapshot(graph.task) as ProjectBackboneTaskSnapshot;
-  return { milestoneTitle: milestone.title, decisionStatement: decision.statement, decisionReason: decision.reason, taskTitle: task.title, taskNextStep: task.nextStep };
+  return { milestoneTitle: milestone.title, decisionStatement: decision.statement, decisionReason: decision.reason, taskTitle: task.title, taskNextStep: task.nextStep, taskDueAt: isoToTehranDateTimeLocal(task.dueAt) };
 }
 
 function createProjectBackboneRecord<ObjectType extends ProjectBackboneObjectType, Snapshot extends ProjectMilestoneSnapshot | ProjectDecisionSnapshot | ProjectBackboneTaskSnapshot>(objectType: ObjectType, id: string, projectId: string, snapshot: Snapshot, timestamp: string): ProjectBackboneRecord<ObjectType, Snapshot> {
@@ -6104,6 +6716,360 @@ function replaceProjectBackboneRecord(envelope: ProjectBackboneEnvelope, record:
   if (record.objectType === "milestone") return { ...envelope, milestones: envelope.milestones.map((item) => item.id === record.id ? record : item) };
   if (record.objectType === "decision") return { ...envelope, decisions: envelope.decisions.map((item) => item.id === record.id ? record : item) };
   return { ...envelope, tasks: envelope.tasks.map((item) => item.id === record.id ? record : item) };
+}
+
+const projectTaskMonitorRecordKeys = [
+  "schemaVersion", "id", "projectId", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "custodianService", "sourceRefs", "sensitivity", "lifecycleState", "browserExecution", "version", "currentRevisionId", "createdAt", "updatedAt", "history", "revisions",
+] as const;
+
+function emptyProjectTaskMonitorEnvelope(): ProjectTaskMonitorEnvelope {
+  return { schemaVersion: 1, monitors: [], runs: [] };
+}
+
+function projectTaskMonitorRevisionFingerprint(projectId: string, snapshot: ProjectTaskMonitorSnapshot) {
+  const serialized = JSON.stringify(stablePurchaseRequestValue({ objectType: "monitor", projectId, snapshot }));
+  return `fnv1a-${purchaseRequestStableHash(serialized)}`;
+}
+
+function parseProjectTaskMonitorOrigin(value: any): ProjectTaskMonitorOrigin | null {
+  if (!hasExactObjectKeys(value, ["objectType", "taskId", "taskVersion", "taskRevisionId", "taskRevisionFingerprint"])) return null;
+  const taskId = typeof value?.taskId === "string" ? value.taskId.trim() : "";
+  const taskRevisionId = typeof value?.taskRevisionId === "string" ? value.taskRevisionId.trim() : "";
+  const taskRevisionFingerprint = typeof value?.taskRevisionFingerprint === "string" ? value.taskRevisionFingerprint.trim() : "";
+  if (value?.objectType !== "project-backbone-task" || !taskId || taskId !== value?.taskId || !taskRevisionId || taskRevisionId !== value?.taskRevisionId || !/^fnv1a-[0-9a-f]{8}$/.test(taskRevisionFingerprint) || taskRevisionFingerprint !== value?.taskRevisionFingerprint || !Number.isInteger(value?.taskVersion) || value.taskVersion < 1) return null;
+  return { objectType: "project-backbone-task", taskId, taskVersion: value.taskVersion, taskRevisionId, taskRevisionFingerprint };
+}
+
+function parseProjectTaskMonitorFailure(value: any): ProjectTaskMonitorFailure | null {
+  if (!hasExactObjectKeys(value, ["code", "message", "at"])) return null;
+  const message = typeof value?.message === "string" ? value.message.trim() : "";
+  const at = typeof value?.at === "string" ? value.at.trim() : "";
+  if (!["dependency-stale", "deadline-missing"].includes(value?.code) || !hasVisibleProjectBackboneText(message) || message !== value?.message || message.length > 300 || !isCanonicalIsoDate(at) || at !== value?.at) return null;
+  return { code: value.code as ProjectTaskMonitorFailureCode, message, at };
+}
+
+function parseProjectTaskMonitorSnapshot(value: any): ProjectTaskMonitorSnapshot | null {
+  if (!hasExactObjectKeys(value, ["reason", "origin", "trigger", "notificationCondition", "enabled", "status", "lastCheckAt", "nextCheckAt", "lastRunId", "failure"])) return null;
+  const reason = typeof value?.reason === "string" ? value.reason.trim() : "";
+  const origin = parseProjectTaskMonitorOrigin(value?.origin);
+  if (!hasExactObjectKeys(value?.trigger, ["kind", "dueAt", "timezone", "source"])) return null;
+  const dueAt = typeof value?.trigger?.dueAt === "string" ? value.trigger.dueAt.trim() : "";
+  const lastCheckAt = value?.lastCheckAt === null ? null : typeof value?.lastCheckAt === "string" ? value.lastCheckAt.trim() : "";
+  const nextCheckAt = value?.nextCheckAt === null ? null : typeof value?.nextCheckAt === "string" ? value.nextCheckAt.trim() : "";
+  const lastRunId = value?.lastRunId === null ? null : typeof value?.lastRunId === "string" ? value.lastRunId.trim() : "";
+  const failure = value?.failure === null ? null : parseProjectTaskMonitorFailure(value?.failure);
+  const statusIsValid = ["watching", "attention", "failed", "disabled"].includes(value?.status);
+  const statusIsConsistent = value?.status === "disabled"
+    ? value?.enabled === false && nextCheckAt === null && failure === null
+    : value?.status === "failed"
+      ? value?.enabled === true && nextCheckAt === null && failure !== null
+      : value?.enabled === true && nextCheckAt !== null && failure === null;
+  if (!hasVisibleProjectBackboneText(reason) || reason !== value?.reason || reason.length > 300 || !origin || value?.trigger?.kind !== "deadline" || !isCanonicalIsoDate(dueAt) || dueAt !== value?.trigger?.dueAt || value?.trigger?.timezone !== "Asia/Tehran" || value?.trigger?.source !== "browser-clock-and-project-backbone-task" || value?.notificationCondition !== "task-open-at-or-after-deadline" || typeof value?.enabled !== "boolean" || !statusIsValid || !statusIsConsistent || lastCheckAt !== null && (!isCanonicalIsoDate(lastCheckAt) || lastCheckAt !== value?.lastCheckAt) || nextCheckAt !== null && (!isCanonicalIsoDate(nextCheckAt) || nextCheckAt !== value?.nextCheckAt) || lastRunId !== null && (!lastRunId || lastRunId !== value?.lastRunId) || value?.failure !== null && !failure) return null;
+  return {
+    reason,
+    origin,
+    trigger: { kind: "deadline", dueAt, timezone: "Asia/Tehran", source: "browser-clock-and-project-backbone-task" },
+    notificationCondition: "task-open-at-or-after-deadline",
+    enabled: value.enabled,
+    status: value.status as ProjectTaskMonitorStatus,
+    lastCheckAt,
+    nextCheckAt,
+    lastRunId,
+    failure,
+  };
+}
+
+function parseProjectTaskMonitorRecord(value: any): ProjectTaskMonitorRecord | null {
+  if (!hasExactObjectKeys(value, projectTaskMonitorRecordKeys)) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
+  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
+  if (value?.schemaVersion !== 1 || !id || id !== value?.id || !projectId || projectId !== value?.projectId || value?.ownerPrincipalType !== "project" || value?.ownerPrincipalId !== projectId || value?.accountSide !== "builder" || value?.scopeType !== "project_private" || value?.scopeId !== projectId || value?.custodianService !== "Task/Run Domain Service" || value?.sensitivity !== "private" || value?.lifecycleState !== "active" || value?.browserExecution !== "tasks-view-open-and-visible" || !Number.isInteger(value?.version) || value.version < 1 || !currentRevisionId || currentRevisionId !== value?.currentRevisionId || !isCanonicalIsoDate(createdAt) || createdAt !== value?.createdAt || !isCanonicalIsoDate(updatedAt) || updatedAt !== value?.updatedAt || new Date(updatedAt).getTime() < new Date(createdAt).getTime() || !Array.isArray(value?.sourceRefs) || value.sourceRefs.length !== 1 || typeof value.sourceRefs[0] !== "string" || !value.sourceRefs[0].trim() || value.sourceRefs[0].trim() !== value.sourceRefs[0]) return null;
+
+  const eventIds = new Set<string>();
+  const history: ProjectTaskMonitorHistoryEvent[] = Array.isArray(value?.history) ? value.history.flatMap((event: any): ProjectTaskMonitorHistoryEvent[] => {
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version", "runId"])) return [];
+    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
+    const at = typeof event?.at === "string" ? event.at.trim() : "";
+    const runId = event?.runId === null ? null : typeof event?.runId === "string" ? event.runId.trim() : "";
+    const type = event?.type as ProjectTaskMonitorHistoryEventType;
+    const typeIsValid = ["created", "checked", "deadline-reached", "failed", "retried", "disabled", "enabled"].includes(type);
+    const runBindingIsValid = ["checked", "deadline-reached", "failed", "retried"].includes(type) ? Boolean(runId) : runId === null;
+    if (!eventId || eventId !== event?.id || eventIds.has(eventId) || !typeIsValid || !["شما", "بررسی محلی مرورگر"].includes(event?.actor) || !isCanonicalIsoDate(at) || at !== event?.at || !Number.isInteger(event?.version) || event.version < 1 || !runBindingIsValid || runId !== null && runId !== event?.runId) return [];
+    eventIds.add(eventId);
+    return [{ id: eventId, type, actor: event.actor, at, version: event.version, runId }];
+  }) : [];
+
+  const revisionIds = new Set<string>();
+  const revisions: ProjectTaskMonitorRevision[] = Array.isArray(value?.revisions) ? value.revisions.flatMap((revision: any): ProjectTaskMonitorRevision[] => {
+    if (!hasExactObjectKeys(revision, ["id", "version", "createdAt", "snapshot", "fingerprint"])) return [];
+    const revisionId = typeof revision?.id === "string" ? revision.id.trim() : "";
+    const revisionCreatedAt = typeof revision?.createdAt === "string" ? revision.createdAt.trim() : "";
+    const snapshot = parseProjectTaskMonitorSnapshot(revision?.snapshot);
+    const fingerprint = typeof revision?.fingerprint === "string" ? revision.fingerprint.trim() : "";
+    if (!revisionId || revisionId !== revision?.id || revisionIds.has(revisionId) || !Number.isInteger(revision?.version) || revision.version < 1 || !isCanonicalIsoDate(revisionCreatedAt) || revisionCreatedAt !== revision?.createdAt || !snapshot || fingerprint !== revision?.fingerprint || fingerprint !== projectTaskMonitorRevisionFingerprint(projectId, snapshot) || snapshot.origin.taskId !== value.sourceRefs[0]) return [];
+    revisionIds.add(revisionId);
+    return [{ id: revisionId, version: revision.version, createdAt: revisionCreatedAt, snapshot, fingerprint }];
+  }) : [];
+
+  const chronologyIsValid = history.length === value?.history?.length
+    && revisions.length === value?.revisions?.length
+    && history.length === value.version
+    && revisions.length === value.version
+    && history[0]?.type === "created"
+    && history.every((event, index) => event.version === index + 1 && event.at === revisions[index]?.createdAt && (index === 0 || new Date(event.at).getTime() >= new Date(history[index - 1].at).getTime()))
+    && revisions.every((revision, index) => revision.version === index + 1)
+    && history[0]?.at === createdAt
+    && history.at(-1)?.at === updatedAt
+    && revisions.at(-1)?.id === currentRevisionId;
+  if (!chronologyIsValid) return null;
+  return { ...value, id, projectId, ownerPrincipalId: projectId, scopeId: projectId, currentRevisionId, createdAt, updatedAt, history, revisions } as ProjectTaskMonitorRecord;
+}
+
+function parseProjectTaskMonitorRun(value: any): ProjectTaskMonitorRun | null {
+  if (!hasExactObjectKeys(value, ["schemaVersion", "id", "monitorId", "monitorVersion", "projectId", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "custodianService", "origin", "scheduledFor", "attempt", "state", "startedAt", "endedAt", "result", "failure", "effectState"])) return null;
+  const id = typeof value?.id === "string" ? value.id.trim() : "";
+  const monitorId = typeof value?.monitorId === "string" ? value.monitorId.trim() : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
+  const origin = parseProjectTaskMonitorOrigin(value?.origin);
+  const scheduledFor = typeof value?.scheduledFor === "string" ? value.scheduledFor.trim() : "";
+  const startedAt = typeof value?.startedAt === "string" ? value.startedAt.trim() : "";
+  const endedAt = typeof value?.endedAt === "string" ? value.endedAt.trim() : "";
+  const failure = value?.failure === null ? null : parseProjectTaskMonitorFailure(value?.failure);
+  let result: ProjectTaskMonitorRun["result"] = null;
+  if (value?.result !== null && hasExactObjectKeys(value?.result, ["kind", "dueAt", "taskStatus"]) && ["not-due", "deadline-reached", "task-completed"].includes(value.result.kind) && isCanonicalIsoDate(value.result.dueAt) && ["in-progress", "completed"].includes(value.result.taskStatus)) result = value.result;
+  if (value?.result !== null && result === null) return null;
+  const stateIsConsistent = value?.state === "succeeded" ? result !== null && value?.failure === null : value?.state === "failed" && result === null && failure !== null;
+  if (value?.schemaVersion !== 1 || !id || id !== value?.id || !monitorId || monitorId !== value?.monitorId || !projectId || projectId !== value?.projectId || value?.ownerPrincipalType !== "project" || value?.ownerPrincipalId !== projectId || value?.accountSide !== "builder" || value?.scopeType !== "project_private" || value?.scopeId !== projectId || value?.custodianService !== "Task/Run Domain Service" || !origin || !isCanonicalIsoDate(scheduledFor) || scheduledFor !== value?.scheduledFor || !Number.isInteger(value?.monitorVersion) || value.monitorVersion < 2 || !Number.isInteger(value?.attempt) || value.attempt < 1 || !["succeeded", "failed"].includes(value?.state) || !isCanonicalIsoDate(startedAt) || startedAt !== value?.startedAt || !isCanonicalIsoDate(endedAt) || endedAt !== value?.endedAt || new Date(endedAt).getTime() < new Date(startedAt).getTime() || !stateIsConsistent || value?.effectState !== "none") return null;
+  return { ...value, id, monitorId, projectId, ownerPrincipalId: projectId, scopeId: projectId, origin, scheduledFor, startedAt, endedAt, result, failure } as ProjectTaskMonitorRun;
+}
+
+function readStoredProjectTaskMonitors(): ProjectTaskMonitorReadResult {
+  try {
+    const raw = window.localStorage.getItem(projectTaskMonitorsStorageKey);
+    if (raw === null) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: false };
+    if (!raw.trim()) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+    const parsed = JSON.parse(raw);
+    if (!hasExactObjectKeys(parsed, ["schemaVersion", "monitors", "runs"]) || parsed?.schemaVersion !== 1 || !Array.isArray(parsed?.monitors) || !Array.isArray(parsed?.runs)) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+    const monitors = parsed.monitors.map(parseProjectTaskMonitorRecord);
+    const runs = parsed.runs.map(parseProjectTaskMonitorRun);
+    if (monitors.some((monitor: ProjectTaskMonitorRecord | null) => !monitor) || runs.some((run: ProjectTaskMonitorRun | null) => !run)) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+    const envelope = { schemaVersion: 1, monitors: monitors as ProjectTaskMonitorRecord[], runs: runs as ProjectTaskMonitorRun[] } satisfies ProjectTaskMonitorEnvelope;
+    if (new Set(envelope.monitors.map((monitor) => monitor.id)).size !== envelope.monitors.length || new Set(envelope.runs.map((run) => run.id)).size !== envelope.runs.length) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+    const currentOrigins = new Set<string>();
+    for (const monitor of envelope.monitors) {
+      const snapshot = projectTaskMonitorCurrentSnapshot(monitor);
+      const originKey = `${monitor.projectId}:${snapshot.origin.taskId}`;
+      if (currentOrigins.has(originKey)) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+      currentOrigins.add(originKey);
+      const monitorRuns = envelope.runs.filter((run) => run.monitorId === monitor.id);
+      if (monitorRuns.some((run) => run.projectId !== monitor.projectId || run.monitorVersion > monitor.version || run.origin.taskId !== snapshot.origin.taskId)) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+      const orderedRuns = [...monitorRuns].sort((first, second) => first.attempt - second.attempt);
+      if (orderedRuns.some((run, index) => run.attempt !== index + 1)) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+      const historyRunIds = monitor.history.flatMap((event) => event.runId ? [event.runId] : []);
+      if (historyRunIds.length !== monitorRuns.length || new Set(historyRunIds).size !== historyRunIds.length || historyRunIds.some((runId) => !monitorRuns.some((run) => run.id === runId))) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+      for (let index = 0; index < monitor.history.length; index += 1) {
+        const event = monitor.history[index];
+        const revision = monitor.revisions[index];
+        const revisionSnapshot = revision.snapshot;
+        const previousSnapshot = index > 0 ? monitor.revisions[index - 1].snapshot : null;
+        const snapshotsMatch = (first: unknown, second: unknown) => JSON.stringify(stablePurchaseRequestValue(first)) === JSON.stringify(stablePurchaseRequestValue(second));
+        if (previousSnapshot && snapshotsMatch(previousSnapshot, revisionSnapshot)) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+        if (!event.runId) {
+          const enabledTransitionPreservesRunState = previousSnapshot
+            && revisionSnapshot.notificationCondition === previousSnapshot.notificationCondition
+            && revisionSnapshot.lastRunId === previousSnapshot.lastRunId
+            && revisionSnapshot.lastCheckAt === previousSnapshot.lastCheckAt
+            && revisionSnapshot.origin.taskId === previousSnapshot.origin.taskId;
+          const nonRunEventIsValid = event.actor === "شما" && (event.type === "created"
+            ? index === 0 && !previousSnapshot && revisionSnapshot.enabled && revisionSnapshot.status === "watching" && revisionSnapshot.lastRunId === null && revisionSnapshot.lastCheckAt === null && revisionSnapshot.failure === null && revisionSnapshot.nextCheckAt === revisionSnapshot.trigger.dueAt
+            : event.type === "disabled"
+              ? Boolean(previousSnapshot?.enabled) && snapshotsMatch(revisionSnapshot, { ...previousSnapshot!, enabled: false, status: "disabled", nextCheckAt: null, failure: null })
+              : event.type === "enabled" && previousSnapshot?.status === "disabled" && previousSnapshot.enabled === false && enabledTransitionPreservesRunState && revisionSnapshot.enabled && revisionSnapshot.status === "watching" && revisionSnapshot.nextCheckAt === revisionSnapshot.trigger.dueAt && revisionSnapshot.failure === null);
+          if (!nonRunEventIsValid) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+          continue;
+        }
+        const isRetryTransition = event.type === "retried" && event.actor === "شما" && previousSnapshot?.enabled === true && previousSnapshot.status === "failed" && previousSnapshot.failure !== null;
+        const isAutomaticTransition = ["checked", "deadline-reached", "failed"].includes(event.type) && event.actor === "بررسی محلی مرورگر" && previousSnapshot?.enabled === true && previousSnapshot.status !== "failed";
+        if (!previousSnapshot || !isRetryTransition && !isAutomaticTransition || revisionSnapshot.notificationCondition !== previousSnapshot.notificationCondition || revisionSnapshot.origin.taskId !== previousSnapshot.origin.taskId) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+        if (isAutomaticTransition && (!snapshotsMatch(revisionSnapshot.reason, previousSnapshot.reason) || !snapshotsMatch(revisionSnapshot.origin, previousSnapshot.origin) || !snapshotsMatch(revisionSnapshot.trigger, previousSnapshot.trigger))) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+        const run = monitorRuns.find((candidate) => candidate.id === event.runId);
+        const expectedAttempt = monitor.history.slice(0, index + 1).filter((candidate) => candidate.runId !== null).length;
+        const scheduledForIsBound = run && new Date(run.scheduledFor).getTime() <= new Date(run.startedAt).getTime()
+          && (event.type === "retried" ? run.scheduledFor === event.at : run.scheduledFor === event.at || run.scheduledFor === previousSnapshot.nextCheckAt);
+        if (!run || !scheduledForIsBound || run.attempt !== expectedAttempt || run.monitorVersion !== event.version || run.startedAt !== event.at || run.endedAt !== event.at || revision.createdAt !== event.at || revisionSnapshot.lastRunId !== run.id || revisionSnapshot.lastCheckAt !== run.endedAt || JSON.stringify(stablePurchaseRequestValue(run.origin)) !== JSON.stringify(stablePurchaseRequestValue(revisionSnapshot.origin))) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+        if (run.state === "failed") {
+          const failureIsBound = (event.type === "failed" && event.actor === "بررسی محلی مرورگر" || event.type === "retried" && event.actor === "شما")
+            && revisionSnapshot.enabled && revisionSnapshot.status === "failed" && revisionSnapshot.nextCheckAt === null && revisionSnapshot.failure !== null
+            && JSON.stringify(stablePurchaseRequestValue(revisionSnapshot.failure)) === JSON.stringify(stablePurchaseRequestValue(run.failure))
+            && run.failure?.at === event.at;
+          const failureTypeIsValid = event.type === "failed"
+            ? run.failure?.code === "dependency-stale"
+            : run.failure?.code === "deadline-missing" && snapshotsMatch(revisionSnapshot.reason, previousSnapshot.reason) && snapshotsMatch(revisionSnapshot.trigger, previousSnapshot.trigger);
+          if (!failureIsBound || !failureTypeIsValid) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+          continue;
+        }
+        const result = run.result!;
+        const expectedStatus: ProjectTaskMonitorStatus = result.kind === "task-completed" ? "disabled" : result.kind === "deadline-reached" ? "attention" : "watching";
+        const expectedEvent = event.type === "retried" && event.actor === "شما" || event.actor === "بررسی محلی مرورگر" && (result.kind === "deadline-reached" ? event.type === "deadline-reached" : event.type === "checked");
+        const nextCheckIsValid = result.kind === "task-completed"
+          ? !revisionSnapshot.enabled && revisionSnapshot.nextCheckAt === null
+          : result.kind === "not-due"
+            ? revisionSnapshot.enabled && revisionSnapshot.nextCheckAt === result.dueAt
+            : revisionSnapshot.enabled && revisionSnapshot.nextCheckAt === new Date(new Date(event.at).getTime() + 86_400_000).toISOString();
+        if (!expectedEvent || revisionSnapshot.status !== expectedStatus || revisionSnapshot.failure !== null || revisionSnapshot.trigger.dueAt !== result.dueAt || !nextCheckIsValid) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+      }
+      const lastRun = orderedRuns.at(-1) ?? null;
+      if (snapshot.lastRunId !== lastRun?.id && !(snapshot.lastRunId === null && lastRun === null) || snapshot.lastCheckAt !== lastRun?.endedAt && !(snapshot.lastCheckAt === null && lastRun === null)) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+    }
+    if (envelope.runs.some((run) => !envelope.monitors.some((monitor) => monitor.id === run.monitorId))) return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+    return { envelope, readError: false };
+  } catch {
+    return { envelope: emptyProjectTaskMonitorEnvelope(), readError: true };
+  }
+}
+
+function validateProjectTaskMonitorAggregate(monitorRead: ProjectTaskMonitorReadResult, backboneRead: ProjectBackboneReadResult): ProjectTaskMonitorReadResult {
+  if (monitorRead.readError || backboneRead.readError) return monitorRead;
+  const tasksById = new Map(backboneRead.envelope.tasks.map((task) => [task.id, task]));
+  const invalidTaskBinding = monitorRead.envelope.monitors.some((monitor) => monitor.revisions.some((revision, index) => {
+    const task = tasksById.get(revision.snapshot.origin.taskId);
+    if (!task) return true;
+    if (task.projectId !== monitor.projectId) return true;
+    const taskRevision = task.revisions.find((candidate) => candidate.version === revision.snapshot.origin.taskVersion);
+    if (!taskRevision || taskRevision.id !== revision.snapshot.origin.taskRevisionId || taskRevision.fingerprint !== revision.snapshot.origin.taskRevisionFingerprint) return true;
+    const taskSnapshot = taskRevision.snapshot as ProjectBackboneTaskSnapshot;
+    const event = monitor.history[index];
+    const run = event.runId ? monitorRead.envelope.runs.find((candidate) => candidate.id === event.runId) : null;
+    if (new Date(taskRevision.createdAt).getTime() > new Date(event.at).getTime()) return true;
+    const eventPreservesOldOrigin = event.type === "disabled" || run?.failure?.code === "dependency-stale";
+    // Monitor and Project Backbone live in separate envelopes and have no shared commit sequence.
+    // A later Task revision may therefore carry the same millisecond timestamp as an earlier
+    // Monitor event. Only a strictly earlier newer Task revision proves that the event used a
+    // stale origin; equality is deliberately treated as ambiguous and validated by exact IDs.
+    const definitelyNewerTaskRevisionAtEvent = task.revisions.some((candidate) => candidate.version > taskRevision.version && new Date(candidate.createdAt).getTime() < new Date(event.at).getTime());
+    if (!eventPreservesOldOrigin && definitelyNewerTaskRevisionAtEvent) return true;
+    const previousSnapshot = index > 0 ? monitor.revisions[index - 1].snapshot : null;
+    const keepsLastDeadlineAfterRemoval = taskSnapshot.dueAt === null && (revision.snapshot.failure?.code === "deadline-missing" || revision.snapshot.status === "disabled" && previousSnapshot?.failure?.code === "deadline-missing");
+    if (!keepsLastDeadlineAfterRemoval && revision.snapshot.trigger.dueAt !== taskSnapshot.dueAt) return true;
+    if (!run) return false;
+    if (run.state === "failed") {
+      if (run.failure?.code === "deadline-missing") return taskSnapshot.dueAt !== null;
+      return !task.revisions.some((candidate) => candidate.version > run.origin.taskVersion && new Date(candidate.createdAt).getTime() <= new Date(run.endedAt).getTime());
+    }
+    if (!taskSnapshot.dueAt || run.result?.dueAt !== taskSnapshot.dueAt || run.result.taskStatus !== taskSnapshot.status) return true;
+    const expectedKind: ProjectTaskMonitorRunResultKind = taskSnapshot.status === "completed" ? "task-completed" : new Date(run.endedAt).getTime() >= new Date(taskSnapshot.dueAt).getTime() ? "deadline-reached" : "not-due";
+    return run.result.kind !== expectedKind;
+  }));
+  return invalidTaskBinding ? { envelope: emptyProjectTaskMonitorEnvelope(), readError: true } : monitorRead;
+}
+
+function projectTaskMonitorCurrentSnapshot(record: ProjectTaskMonitorRecord) {
+  return record.revisions[record.revisions.length - 1].snapshot;
+}
+
+function projectBackboneTaskOrigin(record: ProjectBackboneTaskRecord): ProjectTaskMonitorOrigin {
+  const revision = record.revisions[record.revisions.length - 1];
+  return { objectType: "project-backbone-task", taskId: record.id, taskVersion: record.version, taskRevisionId: revision.id, taskRevisionFingerprint: revision.fingerprint };
+}
+
+function projectTaskMonitorOriginMatchesTask(origin: ProjectTaskMonitorOrigin, task: ProjectBackboneTaskRecord) {
+  const current = projectBackboneTaskOrigin(task);
+  return origin.taskId === current.taskId && origin.taskVersion === current.taskVersion && origin.taskRevisionId === current.taskRevisionId && origin.taskRevisionFingerprint === current.taskRevisionFingerprint;
+}
+
+function createProjectTaskMonitorRecord(task: ProjectBackboneTaskRecord, projectId: string, timestamp: string): ProjectTaskMonitorRecord | null {
+  const taskSnapshot = projectBackboneCurrentSnapshot(task) as ProjectBackboneTaskSnapshot;
+  if (!taskSnapshot.dueAt || !isCanonicalIsoDate(taskSnapshot.dueAt) || task.projectId !== projectId) return null;
+  const id = `task-monitor-${window.crypto.randomUUID()}`;
+  const revisionId = `task-monitor-revision-${window.crypto.randomUUID()}`;
+  const snapshot = {
+    reason: `پیگیری موعد «${taskSnapshot.title}» تا زمانی که کار برنامه باز است.`,
+    origin: projectBackboneTaskOrigin(task),
+    trigger: { kind: "deadline", dueAt: taskSnapshot.dueAt, timezone: "Asia/Tehran", source: "browser-clock-and-project-backbone-task" },
+    notificationCondition: "task-open-at-or-after-deadline",
+    enabled: true,
+    status: "watching",
+    lastCheckAt: null,
+    nextCheckAt: taskSnapshot.dueAt,
+    lastRunId: null,
+    failure: null,
+  } satisfies ProjectTaskMonitorSnapshot;
+  return {
+    schemaVersion: 1,
+    id,
+    projectId,
+    ownerPrincipalType: "project",
+    ownerPrincipalId: projectId,
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: projectId,
+    custodianService: "Task/Run Domain Service",
+    sourceRefs: [task.id],
+    sensitivity: "private",
+    lifecycleState: "active",
+    browserExecution: "tasks-view-open-and-visible",
+    version: 1,
+    currentRevisionId: revisionId,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    history: [{ id: `task-monitor-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1, runId: null }],
+    revisions: [{ id: revisionId, version: 1, createdAt: timestamp, snapshot, fingerprint: projectTaskMonitorRevisionFingerprint(projectId, snapshot) }],
+  };
+}
+
+function appendProjectTaskMonitorRevision(record: ProjectTaskMonitorRecord, snapshot: ProjectTaskMonitorSnapshot, eventType: Exclude<ProjectTaskMonitorHistoryEventType, "created">, actor: ProjectTaskMonitorHistoryEvent["actor"], timestamp: string, runId: string | null) {
+  const version = record.version + 1;
+  const revisionId = `task-monitor-revision-${window.crypto.randomUUID()}`;
+  return {
+    ...record,
+    version,
+    currentRevisionId: revisionId,
+    updatedAt: timestamp,
+    history: [...record.history, { id: `task-monitor-event-${window.crypto.randomUUID()}`, type: eventType, actor, at: timestamp, version, runId }],
+    revisions: [...record.revisions, { id: revisionId, version, createdAt: timestamp, snapshot, fingerprint: projectTaskMonitorRevisionFingerprint(record.projectId, snapshot) }],
+  } satisfies ProjectTaskMonitorRecord;
+}
+
+function replaceProjectTaskMonitorRecord(envelope: ProjectTaskMonitorEnvelope, record: ProjectTaskMonitorRecord, run: ProjectTaskMonitorRun | null = null) {
+  return { ...envelope, monitors: envelope.monitors.map((monitor) => monitor.id === record.id ? record : monitor), runs: run ? [...envelope.runs, run] : envelope.runs };
+}
+
+async function withProjectTaskMonitorsWriteLock(operation: () => ProjectTaskMonitorMutationResult | Promise<ProjectTaskMonitorMutationResult>): Promise<ProjectTaskMonitorMutationResult> {
+  try {
+    const lockManager = window.navigator.locks;
+    if (!lockManager?.request) return { status: "lock-unavailable", monitorId: null };
+    return await lockManager.request(projectTaskMonitorsWriteLockName, { mode: "exclusive" }, () => lockManager.request(projectBackboneWriteLockName, { mode: "exclusive" }, operation));
+  } catch {
+    return { status: "lock-unavailable", monitorId: null };
+  }
+}
+
+function createProjectTaskMonitorRun(record: ProjectTaskMonitorRecord, timestamp: string, scheduledFor: string, state: ProjectTaskMonitorRunState, origin: ProjectTaskMonitorOrigin, result: ProjectTaskMonitorRun["result"], failure: ProjectTaskMonitorFailure | null, attempt: number) {
+  return {
+    schemaVersion: 1,
+    id: `task-monitor-run-${window.crypto.randomUUID()}`,
+    monitorId: record.id,
+    monitorVersion: record.version + 1,
+    projectId: record.projectId,
+    ownerPrincipalType: "project",
+    ownerPrincipalId: record.projectId,
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: record.projectId,
+    custodianService: "Task/Run Domain Service",
+    origin,
+    scheduledFor,
+    attempt,
+    state,
+    startedAt: timestamp,
+    endedAt: timestamp,
+    result,
+    failure,
+    effectState: "none",
+  } satisfies ProjectTaskMonitorRun;
 }
 
 function parseV2ProjectPurchaseRequest(request: any): ProjectPurchaseRequestRecord | null {
@@ -8872,6 +9838,21 @@ function projectImageExtension(fileName: string) {
   return match?.[1] ?? "";
 }
 
+function projectImageCanonicalMime(fileName: string) {
+  const extension = projectImageExtension(fileName);
+  if (extension === "png") return "image/png";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "webp") return "image/webp";
+  if (extension === "heic") return "image/heic";
+  if (extension === "heif") return "image/heif";
+  return "";
+}
+
+function createSafeProjectImageBlob(fileName: string, blob: Blob) {
+  const canonicalMime = projectImageCanonicalMime(fileName);
+  return canonicalMime ? new Blob([blob], { type: canonicalMime }) : null;
+}
+
 function hasCompatibleProjectImageMime(fileName: string, mimeType: string) {
   const extension = projectImageExtension(fileName);
   const normalizedMime = mimeType.toLocaleLowerCase("en");
@@ -8911,11 +9892,13 @@ function openProjectImagesDatabase() {
 }
 
 async function writeProjectImage(record: ProjectFileRecord, blob: Blob) {
+  const safeBlob = createSafeProjectImageBlob(record.originalName, blob);
+  if (!safeBlob || !hasCompatibleProjectImageMime(record.originalName, record.mimeType)) throw new Error("Unsupported project image");
   const database = await openProjectImagesDatabase();
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(projectImagesStoreName, "readwrite");
-      transaction.objectStore(projectImagesStoreName).put({ id: record.id, projectId: record.projectId, originalName: record.originalName, mimeType: record.mimeType, blob } satisfies StoredProjectImage);
+      transaction.objectStore(projectImagesStoreName).put({ id: record.id, projectId: record.projectId, originalName: record.originalName, mimeType: record.mimeType, blob: safeBlob } satisfies StoredProjectImage);
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error("Project image could not be stored"));
       transaction.onabort = () => reject(transaction.error ?? new Error("Project image storage was aborted"));
@@ -8934,9 +9917,38 @@ async function readProjectImage(file: ProjectFileRecord) {
       const request = transaction.objectStore(projectImagesStoreName).get(file.id);
       request.onsuccess = () => {
         const stored = request.result as StoredProjectImage | undefined;
-        resolve(stored?.projectId === file.projectId && stored.blob instanceof Blob ? stored.blob : null);
+        if (
+          stored?.projectId !== file.projectId
+          || stored.originalName !== file.originalName
+          || stored.mimeType !== file.mimeType
+          || !(stored.blob instanceof Blob)
+        ) {
+          resolve(null);
+          return;
+        }
+        resolve(createSafeProjectImageBlob(file.originalName, stored.blob));
       };
       request.onerror = () => reject(request.error ?? new Error("Project image could not be read"));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function deleteProjectImage(fileId: string) {
+  const database = await openProjectImagesDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(projectImagesStoreName, "readwrite");
+      transaction.objectStore(projectImagesStoreName).delete(fileId);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error("Project image could not be deleted"));
+      transaction.onabort = () => reject(transaction.error ?? new Error("Project image deletion was aborted"));
+    });
+    return await new Promise<boolean>((resolve, reject) => {
+      const request = database.transaction(projectImagesStoreName, "readonly").objectStore(projectImagesStoreName).get(fileId);
+      request.onsuccess = () => resolve(request.result === undefined);
+      request.onerror = () => reject(request.error ?? new Error("Project image deletion could not be verified"));
     });
   } finally {
     database.close();
@@ -8998,6 +10010,294 @@ async function readProjectFile(file: ProjectFileRecord) {
   } finally {
     database.close();
   }
+}
+
+async function deleteProjectFile(fileId: string) {
+  const database = await openProjectFilesDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(projectFilesStoreName, "readwrite");
+      transaction.objectStore(projectFilesStoreName).delete(fileId);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error("Project file could not be deleted"));
+      transaction.onabort = () => reject(transaction.error ?? new Error("Project file deletion was aborted"));
+    });
+    return await new Promise<boolean>((resolve, reject) => {
+      const request = database.transaction(projectFilesStoreName, "readonly").objectStore(projectFilesStoreName).get(fileId);
+      request.onsuccess = () => resolve(request.result === undefined);
+      request.onerror = () => reject(request.error ?? new Error("Project file deletion could not be verified"));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function projectSourceIntentBlobMatches(intent: ProjectSourceIntakeIntent) {
+  if (!intent.fileId || !intent.storageMode || !intent.contentHash || intent.nextFilesRaw === null) return intent.fileId === null;
+  try {
+    const nextFiles = JSON.parse(intent.nextFilesRaw);
+    if (!Array.isArray(nextFiles)) return false;
+    const record = nextFiles.find((file) => file?.id === intent.fileId) as ProjectFileRecord | undefined;
+    if (!record || record.storageMode !== intent.storageMode) return false;
+    const blob = intent.storageMode === "browser-image" ? await readProjectImage(record) : await readProjectFile(record);
+    return Boolean(blob) && await sha256ProjectSourceBlob(blob!) === intent.contentHash;
+  } catch {
+    return false;
+  }
+}
+
+async function projectSourceLinkedAssetsAreAvailable(envelope: ProjectSourceEnvelope, files: ProjectFileRecord[]) {
+  if (!projectSourceAssetsMatchFiles(envelope, files)) return false;
+  const filesById = new Map(files.map((file) => [file.id, file]));
+  try {
+    for (const source of envelope.records) {
+      if (!source.assetRef) continue;
+      const file = filesById.get(source.assetRef.fileId);
+      if (!file) return false;
+      const blob = file.storageMode === "browser-image" ? await readProjectImage(file) : await readProjectFile(file);
+      if (!blob || await sha256ProjectSourceBlob(blob) !== source.contentHash) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function projectFileContentsAreAvailable(files: ProjectFileRecord[]) {
+  try {
+    for (const file of files) {
+      if (file.storageMode === "metadata-only") continue;
+      const blob = file.storageMode === "browser-image" ? await readProjectImage(file) : await readProjectFile(file);
+      if (!blob) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function projectAssetStoresAreAvailable(envelope: ProjectSourceEnvelope, files: ProjectFileRecord[]) {
+  return await projectFileContentsAreAvailable(files) && await projectSourceLinkedAssetsAreAvailable(envelope, files);
+}
+
+async function deleteProjectSourceIntentBlob(intent: ProjectSourceIntakeIntent) {
+  if (!intent.fileId || !intent.storageMode) return true;
+  try {
+    return intent.storageMode === "browser-image" ? await deleteProjectImage(intent.fileId) : await deleteProjectFile(intent.fileId);
+  } catch {
+    return false;
+  }
+}
+
+async function rollbackProjectSourceIntent(intent: ProjectSourceIntakeIntent, expectedIntentRaw = JSON.stringify(intent)) {
+  const ownsCurrentValue = (key: string, previousValue: string | null, nextValue: string | null) => {
+    try {
+      const currentValue = window.localStorage.getItem(key);
+      return currentValue === previousValue || currentValue === nextValue;
+    } catch {
+      return false;
+    }
+  };
+  const intentIsStillOwned = () => {
+    try {
+      return window.localStorage.getItem(projectSourceIntakeIntentKey) === expectedIntentRaw;
+    } catch {
+      return false;
+    }
+  };
+  if (!intentIsStillOwned()) return false;
+  if (intent.fileId !== null && !ownsCurrentValue(projectFilesStorageKey, intent.previousFilesRaw, intent.nextFilesRaw)) return false;
+  if (!ownsCurrentValue(projectSourcesStorageKey, intent.previousSourcesRaw, intent.nextSourcesRaw)) return false;
+  if (!writeExactLocalStorageValue(projectSourcesStorageKey, intent.previousSourcesRaw)) return false;
+  if (!intentIsStillOwned() || intent.fileId !== null && !ownsCurrentValue(projectFilesStorageKey, intent.previousFilesRaw, intent.nextFilesRaw)) return false;
+  if (intent.fileId !== null && !writeExactLocalStorageValue(projectFilesStorageKey, intent.previousFilesRaw)) return false;
+  if (!intentIsStillOwned() || window.localStorage.getItem(projectSourcesStorageKey) !== intent.previousSourcesRaw || intent.fileId !== null && window.localStorage.getItem(projectFilesStorageKey) !== intent.previousFilesRaw) return false;
+  if (!await deleteProjectSourceIntentBlob(intent)) return false;
+  if (!intentIsStillOwned() || window.localStorage.getItem(projectSourcesStorageKey) !== intent.previousSourcesRaw || intent.fileId !== null && window.localStorage.getItem(projectFilesStorageKey) !== intent.previousFilesRaw) return false;
+  const rollbackFilesRaw = intent.fileId === null ? window.localStorage.getItem(projectFilesStorageKey) : intent.previousFilesRaw;
+  return clearProjectSourceIntentAtSnapshot(expectedIntentRaw, rollbackFilesRaw, intent.previousSourcesRaw);
+}
+
+async function recoverProjectSourceIntakeIntent() {
+  try {
+    const lockManager = window.navigator.locks;
+    if (!lockManager?.request) return false;
+    return await lockManager.request(projectAssetsWriteLockName, { mode: "exclusive" }, async () => {
+      const rawIntent = window.localStorage.getItem(projectSourceIntakeIntentKey);
+      if (rawIntent === null) return true;
+      const intent = parseProjectSourceIntent(rawIntent);
+      if (!intent) return false;
+      const committedMetadata = window.localStorage.getItem(projectFilesStorageKey) === intent.nextFilesRaw
+        && window.localStorage.getItem(projectSourcesStorageKey) === intent.nextSourcesRaw;
+      if (committedMetadata && await projectSourceIntentBlobMatches(intent)) {
+        return clearProjectSourceIntentAtSnapshot(rawIntent, intent.nextFilesRaw, intent.nextSourcesRaw);
+      }
+      return rollbackProjectSourceIntent(intent, rawIntent);
+    });
+  } catch {
+    return false;
+  }
+}
+
+async function commitProjectSourceIntake(project: BuilderProject, textContent: string, attachment: PendingProjectFile | null, expectedEnvelopeVersion: number): Promise<ProjectSourceMutationResult> {
+  const hasText = hasVisibleProjectTaskText(textContent);
+  if ((!hasText && !attachment) || textContent.length > 4000 || attachment && !attachment.blob) return { status: "invalid" };
+
+  let attachmentHash: string | null = null;
+  let attachmentIsImage = false;
+  if (attachment?.blob) {
+    const file = attachment.blob;
+    attachmentIsImage = isSupportedProjectImage(file);
+    const attachmentIsDocument = isSupportedProjectDocument(file);
+    if ((!attachmentIsImage && !attachmentIsDocument)
+      || file.name !== attachment.originalName
+      || file.size !== attachment.size
+      || (attachmentIsImage ? !hasCompatibleProjectImageMime(file.name, file.type) : !hasCompatibleProjectDocumentMime(file.name, file.type))) return { status: "invalid" };
+    try {
+      attachmentHash = await sha256ProjectSourceBlob(file);
+    } catch {
+      return { status: "write-failure" };
+    }
+  }
+
+  return withProjectSourceWriteLock(async () => {
+    try {
+      if (window.localStorage.getItem(projectSourceIntakeIntentKey) !== null) return { status: "read-failure" };
+      const previousFilesRaw = window.localStorage.getItem(projectFilesStorageKey);
+      const previousSourcesRaw = window.localStorage.getItem(projectSourcesStorageKey);
+      const latestSources = readStoredProjectSources();
+      if (latestSources.readError) return { status: "read-failure" };
+      if (latestSources.envelope.envelopeVersion !== expectedEnvelopeVersion) return { status: "version-conflict" };
+      const latestFiles = readStoredProjectFilesForMutation();
+      if (latestFiles.readError || !projectSourceAssetsMatchFiles(latestSources.envelope, latestFiles.records)) return { status: "read-failure" };
+      if (!await projectAssetStoresAreAvailable(latestSources.envelope, latestFiles.records)) return { status: "read-failure" };
+      if (window.localStorage.getItem(projectFilesStorageKey) !== previousFilesRaw
+        || window.localStorage.getItem(projectSourcesStorageKey) !== previousSourcesRaw) return { status: "version-conflict" };
+
+      const timestamp = nextProjectSourceTimestamp(latestSources.envelope.updatedAt);
+      const intakeId = `source-intake-${window.crypto.randomUUID()}`;
+      const nextRecords: ProjectSourceRecord[] = [];
+      if (hasText) {
+        nextRecords.push(createProjectSourceRecord({
+          id: `source-${window.crypto.randomUUID()}`,
+          intakeId,
+          projectId: project.id,
+          sourceType: "composer-text",
+          textContent,
+          assetRef: null,
+          contentHash: `sha256-${memoryCoreSha256(textContent)}`,
+          capturedAt: timestamp,
+        }));
+      }
+
+      let fileRecord: ProjectFileRecord | null = null;
+      if (attachment?.blob && attachmentHash) {
+        const canonicalDocumentMime = attachmentIsImage ? "" : projectDocumentCanonicalMime(attachment.originalName);
+        fileRecord = {
+          id: `file-${window.crypto.randomUUID()}`,
+          projectId: project.id,
+          displayName: attachment.displayName.trim() || attachment.originalName,
+          originalName: attachment.originalName,
+          mimeType: canonicalDocumentMime || attachment.mimeType || "application/octet-stream",
+          size: attachment.size,
+          category: attachmentIsImage ? "عکس" : attachment.category,
+          source: attachment.source,
+          status: "ثبت محلی",
+          version: 1,
+          projectStage: project.stage,
+          visibility: "خصوصی پروژه",
+          storageMode: attachmentIsImage ? "browser-image" : "browser-file",
+          sourceModifiedAt: attachment.sourceModifiedAt,
+          createdAt: timestamp,
+        };
+        nextRecords.push(createProjectSourceRecord({
+          id: `source-${window.crypto.randomUUID()}`,
+          intakeId,
+          projectId: project.id,
+          sourceType: attachmentIsImage ? "composer-photo" : "composer-file",
+          textContent: null,
+          assetRef: { kind: attachmentIsImage ? "project-photo" : "project-file", fileId: fileRecord.id, fileVersion: 1 },
+          contentHash: attachmentHash,
+          capturedAt: timestamp,
+        }));
+      }
+      const intake = createProjectSourceIntake(intakeId, project.id, nextRecords.map((record) => record.id), timestamp);
+      const nextEnvelope = parseProjectSourceEnvelope({
+        ...latestSources.envelope,
+        envelopeVersion: latestSources.envelope.envelopeVersion + 1,
+        records: [...latestSources.envelope.records, ...nextRecords],
+        intakes: [...latestSources.envelope.intakes, intake],
+        updatedAt: timestamp,
+      });
+      if (!nextEnvelope) return { status: "invalid" };
+
+      const nextFiles = fileRecord ? [...latestFiles.records, fileRecord] : latestFiles.records;
+      const nextFilesRaw = fileRecord ? JSON.stringify(nextFiles) : previousFilesRaw;
+      const nextSourcesRaw = JSON.stringify(nextEnvelope);
+      if (!projectSourceAssetsMatchFiles(nextEnvelope, nextFiles)) return { status: "read-failure" };
+      const intentBase = {
+        schemaVersion: 1,
+        id: intakeId,
+        previousFilesRaw,
+        nextFilesRaw,
+        previousSourcesRaw,
+        nextSourcesRaw,
+        fileId: fileRecord?.id ?? null,
+        storageMode: fileRecord?.storageMode === "browser-image" || fileRecord?.storageMode === "browser-file" ? fileRecord.storageMode : null,
+        contentHash: fileRecord ? attachmentHash : null,
+        createdAt: timestamp,
+      } satisfies Omit<ProjectSourceIntakeIntent, "intentHash">;
+      const intent = { ...intentBase, intentHash: projectSourceIntentHash(intentBase) } satisfies ProjectSourceIntakeIntent;
+      const intentRaw = JSON.stringify(intent);
+      if (!writeExactLocalStorageValue(projectSourceIntakeIntentKey, intentRaw)) return { status: "write-failure" };
+
+      if (fileRecord && attachment?.blob) {
+        try {
+          if (fileRecord.storageMode === "browser-image") await writeProjectImage(fileRecord, attachment.blob);
+          else await writeProjectFile(fileRecord, attachment.blob);
+          if (!await projectSourceIntentBlobMatches(intent)) throw new Error("Stored source asset failed verification");
+        } catch {
+          return { status: await rollbackProjectSourceIntent(intent) ? "write-failure" : "read-failure" };
+        }
+      }
+
+      const currentSourcesRaw = window.localStorage.getItem(projectSourcesStorageKey);
+      const currentFilesRaw = window.localStorage.getItem(projectFilesStorageKey);
+      if (currentSourcesRaw !== previousSourcesRaw || currentFilesRaw !== previousFilesRaw) {
+        const exactIntentWasCommitted = currentSourcesRaw === nextSourcesRaw
+          && currentFilesRaw === nextFilesRaw
+          && window.localStorage.getItem(projectSourceIntakeIntentKey) === intentRaw
+          && await projectSourceIntentBlobMatches(intent);
+        if (!exactIntentWasCommitted) return { status: "read-failure" };
+        const externallyVerifiedSources = readStoredProjectSources();
+        const externallyVerifiedFiles = readStoredProjectFilesForMutation();
+        if (externallyVerifiedSources.readError
+          || externallyVerifiedFiles.readError
+          || !await projectAssetStoresAreAvailable(externallyVerifiedSources.envelope, externallyVerifiedFiles.records)
+          || window.localStorage.getItem(projectSourceIntakeIntentKey) !== intentRaw
+          || window.localStorage.getItem(projectSourcesStorageKey) !== nextSourcesRaw
+          || window.localStorage.getItem(projectFilesStorageKey) !== nextFilesRaw
+          || !clearProjectSourceIntentAtSnapshot(intentRaw, nextFilesRaw, nextSourcesRaw)) return { status: "read-failure" };
+        return { status: "created", envelope: externallyVerifiedSources.envelope, files: externallyVerifiedFiles.records };
+      }
+      if (fileRecord && !writeExactLocalStorageValue(projectFilesStorageKey, nextFilesRaw)) return { status: await rollbackProjectSourceIntent(intent) ? "write-failure" : "read-failure" };
+      if (!writeExactLocalStorageValue(projectSourcesStorageKey, nextSourcesRaw)) return { status: await rollbackProjectSourceIntent(intent) ? "write-failure" : "read-failure" };
+      const verifiedSources = readStoredProjectSources();
+      const verifiedFiles = readStoredProjectFiles();
+      if (verifiedSources.readError
+        || verifiedSources.envelope.envelopeVersion !== nextEnvelope.envelopeVersion
+        || verifiedFiles.readError
+        || !projectSourceAssetsMatchFiles(verifiedSources.envelope, verifiedFiles.records)
+        || !await projectAssetStoresAreAvailable(verifiedSources.envelope, verifiedFiles.records)
+        || window.localStorage.getItem(projectSourceIntakeIntentKey) !== intentRaw
+        || window.localStorage.getItem(projectFilesStorageKey) !== nextFilesRaw
+        || window.localStorage.getItem(projectSourcesStorageKey) !== nextSourcesRaw) return { status: await rollbackProjectSourceIntent(intent) ? "write-failure" : "read-failure" };
+      if (!clearProjectSourceIntentAtSnapshot(intentRaw, nextFilesRaw, nextSourcesRaw)) return { status: "read-failure" };
+      return { status: "created", envelope: verifiedSources.envelope, files: nextFiles };
+    } catch {
+      return { status: "write-failure" };
+    }
+  });
 }
 
 function isValidProjectFileDate(value: string) {
@@ -9686,11 +10986,19 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [draftsByProject, setDraftsByProject] = useState<Record<string, string>>({});
-  const [messagesByProject, setMessagesByProject] = useState<Record<string, ChatMessage[]>>({});
+  const [attachmentsByProject, setAttachmentsByProject] = useState<Record<string, PendingProjectFile | null>>({});
+  const attachmentsByProjectRef = useRef(attachmentsByProject);
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  const sourceDetailTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [composerError, setComposerError] = useState("");
+  const [composerSending, setComposerSending] = useState(false);
+  const composerSendingRef = useRef(false);
   const [initialProjectFiles] = useState<LocalRecordsReadResult<ProjectFileRecord>>(readStoredProjectFiles);
+  const [initialProjectSources] = useState<ProjectSourceReadResult>(() => validateProjectSourceAggregate(readStoredProjectSources(), initialProjectFiles));
   const [initialProjectMemories] = useState<ProjectMemoryReadResult>(() => ({ envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false }));
   const [initialProjectTasks] = useState<LocalRecordsReadResult<ProjectTaskRecord>>(readStoredProjectTasks);
   const [initialProjectBackbone] = useState<ProjectBackboneReadResult>(readStoredProjectBackbone);
+  const [initialProjectTaskMonitors] = useState<ProjectTaskMonitorReadResult>(() => validateProjectTaskMonitorAggregate(readStoredProjectTaskMonitors(), initialProjectBackbone));
   const [initialProjectPurchaseRequests] = useState<LocalRecordsReadResult<ProjectPurchaseRequestRecord>>(readStoredProjectPurchaseRequests);
   const [initialProjectApprovals] = useState<LocalRecordsReadResult<ProjectApprovalRecord>>(() => readStoredProjectApprovals(initialProjectPurchaseRequests));
   const [initialProjectSupplierContacts] = useState<LocalRecordsReadResult<SupplierContactRecord>>(readStoredProjectSupplierContacts);
@@ -9710,6 +11018,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const projectMemories = projectMemoryEnvelope.records;
   const [projectTasks, setProjectTasks] = useState<ProjectTaskRecord[]>(initialProjectTasks.records);
   const [projectBackbone, setProjectBackbone] = useState<ProjectBackboneEnvelope>(initialProjectBackbone.envelope);
+  const [projectTaskMonitorEnvelope, setProjectTaskMonitorEnvelope] = useState<ProjectTaskMonitorEnvelope>(initialProjectTaskMonitors.envelope);
   const [projectPurchaseRequests, setProjectPurchaseRequests] = useState<ProjectPurchaseRequestRecord[]>(initialProjectPurchaseRequests.records);
   const [projectApprovals, setProjectApprovals] = useState<ProjectApprovalRecord[]>(initialProjectApprovals.records);
   const [projectSupplierContacts, setProjectSupplierContacts] = useState<SupplierContactRecord[]>(initialProjectSupplierContacts.records);
@@ -9724,10 +11033,18 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [builderManualNegotiationResponses, setBuilderManualNegotiationResponses] = useState<BuilderManualNegotiationResponseRecord[]>(initialBuilderManualNegotiationResponses.records);
   const [builderManualNegotiationResponseReviews, setBuilderManualNegotiationResponseReviews] = useState<BuilderManualNegotiationResponseReviewRecord[]>(initialBuilderManualNegotiationResponseReviews.records);
   const [builderManualNegotiationConditionImpacts, setBuilderManualNegotiationConditionImpacts] = useState<BuilderManualNegotiationConditionImpactRecord[]>(initialBuilderManualNegotiationConditionImpacts.records);
-  const [projectFilesReadError] = useState(initialProjectFiles.readError);
+  const [projectSources, setProjectSources] = useState<ProjectSourceEnvelope>(initialProjectSources.envelope);
+  const [projectFilesReadError, setProjectFilesReadError] = useState(initialProjectFiles.readError);
+  const [projectSourcesReadError, setProjectSourcesReadError] = useState(initialProjectSources.readError);
+  const [sourceAssetValidationPending, setSourceAssetValidationPending] = useState(() => !initialProjectSources.readError && initialProjectSources.envelope.records.some((source) => source.assetRef !== null));
+  const [sourceRecoveryPending, setSourceRecoveryPending] = useState(() => {
+    try { return window.localStorage.getItem(projectSourceIntakeIntentKey) !== null; } catch { return true; }
+  });
+  const [sourceRecoveryBlocked, setSourceRecoveryBlocked] = useState(false);
   const [projectMemoriesReadError, setProjectMemoriesReadError] = useState(initialProjectMemories.readError);
   const [projectTasksReadError] = useState(initialProjectTasks.readError);
   const [projectBackboneReadError, setProjectBackboneReadError] = useState(initialProjectBackbone.readError);
+  const [projectTaskMonitorsReadError, setProjectTaskMonitorsReadError] = useState(initialProjectTaskMonitors.readError);
   const [projectPurchaseRequestsReadError, setProjectPurchaseRequestsReadError] = useState(initialProjectPurchaseRequests.readError);
   const [projectApprovalsReadError] = useState(initialProjectApprovals.readError);
   const [projectSupplierContactsReadError] = useState(initialProjectSupplierContacts.readError);
@@ -9752,12 +11069,24 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     }
   });
   const draft = draftsByProject[activeProject.id] ?? "";
-  const messages = messagesByProject[activeProject.id] ?? [];
+  const pendingAttachment = attachmentsByProject[activeProject.id] ?? null;
+  const messages = useMemo<ChatMessage[]>(() => projectSources.intakes.filter((intake) => intake.projectId === activeProject.id).flatMap((intake) => {
+    const sources = intake.sourceIds.map((sourceId) => projectSources.records.find((record) => record.id === sourceId)).filter((record): record is ProjectSourceRecord => Boolean(record));
+    const text = sources.find((source) => source.sourceType === "composer-text")?.textContent ?? "";
+    return [
+      { id: intake.id, role: "user", text, sourceIds: intake.sourceIds },
+      { id: `${intake.id}:assistant`, role: "assistant", text: `برای «${activeProject.name}» ثبت شد. منبع محلی نگه‌داری شد؛ هنوز خواندن فایل، OCR یا تحلیل مدل انجام نشده است.`, sourceIds: [] },
+    ];
+  }), [activeProject.id, activeProject.name, projectSources]);
   const setDraft = (nextDraft: string) => {
     setDraftsByProject((current) => ({ ...current, [activeProject.id]: nextDraft }));
   };
-  const updateMessages = (updater: (current: ChatMessage[]) => ChatMessage[]) => {
-    setMessagesByProject((current) => ({ ...current, [activeProject.id]: updater(current[activeProject.id] ?? []) }));
+  const setPendingAttachment = (nextAttachment: PendingProjectFile | null) => {
+    setAttachmentsByProject((current) => {
+      const previousAttachment = current[activeProject.id];
+      if (previousAttachment?.previewUrl && previousAttachment.previewUrl !== nextAttachment?.previewUrl) URL.revokeObjectURL(previousAttachment.previewUrl);
+      return { ...current, [activeProject.id]: nextAttachment };
+    });
   };
 
   const openNewProject = () => {
@@ -9773,38 +11102,125 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   }, []);
 
   useEffect(() => {
+    attachmentsByProjectRef.current = attachmentsByProject;
+  }, [attachmentsByProject]);
+
+  useEffect(() => () => {
+    Object.values(attachmentsByProjectRef.current).forEach((attachment) => {
+      if (attachment?.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!sourceRecoveryPending) return;
+    let disposed = false;
+    const recover = async () => {
+      const recovered = await recoverProjectSourceIntakeIntent();
+      if (disposed) return;
+      if (!recovered) {
+        setSourceRecoveryPending(false);
+        setSourceRecoveryBlocked(true);
+        return;
+      }
+      const nextFiles = readStoredProjectFiles();
+      const nextSources = validateProjectSourceAggregate(readStoredProjectSources(), nextFiles);
+      setProjectSources(nextSources.envelope);
+      setProjectSourcesReadError(nextSources.readError);
+      setProjectFiles(nextFiles.records);
+      setProjectFilesReadError(nextFiles.readError);
+      setSourceAssetValidationPending(!nextSources.readError && nextSources.envelope.records.some((source) => source.assetRef !== null));
+      setSourceRecoveryPending(false);
+      setSourceRecoveryBlocked(nextSources.readError);
+    };
+    void recover();
+    return () => { disposed = true; };
+  }, [sourceRecoveryPending]);
+
+  useEffect(() => {
     setProjectSearchQuery("");
     setFocusedFileId(null);
     setFocusedMemoryId(null);
+    setSelectedSourceId(null);
+    sourceDetailTriggerRef.current = null;
+    setComposerError("");
   }, [activeProject.id]);
 
   useEffect(() => {
+    if (sourceRecoveryPending || sourceRecoveryBlocked || projectSourcesReadError) {
+      setSourceAssetValidationPending(false);
+      return;
+    }
+    if (!projectSources.records.some((source) => source.assetRef !== null)) {
+      setSourceAssetValidationPending(false);
+      return;
+    }
+    let disposed = false;
+    setSourceAssetValidationPending(true);
+    const verifyAssets = async () => {
+      const available = await projectSourceLinkedAssetsAreAvailable(projectSources, projectFiles);
+      if (disposed) return;
+      setSourceAssetValidationPending(false);
+      if (!available) setProjectSourcesReadError(true);
+    };
+    void verifyAssets();
+    return () => { disposed = true; };
+  }, [projectFiles, projectSources, projectSourcesReadError, sourceRecoveryBlocked, sourceRecoveryPending]);
+
+  useEffect(() => {
+    if (projectSourcesReadError || sourceRecoveryPending || sourceRecoveryBlocked || sourceAssetValidationPending) return;
+    if (!window.navigator.locks?.request) return;
     let disposed = false;
     const reconcileMissingFileContent = async () => {
-      const candidates = projectFiles.filter((file) => file.storageMode === "browser-image" || file.storageMode === "browser-file");
-      const missingIds = new Set((await Promise.all(candidates.map(async (file) => {
-        try {
-          const blob = file.storageMode === "browser-image" ? await readProjectImage(file) : await readProjectFile(file);
-          return blob ? "" : file.id;
-        } catch {
-          return "";
+      const result = await withProjectAssetsWriteLock<"ok" | "error" | "disposed">("error", async () => {
+        const previousSourcesRaw = window.localStorage.getItem(projectSourcesStorageKey);
+        const previousFilesRaw = window.localStorage.getItem(projectFilesStorageKey);
+        if (window.localStorage.getItem(projectSourceIntakeIntentKey) !== null) return "error";
+        const latestSources = readStoredProjectSources();
+        const latestFiles = readStoredProjectFilesForMutation();
+        if (latestSources.readError || latestFiles.readError || !await projectSourceLinkedAssetsAreAvailable(latestSources.envelope, latestFiles.records)) return "error";
+        const sourceFileIds = new Set(latestSources.envelope.records.flatMap((source) => source.assetRef ? [source.assetRef.fileId] : []));
+        const candidates = latestFiles.records.filter((file) => file.storageMode === "browser-image" || file.storageMode === "browser-file");
+        const checks = await Promise.all(candidates.map(async (file) => {
+          try {
+            const blob = file.storageMode === "browser-image" ? await readProjectImage(file) : await readProjectFile(file);
+            return { id: file.id, missing: !blob && !sourceFileIds.has(file.id), readError: false };
+          } catch {
+            return { id: file.id, missing: false, readError: true };
+          }
+        }));
+        if (checks.some((check) => check.readError)) return "error";
+        const missingIds = new Set(checks.filter((check) => check.missing).map((check) => check.id));
+        if (disposed) return "disposed";
+        if (missingIds.size === 0) return "ok";
+        const reconciledFiles = latestFiles.records.filter((file) => !missingIds.has(file.id));
+        if (window.localStorage.getItem(projectSourceIntakeIntentKey) !== null
+          || window.localStorage.getItem(projectSourcesStorageKey) !== previousSourcesRaw
+          || window.localStorage.getItem(projectFilesStorageKey) !== previousFilesRaw) return "error";
+        const reconciledFilesRaw = reconciledFiles.length === 0 ? null : JSON.stringify(reconciledFiles);
+        if (!writeExactLocalStorageValue(projectFilesStorageKey, reconciledFilesRaw)
+          && window.localStorage.getItem(projectFilesStorageKey) !== reconciledFilesRaw) return "error";
+        const verifiedSources = readStoredProjectSources();
+        const verifiedFiles = readStoredProjectFilesForMutation();
+        const verifiedAssets = !verifiedSources.readError && !verifiedFiles.readError
+          && await projectAssetStoresAreAvailable(verifiedSources.envelope, verifiedFiles.records);
+        const finalSnapshotMatches = window.localStorage.getItem(projectSourceIntakeIntentKey) === null
+          && window.localStorage.getItem(projectSourcesStorageKey) === previousSourcesRaw
+          && window.localStorage.getItem(projectFilesStorageKey) === reconciledFilesRaw;
+        if (!verifiedAssets || !finalSnapshotMatches) {
+          if (finalSnapshotMatches) writeExactLocalStorageValue(projectFilesStorageKey, previousFilesRaw);
+          return "error";
         }
-      }))).filter(Boolean));
-      if (disposed || missingIds.size === 0) return;
-      setProjectFiles((currentFiles) => {
-        const reconciledFiles = currentFiles.filter((file) => !missingIds.has(file.id));
-        try {
-          if (reconciledFiles.length === 0) window.localStorage.removeItem(projectFilesStorageKey);
-          else window.localStorage.setItem(projectFilesStorageKey, JSON.stringify(reconciledFiles));
-        } catch {
-          // Keep broken records hidden in this session and retry reconciliation on the next load.
-        }
-        return reconciledFiles;
+        if (!disposed) setProjectFiles(reconciledFiles);
+        return disposed ? "disposed" : "ok";
       });
+      if (!disposed && result === "error") {
+        setProjectFilesReadError(true);
+        setProjectSourcesReadError(true);
+      }
     };
     void reconcileMissingFileContent();
     return () => { disposed = true; };
-  }, [projectFiles]);
+  }, [projectFiles, projectSources.records, projectSourcesReadError, sourceAssetValidationPending, sourceRecoveryBlocked, sourceRecoveryPending]);
 
   useLayoutEffect(() => {
     if (view !== "chat") return;
@@ -9863,6 +11279,19 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     () => activeProjectFiles.filter((file) => !isProjectImage(file)),
     [activeProjectFiles],
   );
+  const activeProjectSources = useMemo(
+    () => projectSources.records.filter((source) => source.projectId === activeProject.id && source.scopeId === activeProject.id),
+    [activeProject.id, projectSources.records],
+  );
+  const selectedSource = activeProjectSources.find((source) => source.id === selectedSourceId) ?? null;
+  const selectedSourceFile = selectedSource?.assetRef
+    ? activeProjectFiles.find((file) => file.id === selectedSource.assetRef?.fileId && file.version === selectedSource.assetRef.fileVersion) ?? null
+    : null;
+  const sourceStorageLocked = projectFilesReadError || projectSourcesReadError || sourceRecoveryPending || sourceRecoveryBlocked || sourceAssetValidationPending;
+  const closeSourceDetail = () => {
+    setSelectedSourceId(null);
+    window.requestAnimationFrame(() => sourceDetailTriggerRef.current?.focus());
+  };
   const activeProjectMemoryRecords = useMemo(
     () => projectMemories.filter((memory) => memory.scopeType === "project_private" && memory.scopeId === activeProject.id),
     [activeProject.id, projectMemories],
@@ -9886,6 +11315,14 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const activeProjectBackbone = useMemo(
     () => projectBackboneGraphForProject(projectBackbone, activeProject.id),
     [activeProject.id, projectBackbone],
+  );
+  const activeProjectTaskMonitors = useMemo(
+    () => projectTaskMonitorEnvelope.monitors.filter((monitor) => monitor.projectId === activeProject.id),
+    [activeProject.id, projectTaskMonitorEnvelope.monitors],
+  );
+  const activeProjectTaskMonitorRuns = useMemo(
+    () => projectTaskMonitorEnvelope.runs.filter((run) => run.projectId === activeProject.id),
+    [activeProject.id, projectTaskMonitorEnvelope.runs],
   );
   const activeProjectPurchaseRequests = useMemo(
     () => projectPurchaseRequests.filter((request) => request.projectId === activeProject.id),
@@ -9966,13 +11403,89 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return true;
   };
 
-  const sendMessage = () => {
-    const text = draft.trim();
-    if (!text) return;
-    const nextId = Date.now();
-    updateMessages((current) => [...current, { id: nextId, role: "user", text }, { id: nextId + 1, role: "assistant", text: `برای «${activeProject.name}» گرفتم. در نسخهٔ بعد این درخواست به منابع پروژه و ابزارهای تخصصی چیدا متصل می‌شود.` }]);
-    setDraft("");
-    keyboard.hide();
+  const chooseComposerAttachment = (file: File | undefined, source: ProjectFileRecord["source"]) => {
+    setComposerError("");
+    if (!file) return;
+    const isImage = isSupportedProjectImage(file);
+    const isDocument = isSupportedProjectDocument(file);
+    if (!isImage && !isDocument) {
+      setComposerError(projectDocumentExtension(file.name) || projectImageExtension(file.name)
+        ? "پسوند و نوع واقعی فایل با هم هم‌خوان نیستند."
+        : "این فایل پشتیبانی نمی‌شود. عکس، PDF، صفحه‌گسترده یا سند متنی انتخاب کن.");
+      onOpenSheet(null);
+      return;
+    }
+    setPendingAttachment({
+      displayName: file.name,
+      originalName: file.name,
+      mimeType: isImage ? file.type || "application/octet-stream" : projectDocumentCanonicalMime(file.name),
+      size: file.size,
+      category: isImage ? "عکس" : inferProjectFileCategory(file),
+      source,
+      sourceModifiedAt: file.lastModified ? new Date(file.lastModified).toISOString() : null,
+      blob: file,
+      previewUrl: isImage && isBrowserPreviewableProjectImage({ mimeType: file.type, originalName: file.name }) ? URL.createObjectURL(file) : null,
+    });
+    onOpenSheet(null);
+  };
+
+  const sendMessage = async () => {
+    if (composerSendingRef.current || sourceStorageLocked || (!hasVisibleProjectTaskText(draft) && !pendingAttachment)) return;
+    if (pendingAttachment && projectFilesReadError) {
+      setComposerError("شناسنامهٔ فایل‌ها کامل خوانده نشد؛ برای جلوگیری از بازنویسی، پیوست ثبت نشد.");
+      return;
+    }
+    const submittedProject = activeProject;
+    const submittedDraft = draft;
+    const submittedAttachment = pendingAttachment;
+    const submittedEnvelopeVersion = projectSources.envelopeVersion;
+    composerSendingRef.current = true;
+    setComposerSending(true);
+    setComposerError("");
+    const result = await commitProjectSourceIntake(submittedProject, submittedDraft, submittedAttachment, submittedEnvelopeVersion);
+    if (result.status === "created") {
+      setProjectSources(result.envelope);
+      setProjectFiles(result.files);
+      setDraftsByProject((current) => (current[submittedProject.id] ?? "") === submittedDraft
+        ? { ...current, [submittedProject.id]: "" }
+        : current);
+      setAttachmentsByProject((current) => {
+        const currentAttachment = current[submittedProject.id] ?? null;
+        if (currentAttachment !== submittedAttachment) return current;
+        if (currentAttachment?.previewUrl) URL.revokeObjectURL(currentAttachment.previewUrl);
+        return { ...current, [submittedProject.id]: null };
+      });
+      keyboard.hide();
+    } else if (result.status === "version-conflict") {
+      const latestFiles = readStoredProjectFiles();
+      const latestSources = validateProjectSourceAggregate(readStoredProjectSources(), latestFiles);
+      if (!latestSources.readError) {
+        setProjectSources(latestSources.envelope);
+        setProjectFiles(latestFiles.records);
+        setSourceAssetValidationPending(latestSources.envelope.records.some((source) => source.assetRef !== null));
+      }
+      setProjectSourcesReadError(latestSources.readError);
+      setProjectFilesReadError(latestFiles.readError);
+      setComposerError("منابع پروژه در جای دیگری تغییر کرده بود. نسخهٔ تازه بارگذاری شد؛ پیش‌نویس را دوباره ارسال کن.");
+    } else {
+      let hasPendingIntent = false;
+      try { hasPendingIntent = window.localStorage.getItem(projectSourceIntakeIntentKey) !== null; } catch { hasPendingIntent = true; }
+      if (hasPendingIntent) setSourceRecoveryBlocked(true);
+      if (result.status === "read-failure" && !hasPendingIntent) {
+        const latestFiles = readStoredProjectFiles();
+        setProjectFilesReadError(latestFiles.readError);
+        setProjectSourcesReadError(true);
+      }
+      setComposerError(result.status === "lock-unavailable"
+        ? "قفل امن مرورگر در دسترس نیست؛ برای جلوگیری از بازنویسی، چیزی ثبت نشد."
+        : result.status === "read-failure"
+          ? hasPendingIntent ? "ثبت کامل نشد و بازیابی امن لازم است. صفحه را دوباره بارگذاری کن؛ پیش‌نویس فعلی دست‌نخورده است." : "منابع محلی خوانا نیستند؛ برای جلوگیری از بازنویسی، چیزی ثبت نشد."
+          : result.status === "invalid"
+            ? "متن یا پیوست معتبر نیست؛ پیش‌نویس را بررسی کن."
+            : "پیام و منبع محلی ذخیره نشدند؛ پیش‌نویس برای تلاش دوباره نگه داشته شد.");
+    }
+    composerSendingRef.current = false;
+    setComposerSending(false);
   };
 
   const openProjectSpace = (projectId: string) => {
@@ -10111,122 +11624,219 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   };
 
   const writeProjectFilesMetadata = (nextFiles: ProjectFileRecord[]) => {
+    return writeExactLocalStorageValue(projectFilesStorageKey, nextFiles.length === 0 ? null : JSON.stringify(nextFiles));
+  };
+  const projectAssetSnapshotIsCurrent = (filesRaw: string | null, sourcesRaw: string | null) => {
     try {
-      window.localStorage.setItem(projectFilesStorageKey, JSON.stringify(nextFiles));
-      return true;
+      return window.localStorage.getItem(projectSourceIntakeIntentKey) === null
+        && window.localStorage.getItem(projectFilesStorageKey) === filesRaw
+        && window.localStorage.getItem(projectSourcesStorageKey) === sourcesRaw;
     } catch {
       return false;
     }
-  };
-
-  const persistProjectFiles = (nextFiles: ProjectFileRecord[]) => {
-    if (projectFilesReadError) return false;
-    if (!writeProjectFilesMetadata(nextFiles)) return false;
-    setProjectFiles(nextFiles);
-    return true;
   };
 
   const registerProjectFile = async (pendingFile: PendingProjectFile) => {
-    if (projectFilesReadError) return false;
+    if (projectFilesReadError || sourceStorageLocked) return false;
     const isImage = isProjectImage(pendingFile);
     const canonicalDocumentMime = isImage ? "" : projectDocumentCanonicalMime(pendingFile.originalName);
     if (!isImage && (!canonicalDocumentMime || !hasCompatibleProjectDocumentMime(pendingFile.originalName, pendingFile.mimeType))) return false;
-    const createdAt = new Date().toISOString();
-    const record = {
-      id: `file-${window.crypto.randomUUID()}`,
-      projectId: activeProject.id,
-      displayName: pendingFile.displayName.trim() || pendingFile.originalName,
-      originalName: pendingFile.originalName,
-      mimeType: canonicalDocumentMime || pendingFile.mimeType,
-      size: pendingFile.size,
-      category: pendingFile.category,
-      source: pendingFile.source,
-      status: "ثبت محلی",
-      version: 1,
-      projectStage: activeProject.stage,
-      visibility: "خصوصی پروژه",
-      storageMode: pendingFile.blob
-        ? isImage ? "browser-image" : "browser-file"
-        : "metadata-only",
-      sourceModifiedAt: pendingFile.sourceModifiedAt,
-      createdAt,
-    } satisfies ProjectFileRecord;
-
-    const nextFiles = [...projectFiles, record];
-    let previousMetadata: string | null;
-    try {
-      previousMetadata = window.localStorage.getItem(projectFilesStorageKey);
-    } catch {
-      return false;
-    }
-    if (!writeProjectFilesMetadata(nextFiles)) return false;
-
-    if (pendingFile.blob) {
+    return withProjectAssetsWriteLock(false, async () => {
       try {
-        if (record.storageMode === "browser-image") await writeProjectImage(record, pendingFile.blob);
-        else if (record.storageMode === "browser-file") await writeProjectFile(record, pendingFile.blob);
-      } catch {
-        try {
-          if (previousMetadata === null) window.localStorage.removeItem(projectFilesStorageKey);
-          else window.localStorage.setItem(projectFilesStorageKey, previousMetadata);
-        } catch {
-          // The in-memory list remains unchanged, so the current session never claims a successful registration.
+        const previousMetadata = window.localStorage.getItem(projectFilesStorageKey);
+        const previousSourcesRaw = window.localStorage.getItem(projectSourcesStorageKey);
+        if (window.localStorage.getItem(projectSourceIntakeIntentKey) !== null) return false;
+        const latestFiles = readStoredProjectFilesForMutation();
+        const latestSources = readStoredProjectSources();
+        if (latestFiles.readError || latestSources.readError || !await projectAssetStoresAreAvailable(latestSources.envelope, latestFiles.records)) return false;
+        if (!projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) return false;
+        const record = {
+          id: `file-${window.crypto.randomUUID()}`,
+          projectId: activeProject.id,
+          displayName: pendingFile.displayName.trim() || pendingFile.originalName,
+          originalName: pendingFile.originalName,
+          mimeType: canonicalDocumentMime || pendingFile.mimeType,
+          size: pendingFile.size,
+          category: pendingFile.category,
+          source: pendingFile.source,
+          status: "ثبت محلی",
+          version: 1,
+          projectStage: activeProject.stage,
+          visibility: "خصوصی پروژه",
+          storageMode: pendingFile.blob
+            ? isImage ? "browser-image" : "browser-file"
+            : "metadata-only",
+          sourceModifiedAt: pendingFile.sourceModifiedAt,
+          createdAt: new Date().toISOString(),
+        } satisfies ProjectFileRecord;
+        const nextFiles = [...latestFiles.records, record];
+        const nextMetadata = JSON.stringify(nextFiles);
+        const deleteUncommittedBlob = async () => {
+          if (record.storageMode === "browser-image") return deleteProjectImage(record.id).catch(() => false);
+          if (record.storageMode === "browser-file") return deleteProjectFile(record.id).catch(() => false);
+          return true;
+        };
+        if (pendingFile.blob) {
+          try {
+            const expectedHash = await sha256ProjectSourceBlob(pendingFile.blob);
+            if (record.storageMode === "browser-image") await writeProjectImage(record, pendingFile.blob);
+            else if (record.storageMode === "browser-file") await writeProjectFile(record, pendingFile.blob);
+            const storedBlob = record.storageMode === "browser-image" ? await readProjectImage(record) : await readProjectFile(record);
+            if (!storedBlob || await sha256ProjectSourceBlob(storedBlob) !== expectedHash) throw new Error("Stored project asset failed verification");
+          } catch {
+            if (projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) await deleteUncommittedBlob();
+            else {
+              setProjectFilesReadError(true);
+              setProjectSourcesReadError(true);
+            }
+            return false;
+          }
         }
+        if (!projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) {
+          setProjectFilesReadError(true);
+          setProjectSourcesReadError(true);
+          return false;
+        }
+        if (!writeExactLocalStorageValue(projectFilesStorageKey, nextMetadata) && !projectAssetSnapshotIsCurrent(nextMetadata, previousSourcesRaw)) {
+          if (projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) await deleteUncommittedBlob();
+          else {
+            setProjectFilesReadError(true);
+            setProjectSourcesReadError(true);
+          }
+          return false;
+        }
+        const verifiedFiles = readStoredProjectFilesForMutation();
+        const verifiedSources = readStoredProjectSources();
+        const verifiedAssets = !verifiedFiles.readError && !verifiedSources.readError
+          && await projectAssetStoresAreAvailable(verifiedSources.envelope, verifiedFiles.records);
+        if (!verifiedAssets || !projectAssetSnapshotIsCurrent(nextMetadata, previousSourcesRaw)) {
+          const canRollback = projectAssetSnapshotIsCurrent(nextMetadata, previousSourcesRaw);
+          const metadataRolledBack = canRollback && writeExactLocalStorageValue(projectFilesStorageKey, previousMetadata);
+          if (metadataRolledBack && projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) await deleteUncommittedBlob();
+          setProjectFilesReadError(true);
+          setProjectSourcesReadError(true);
+          return false;
+        }
+        setProjectFiles(nextFiles);
+        return true;
+      } catch {
         return false;
       }
-    }
-
-    setProjectFiles(nextFiles);
-    return true;
+    });
   };
 
   const restoreProjectFileContent = async (fileId: string, file: File) => {
-    if (projectFilesReadError) return false;
-    const currentRecord = projectFiles.find((record) => record.id === fileId && record.projectId === activeProject.id);
-    if (
-      !currentRecord
-      || currentRecord.storageMode !== "metadata-only"
-      || isProjectImage(currentRecord)
-      || file.name !== currentRecord.originalName
-      || file.size !== currentRecord.size
-      || !isSupportedProjectDocument(file)
-    ) return false;
+    if (projectFilesReadError || sourceStorageLocked || !isSupportedProjectDocument(file)) return false;
     const canonicalMime = projectDocumentCanonicalMime(file.name);
     if (!canonicalMime) return false;
-    const restoredRecord = {
-      ...currentRecord,
-      mimeType: canonicalMime,
-      storageMode: "browser-file",
-      sourceModifiedAt: file.lastModified ? new Date(file.lastModified).toISOString() : currentRecord.sourceModifiedAt,
-    } satisfies ProjectFileRecord;
-    const nextFiles = projectFiles.map((record) => record.id === currentRecord.id ? restoredRecord : record);
-    let previousMetadata: string | null;
-    try {
-      previousMetadata = window.localStorage.getItem(projectFilesStorageKey);
-    } catch {
-      return false;
-    }
-    if (!writeProjectFilesMetadata(nextFiles)) return false;
-    try {
-      await writeProjectFile(restoredRecord, file);
-    } catch {
+    return withProjectAssetsWriteLock(false, async () => {
       try {
-        if (previousMetadata === null) window.localStorage.removeItem(projectFilesStorageKey);
-        else window.localStorage.setItem(projectFilesStorageKey, previousMetadata);
+        const previousMetadata = window.localStorage.getItem(projectFilesStorageKey);
+        const previousSourcesRaw = window.localStorage.getItem(projectSourcesStorageKey);
+        if (window.localStorage.getItem(projectSourceIntakeIntentKey) !== null) return false;
+        const latestFiles = readStoredProjectFilesForMutation();
+        const latestSources = readStoredProjectSources();
+        if (latestFiles.readError || latestSources.readError || !await projectAssetStoresAreAvailable(latestSources.envelope, latestFiles.records)) return false;
+        const currentRecord = latestFiles.records.find((record) => record.id === fileId && record.projectId === activeProject.id);
+        if (!currentRecord
+          || currentRecord.storageMode !== "metadata-only"
+          || isProjectImage(currentRecord)
+          || file.name !== currentRecord.originalName
+          || file.size !== currentRecord.size) return false;
+        if (!projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) return false;
+        const restoredRecord = {
+          ...currentRecord,
+          mimeType: canonicalMime,
+          storageMode: "browser-file",
+          sourceModifiedAt: file.lastModified ? new Date(file.lastModified).toISOString() : currentRecord.sourceModifiedAt,
+        } satisfies ProjectFileRecord;
+        const nextFiles = latestFiles.records.map((record) => record.id === currentRecord.id ? restoredRecord : record);
+        const nextMetadata = JSON.stringify(nextFiles);
+        try {
+          const expectedHash = await sha256ProjectSourceBlob(file);
+          await writeProjectFile(restoredRecord, file);
+          const storedBlob = await readProjectFile(restoredRecord);
+          if (!storedBlob || await sha256ProjectSourceBlob(storedBlob) !== expectedHash) throw new Error("Restored project file failed verification");
+        } catch {
+          if (projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) await deleteProjectFile(restoredRecord.id).catch(() => false);
+          else {
+            setProjectFilesReadError(true);
+            setProjectSourcesReadError(true);
+          }
+          return false;
+        }
+        if (!projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) {
+          setProjectFilesReadError(true);
+          setProjectSourcesReadError(true);
+          return false;
+        }
+        if (!writeExactLocalStorageValue(projectFilesStorageKey, nextMetadata) && !projectAssetSnapshotIsCurrent(nextMetadata, previousSourcesRaw)) {
+          if (projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) await deleteProjectFile(restoredRecord.id).catch(() => false);
+          else {
+            setProjectFilesReadError(true);
+            setProjectSourcesReadError(true);
+          }
+          return false;
+        }
+        const verifiedFiles = readStoredProjectFilesForMutation();
+        const verifiedSources = readStoredProjectSources();
+        const verifiedAssets = !verifiedFiles.readError && !verifiedSources.readError
+          && await projectAssetStoresAreAvailable(verifiedSources.envelope, verifiedFiles.records);
+        if (!verifiedAssets || !projectAssetSnapshotIsCurrent(nextMetadata, previousSourcesRaw)) {
+          const canRollback = projectAssetSnapshotIsCurrent(nextMetadata, previousSourcesRaw);
+          const metadataRolledBack = canRollback && writeExactLocalStorageValue(projectFilesStorageKey, previousMetadata);
+          if (metadataRolledBack && projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) await deleteProjectFile(restoredRecord.id).catch(() => false);
+          setProjectFilesReadError(true);
+          setProjectSourcesReadError(true);
+          return false;
+        }
+        setProjectFiles(nextFiles);
+        return true;
       } catch {
-        // Keep the in-memory metadata unchanged; reconciliation will fail closed on the next load.
+        return false;
       }
-      return false;
-    }
-    setProjectFiles(nextFiles);
-    return true;
+    });
   };
 
-  const renameProjectFile = (fileId: string, displayName: string) => {
+  const renameProjectFile = async (fileId: string, displayName: string) => {
     const normalizedName = displayName.trim();
-    if (!normalizedName) return false;
-    const nextFiles = projectFiles.map((file) => file.id === fileId && file.projectId === activeProject.id ? { ...file, displayName: normalizedName } : file);
-    return persistProjectFiles(nextFiles);
+    if (!normalizedName || projectFilesReadError || sourceStorageLocked) return false;
+    return withProjectAssetsWriteLock(false, async () => {
+      try {
+        const previousMetadata = window.localStorage.getItem(projectFilesStorageKey);
+        const previousSourcesRaw = window.localStorage.getItem(projectSourcesStorageKey);
+        if (window.localStorage.getItem(projectSourceIntakeIntentKey) !== null) return false;
+        const latestFiles = readStoredProjectFilesForMutation();
+        const latestSources = readStoredProjectSources();
+        if (latestFiles.readError || latestSources.readError || !await projectAssetStoresAreAvailable(latestSources.envelope, latestFiles.records)) return false;
+        const currentRecord = latestFiles.records.find((record) => record.id === fileId && record.projectId === activeProject.id);
+        if (!currentRecord || !projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) return false;
+        if (currentRecord.displayName === normalizedName) return true;
+        const nextFiles = latestFiles.records.map((record) => record.id === currentRecord.id ? { ...record, displayName: normalizedName } : record);
+        const nextMetadata = JSON.stringify(nextFiles);
+        if (!writeProjectFilesMetadata(nextFiles) && !projectAssetSnapshotIsCurrent(nextMetadata, previousSourcesRaw)) {
+          if (!projectAssetSnapshotIsCurrent(previousMetadata, previousSourcesRaw)) {
+            setProjectFilesReadError(true);
+            setProjectSourcesReadError(true);
+          }
+          return false;
+        }
+        const verifiedFiles = readStoredProjectFilesForMutation();
+        const verifiedSources = readStoredProjectSources();
+        const verifiedAssets = !verifiedFiles.readError && !verifiedSources.readError
+          && await projectAssetStoresAreAvailable(verifiedSources.envelope, verifiedFiles.records);
+        if (!verifiedAssets || !projectAssetSnapshotIsCurrent(nextMetadata, previousSourcesRaw)) {
+          if (projectAssetSnapshotIsCurrent(nextMetadata, previousSourcesRaw)) writeExactLocalStorageValue(projectFilesStorageKey, previousMetadata);
+          setProjectFilesReadError(true);
+          setProjectSourcesReadError(true);
+          return false;
+        }
+        setProjectFiles(nextFiles);
+        return true;
+      } catch {
+        return false;
+      }
+    });
   };
 
   const projectMemoryIsAccessible = (memory: ProjectMemoryRecord) => memory.ownerPrincipalId === localBuilderAccountId
@@ -10768,7 +12378,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       const taskId = `backbone-task-${window.crypto.randomUUID()}`;
       const milestone = createProjectBackboneRecord("milestone", milestoneId, activeProject.id, { title: normalizedDraft.milestoneTitle, status: "planned", targetDate: null }, timestamp);
       const decision = createProjectBackboneRecord("decision", decisionId, activeProject.id, { statement: normalizedDraft.decisionStatement, reason: normalizedDraft.decisionReason, milestoneId, taskId }, timestamp);
-      const task = createProjectBackboneRecord("task", taskId, activeProject.id, { title: normalizedDraft.taskTitle, nextStep: normalizedDraft.taskNextStep, dueAt: null, status: "in-progress", milestoneId, decisionId }, timestamp);
+      const task = createProjectBackboneRecord("task", taskId, activeProject.id, { title: normalizedDraft.taskTitle, nextStep: normalizedDraft.taskNextStep, dueAt: normalizedDraft.taskDueAt ? tehranDateTimeLocalToIso(normalizedDraft.taskDueAt) : null, status: "in-progress", milestoneId, decisionId }, timestamp);
       const nextEnvelope = {
         schemaVersion: 1,
         milestones: [...latest.envelope.milestones, milestone],
@@ -10799,7 +12409,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       const currentTask = projectBackboneCurrentSnapshot(graph.task) as ProjectBackboneTaskSnapshot;
       const nextMilestone = { ...currentMilestone, title: normalizedDraft.milestoneTitle } satisfies ProjectMilestoneSnapshot;
       const nextDecision = { ...currentDecision, statement: normalizedDraft.decisionStatement, reason: normalizedDraft.decisionReason } satisfies ProjectDecisionSnapshot;
-      const nextTask = { ...currentTask, title: normalizedDraft.taskTitle, nextStep: normalizedDraft.taskNextStep } satisfies ProjectBackboneTaskSnapshot;
+      const nextTask = { ...currentTask, title: normalizedDraft.taskTitle, nextStep: normalizedDraft.taskNextStep, dueAt: normalizedDraft.taskDueAt ? tehranDateTimeLocalToIso(normalizedDraft.taskDueAt) : null } satisfies ProjectBackboneTaskSnapshot;
       const milestoneChanged = JSON.stringify(stablePurchaseRequestValue(currentMilestone)) !== JSON.stringify(stablePurchaseRequestValue(nextMilestone));
       const decisionChanged = JSON.stringify(stablePurchaseRequestValue(currentDecision)) !== JSON.stringify(stablePurchaseRequestValue(nextDecision));
       const taskChanged = JSON.stringify(stablePurchaseRequestValue(currentTask)) !== JSON.stringify(stablePurchaseRequestValue(nextTask));
@@ -10841,6 +12451,307 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       return writeProjectBackbone(nextEnvelope) ? "rolled-back" : "write-failure";
     });
   };
+
+  const writeProjectTaskMonitors = (nextEnvelope: ProjectTaskMonitorEnvelope, backboneEnvelope: ProjectBackboneEnvelope, expectedEnvelope: ProjectTaskMonitorEnvelope) => {
+    let previousBytes: string | null | undefined;
+    let serialized = "";
+    let wroteCandidate = false;
+    const restorePreviousBytes = () => {
+      try {
+        if (!wroteCandidate || window.localStorage.getItem(projectTaskMonitorsStorageKey) !== serialized) return !wroteCandidate;
+        if (previousBytes === null) window.localStorage.removeItem(projectTaskMonitorsStorageKey);
+        else window.localStorage.setItem(projectTaskMonitorsStorageKey, previousBytes!);
+        return window.localStorage.getItem(projectTaskMonitorsStorageKey) === previousBytes;
+      } catch {
+        return false;
+      }
+    };
+    const failAfterCandidateWrite = () => {
+      if (!restorePreviousBytes()) setProjectTaskMonitorsReadError(true);
+      return false;
+    };
+    try {
+      const backboneRead = { envelope: backboneEnvelope, readError: false } satisfies ProjectBackboneReadResult;
+      if (validateProjectTaskMonitorAggregate({ envelope: nextEnvelope, readError: false }, backboneRead).readError) return false;
+      const currentBackboneBeforeWrite = readStoredProjectBackbone();
+      if (currentBackboneBeforeWrite.readError || JSON.stringify(currentBackboneBeforeWrite.envelope) !== JSON.stringify(backboneEnvelope)) return false;
+      previousBytes = window.localStorage.getItem(projectTaskMonitorsStorageKey);
+      const currentMonitorsBeforeWrite = readStoredProjectTaskMonitors();
+      if (currentMonitorsBeforeWrite.readError || JSON.stringify(currentMonitorsBeforeWrite.envelope) !== JSON.stringify(expectedEnvelope) || window.localStorage.getItem(projectTaskMonitorsStorageKey) !== previousBytes) return false;
+      serialized = JSON.stringify(nextEnvelope);
+      window.localStorage.setItem(projectTaskMonitorsStorageKey, serialized);
+      wroteCandidate = true;
+      if (window.localStorage.getItem(projectTaskMonitorsStorageKey) !== serialized) return failAfterCandidateWrite();
+      const currentBackboneAfterWrite = readStoredProjectBackbone();
+      if (currentBackboneAfterWrite.readError || JSON.stringify(currentBackboneAfterWrite.envelope) !== JSON.stringify(backboneEnvelope)) return failAfterCandidateWrite();
+      const verified = validateProjectTaskMonitorAggregate(readStoredProjectTaskMonitors(), currentBackboneAfterWrite);
+      if (verified.readError || JSON.stringify(verified.envelope) !== serialized) return failAfterCandidateWrite();
+    } catch {
+      return wroteCandidate ? failAfterCandidateWrite() : false;
+    }
+    setProjectTaskMonitorEnvelope(nextEnvelope);
+    setProjectTaskMonitorsReadError(false);
+    return true;
+  };
+
+  const refreshProjectTaskMonitorDependencies = (monitorRead: ProjectTaskMonitorReadResult, backboneRead: ProjectBackboneReadResult) => {
+    if (!monitorRead.readError) {
+      setProjectTaskMonitorEnvelope(monitorRead.envelope);
+      setProjectTaskMonitorsReadError(false);
+    } else {
+      setProjectTaskMonitorsReadError(true);
+    }
+    if (!backboneRead.readError) {
+      setProjectBackbone(backboneRead.envelope);
+      setProjectBackboneReadError(false);
+    } else {
+      setProjectBackboneReadError(true);
+    }
+  };
+
+  const readFreshProjectTaskMonitorDependencies = () => {
+    const backboneRead = readStoredProjectBackbone();
+    const monitorRead = validateProjectTaskMonitorAggregate(readStoredProjectTaskMonitors(), backboneRead);
+    return { monitorRead, backboneRead };
+  };
+
+  const createProjectTaskMonitor = async (): Promise<ProjectTaskMonitorMutationResult> => withProjectTaskMonitorsWriteLock(() => {
+    const { monitorRead, backboneRead } = readFreshProjectTaskMonitorDependencies();
+    if (monitorRead.readError || backboneRead.readError) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: monitorRead.readError ? "read-failure" : "dependency-read-failure", monitorId: null };
+    }
+    const graph = projectBackboneGraphForProject(backboneRead.envelope, activeProject.id);
+    if (!graph) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: "dependency-missing", monitorId: null };
+    }
+    const existing = monitorRead.envelope.monitors.find((monitor) => monitor.projectId === activeProject.id && monitor.sourceRefs[0] === graph.task.id);
+    if (existing) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: "unchanged", monitorId: existing.id };
+    }
+    const taskSnapshot = projectBackboneCurrentSnapshot(graph.task) as ProjectBackboneTaskSnapshot;
+    if (!taskSnapshot.dueAt) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: "deadline-missing", monitorId: null };
+    }
+    const timestamp = new Date(Math.max(Date.now(), new Date(graph.task.updatedAt).getTime())).toISOString();
+    const monitor = createProjectTaskMonitorRecord(graph.task, activeProject.id, timestamp);
+    if (!monitor) return { status: "deadline-missing", monitorId: null };
+    const nextEnvelope = { ...monitorRead.envelope, monitors: [...monitorRead.envelope.monitors, monitor] };
+    if (!writeProjectTaskMonitors(nextEnvelope, backboneRead.envelope, monitorRead.envelope)) return { status: "write-failure", monitorId: null };
+    setProjectBackbone(backboneRead.envelope);
+    setProjectBackboneReadError(false);
+    return { status: "created", monitorId: monitor.id };
+  });
+
+  const runProjectTaskMonitors = async (monitorId: string | null, force: boolean, expectedVersion: number | null = null, automaticRunStillAllowed: (() => boolean) | null = null): Promise<ProjectTaskMonitorMutationResult> => withProjectTaskMonitorsWriteLock(() => {
+    if (!force && automaticRunStillAllowed && !automaticRunStillAllowed()) return { status: "unchanged", monitorId };
+    const { monitorRead, backboneRead } = readFreshProjectTaskMonitorDependencies();
+    if (monitorRead.readError || backboneRead.readError) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: monitorRead.readError ? "read-failure" : "dependency-read-failure", monitorId };
+    }
+    const candidates = monitorRead.envelope.monitors.filter((monitor) => monitor.projectId === activeProject.id && (monitorId === null || monitor.id === monitorId));
+    if (monitorId !== null && candidates.length === 0) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: "version-conflict", monitorId };
+    }
+    if (force && monitorId !== null && expectedVersion !== null && candidates[0]?.version !== expectedVersion) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: "version-conflict", monitorId };
+    }
+
+    let nextEnvelope = monitorRead.envelope;
+    let didChange = false;
+    const nowMs = Date.now();
+    for (const monitor of candidates) {
+      const currentMonitor = nextEnvelope.monitors.find((item) => item.id === monitor.id) ?? monitor;
+      const snapshot = projectTaskMonitorCurrentSnapshot(currentMonitor);
+      if (!snapshot.enabled || snapshot.status === "failed") continue;
+      const task = backboneRead.envelope.tasks.find((item) => item.id === snapshot.origin.taskId && item.projectId === activeProject.id);
+      if (!task) {
+        refreshProjectTaskMonitorDependencies({ envelope: emptyProjectTaskMonitorEnvelope(), readError: true }, backboneRead);
+        return { status: "dependency-read-failure", monitorId };
+      }
+      const dependencyIsStale = Boolean(task && !projectTaskMonitorOriginMatchesTask(snapshot.origin, task));
+      const dueForAutomaticCheck = snapshot.nextCheckAt ? new Date(snapshot.nextCheckAt).getTime() : Number.POSITIVE_INFINITY;
+      if (!dependencyIsStale && !force && dueForAutomaticCheck > nowMs) continue;
+
+      const timestamp = new Date(Math.max(Date.now(), new Date(currentMonitor.updatedAt).getTime(), new Date(task.updatedAt).getTime())).toISOString();
+      const attempt = nextEnvelope.runs.filter((run) => run.monitorId === currentMonitor.id).length + 1;
+      const scheduledFor = force || dependencyIsStale ? timestamp : snapshot.nextCheckAt ?? timestamp;
+      if (!force && nextEnvelope.runs.some((run) => run.monitorId === currentMonitor.id && run.monitorVersion === currentMonitor.version && run.scheduledFor === scheduledFor)) continue;
+
+      if (dependencyIsStale) {
+        const failure = {
+          code: "dependency-stale",
+          message: "نسخهٔ کار برنامه پس از ساخت پایش تغییر کرده است؛ برای اتصال دوباره، تلاش مجدد را بزن.",
+          at: timestamp,
+        } satisfies ProjectTaskMonitorFailure;
+        const run = createProjectTaskMonitorRun(currentMonitor, timestamp, scheduledFor, "failed", snapshot.origin, null, failure, attempt);
+        const nextSnapshot = { ...snapshot, status: "failed", lastCheckAt: timestamp, nextCheckAt: null, lastRunId: run.id, failure } satisfies ProjectTaskMonitorSnapshot;
+        const nextRecord = appendProjectTaskMonitorRevision(currentMonitor, nextSnapshot, "failed", "بررسی محلی مرورگر", timestamp, run.id);
+        nextEnvelope = replaceProjectTaskMonitorRecord(nextEnvelope, nextRecord, run);
+        didChange = true;
+        continue;
+      }
+
+      const taskSnapshot = projectBackboneCurrentSnapshot(task) as ProjectBackboneTaskSnapshot;
+      if (!taskSnapshot.dueAt) {
+        const failure = { code: "deadline-missing", message: "موعد کار از برنامهٔ پروژه برداشته شده است؛ پس از ثبت موعد، تلاش مجدد را بزن.", at: timestamp } satisfies ProjectTaskMonitorFailure;
+        const run = createProjectTaskMonitorRun(currentMonitor, timestamp, scheduledFor, "failed", projectBackboneTaskOrigin(task), null, failure, attempt);
+        const nextSnapshot = { ...snapshot, status: "failed", lastCheckAt: timestamp, nextCheckAt: null, lastRunId: run.id, failure } satisfies ProjectTaskMonitorSnapshot;
+        const nextRecord = appendProjectTaskMonitorRevision(currentMonitor, nextSnapshot, "failed", "بررسی محلی مرورگر", timestamp, run.id);
+        nextEnvelope = replaceProjectTaskMonitorRecord(nextEnvelope, nextRecord, run);
+        didChange = true;
+        continue;
+      }
+
+      const deadlineReached = new Date(taskSnapshot.dueAt).getTime() <= new Date(timestamp).getTime();
+      const taskCompleted = taskSnapshot.status === "completed";
+      const result = { kind: taskCompleted ? "task-completed" : deadlineReached ? "deadline-reached" : "not-due", dueAt: taskSnapshot.dueAt, taskStatus: taskSnapshot.status } satisfies NonNullable<ProjectTaskMonitorRun["result"]>;
+      const run = createProjectTaskMonitorRun(currentMonitor, timestamp, scheduledFor, "succeeded", projectBackboneTaskOrigin(task), result, null, attempt);
+      const nextSnapshot = {
+        ...snapshot,
+        origin: projectBackboneTaskOrigin(task),
+        trigger: { ...snapshot.trigger, dueAt: taskSnapshot.dueAt },
+        enabled: !taskCompleted,
+        status: taskCompleted ? "disabled" : deadlineReached ? "attention" : "watching",
+        lastCheckAt: timestamp,
+        nextCheckAt: taskCompleted ? null : deadlineReached ? new Date(new Date(timestamp).getTime() + 86_400_000).toISOString() : taskSnapshot.dueAt,
+        lastRunId: run.id,
+        failure: null,
+      } satisfies ProjectTaskMonitorSnapshot;
+      const nextRecord = appendProjectTaskMonitorRevision(currentMonitor, nextSnapshot, deadlineReached && !taskCompleted ? "deadline-reached" : "checked", "بررسی محلی مرورگر", timestamp, run.id);
+      nextEnvelope = replaceProjectTaskMonitorRecord(nextEnvelope, nextRecord, run);
+      didChange = true;
+    }
+
+    if (!didChange) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: "unchanged", monitorId };
+    }
+    if (!writeProjectTaskMonitors(nextEnvelope, backboneRead.envelope, monitorRead.envelope)) return { status: "write-failure", monitorId };
+    setProjectBackbone(backboneRead.envelope);
+    setProjectBackboneReadError(false);
+    return { status: "updated", monitorId };
+  });
+
+  const toggleProjectTaskMonitor = async (monitorId: string, enabled: boolean, expectedVersion: number): Promise<ProjectTaskMonitorMutationResult> => withProjectTaskMonitorsWriteLock(() => {
+    const { monitorRead, backboneRead } = readFreshProjectTaskMonitorDependencies();
+    if (monitorRead.readError || backboneRead.readError) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: monitorRead.readError ? "read-failure" : "dependency-read-failure", monitorId };
+    }
+    const monitor = monitorRead.envelope.monitors.find((item) => item.id === monitorId && item.projectId === activeProject.id);
+    if (!monitor || monitor.version !== expectedVersion) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: "version-conflict", monitorId };
+    }
+    const snapshot = projectTaskMonitorCurrentSnapshot(monitor);
+    if (snapshot.enabled === enabled) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: "unchanged", monitorId };
+    }
+    let nextSnapshot: ProjectTaskMonitorSnapshot;
+    let dependencyUpdatedAt = 0;
+    if (!enabled) {
+      nextSnapshot = { ...snapshot, enabled: false, status: "disabled", nextCheckAt: null, failure: null };
+    } else {
+      const task = backboneRead.envelope.tasks.find((item) => item.id === snapshot.origin.taskId && item.projectId === activeProject.id);
+      if (!task) {
+        refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+        return { status: "dependency-missing", monitorId };
+      }
+      const taskSnapshot = projectBackboneCurrentSnapshot(task) as ProjectBackboneTaskSnapshot;
+      if (!taskSnapshot.dueAt) {
+        refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+        return { status: "deadline-missing", monitorId };
+      }
+      dependencyUpdatedAt = new Date(task.updatedAt).getTime();
+      nextSnapshot = {
+        ...snapshot,
+        reason: `پیگیری موعد «${taskSnapshot.title}» تا زمانی که کار برنامه باز است.`,
+        origin: projectBackboneTaskOrigin(task),
+        trigger: { ...snapshot.trigger, dueAt: taskSnapshot.dueAt },
+        enabled: true,
+        status: "watching",
+        nextCheckAt: taskSnapshot.dueAt,
+        failure: null,
+      };
+    }
+    const timestamp = new Date(Math.max(Date.now(), new Date(monitor.updatedAt).getTime(), dependencyUpdatedAt)).toISOString();
+    const nextRecord = appendProjectTaskMonitorRevision(monitor, nextSnapshot, enabled ? "enabled" : "disabled", "شما", timestamp, null);
+    const nextEnvelope = replaceProjectTaskMonitorRecord(monitorRead.envelope, nextRecord);
+    if (!writeProjectTaskMonitors(nextEnvelope, backboneRead.envelope, monitorRead.envelope)) return { status: "write-failure", monitorId };
+    setProjectBackbone(backboneRead.envelope);
+    setProjectBackboneReadError(false);
+    return { status: "updated", monitorId };
+  });
+
+  const retryProjectTaskMonitor = async (monitorId: string, expectedVersion: number): Promise<ProjectTaskMonitorMutationResult> => withProjectTaskMonitorsWriteLock(() => {
+    const { monitorRead, backboneRead } = readFreshProjectTaskMonitorDependencies();
+    if (monitorRead.readError || backboneRead.readError) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: monitorRead.readError ? "read-failure" : "dependency-read-failure", monitorId };
+    }
+    const monitor = monitorRead.envelope.monitors.find((item) => item.id === monitorId && item.projectId === activeProject.id);
+    if (!monitor || monitor.version !== expectedVersion) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: "version-conflict", monitorId };
+    }
+    const snapshot = projectTaskMonitorCurrentSnapshot(monitor);
+    if (snapshot.status !== "failed" || !snapshot.enabled) {
+      refreshProjectTaskMonitorDependencies(monitorRead, backboneRead);
+      return { status: "unchanged", monitorId };
+    }
+    const task = backboneRead.envelope.tasks.find((item) => item.id === snapshot.origin.taskId && item.projectId === activeProject.id);
+    if (!task) {
+      refreshProjectTaskMonitorDependencies({ envelope: emptyProjectTaskMonitorEnvelope(), readError: true }, backboneRead);
+      return { status: "dependency-read-failure", monitorId };
+    }
+    const timestamp = new Date(Math.max(Date.now(), new Date(monitor.updatedAt).getTime(), new Date(task.updatedAt).getTime())).toISOString();
+    const attempt = monitorRead.envelope.runs.filter((run) => run.monitorId === monitor.id).length + 1;
+    const currentTaskSnapshot = projectBackboneCurrentSnapshot(task) as ProjectBackboneTaskSnapshot;
+    const failure = !currentTaskSnapshot.dueAt
+      ? { code: "deadline-missing", message: "کار مبدأ هنوز موعد دقیقی ندارد؛ ابتدا موعد را در برنامهٔ پروژه ثبت کن.", at: timestamp } satisfies ProjectTaskMonitorFailure
+      : null;
+
+    let run: ProjectTaskMonitorRun;
+    let nextSnapshot: ProjectTaskMonitorSnapshot;
+    if (failure) {
+      const retryOrigin = projectBackboneTaskOrigin(task);
+      run = createProjectTaskMonitorRun(monitor, timestamp, timestamp, "failed", retryOrigin, null, failure, attempt);
+      nextSnapshot = { ...snapshot, origin: retryOrigin, status: "failed", lastCheckAt: timestamp, nextCheckAt: null, lastRunId: run.id, failure };
+    } else {
+      const dueAt = currentTaskSnapshot.dueAt!;
+      const deadlineReached = new Date(dueAt).getTime() <= new Date(timestamp).getTime();
+      const taskCompleted = currentTaskSnapshot.status === "completed";
+      const retryOrigin = projectBackboneTaskOrigin(task);
+      const result = { kind: taskCompleted ? "task-completed" : deadlineReached ? "deadline-reached" : "not-due", dueAt, taskStatus: currentTaskSnapshot.status } satisfies NonNullable<ProjectTaskMonitorRun["result"]>;
+      run = createProjectTaskMonitorRun(monitor, timestamp, timestamp, "succeeded", retryOrigin, result, null, attempt);
+      nextSnapshot = {
+        ...snapshot,
+        reason: `پیگیری موعد «${currentTaskSnapshot.title}» تا زمانی که کار برنامه باز است.`,
+        origin: retryOrigin,
+        trigger: { ...snapshot.trigger, dueAt },
+        enabled: !taskCompleted,
+        status: taskCompleted ? "disabled" : deadlineReached ? "attention" : "watching",
+        lastCheckAt: timestamp,
+        nextCheckAt: taskCompleted ? null : deadlineReached ? new Date(new Date(timestamp).getTime() + 86_400_000).toISOString() : dueAt,
+        lastRunId: run.id,
+        failure: null,
+      };
+    }
+    const nextRecord = appendProjectTaskMonitorRevision(monitor, nextSnapshot, "retried", "شما", timestamp, run.id);
+    const nextEnvelope = replaceProjectTaskMonitorRecord(monitorRead.envelope, nextRecord, run);
+    if (!writeProjectTaskMonitors(nextEnvelope, backboneRead.envelope, monitorRead.envelope)) return { status: "write-failure", monitorId };
+    setProjectBackbone(backboneRead.envelope);
+    setProjectBackboneReadError(false);
+    return { status: "updated", monitorId };
+  });
 
   const persistProjectPurchaseRequests = (nextRequests: ProjectPurchaseRequestRecord[]) => {
     if (projectPurchaseRequestsReadError) return false;
@@ -12382,7 +14293,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <ProjectFilesView
         project={activeProject}
         files={activeProjectDocuments}
-        storageLocked={projectFilesReadError}
+        storageLocked={projectFilesReadError || sourceStorageLocked}
         initialSelectedId={focusedFileId}
         onBack={() => { setFocusedFileId(null); setView(filesReturnView); }}
         onRegister={registerProjectFile}
@@ -12397,7 +14308,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <ProjectGalleryView
         project={activeProject}
         files={activeProjectImages}
-        storageLocked={projectFilesReadError}
+        storageLocked={projectFilesReadError || sourceStorageLocked}
         onBack={() => setView(galleryReturnView)}
         onRegister={registerProjectFile}
       />
@@ -12449,6 +14360,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         project={activeProject}
         tasks={activeProjectTasks}
         backbone={activeProjectBackbone}
+        monitors={activeProjectTaskMonitors}
+        monitorRuns={activeProjectTaskMonitorRuns}
         approvals={activeProjectApprovals}
         dispatchPlanApprovals={activeProjectDispatchPlanApprovals}
         dispatchDrafts={activeProjectDispatchDrafts}
@@ -12460,6 +14373,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         returnToPurchaseRequestId={projectTasksLaunch.returnToPurchaseRequestId}
         tasksStorageLocked={projectTasksReadError}
         backboneStorageLocked={projectBackboneReadError}
+        monitorsStorageLocked={projectTaskMonitorsReadError}
         approvalsStorageLocked={projectApprovalsReadError || projectPurchaseRequestsReadError}
         dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError}
         onBack={() => { keyboard.hide(); setView("chat"); }}
@@ -12468,6 +14382,10 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         onCreate={createProjectTask}
         onUpdate={updateProjectTask}
         onStatusChange={changeProjectTaskStatus}
+        onCreateMonitor={createProjectTaskMonitor}
+        onRunMonitors={runProjectTaskMonitors}
+        onToggleMonitor={toggleProjectTaskMonitor}
+        onRetryMonitor={retryProjectTaskMonitor}
         onApprovalDecision={decideProjectApproval}
         onDispatchPlanApprovalDecision={changeProjectDispatchPlanApproval}
       />
@@ -12593,7 +14511,22 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
             </div>
           ) : (
             <div className="message-list" aria-live="polite">
-              {messages.map((message) => <article className={`message ${message.role}`} key={message.id}>{message.role === "assistant" ? <span className="message-label">چیدا</span> : null}<p>{message.text}</p></article>)}
+              {messages.map((message) => (
+                <article className={`message ${message.role}`} key={message.id} data-testid={message.role === "user" ? "composer-intake-message" : undefined}>
+                  {message.role === "assistant" ? <span className="message-label">چیدا</span> : null}
+                  {message.text ? <p>{message.text}</p> : null}
+                  {message.role === "user" && message.sourceIds.length > 0 ? (
+                    <div className="message-source-list" aria-label="منابع محلی این پیام">
+                      {message.sourceIds.map((sourceId) => {
+                        const source = activeProjectSources.find((record) => record.id === sourceId);
+                        if (!source) return null;
+                        const file = source.assetRef ? activeProjectFiles.find((record) => record.id === source.assetRef?.fileId) : null;
+                        return <button type="button" key={source.id} onClick={(event) => { sourceDetailTriggerRef.current = event.currentTarget; setSelectedSourceId(source.id); }} data-testid="composer-source-open"><span>{source.sourceType === "composer-text" ? <MessageSquare size={15} /> : source.sourceType === "composer-photo" ? <ImageIcon size={15} /> : <FileText size={15} />}</span><strong dir="auto">{source.sourceType === "composer-text" ? "متن ثبت‌شده" : file?.displayName ?? "منبع در دسترس نیست"}</strong></button>;
+                      })}
+                    </div>
+                  ) : null}
+                </article>
+              ))}
             </div>
           )}
         </main>
@@ -12614,16 +14547,26 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         </Carousel>
         <div className="composer-stack" data-testid="composer-box">
           <div className="composer-card" data-testid="composer-card">
-            <KeyboardTextarea data-testid="composer-input" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={`پیامت برای ${activeProject.name}...`} rows={2} aria-label="پیام به چیدا" />
+            {pendingAttachment ? (
+              <div className="composer-attachment" data-testid="composer-attachment" data-kind={isProjectImage(pendingAttachment) ? "photo" : "file"}>
+                <span className="composer-attachment-preview">{pendingAttachment.previewUrl ? <img src={pendingAttachment.previewUrl} alt="" draggable={false} /> : isProjectImage(pendingAttachment) ? <ImageIcon size={19} /> : <FileText size={19} />}</span>
+                <span className="composer-attachment-copy"><strong dir="auto">{pendingAttachment.displayName}</strong><small>{projectFileFormat(pendingAttachment)} · {formatProjectFileSize(pendingAttachment.size)}</small></span>
+                <button type="button" onClick={() => { setComposerError(""); setPendingAttachment(null); }} aria-label={`حذف پیوست ${pendingAttachment.displayName}`} data-testid="composer-attachment-remove" disabled={composerSending}><X size={17} /></button>
+              </div>
+            ) : null}
+            <KeyboardTextarea data-testid="composer-input" value={draft} onChange={(event) => { setDraft(event.target.value); setComposerError(""); }} placeholder={`پیامت برای ${activeProject.name}...`} rows={2} maxLength={4000} aria-label="پیام به چیدا" disabled={composerSending} />
             <div className="composer-actions">
               <div className="composer-action-group primary-tools">
-                <button className="composer-icon" type="button" onClick={() => onOpenSheet("attach")} aria-label="افزودن فایل یا تصویر" data-testid="attach-button"><Plus size={23} /></button>
+                <button className="composer-icon" type="button" onClick={() => onOpenSheet("attach")} aria-label="افزودن فایل یا تصویر" data-testid="attach-button" disabled={sourceStorageLocked || projectFilesReadError || composerSending}><Plus size={23} /></button>
                 <button className="composer-icon" type="button" onClick={() => onOpenSheet("models")} aria-label={`حالت پاسخ: ${modelMode}`} data-testid="model-button"><Gauge size={21} /></button>
               </div>
               <div className="composer-action-group send-tools">
                 <button className="composer-icon" type="button" aria-label="ورودی صوتی" data-testid="voice-button"><Mic size={21} /></button>
-                <button className="send-button" type="button" onClick={sendMessage} aria-label="ارسال پیام" data-testid="send-button" data-ready={draft.trim() ? "true" : "false"} disabled={!draft.trim()}><ArrowUp size={20} strokeWidth={2.1} /></button>
+                <button className="send-button" type="button" onClick={() => { void sendMessage(); }} aria-label="ارسال پیام" data-testid="send-button" data-ready={(hasVisibleProjectTaskText(draft) || pendingAttachment) && !sourceStorageLocked && !composerSending ? "true" : "false"} disabled={(!hasVisibleProjectTaskText(draft) && !pendingAttachment) || sourceStorageLocked || composerSending}><ArrowUp size={20} strokeWidth={2.1} /></button>
               </div>
+            </div>
+            <div className="composer-error-slot" aria-live="assertive">
+              {composerError ? <p role="alert" data-testid="composer-source-error">{composerError}</p> : sourceRecoveryPending ? <p role="status" data-testid="composer-source-recovery">در حال بررسی ثبت محلی قبلی…</p> : sourceAssetValidationPending ? <p role="status" data-testid="composer-source-asset-check">در حال بررسی اصل منابع محلی…</p> : sourceRecoveryBlocked || projectSourcesReadError || projectFilesReadError ? <p role="alert" data-testid="composer-source-read-error">منابع یا شناسنامهٔ فایل‌های محلی کامل خوانده نشدند؛ ارسال برای جلوگیری از بازنویسی قفل است.</p> : null}
             </div>
           </div>
           <div className="project-context" data-testid="project-context">
@@ -12659,7 +14602,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
               </nav>
               <div className="drawer-section">
                 <div className="drawer-section-title"><span>گفتگوهای اخیر</span><button type="button" aria-label="جستجو"><Search size={17} /></button></div>
-                <p className="recent-chat-empty">هنوز گفتگویی برای {activeProject.name} ثبت نشده است.</p>
+                <p className="recent-chat-empty" data-testid="recent-chat-boundary">{messages.length > 0 ? `${(messages.length / 2).toLocaleString("fa-IR")} ورودی محلی برای ${activeProject.name} ثبت شده؛ فهرست گفت‌وگوهای جدا هنوز ساخته نشده است.` : `فهرست گفت‌وگوهای جدا برای ${activeProject.name} هنوز ساخته نشده است.`}</p>
               </div>
               <button className="drawer-profile" type="button" data-testid="drawer-profile" onClick={() => { setDrawerOpen(false); onOpenSheet("settings"); }}>
                 <span className="drawer-avatar" aria-hidden="true"><img src="/chida/profile-builder-fictional.jpg" alt="" /></span><span className="drawer-profile-copy"><strong>مهیار کلباسی</strong><small>حساب سازنده</small></span><Settings size={18} />
@@ -12670,7 +14613,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       </AnimatePresence>
 
       <ModelsSheet sheet={sheet} mode={modelMode} onClose={() => onOpenSheet(null)} onSelect={onModelChange} />
-      <AttachSheet sheet={sheet} onClose={() => onOpenSheet(null)} />
+      <AttachSheet sheet={sheet} disabled={sourceStorageLocked || projectFilesReadError} onClose={() => onOpenSheet(null)} onChoose={chooseComposerAttachment} />
+      <ProjectSourceDetailSheet source={selectedSource} file={selectedSourceFile} project={activeProject} assetReadLocked={projectSourcesReadError || sourceRecoveryBlocked} onClose={closeSourceDetail} />
       <ToolsSheet sheet={sheet} installedTool={installedTool} onBuild={() => onOpenSheet("build")} onSearch={openProjectSearch} onSourceDemo={openSourceAnswerDemo} onFiles={() => openProjectFiles("chat")} onClose={() => onOpenSheet(null)} />
       <BuildSheet sheet={sheet} activeProject={activeProject.name} onClose={() => onOpenSheet(null)} onInstalled={installTool} />
       <BriefSheet sheet={sheet} schedule={briefSchedule} onClose={() => onOpenSheet(null)} onSave={saveBrief} />
@@ -12680,12 +14624,15 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         sheet={sheet}
         projectName={activeProject.name}
         projectCount={projects.length}
-        localRecordCount={projectFilesReadError || projectMemoriesReadError || projectTasksReadError || projectBackboneReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError || builderManualNegotiationConditionImpactsReadError
+        localRecordCount={projectFilesReadError || projectSourcesReadError || sourceRecoveryPending || sourceRecoveryBlocked || projectMemoriesReadError || projectTasksReadError || projectBackboneReadError || projectTaskMonitorsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError || builderManualNegotiationConditionImpactsReadError
           ? null
           : activeProjectFiles.length
+            + activeProjectSources.length
             + activeProjectMemories.length
             + activeProjectTasks.length
             + (activeProjectBackbone ? 3 : 0)
+            + activeProjectTaskMonitors.length
+            + activeProjectTaskMonitorRuns.length
             + activeProjectPurchaseRequests.length
             + activeProjectApprovals.length
             + activeProjectSupplierContacts.length
@@ -12711,7 +14658,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
 
 function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, backLabel, onBack, onCreate, onUpdate, onRollback }: { project: BuilderProject; graph: ProjectBackboneGraph | null; storageLocked: boolean; startWithEditor: boolean; backLabel: string; onBack: () => void; onCreate: (draft: ProjectBackboneDraft) => Promise<ProjectBackboneMutationResult>; onUpdate: (draft: ProjectBackboneDraft, expectedVersions: ProjectBackboneExpectedVersions) => Promise<ProjectBackboneMutationResult>; onRollback: (objectType: ProjectBackboneObjectType, recordId: string, targetVersion: number, expectedVersion: number) => Promise<ProjectBackboneMutationResult> }) {
   const keyboard = useKeyboard();
-  const emptyDraft: ProjectBackboneDraft = { milestoneTitle: "", decisionStatement: "", decisionReason: "", taskTitle: "", taskNextStep: "" };
+  const emptyDraft: ProjectBackboneDraft = { milestoneTitle: "", decisionStatement: "", decisionReason: "", taskTitle: "", taskNextStep: "", taskDueAt: "" };
   const [editorOpen, setEditorOpen] = useState(startWithEditor && !storageLocked);
   const [draft, setDraft] = useState<ProjectBackboneDraft>(() => graph ? projectBackboneDraftFromGraph(graph) : emptyDraft);
   const [expectedVersions, setExpectedVersions] = useState<ProjectBackboneExpectedVersions | null>(() => graph ? { milestone: graph.milestone.version, decision: graph.decision.version, task: graph.task.version } : null);
@@ -12747,6 +14694,12 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
       { key: "taskNextStep", id: "backbone-task-next-step", label: "گام بعدی", max: 300 },
     ];
     const invalid = fields.find((field) => !hasVisibleProjectBackboneText(normalized[field.key]) || normalized[field.key].length > field.max);
+    if (!invalid && normalized.taskDueAt && tehranDateTimeLocalToIso(normalized.taskDueAt) === null) {
+      setFormError("موعد کار را با تاریخ و ساعت معتبر تهران ثبت کن.");
+      setInvalidFieldId("backbone-task-due-at");
+      window.requestAnimationFrame(() => document.getElementById("backbone-task-due-at")?.focus());
+      return null;
+    }
     if (!invalid) return normalized;
     setFormError(`${invalid.label} را کامل و کوتاه ثبت کن.`);
     setInvalidFieldId(invalid.id);
@@ -12805,7 +14758,7 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
       return [decision.statement, `دلیل: ${decision.reason}`];
     }
     const task = snapshot as ProjectBackboneTaskSnapshot;
-    return [task.title, `گام بعدی: ${task.nextStep}`];
+    return [task.title, `گام بعدی: ${task.nextStep}`, ...(task.dueAt ? [`موعد: ${formatTehranDateTime(task.dueAt)}`] : [])];
   };
 
   const renderHistoryGroup = (objectType: ProjectBackboneObjectType, label: string, record: ProjectMilestoneRecord | ProjectDecisionRecord | ProjectBackboneTaskRecord) => (
@@ -12873,6 +14826,7 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
                 <article className="project-backbone-card" data-testid="project-backbone-task">
                   <div className="project-backbone-card-head"><div><small>کار متصل</small><h2>{task.title}</h2></div><span>{task.status === "completed" ? "انجام‌شده" : "در حال انجام"} · نسخهٔ {graph.task.version.toLocaleString("fa-IR")}</span></div>
                   <p><strong>گام بعدی: </strong>{task.nextStep}</p>
+                  <p className="project-backbone-task-due" data-testid="project-backbone-task-due"><strong>موعد: </strong>{task.dueAt ? formatTehranDateTime(task.dueAt) : "تعیین نشده"}</p>
                 </article>
               </section>
 
@@ -12905,6 +14859,7 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
               <strong>۳. کار متصل</strong><small>این کار به نقطه‌عطف و تصمیم بالا وصل می‌شود.</small>
               <label className="field-control" htmlFor="backbone-task-title"><span>عنوان کار</span><KeyboardInput id="backbone-task-title" data-testid="backbone-task-title" value={draft.taskTitle} onChange={(event) => updateDraft("taskTitle", event.target.value)} maxLength={80} placeholder="مثلاً هماهنگی بازدید آرماتوربندی" disabled={storageLocked || mutationPending} aria-required="true" aria-invalid={invalidFieldId === "backbone-task-title"} aria-describedby={invalidFieldId === "backbone-task-title" ? "project-backbone-form-error" : undefined} /></label>
               <label className="field-control" htmlFor="backbone-task-next-step"><span>گام بعدی</span><KeyboardTextarea id="backbone-task-next-step" data-testid="backbone-task-next-step" value={draft.taskNextStep} onChange={(event) => updateDraft("taskNextStep", event.target.value)} maxLength={300} rows={3} placeholder="اقدام مشخص بعدی چیست؟" disabled={storageLocked || mutationPending} aria-required="true" aria-invalid={invalidFieldId === "backbone-task-next-step"} aria-describedby={invalidFieldId === "backbone-task-next-step" ? "project-backbone-form-error" : undefined} /></label>
+              <label className="field-control project-backbone-due-field" htmlFor="backbone-task-due-at"><span>موعد دقیق کار <small>(اختیاری · زمان تهران)</small></span><KeyboardInput id="backbone-task-due-at" data-testid="backbone-task-due-at" type="datetime-local" value={draft.taskDueAt} onChange={(event) => updateDraft("taskDueAt", event.target.value)} dir="ltr" disabled={storageLocked || mutationPending} aria-invalid={invalidFieldId === "backbone-task-due-at"} aria-describedby={invalidFieldId === "backbone-task-due-at" ? "project-backbone-form-error" : "backbone-task-due-at-help"} /><small id="backbone-task-due-at-help">این موعد فقط مبنای پایش محلی همان مرورگر است.</small></label>
             </section>
             {formError ? <p id="project-backbone-form-error" className="project-backbone-form-error" role="alert" data-testid="project-backbone-error">{formError}</p> : null}
             <button className="primary-button" type="submit" disabled={storageLocked || mutationPending} data-testid="project-backbone-save">{mutationPending ? "در حال ثبت امن..." : graph ? "ثبت تغییرهای معنادار" : "ثبت برنامهٔ متصل"}</button>
@@ -15295,15 +17250,68 @@ function projectTaskEventLabel(type: ProjectTaskEventType) {
   return "کار ثبت شد";
 }
 
-function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, backboneStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onOpenBackbone, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onApprovalDecision, onDispatchPlanApprovalDecision }: { project: BuilderProject; tasks: ProjectTaskRecord[]; backbone: ProjectBackboneGraph | null; approvals: ProjectApprovalRecord[]; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; dispatchDrafts: DispatchDraftRecord[]; requests: ProjectPurchaseRequestRecord[]; contacts: SupplierContactRecord[]; initialFilter: ProjectTaskFilter; initialApprovalId: string | null; initialDispatchPlanApprovalId: string | null; returnToPurchaseRequestId: string | null; tasksStorageLocked: boolean; backboneStorageLocked: boolean; approvalsStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; onBack: () => void; onOpenBackbone: () => void; onReturnToPurchaseRequest: (requestId: string) => void; onCreate: (draft: ProjectTaskDraft) => boolean; onUpdate: (taskId: string, draft: ProjectTaskDraft) => boolean; onStatusChange: (taskId: string, status: ProjectTaskStatus) => boolean; onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => boolean; onDispatchPlanApprovalDecision: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean }) {
+function projectTaskMonitorStatusLabel(status: ProjectTaskMonitorStatus) {
+  if (status === "attention") return "موعد رسیده";
+  if (status === "failed") return "بررسی ناموفق";
+  if (status === "disabled") return "غیرفعال";
+  return "در حال پایش";
+}
+
+function projectTaskMonitorRunLabel(run: ProjectTaskMonitorRun | null) {
+  if (!run) return "هنوز بررسی نشده";
+  if (run.state === "failed") return "بررسی ناموفق";
+  if (run.result?.kind === "deadline-reached") return "موعد رسیده";
+  if (run.result?.kind === "task-completed") return "کار تمام شده";
+  return "موعد نرسیده";
+}
+
+type ProjectTasksViewProps = {
+  project: BuilderProject;
+  tasks: ProjectTaskRecord[];
+  backbone: ProjectBackboneGraph | null;
+  monitors: ProjectTaskMonitorRecord[];
+  monitorRuns: ProjectTaskMonitorRun[];
+  approvals: ProjectApprovalRecord[];
+  dispatchPlanApprovals: DispatchPlanApprovalRecord[];
+  dispatchDrafts: DispatchDraftRecord[];
+  requests: ProjectPurchaseRequestRecord[];
+  contacts: SupplierContactRecord[];
+  initialFilter: ProjectTaskFilter;
+  initialApprovalId: string | null;
+  initialDispatchPlanApprovalId: string | null;
+  returnToPurchaseRequestId: string | null;
+  tasksStorageLocked: boolean;
+  backboneStorageLocked: boolean;
+  monitorsStorageLocked: boolean;
+  approvalsStorageLocked: boolean;
+  dispatchPlanApprovalsStorageLocked: boolean;
+  onBack: () => void;
+  onOpenBackbone: () => void;
+  onReturnToPurchaseRequest: (requestId: string) => void;
+  onCreate: (draft: ProjectTaskDraft) => boolean;
+  onUpdate: (taskId: string, draft: ProjectTaskDraft) => boolean;
+  onStatusChange: (taskId: string, status: ProjectTaskStatus) => boolean;
+  onCreateMonitor: () => Promise<ProjectTaskMonitorMutationResult>;
+  onRunMonitors: (monitorId: string | null, force: boolean, expectedVersion?: number | null, automaticRunStillAllowed?: (() => boolean) | null) => Promise<ProjectTaskMonitorMutationResult>;
+  onToggleMonitor: (monitorId: string, enabled: boolean, expectedVersion: number) => Promise<ProjectTaskMonitorMutationResult>;
+  onRetryMonitor: (monitorId: string, expectedVersion: number) => Promise<ProjectTaskMonitorMutationResult>;
+  onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => boolean;
+  onDispatchPlanApprovalDecision: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean;
+};
+
+function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, backboneStorageLocked, monitorsStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onOpenBackbone, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onCreateMonitor, onRunMonitors, onToggleMonitor, onRetryMonitor, onApprovalDecision, onDispatchPlanApprovalDecision }: ProjectTasksViewProps) {
   const keyboard = useKeyboard();
   const taskAddButtonRef = useRef<HTMLButtonElement>(null);
   const taskEditButtonRef = useRef<HTMLButtonElement>(null);
   const approvalHeadingRef = useRef<HTMLElement>(null);
   const dispatchPlanHeadingRef = useRef<HTMLElement>(null);
   const pendingApprovalCardFocus = useRef<string | null>(null);
+  const monitorDetailFocusIdRef = useRef<string | null>(null);
+  const onRunMonitorsRef = useRef(onRunMonitors);
+  onRunMonitorsRef.current = onRunMonitors;
   const [filter, setFilter] = useState<ProjectTaskFilter>(initialFilter);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedMonitorId, setSelectedMonitorId] = useState<string | null>(null);
   const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(initialApprovalId);
   const [selectedDispatchPlanApprovalId, setSelectedDispatchPlanApprovalId] = useState<string | null>(initialDispatchPlanApprovalId);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -15311,7 +17319,13 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
   const [taskDraft, setTaskDraft] = useState<ProjectTaskDraft>({ title: "", currentStep: "", dueDate: "" });
   const [fieldErrors, setFieldErrors] = useState({ title: "", currentStep: "" });
   const [storageError, setStorageError] = useState("");
+  const [monitorMessage, setMonitorMessage] = useState("");
+  const [monitorMutationPending, setMonitorMutationPending] = useState(false);
   const selectedTask = selectedId ? tasks.find((task) => task.id === selectedId) ?? null : null;
+  const selectedMonitor = selectedMonitorId ? monitors.find((monitor) => monitor.id === selectedMonitorId) ?? null : null;
+  const selectedMonitorSnapshot = selectedMonitor ? projectTaskMonitorCurrentSnapshot(selectedMonitor) : null;
+  const selectedMonitorLatestRun = selectedMonitor ? [...monitorRuns].filter((run) => run.monitorId === selectedMonitor.id).sort((first, second) => second.attempt - first.attempt)[0] ?? null : null;
+  const selectedMonitorTask = selectedMonitorSnapshot && backbone?.task.id === selectedMonitorSnapshot.origin.taskId ? projectBackboneCurrentSnapshot(backbone.task) as ProjectBackboneTaskSnapshot : null;
   const selectedApproval = selectedApprovalId ? approvals.find((approval) => approval.id === selectedApprovalId) ?? null : null;
   const selectedDispatchPlanApproval = selectedDispatchPlanApprovalId ? dispatchPlanApprovals.find((approval) => approval.id === selectedDispatchPlanApprovalId) ?? null : null;
   const selectedDispatchDraft = selectedDispatchPlanApproval ? dispatchDrafts.find((draft) => draft.id === selectedDispatchPlanApproval.target.dispatchDraftId) ?? null : null;
@@ -15332,6 +17346,10 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
     () => [...dispatchPlanApprovals].sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
     [dispatchPlanApprovals],
   );
+  const orderedMonitors = useMemo(
+    () => [...monitors].sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
+    [monitors],
+  );
   const backboneTask = backbone ? projectBackboneCurrentSnapshot(backbone.task) as ProjectBackboneTaskSnapshot : null;
   const activeCount = tasks.filter((task) => task.status === "in-progress").length + (backboneTask?.status === "in-progress" ? 1 : 0);
   const completedCount = tasks.filter((task) => task.status === "completed").length + (backboneTask?.status === "completed" ? 1 : 0);
@@ -15343,7 +17361,8 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
   };
   const pendingApprovalCount = approvals.filter((approval) => approval.status === "pending").length + dispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) === "pending").length;
   const decidedApprovalCount = approvals.filter((approval) => approval.status !== "pending").length + dispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) !== "pending").length;
-  const filterCounts: Record<ProjectTaskFilter, number> = { active: activeCount, approval: pendingApprovalCount, completed: completedCount + decidedApprovalCount, failed: 0, monitor: 0 };
+  const failedMonitorCount = monitors.filter((monitor) => projectTaskMonitorCurrentSnapshot(monitor).status === "failed").length;
+  const filterCounts: Record<ProjectTaskFilter, number> = { active: activeCount, approval: pendingApprovalCount, completed: completedCount + decidedApprovalCount, failed: failedMonitorCount, monitor: monitors.length };
   const filteredTasks = tasksStorageLocked
     ? []
     : filter === "active"
@@ -15365,19 +17384,55 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
       : filter === "completed"
         ? orderedDispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) !== "pending")
         : [];
+  const filteredMonitors = monitorsStorageLocked
+    ? []
+    : filter === "monitor"
+      ? orderedMonitors
+      : filter === "failed"
+        ? orderedMonitors.filter((monitor) => projectTaskMonitorCurrentSnapshot(monitor).status === "failed")
+        : [];
   const filterReadError = filter === "approval"
     ? approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
     : filter === "completed"
       ? tasksStorageLocked || backboneStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
       : filter === "active"
         ? tasksStorageLocked || backboneStorageLocked
-        : false;
+        : filter === "monitor" || filter === "failed"
+          ? monitorsStorageLocked || backboneStorageLocked
+          : false;
   const backboneTaskIsVisible = !backboneStorageLocked && Boolean(backboneTask) && (filter === "active" && backboneTask?.status === "in-progress" || filter === "completed" && backboneTask?.status === "completed");
-  const resultCount = filteredTasks.length + filteredApprovals.length + filteredDispatchPlanApprovals.length + (backboneTaskIsVisible ? 1 : 0);
+  const resultCount = filteredTasks.length + filteredApprovals.length + filteredDispatchPlanApprovals.length + filteredMonitors.length + (backboneTaskIsVisible ? 1 : 0);
 
   useEffect(() => {
     if (selectedId && !selectedTask) setSelectedId(null);
   }, [selectedId, selectedTask]);
+
+  useEffect(() => {
+    if (selectedMonitorId && !selectedMonitor) setSelectedMonitorId(null);
+  }, [selectedMonitor, selectedMonitorId]);
+
+  useEffect(() => {
+    if (monitorsStorageLocked || backboneStorageLocked) return;
+    let cancelled = false;
+    const runDueChecks = async () => {
+      if (document.visibilityState !== "visible") return;
+      const result = await onRunMonitorsRef.current(null, false, null, () => !cancelled && document.visibilityState === "visible");
+      if (cancelled || result.status === "unchanged" || result.status === "updated" || filter !== "monitor" && filter !== "failed") return;
+      setMonitorMessage(result.status === "lock-unavailable" ? "قفل امن مرورگر برای بررسی خودکار در دسترس نیست." : result.status === "read-failure" || result.status === "dependency-read-failure" ? "دادهٔ پایش یا برنامه خوانا نیست؛ بررسی خودکار متوقف شد." : "بررسی خودکار کامل نشد؛ می‌توانی دوباره تلاش کنی.");
+    };
+    const handleFocus = () => { void runDueChecks(); };
+    const handleVisibility = () => { if (document.visibilityState === "visible") void runDueChecks(); };
+    void runDueChecks();
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+    const intervalId = window.setInterval(() => { void runDueChecks(); }, 60_000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.clearInterval(intervalId);
+    };
+  }, [backboneStorageLocked, filter, monitorsStorageLocked]);
 
   useEffect(() => {
     if (selectedApprovalId && !selectedApproval) setSelectedApprovalId(null);
@@ -15469,6 +17524,75 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
       return;
     }
     setStorageError("");
+  };
+
+  const monitorMutationError = (status: ProjectTaskMonitorMutationStatus) => {
+    if (status === "deadline-missing") return "برای ساخت یا اتصال دوبارهٔ پایش، ابتدا موعد دقیق کار را در برنامهٔ پروژه ثبت کن.";
+    if (status === "dependency-missing") return "کار مبدأ این پایش در همین پروژه پیدا نشد.";
+    if (status === "version-conflict") return "پایش در جای دیگری تغییر کرده بود؛ نسخهٔ تازه بارگذاری شد. دوباره اقدام کن.";
+    if (status === "write-failure") return "تغییر پایش ذخیره نشد؛ نسخهٔ قبلی دست‌نخورده ماند.";
+    if (status === "lock-unavailable") return "قفل امن مرورگر در دسترس نبود؛ برای جلوگیری از برخورد هم‌زمان چیزی تغییر نکرد.";
+    if (status === "read-failure" || status === "dependency-read-failure") return "دادهٔ پایش یا برنامه خوانا نیست؛ برای جلوگیری از بازنویسی، تغییر قفل شد.";
+    return "این اقدام کامل نشد؛ دوباره تلاش کن.";
+  };
+
+  const createMonitor = async () => {
+    if (monitorMutationPending) return;
+    setMonitorMessage("");
+    setMonitorMutationPending(true);
+    const result = await onCreateMonitor();
+    if ((result.status === "created" || result.status === "unchanged") && result.monitorId) {
+      const checkResult = await onRunMonitors(result.monitorId, false);
+      setMonitorMutationPending(false);
+      setSelectedMonitorId(result.monitorId);
+      setMonitorMessage(checkResult.status === "updated" ? "پایش ثبت شد و موعد همین حالا بررسی شد." : checkResult.status === "unchanged" ? result.status === "created" ? "پایش محلی موعد ثبت شد." : "این کار همین حالا یک پایش دارد." : monitorMutationError(checkResult.status));
+      return;
+    }
+    setMonitorMutationPending(false);
+    setMonitorMessage(monitorMutationError(result.status));
+  };
+
+  const runSelectedMonitor = async () => {
+    if (!selectedMonitor || monitorMutationPending) return;
+    setMonitorMessage("");
+    setMonitorMutationPending(true);
+    const result = await onRunMonitors(selectedMonitor.id, true, selectedMonitor.version);
+    setMonitorMutationPending(false);
+    setMonitorMessage(result.status === "updated" ? "بررسی تازه ثبت شد؛ هیچ اقدام بیرونی انجام نشد." : result.status === "unchanged" ? "این پایش اکنون غیرفعال یا منتظر تلاش مجدد است." : monitorMutationError(result.status));
+  };
+
+  const toggleSelectedMonitor = async () => {
+    if (!selectedMonitor || !selectedMonitorSnapshot || monitorMutationPending) return;
+    const wasEnabled = selectedMonitorSnapshot.enabled;
+    setMonitorMessage("");
+    setMonitorMutationPending(true);
+    const result = await onToggleMonitor(selectedMonitor.id, !wasEnabled, selectedMonitor.version);
+    if (result.status === "updated" && !wasEnabled) {
+      const checkResult = await onRunMonitors(selectedMonitor.id, false);
+      setMonitorMutationPending(false);
+      setMonitorMessage(checkResult.status === "updated" ? "پایش فعال شد و موعد همین حالا بررسی شد." : checkResult.status === "unchanged" ? "پایش دوباره به نسخهٔ جاری کار متصل شد." : monitorMutationError(checkResult.status));
+      return;
+    }
+    setMonitorMutationPending(false);
+    setMonitorMessage(result.status === "updated" ? "پایش غیرفعال شد؛ تاریخچه باقی ماند." : result.status === "unchanged" ? "وضعیت پایش تغییری نکرد." : monitorMutationError(result.status));
+  };
+
+  const retrySelectedMonitor = async () => {
+    if (!selectedMonitor || monitorMutationPending) return;
+    setMonitorMessage("");
+    setMonitorMutationPending(true);
+    const result = await onRetryMonitor(selectedMonitor.id, selectedMonitor.version);
+    setMonitorMutationPending(false);
+    setMonitorMessage(result.status === "updated" ? "تلاش تازه ثبت شد؛ نتیجهٔ قبلی در تاریخچه باقی ماند." : result.status === "unchanged" ? "این پایش دیگر در وضعیت شکست نیست." : monitorMutationError(result.status));
+  };
+
+  const closeMonitorDetail = () => {
+    const monitorId = selectedMonitor?.id ?? monitorDetailFocusIdRef.current;
+    setSelectedMonitorId(null);
+    setMonitorMessage("");
+    window.requestAnimationFrame(() => {
+      if (monitorId) document.querySelector<HTMLElement>(`[data-monitor-id="${monitorId}"]`)?.focus();
+    });
   };
 
   const decideApproval = (decision: Exclude<ProjectApprovalStatus, "pending">) => {
@@ -15671,6 +17795,57 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
     );
   }
 
+  if (selectedMonitor && selectedMonitorSnapshot) {
+    return (
+      <div className="chida-app project-task-monitor-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-task-monitor-detail">
+        <header className="project-workspace-header">
+          <button className="icon-button" type="button" onClick={closeMonitorDetail} disabled={monitorMutationPending} aria-label="بازگشت به پایش‌ها" data-testid="project-task-monitor-back"><ArrowRight size={21} /></button>
+          <span className="project-workspace-title"><small>پایش موعد</small><strong>{project.name}</strong></span>
+          <span className="project-workspace-header-spacer" aria-hidden="true" />
+        </header>
+
+        <MobileScroll className="project-task-monitor-detail-scroll">
+          <main className="project-task-monitor-detail-content">
+            <section className="project-task-monitor-heading">
+              <span><Bell size={24} strokeWidth={1.65} /></span>
+              <div><small>{projectTaskMonitorStatusLabel(selectedMonitorSnapshot.status)}</small><h1>{selectedMonitorTask?.title ?? "پایش کار برنامهٔ پروژه"}</h1><p>{selectedMonitorSnapshot.reason}</p></div>
+            </section>
+
+            <p className="project-task-monitor-local-boundary" data-testid="project-task-monitor-local-boundary"><ShieldCheck size={18} /><span><strong>پایش محلی مرورگر</strong>فقط هنگام بازکردن مرکز کارها یا وقتی همین صفحه در این مرورگر باز و قابل‌دیدن است بررسی می‌شود. با بسته‌شدن یا پنهان‌بودن صفحه، اجرای پس‌زمینه یا اعلان سیستم‌عامل نداریم.</span></p>
+
+            <section className={`project-task-monitor-status is-${selectedMonitorSnapshot.status}`} data-testid="project-task-monitor-status" aria-live="polite">
+              <Clock3 size={20} />
+              <span><strong>{projectTaskMonitorStatusLabel(selectedMonitorSnapshot.status)}</strong><small>{selectedMonitorSnapshot.failure?.message ?? (selectedMonitorSnapshot.status === "attention" ? "موعد ثبت‌شده رسیده است؛ تصمیم و اقدام با شماست." : selectedMonitorSnapshot.status === "disabled" ? "بررسی بعدی متوقف شده و تاریخچه باقی مانده است." : "موعد دقیق همین Task در مرورگر بررسی می‌شود.")}</small></span>
+            </section>
+
+            <dl className="project-task-monitor-meta">
+              <div><dt>موعد ثبت‌شده</dt><dd>{formatTehranDateTime(selectedMonitorSnapshot.trigger.dueAt)}</dd></div>
+              <div data-testid="project-task-monitor-last-check"><dt>آخرین بررسی</dt><dd>{selectedMonitorSnapshot.lastCheckAt ? formatTehranDateTime(selectedMonitorSnapshot.lastCheckAt) : "هنوز بررسی نشده"}</dd></div>
+              <div data-testid="project-task-monitor-next-check"><dt>بررسی بعدی</dt><dd>{selectedMonitorSnapshot.nextCheckAt ? formatTehranDateTime(selectedMonitorSnapshot.nextCheckAt) : selectedMonitorSnapshot.status === "failed" ? "پس از تلاش مجدد" : "متوقف"}</dd></div>
+              <div><dt>آخرین نتیجه</dt><dd>{projectTaskMonitorRunLabel(selectedMonitorLatestRun)}</dd></div>
+            </dl>
+
+            {monitorMessage ? <p className="project-task-monitor-message" role="status" data-testid="project-task-monitor-message">{monitorMessage}</p> : null}
+
+            <div className="project-task-monitor-actions">
+              {selectedMonitorSnapshot.status === "failed" ? <button className="primary-button" type="button" onClick={() => { void retrySelectedMonitor(); }} disabled={monitorMutationPending || monitorsStorageLocked || backboneStorageLocked} data-testid="project-task-monitor-retry"><RotateCcw size={17} /> {monitorMutationPending ? "در حال تلاش..." : "تلاش مجدد و اتصال به نسخهٔ جاری"}</button> : <button className="primary-button" type="button" onClick={() => { void runSelectedMonitor(); }} disabled={monitorMutationPending || !selectedMonitorSnapshot.enabled || monitorsStorageLocked || backboneStorageLocked} data-testid="project-task-monitor-run-now"><Clock3 size={17} /> {monitorMutationPending ? "در حال بررسی..." : "بررسی اکنون"}</button>}
+              <button type="button" onClick={() => { void toggleSelectedMonitor(); }} disabled={monitorMutationPending || monitorsStorageLocked || backboneStorageLocked} data-testid="project-task-monitor-toggle">{selectedMonitorSnapshot.enabled ? "غیرفعال‌کردن پایش" : "فعال‌کردن دوباره"}</button>
+              <button type="button" onClick={onOpenBackbone} disabled={monitorMutationPending || backboneStorageLocked} data-testid="project-task-monitor-open-task"><Pin size={16} /> بازکردن کار در برنامه</button>
+            </div>
+
+            <details className="project-task-monitor-history" data-testid="project-task-monitor-history">
+              <summary>تاریخچه و جزئیات فنی</summary>
+              <div>
+                <dl><div><dt>نسخهٔ پایش</dt><dd>{selectedMonitor.version.toLocaleString("fa-IR")}</dd></div><div><dt>شرط بررسی</dt><dd>کار باز و زمان فعلی برابر یا پس از موعد</dd></div><div><dt>اثر بیرونی</dt><dd>ندارد</dd></div></dl>
+                <ol>{[...selectedMonitor.history].reverse().map((event) => <li key={event.id}><strong>{event.type}</strong><small>{formatTehranDateTime(event.at)} · نسخهٔ {event.version.toLocaleString("fa-IR")}</small></li>)}</ol>
+              </div>
+            </details>
+          </main>
+        </MobileScroll>
+      </div>
+    );
+  }
+
   if (selectedTask) {
     return (
       <div className="chida-app project-task-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-task-detail-view">
@@ -15741,6 +17916,11 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
           {(approvalsStorageLocked || dispatchPlanApprovalsStorageLocked) && (filter === "approval" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-approval-read-error"><ShieldCheck size={17} /><span><strong>تأییدهای محلی کامل خوانده نشد.</strong> برای جلوگیری از تصمیم روی نسخهٔ نامطمئن، ایجاد و ثبت تصمیم تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
+          {(monitorsStorageLocked || backboneStorageLocked) && (filter === "monitor" || filter === "failed") ? (
+            <p className="project-storage-recovery-alert" role="alert" data-testid="project-task-monitor-read-error"><ShieldCheck size={17} /><span><strong>پایش‌ها یا Task مبدأ کامل خوانده نشدند.</strong> این وضعیت خالی نیست؛ بررسی و تغییر تا بازیابی موفق قفل شده است.</span></p>
+          ) : null}
+          {!monitorsStorageLocked && !backboneStorageLocked && (filter === "monitor" || filter === "failed") ? <p className="project-task-monitor-list-boundary"><Clock3 size={16} /> فقط هنگام بازکردن یا وقتی مرکز کارها در همین مرورگر قابل‌دیدن است بررسی می‌شود.</p> : null}
+          {monitorMessage && !selectedMonitor ? <p className="project-task-monitor-message" role="status" data-testid="project-task-monitor-list-message">{monitorMessage}</p> : null}
 
           <Carousel ariaLabel="فیلتر وضعیت کارها" className="project-task-filters" contentClassName="project-task-filter-track">
             {projectTaskFilters.map((item) => {
@@ -15750,8 +17930,10 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
                   ? approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
                   : item.id === "completed"
                     ? tasksStorageLocked || backboneStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
-                    : false;
-              return <button className="project-task-filter" type="button" key={item.id} aria-pressed={filter === item.id} onClick={() => { setStorageError(""); setFilter(item.id); }} data-testid={`project-task-filter-${item.id}`}><span>{item.label}</span><small aria-label={countUnavailable ? `بازیابی ${item.label} کامل نشد` : undefined}>{countUnavailable ? "!" : filterCounts[item.id].toLocaleString("fa-IR")}</small></button>;
+                    : item.id === "monitor" || item.id === "failed"
+                      ? monitorsStorageLocked || backboneStorageLocked
+                      : false;
+              return <button className="project-task-filter" type="button" key={item.id} aria-pressed={filter === item.id} onClick={() => { setStorageError(""); setMonitorMessage(""); setFilter(item.id); }} data-testid={`project-task-filter-${item.id}`}><span>{item.label}</span><small aria-label={countUnavailable ? `بازیابی ${item.label} کامل نشد` : undefined}>{countUnavailable ? "!" : filterCounts[item.id].toLocaleString("fa-IR")}</small></button>;
             })}
           </Carousel>
 
@@ -15760,6 +17942,7 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
               <span><CheckCircle2 size={25} strokeWidth={1.65} /></span>
               <h2>{projectTaskEmptyCopy[filter].title}</h2>
               <p>{projectTaskEmptyCopy[filter].description}</p>
+              {filter === "monitor" && !monitorsStorageLocked && !backboneStorageLocked ? backboneTask?.dueAt ? <button className="primary-button project-task-monitor-create" type="button" onClick={() => { void createMonitor(); }} disabled={monitorMutationPending} data-testid="project-task-monitor-create"><Bell size={17} /> {monitorMutationPending ? "در حال ثبت..." : "ساخت پایش موعد"}</button> : <button className="project-task-monitor-open-backbone" type="button" onClick={onOpenBackbone} data-testid="project-task-monitor-set-deadline"><Pin size={16} /> ثبت موعد در برنامهٔ پروژه</button> : null}
             </section>
           ) : (
             <section className="project-task-list" aria-label={projectTaskFilters.find((item) => item.id === filter)?.label}>
@@ -15778,6 +17961,17 @@ function ProjectTasksView({ project, tasks, backbone, approvals, dispatchPlanApp
                   <ArrowRight size={17} aria-hidden="true" />
                 </button>
               ))}
+              {filteredMonitors.map((monitor) => {
+                const snapshot = projectTaskMonitorCurrentSnapshot(monitor);
+                const taskTitle = backbone?.task.id === snapshot.origin.taskId ? (projectBackboneCurrentSnapshot(backbone.task) as ProjectBackboneTaskSnapshot).title : "کار برنامهٔ پروژه";
+                return (
+                  <button className={`project-task-card project-task-monitor-card is-${snapshot.status}`} type="button" key={monitor.id} data-monitor-id={monitor.id} onClick={() => { setMonitorMessage(""); monitorDetailFocusIdRef.current = monitor.id; setSelectedMonitorId(monitor.id); }} data-testid="project-task-monitor-card">
+                    <span className="project-task-card-icon"><Bell size={20} strokeWidth={1.65} /></span>
+                    <span className="project-task-card-copy"><span><small>{projectTaskMonitorStatusLabel(snapshot.status)}</small><small>نسخهٔ {monitor.version.toLocaleString("fa-IR")}</small></span><strong>{taskTitle}</strong><em>موعد: {formatTehranDateTime(snapshot.trigger.dueAt)}</em><small className="project-task-card-date">{snapshot.lastCheckAt ? `آخرین بررسی: ${formatTehranDateTime(snapshot.lastCheckAt)}` : "هنوز بررسی نشده"}</small></span>
+                    <ArrowRight size={17} aria-hidden="true" />
+                  </button>
+                );
+              })}
               {backboneTaskIsVisible && backbone && backboneTask ? (
                 <button className="project-task-card project-backbone-task-card" type="button" onClick={onOpenBackbone} data-testid="project-backbone-task-card">
                   <span className="project-task-card-icon"><Pin size={20} strokeWidth={1.65} /></span>
@@ -16704,7 +18898,7 @@ function ProjectGalleryDetailSheet({ file, imageUrl, project, onClose }: { file:
   );
 }
 
-function ProjectFilesView({ project, files, storageLocked, initialSelectedId = null, onBack, onRegister, onRestoreContent, onRename }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; initialSelectedId?: string | null; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => boolean }) {
+function ProjectFilesView({ project, files, storageLocked, initialSelectedId = null, onBack, onRegister, onRestoreContent, onRename }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; initialSelectedId?: string | null; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean> }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<PendingProjectFile | null>(null);
@@ -16916,14 +19110,16 @@ function ProjectFileRegisterSheet({ file, project, error, busy, categoryLocked =
   );
 }
 
-function ProjectFileDetailSheet({ file, project, storageLocked, onClose, onRename }: { file: ProjectFileRecord | null; project: BuilderProject; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => boolean }) {
+function ProjectFileDetailSheet({ file, project, storageLocked, onClose, onRename }: { file: ProjectFileRecord | null; project: BuilderProject; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => Promise<boolean> }) {
   const keyboard = useKeyboard();
   const [displayName, setDisplayName] = useState("");
   const [nameError, setNameError] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
   useEffect(() => {
     setDisplayName(file?.displayName ?? "");
     setNameError("");
+    setSavingName(false);
   }, [file?.displayName, file?.id]);
 
   const close = () => {
@@ -16931,16 +19127,18 @@ function ProjectFileDetailSheet({ file, project, storageLocked, onClose, onRenam
     onClose();
   };
 
-  const saveName = () => {
+  const saveName = async () => {
     const normalizedName = displayName.trim();
-    if (!file || !normalizedName) {
+    if (!file || !normalizedName || savingName) {
       setNameError("نام نمایشی فایل را وارد کن.");
       return;
     }
-    if (onRename(file.id, normalizedName)) {
+    setSavingName(true);
+    if (await onRename(file.id, normalizedName)) {
       close();
       return;
     }
+    setSavingName(false);
     setNameError("نام نمایشی ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
   };
 
@@ -16961,7 +19159,7 @@ function ProjectFileDetailSheet({ file, project, storageLocked, onClose, onRenam
             <div><dt>مرحله هنگام ثبت</dt><dd>{file.projectStage || "ثبت نشده"}</dd></div>
             <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(file.createdAt)}</dd></div>
           </dl>
-          <button className="primary-button" type="button" onClick={saveName} disabled={storageLocked} data-testid="project-file-rename-save">ذخیرهٔ نام نمایشی</button>
+          <button className="primary-button" type="button" onClick={() => { void saveName(); }} disabled={storageLocked || savingName} data-testid="project-file-rename-save">{savingName ? "در حال ذخیره…" : "ذخیرهٔ نام نمایشی"}</button>
         </section>
       ) : null}
     </BottomSheet>
@@ -16981,8 +19179,100 @@ function ModelsSheet({ sheet, mode, onClose, onSelect }: { sheet: SheetName; mod
   return <BottomSheet open={sheet === "models"} onOpenChange={(open) => !open && onClose()} title="حالت پاسخ" description="چیدا مدل مناسب را پشت صحنه مدیریت می‌کند." snap={0.48}><div className="sheet-list" dir="rtl" data-testid="model-sheet">{options.map((option) => <SheetRow key={option.name} icon={option.icon} title={option.name} description={option.description} selected={mode === option.name} onClick={() => { onSelect(option.name); onClose(); }} />)}</div></BottomSheet>;
 }
 
-function AttachSheet({ sheet, onClose }: { sheet: SheetName; onClose: () => void }) {
-  return <BottomSheet open={sheet === "attach"} onOpenChange={(open) => !open && onClose()} title="افزودن به گفتگو" snap={0.48}><div className="sheet-list" dir="rtl"><SheetRow icon={<Camera size={20} />} title="دوربین" description="از کارگاه یا مدرک عکس بگیر" onClick={onClose} /><SheetRow icon={<ImageIcon size={20} />} title="عکس و ویدیو" description="از گالری دستگاه انتخاب کن" onClick={onClose} /><SheetRow icon={<FileText size={20} />} title="فایل پیوست · به‌زودی" description="فعلاً برای ثبت فایل از ابزارها وارد اسناد پروژه شو" testId="composer-file-attachment" disabled onClick={() => {}} /></div></BottomSheet>;
+function AttachSheet({ sheet, disabled, onClose, onChoose }: { sheet: SheetName; disabled: boolean; onClose: () => void; onChoose: (file: File | undefined, source: ProjectFileRecord["source"]) => void }) {
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  return (
+    <BottomSheet open={sheet === "attach"} onOpenChange={(open) => !open && onClose()} title="افزودن به گفتگو" description="پیوست فقط در همین پروژه ثبت می‌شود؛ OCR، مدل یا ارسال بیرونی فعال نیست." snap={0.56}>
+      <div className="sheet-list" dir="rtl" data-testid="composer-attach-sheet">
+        <p className="composer-attach-boundary" data-testid="composer-attach-boundary"><ShieldCheck size={17} aria-hidden="true" />فایل فقط به‌صورت محلی در همین پروژه ثبت می‌شود؛ OCR، مدل یا ارسال بیرونی فعال نیست.</p>
+        <SheetRow icon={<Camera size={20} />} title="دوربین" description="از کارگاه یا مدرک عکس بگیر" testId="composer-camera-attachment" disabled={disabled} onClick={() => cameraInputRef.current?.click()} />
+        <SheetRow icon={<ImageIcon size={20} />} title="عکس" description="از گالری دستگاه انتخاب کن" testId="composer-image-attachment" disabled={disabled} onClick={() => imageInputRef.current?.click()} />
+        <SheetRow icon={<FileText size={20} />} title="فایل پیوست" description="PDF، صفحه‌گسترده یا سند متنی" testId="composer-file-attachment" disabled={disabled} onClick={() => fileInputRef.current?.click()} />
+        <input ref={cameraInputRef} className="project-file-native-input" type="file" accept="image/*" capture="environment" disabled={disabled} data-testid="composer-camera-input" onChange={(event) => { onChoose(event.currentTarget.files?.[0], "دوربین دستگاه"); event.currentTarget.value = ""; }} />
+        <input ref={imageInputRef} className="project-file-native-input" type="file" accept={projectImageAccept} disabled={disabled} data-testid="composer-image-input" onChange={(event) => { onChoose(event.currentTarget.files?.[0], "انتخاب مستقیم از دستگاه"); event.currentTarget.value = ""; }} />
+        <input ref={fileInputRef} className="project-file-native-input" type="file" accept={projectFileAccept} disabled={disabled} data-testid="composer-file-input" onChange={(event) => { onChoose(event.currentTarget.files?.[0], "انتخاب مستقیم از دستگاه"); event.currentTarget.value = ""; }} />
+      </div>
+    </BottomSheet>
+  );
+}
+
+function ProjectSourceDetailSheet({ source, file, project, assetReadLocked, onClose }: { source: ProjectSourceRecord | null; file: ProjectFileRecord | null; project: BuilderProject; assetReadLocked: boolean; onClose: () => void }) {
+  const [assetStatus, setAssetStatus] = useState<"idle" | "loading" | "available" | "missing" | "invalid" | "unreadable">("idle");
+  const [assetUrl, setAssetUrl] = useState("");
+  const [previewFailed, setPreviewFailed] = useState(false);
+
+  useEffect(() => {
+    let disposed = false;
+    let objectUrl = "";
+    setAssetUrl("");
+    setPreviewFailed(false);
+    if (!source) {
+      setAssetStatus("idle");
+      return () => {};
+    }
+    if (source.sourceType === "composer-text") {
+      setAssetStatus(source.textContent !== null && `sha256-${memoryCoreSha256(source.textContent)}` === source.contentHash ? "available" : "invalid");
+      return () => {};
+    }
+    if (!file || !source.assetRef || file.projectId !== source.projectId || file.version !== source.assetRef.fileVersion) {
+      setAssetStatus("missing");
+      return () => {};
+    }
+    if (assetReadLocked) {
+      setAssetStatus("unreadable");
+      return () => {};
+    }
+    setAssetStatus("loading");
+    const load = async () => {
+      try {
+        const blob = file.storageMode === "browser-image" ? await readProjectImage(file) : await readProjectFile(file);
+        if (!blob) {
+          if (!disposed) setAssetStatus("missing");
+          return;
+        }
+        if (await sha256ProjectSourceBlob(blob) !== source.contentHash) {
+          if (!disposed) setAssetStatus("invalid");
+          return;
+        }
+        if (disposed) return;
+        objectUrl = URL.createObjectURL(blob);
+        setAssetUrl(objectUrl);
+        setAssetStatus("available");
+      } catch {
+        if (!disposed) setAssetStatus("unreadable");
+      }
+    };
+    void load();
+    return () => {
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [assetReadLocked, file?.id, file?.storageMode, source?.contentHash, source?.id, source?.textContent]);
+
+  const sourceLabel = source?.sourceType === "composer-text" ? "متن پیام" : source?.sourceType === "composer-photo" ? "عکس پیوست" : "فایل پیوست";
+  return (
+    <BottomSheet open={Boolean(source)} onOpenChange={(open) => !open && onClose()} title="منبع محلی" description="اصل ثبت‌شدهٔ همین ورودی؛ بدون OCR یا استفادهٔ مدل" snap={0.9}>
+      {source ? (
+        <section className="project-source-detail" dir="rtl" data-testid="composer-source-detail">
+          <div className="project-source-detail-title"><span>{source.sourceType === "composer-text" ? <MessageSquare size={22} /> : source.sourceType === "composer-photo" ? <ImageIcon size={22} /> : <FileText size={22} />}</span><div><small>{sourceLabel}</small><strong dir="auto">{file?.displayName ?? (source.sourceType === "composer-text" ? "متن دقیق کاربر" : "اصل فایل در دسترس نیست")}</strong></div></div>
+          {source.sourceType === "composer-text" && assetStatus === "available" ? <p className="project-source-text" dir="auto" data-testid="composer-source-text">{source.textContent}</p> : null}
+          {source.sourceType === "composer-photo" && assetStatus === "available" && assetUrl && file && isBrowserPreviewableProjectImage(file) && !previewFailed ? <img className="project-source-image" src={assetUrl} alt={file.displayName} draggable={false} data-testid="composer-source-image" onError={() => setPreviewFailed(true)} /> : null}
+          {source.sourceType !== "composer-text" && assetStatus === "available" && assetUrl ? <a className="primary-button project-source-open-asset" href={assetUrl} target="_blank" rel="noopener noreferrer" data-testid="composer-source-open-asset"><ArrowUpRight size={17} /> بازکردن اصل {source.sourceType === "composer-photo" ? "عکس" : "فایل"}</a> : null}
+          {assetStatus === "loading" ? <p className="project-source-status" role="status">در حال بررسی اصل منبع…</p> : null}
+          {assetStatus === "missing" || assetStatus === "invalid" || assetStatus === "unreadable" ? <p className="project-source-status error" role="alert" data-testid="composer-source-unavailable">{assetStatus === "missing" ? "اصل این منبع در این مرورگر پیدا نشد." : assetStatus === "invalid" ? "اصل منبع با hash ثبت‌شده هم‌خوان نیست و باز نمی‌شود." : "خواندن اصل منبع از ذخیره‌سازی مرورگر انجام نشد."}</p> : null}
+          <dl className="project-file-meta">
+            <div><dt>پروژه</dt><dd>{project.name}</dd></div>
+            <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(source.capturedAt)}</dd></div>
+            <div><dt>نسخه و منشأ</dt><dd>نسخهٔ ۱ · ثبت مستقیم شما</dd></div>
+            <div><dt>دسترسی فعلی</dt><dd>خصوصی پروژه · مدل، بازیابی و اشتراک خاموش</dd></div>
+          </dl>
+          <button className="primary-button project-source-close" type="button" onClick={onClose} data-testid="composer-source-close">بستن</button>
+        </section>
+      ) : null}
+    </BottomSheet>
+  );
 }
 
 function ToolsSheet({ sheet, installedTool, onBuild, onSearch, onSourceDemo, onFiles, onClose }: { sheet: SheetName; installedTool: string; onBuild: () => void; onSearch: () => void; onSourceDemo: () => void; onFiles: () => void; onClose: () => void }) {

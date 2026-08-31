@@ -1581,4 +1581,110 @@
 - commit قابلیت `6169035074b4262b7576df638fa4a657f04fdee7` با prototype tree `a831c16ffb049bbbacd79aee533935eea33aa078` روی GitHub `main` منتشر شد. gate تازهٔ release شامل focused برابر ۳۵/۳۵، app برابر ۲۱۰/۲۱۰، runtime برابر ۲۱۸/۲۱۸، Sites برابر ۴/۴، build/TypeScript، `npx tsc --noEmit`، integrity هر ۲۸ فایل، `git diff --check` و ممیزی مستقل بدون finding باز P0/P1/P2 پاس شد.
 - Cloudflare Pages deployment `6d59d990-f82b-4f76-b5e8-7ad46c09ecda` از همین source با `github:push` روی `main` و `commit_dirty=false` به وضعیت `success` رسید. canonical و immutable هر دو HTTP 200 و با build محلی یکسان‌اند: HTML `ea15863272858e53ad1036f6b3a3be91b90ac57162f86a49346a5726fafa499e`، JavaScript `0f6e02bb244327f2935a38e3ab211d8f3a45ea457c58947753974f5df49fccd6` و CSS `683758425f5aebacaf0be2fd353418bf216e7f221185768cd5bb4c86903767a6`.
 - ChatGPT Sites نسخهٔ ۲۹ با source commit release، ۱۹ فایل و archive hash `sha256:a540f36f4447d3a200ad04295f967602366e3ea4025c4faf5bace206c8c89e0d` ذخیره شد؛ version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_43b1a0eaf8888191af729ef9a417fdb7` و deployment خصوصی `appgdep_6a94f2d1bebc8191a46ffa27d1d1b76c` در وضعیت `succeeded` است. دسترسی `custom`/owner-only با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
-- commit مستندی حاوی همین receipt prototype tree را تغییر نمی‌دهد و دوباره روی هر سه مقصد همسان می‌شود. شناسه‌های خود receipt نهایی به‌دلیل self-reference در پیام تحویل و handoff تسک تازه ثبت می‌شوند؛ Source/Composer Intake، مدل، backend، شبکه و مسیر تأمین‌کننده آغاز نشده‌اند.
+- commit مستندی حاوی همین receipt prototype tree را تغییر نمی‌دهد و دوباره روی هر سه مقصد همسان می‌شود. شناسه‌های خود receipt نهایی به‌دلیل self-reference در پیام تحویل و handoff تسک تازه ثبت می‌شوند؛ این بند وضعیت تاریخی پایان MC-1 است و وضعیت جاری Source/Composer در SI-1 زیر ثبت می‌شود.
+
+## SI-1 — Source/Composer Intake محلی سازنده
+
+- **تاریخ مجوز و اجرای محلی:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
+- **وضعیت:** ماهیار پس از مشخص‌شدن تسک بعدی با پیام «شروع کن لطفا» فقط اجرای SI-1 را مجاز کرد. پیاده‌سازی در checkout اصلی انجام شد و ماهیار پس از مشاهده با پیام «خوبه بریم تسک بعدی» تجربهٔ SI-1 را تأیید و اجرای Task/Monitor Core را مجاز کرد. پس از تکمیل و آزمون TM-1، با پیام «منتشر کن لطفا» انتشار snapshot ترکیبی SI-1/TM-1 را صریحاً مجاز کرد؛ این بند پیش از release ثبت می‌شود و موفقیت انتشار فقط با receipt terminal بعدی ادعا خواهد شد.
+- **دامنه:** ثبت محلی و پروژه‌محور متن دقیق Composer همراه با حداکثر یک عکس یا سند پشتیبانی‌شده در همان draft، پیش‌نمایش/حذف پیش از ثبت و بازکردن دوبارهٔ Source؛ بدون OCR، vision، extraction، مدل، retrieval، index جست‌وجو، backend، sync، cloud upload، share، ارسال بیرونی یا thread کامل ماندگار.
+
+### تجربهٔ مشاهده‌شده
+
+- «پیوست به گفتگو» وقتی فقط metadata یا دکمهٔ نمایشی داشت، برای کاربر روشن نمی‌کرد اصل انتخاب‌شده کجا می‌ماند و آیا بعد از reload قابل‌بازشدن است. تجربهٔ فعلی عکس یا سند را پیش از ثبت در همان Composer نشان می‌دهد، حذف را ممکن می‌کند و بعد از ثبت یک ورودی Source قابل‌بازشدن می‌سازد.
+- متن و فایل یک draft واحدند، اما یک شیء واحد نیستند: متن دقیق به‌عنوان Source متنی و عکس/سند به‌عنوان Source دارایی با `FileRecord` مستقل ثبت می‌شوند و یک intake فقط پیوند آن‌ها را نگه می‌دارد. این تفکیک از گم‌شدن فایل در تاریخچهٔ نمایشی جلوگیری می‌کند.
+- نمایش یک پاسخ کوتاه پس از ثبت می‌توانست به‌اشتباه خروجی مدل یا thread پایدار تلقی شود. متن فعلی فقط رسید محلیِ مشتق‌شده از intake است و صریحاً می‌گوید OCR، خواندن فایل و تحلیل مدل انجام نشده‌اند؛ فهرست گفتگوهای جدا نیز ساخته نشده است.
+- در آزمون تعویض پروژه، ثبت اتمیکِ قبلی می‌توانست هم‌زمان با تایپ بعدی تمام شود و پاک‌سازی draft قبلی متن تازه را حذف کند. Composer اکنون تا پایان commit کوتاه‌مدت قفل و پاک‌سازی فقط به snapshot همان ارسال محدود است.
+- ماهیار پس از دریافت preview و رسید کامل آزمون گفت «خوبه بریم تسک بعدی» و اصلاحی برای SI-1 نخواست؛ این بازخورد تأیید تجربهٔ همین snapshot محلی و مجوز اجرای برش بعدی است، نه مجوز commit، push یا deploy.
+
+### شکاف یا ابهام سند مادر
+
+- سند مادر فایل و Source را first-class، scopeدار، نسخه‌دار و دارای provenance می‌خواهد، اما schema دقیق `SourceRecord`، رابطهٔ آن با `FileRecord` و intake Composer، و مرز آن با chat history را تعریف نمی‌کند.
+- حفظ مدرک مبدأ و جداسازی extracted/guessed در سند آمده است، ولی برای مرحله‌ای که هیچ extraction وجود ندارد، قرارداد browser-local نگه‌داری bytes، hash محتوای دقیق، MIME امن و رفتار missing/tampered/unreadable صریح نیست.
+- atomicity میان metadata، bytes و Source، recovery پس از قطع میان چند store، قفل نویسنده‌ها و تفاوت empty با read-error در قرارداد فعلی سند مادر جزئیات کافی ندارند.
+- lifecycle نگه‌داری، quota، export/delete، migration، چندپیوستی‌شدن آینده و سیاست untrusted input هنوز برای Source/File کامل نشده‌اند.
+
+### تصمیم و وضعیت آن
+
+- **[تصمیم این برش؛ محلی و تأییدشده توسط ماهیار]** هر intake دقیقاً به پروژهٔ فعال تعلق دارد و یک یا دو Source می‌سازد: متن دقیق اختیاری و حداکثر یک عکس/سند اختیاری؛ حداقل یکی باید وجود داشته باشد. attachment-only معتبر است و تغییر پروژه draft و پیوست پروژهٔ دیگر را نشان نمی‌دهد.
+- metadata فایل در `localStorage` و Blob انتخاب‌شده فقط در IndexedDB همان مرورگر نگه‌داری می‌شود. پسوند و MIME باید با allowlist سازگار باشند؛ Blob هنگام خواندن با MIME امن وابسته به پسوند بازسازی می‌شود و متن/Base64/Blob وارد `localStorage` نمی‌شود.
+- `SourceRecord` دارای project/scope، provenance، version، content hash SHA-256 و fingerprint است. Source دارایی به id/version همان `FileRecord` و bytes دقیق آن bind می‌شود؛ `FileRecord` مستقل باقی می‌ماند و شناسنامهٔ فایل به‌تنهایی حافظه، متن استخراج‌شده یا Source چت نیست.
+- همهٔ writerهای Source و metadata فایل از یک Web Lock استفاده می‌کنند و پیش از mutation دوباره می‌خوانند. فقط commit چندمخزنی Composer intent ماندگار و snapshot-bound دارد؛ ثبت مستقل فایل Blob-first است و پس از read-back bytes، metadata را commit می‌کند.
+- read-error، نبود Blob، mismatch binding، دست‌کاری hash/MIME، stale version، نبود Web Locks و شکست هر write با empty یا موفقیت اشتباه نمی‌شوند. mutation وابسته fail-close می‌ماند و عملیات نیمه‌تمام Composer rollback/resume امن دارد.
+
+### وضعیت پیاده‌سازی و شواهد
+
+- مسیرهای دوربین، عکس و سند Composer به input واقعی وصل شده‌اند؛ preview/remove، attachment-only، رسید صادقانه، بازکردن متن دقیق یا اصل عکس/سند، reload و project isolation پیاده شده‌اند. focus پس از بستن جزئیات به trigger برمی‌گردد و ساخت دیرهنگام object URL پس از close مسدود است.
+- regressionهای متمرکز SI-1 متن+سند، عکس تنها، MIME ناسازگار، rollback دو store، recovery intent، intent جعلی، Blob گم‌شده یا دست‌کاری‌شده، MIME امن، Source/file ناخوانا، نبود lock، رقابت دو تب و قفل مشترک کتابخانهٔ فایل را پوشش می‌دهند و ۲۳/۲۳ پاس شدند. پس از اصلاح چهار انتظار/race دقیق، مجموعهٔ کامل app برابر ۲۳۳/۲۳۳، runtime برابر ۲۴۱/۲۴۱ و Sites برابر ۴/۴ پاس شد؛ `check:runtime` هر ۲۸ فایل محافظت‌شده، build، TypeScript مستقل و `git diff --check` نیز پاس‌اند. تنها هشدار شناخته‌شدهٔ build، chunk جاوااسکریپت بزرگ‌تر از 500kB است.
+- QA مرورگر داخلی در viewport واقعی `390 × 844`، preview/remove و ثبت متن دقیق همراه PDF، ثبت attachment-only عکس، reopen/reload هر دو دارایی، اصل Blob، project isolation، رسید محلی و provenance خاموش‌بودن model/retrieval/share را تأیید کرد. بازگشت focus پس از Escape برای متن/فایل/عکس درست بود؛ دکمهٔ بستن `354 × 50`، دکمه‌های Source حداقل ۴۴px و کنترل‌های اصلی Composer حداقل ۴۸px بودند؛ عرض inner/html/body برابر ۳۹۰، بیرون‌زدگی خارج از carousel صفر و console warning/error صفر بود.
+- سه بازبینی مستقل پیاده‌سازی، مرز دامنه و پوشش تست پس از اصلاح‌ها finding باز P0/P1 گزارش نکردند. gate پیاده‌سازی محلی SI-1 PASS است و تجربهٔ آن توسط ماهیار تأیید شد. Builder Architecture Gate کامل همچنان FAIL است و این PASS فقط به همین برش مربوط می‌شود؛ Task/Monitor Core اکنون با پیام جداگانه مجاز شده است.
+
+### محدودیت و بدهی باقی‌مانده
+
+- این prototype فقط همان مرورگر را پوشش می‌دهد؛ هیچ upload، sync، backup ابری، اشتراک، پردازش محتوا یا تضمین ماندگاری بیرون از storage محلی ندارد. پاک‌شدن دادهٔ مرورگر اصل فایل را از دسترس خارج می‌کند.
+- `FileRecord` مستقل فعلاً content hash ماندگار ندارد؛ hash دقیق در Source لینک‌شده نگه‌داری و بررسی می‌شود. فایل‌های مستقل کتابخانه Blob-first و read-back می‌شوند، اما نباید اصالت بلندمدت hash-bound برایشان ادعا شود.
+- فقط یک attachment در هر draft پشتیبانی می‌شود. چندفایل، ترتیب، caption مستقل، quota/eviction، export/delete و migration schema به برش‌های بعدی نیاز دارند.
+- فایل و متن هنوز به مدل، Memory Core، جست‌وجوی محتوایی یا پاسخ منبع‌دار وصل نیستند؛ intake محلی مجوز مصرف داده در context یا ساخت `MemoryCandidate` نیست.
+
+### پیشنهاد اصلاح سند مادر
+
+- `SourceRecord`، `FileRecord` و `ComposerIntake` به‌عنوان سه قرارداد جدا تعریف شوند: Source evidence دقیق و hash-bound، File asset مستقل با lifecycle خودش، و intake فقط گروه‌بندی project-scoped منابع ثبت‌شده.
+- برای storage محلی قرارداد اتمیک رسمی شامل metadata/bytes ordering، intent ماندگار فقط برای mutation چندمخزنی، common writer lock، commit-time reread، rollback/resume و fail-close corruption/missing/tamper اضافه شود.
+- مرز نسخهٔ بدون extraction صریح شود: حفظ اصل و provenance مجاز است، اما OCR/vision/embedding/model use/retrieval/share تا اتصال و رضایت جدا همگی false می‌مانند.
+- acceptance آیندهٔ Source/File باید retention/quota، export/delete، migration، untrusted-content handling، hash مستقل FileRecord و چندپیوستی‌شدن را جدا از تجربهٔ سادهٔ Composer پوشش دهد.
+
+## TM-1 — Task/Monitor Core محلی سازنده
+
+- **تاریخ مجوز، اجرا و مجوز انتشار:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
+- **وضعیت و ترتیب واقعی:** ماهیار با پیام «خوبه بریم تسک بعدی» فقط اجرای Task/Monitor Core را پس از SI-1 مجاز کرد و سپس با پیام «منتشر کن لطفا» انتشار دامنهٔ جاری SI-1/TM-1 را خواست. release-verification پس از پیام انتشار یک رگرسیون presentation، دو P2 قرارداد TM-1 و چند race صرفاً test-only را آشکار کرد؛ همه بدون گسترش دامنه بسته شدند و suiteهای کامل و QA موبایل پاس شدند. پیام کاربر مجوز commit/push/deploy همین دامنه و اصلاحات لازم release است، نه تأیید UX تفصیلی یا بایت‌به‌بایت post-fix و نه مجوز Build Lifecycle، مدل، backend، شبکه یا مسیر تأمین‌کننده.
+- **دامنه:** یک موعد اختیاری برای Task متصل «برنامهٔ پروژه» و دقیقاً یک Monitor موعد پروژه‌محور با Runهای append-only؛ بدون service worker، اجرای تب بسته یا پنهان، Notification API، backend، مدل، وب، پایش قیمت/مقررات، شبکه یا اثر بیرونی.
+
+### تجربهٔ مشاهده‌شده
+
+- موعد در فرم برنامه با برچسب صریح «زمان تهران» ثبت می‌شود و در نمای Task به تاریخ فارسی قابل‌فهم دیده می‌شود. کنترل بومی `datetime-local` عمداً LTR و پنج ورودی متنی همان sheet واقعاً RTL می‌مانند.
+- مرکز «کارها» یک فیلتر مستقل «پایش‌ها» دارد؛ حالت خالی فقط برای Task متصلِ دارای موعد اقدام «ساخت پایش موعد» نشان می‌دهد. وظیفهٔ دستی قدیمی همچنان قابل‌ساخت و ویرایش است و producer پایش نیست.
+- جزئیات پایش به‌جای اصطلاحات فنی، وضعیت، موعد، آخرین بررسی، بررسی بعدی و آخرین نتیجه را نشان می‌دهد. «بررسی اکنون»، غیرفعال‌کردن و فعال‌کردن دوباره مسیرهای مستقیم‌اند و تاریخچه پشت افشای اختیاری می‌ماند.
+- QA مرورگر داخلی در `390 × 844` برنامه را با موعد تهران ثبت کرد، پایش را ساخت، یک Run دستی با نتیجهٔ «موعد نرسیده» ثبت کرد و چرخهٔ disable/re-enable را پیمود. بازگشت از جزئیات، focus را به همان کارت پایش برگرداند؛ overflow افقی document/body صفر، کنترل قابل‌دیدن کوچک‌تر از ۴۴px صفر و console warning/error صفر بود.
+- در گیت کامل یک رگرسیون واقعی presentation آشکار شد: افزودن فیلتر پایش دکمهٔ «کار جدید» را در فیلتر Approval پنهان کرده بود و جداسازی failure domain را می‌شکست. شرط محدودکننده حذف شد و سناریوی Approval در سه اجرای تکراری و سپس هر دو suite کامل پاس شد.
+- بازبینی مستقل نشان داد automatic check می‌تواند پس از انتظار پشت Web Lock و خروج کاربر از Tasks commit شود. authority mounted/visible اکنون داخل critical section و پیش از هر read/mutation دوباره سنجیده می‌شود؛ regression مستقیم queued-lock + خروج از Tasks پاس است.
+- همان بازبینی نشان داد parser بعضی شناسه‌های Monitor/Run را trim و بعداً bytes را canonical بازنویسی می‌کند. برابری raw/canonical برای origin، failure، snapshot، record، history، revision و Run اجباری شد؛ whitespace tamper اکنون read-error می‌دهد و exact bytes را حفظ می‌کند.
+- چند تست قدیمی Memory/Run/Backbone به‌علت خواندن storage پیش از پایان commit غیرهمگام ناپایدار بودند. انتظار صریح روی کارت، کنترل، editor، Run و tombstone اضافه شد؛ رفتار محصول این دامنه‌ها تغییر نکرد و سناریوهای اصلاح‌شده در تکرارهای متمرکز و suiteهای کامل پایدار ماندند.
+
+### شکاف یا ابهام سند مادر
+
+- سند مادر پایش و follow-up را مفهومی تعریف می‌کند، اما producer دقیق، binding به نسخهٔ Task، قرارداد Monitor/Run، retry، cadence، idempotency و مرز failure domain را مشخص نمی‌کند.
+- تعریف کلی «کار در پس‌زمینه» می‌تواند با این prototype browser-local اشتباه شود. نسخهٔ فعلی فقط هنگام mounted و visible بودن مرکز «کارها» بررسی می‌کند و هیچ تضمین زمانی برای تب بسته/پنهان ندارد؛ این محدودیت باید در قرارداد رسمی از scheduler/backend آینده جدا شود.
+- رفتار stale Task، حذف موعد، Task گم‌شده، dependency ناخوانا، cancellation، rollback Monitor و چندپایش/تکرار دلخواه در سند مادر قرارداد کامل ندارند.
+
+### تصمیم و وضعیت آن
+
+- **[تصمیم این برش؛ محلی و مجاز برای انتشار]** فقط Task متصل Project Backbone می‌تواند یک Monitor موعد داشته باشد. وظیفهٔ دستی قدیمی، Approval، DispatchDraft یا رکورد دیگر producer این Monitor نیست.
+- مقدار `datetime-local` به‌عنوان زمان `Asia/Tehran` تفسیر و در snapshot Task به ISO UTC canonical تبدیل می‌شود. Monitor و Run به id/version/revision/fingerprint دقیق همان Task bind هستند و تغییر revision یا حذف موعد، failure قابل‌retry می‌سازد.
+- envelope مستقل Monitor/Run exact و نسخه‌دار است؛ history و Runs append-only، attemptها پیوسته، schedule به Run bind، no-op نامعتبر، result با موعد Task سازگار و cadence پس از رسیدن موعد دقیقاً ۲۴ ساعت است.
+- mutationهای Monitor→Backbone ترتیب قفل ثابت Monitor سپس Backbone، expected preimage، reread پیش و پس از commit و rollback فقط bytes متعلق به candidate خود را دارند. نبود Web Locks، store ناخوانا، preimage تازهٔ رقیب یا postimage ناسازگار fail-close می‌شود.
+- بررسی خودکار فقط وقتی مرکز «کارها» mounted و `document.visibilityState=visible` است، در mount/focus/visibility و هر ۶۰ ثانیه انجام می‌شود. درخواست queued همین authority را پس از گرفتن هر دو lock و پیش از read/mutation دوباره می‌سنجد. Run دستی نیز موجود است؛ بسته یا پنهان‌بودن تب، worker، push/OS notification، مدل، شبکه یا اقدام بیرونی ندارد.
+- Task حذف‌شده یا dependency ناخوانا بدون tombstone معتبر recoverable ادعا نمی‌شود و store-level fail-close می‌ماند. status transition کامل Task، چند Monitor، recurrence دلخواه، cancellation/rollback Monitor و cadenceهای دیگر deferred هستند.
+
+### وضعیت پیاده‌سازی و شواهد
+
+- بیست regression متمرکز TM-1 ساخت/reload، Run دستی، stale Task و retry، حذف موعد، disable/re-enable، شکست write، رقابت writer ناسازگار، tamper/canonical exact، transition/attempt/schedule/cadence/result، دو تب، هم‌زمانی ویرایش Backbone، auto dedupe، لغو automatic queued، نبود Web Locks و جداسازی پروژه را پوشش می‌دهند و ۲۰/۲۰ پاس شدند.
+- گیت release فعلی با `npm run test:app` برابر ۲۵۳/۲۵۳، `npm run test:runtime` برابر ۲۶۱/۲۶۱، `npm run test:sites` برابر ۴/۴، `npm run check:runtime` برای ۲۸ فایل محافظت‌شده، `npm run build`، `npx tsc --noEmit` و `git diff --check` پاس شد. تنها هشدار شناخته‌شدهٔ build، chunk جاوااسکریپت بزرگ‌تر از 500kB است.
+- regressionهای post-review مرتبط در ۱۲/۱۲ تکرار، مجموعهٔ Memory پایدارشده در ۹/۹ و سناریوی rollback رقابتی Backbone→Monitor در ۳/۳ تکرار پاس شدند. بازبینی مستقل نهایی finding باز P0/P1/P2 ندارد. Builder Architecture Gate کامل همچنان فقط پس از Build Lifecycle و acceptance matrix مستقل قابل‌سنجش است.
+
+### محدودیت و بدهی باقی‌مانده
+
+- پایش فقط همان مرورگر است و بازبودن/visible بودن مرکز «کارها» شرط بررسی خودکار است؛ این ویژگی reminder قابل‌اتکا، scheduler، اعلان یا سرویس background نیست.
+- فقط یک Monitor برای Task متصل Project Backbone وجود دارد. lifecycle عمومی Task، recurrence، چند trigger، cancellation، pause با دلیل، rollback و retention/compaction Runها ساخته نشده‌اند.
+- failureهای stale revision و deadline-missing قابل‌retry هستند، اما حذف واقعی Task بدون tombstone و dependency unreadable عمداً fail-close است. قرارداد delete/tombstone Task باید پیش از recovery ادعایی افزوده شود.
+- این برش هیچ داده‌ای به مدل یا شبکه نمی‌فرستد، وب/قیمت/مقررات را نمی‌خواند و هیچ اقدام بیرونی انجام نمی‌دهد.
+
+### پیشنهاد اصلاح سند مادر
+
+- `Monitor`، `Trigger` و `Run` به‌عنوان اشیای مستقل با owner/scope، source binding دقیق، version/revision/fingerprint، schedule، attempt، result، history و failure semantics تعریف شوند.
+- browser-local evaluation از scheduler/backend production جدا شود: شرایط اجرا، guarantee نداشتن در tab بسته/پنهان، cadence، idempotency و مرز Notification/worker باید صریح باشند.
+- ماتریس failure رسمی stale dependency، removed deadline، deleted Task، unreadable store، lock unavailable، concurrent writer و retryability را از empty/success تفکیک کند.
+- lifecycle آینده شامل recurrence، چند Monitor، cancellation/pause/rollback، Task tombstone، retention Run و permission برای اثر بیرونی باید به برش‌های مستقل و تأیید انسانی جدا تقسیم شود.
+
+### وضعیت انتشار پیش از receipt
+
+- مجوز انتشار snapshot ترکیبی SI-1/TM-1 دریافت شده است. تا پیش از ثبت commit و رسید terminal هر سه مقصد، این بخش فقط `release authorized` را ثبت می‌کند و موفقیت GitHub، Cloudflare Pages یا ChatGPT Sites را ادعا نمی‌کند.

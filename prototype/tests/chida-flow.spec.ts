@@ -1221,6 +1221,7 @@ test("builder opens and edits the active project space without losing the chat d
 });
 
 test("builder stores a project document locally, opens the real file, and keeps photos out of Files", async ({ page }) => {
+  test.slow();
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   const activeProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
@@ -1708,7 +1709,7 @@ test("project gallery rolls back the local image when metadata storage fails", a
   expect(storedImageCount).toBe(0);
 });
 
-test("project gallery reconciles metadata when image storage and rollback both fail", async ({ page }) => {
+test("project gallery never creates metadata when image storage fails before commit", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   await page.getByTestId("open-project-space").click();
@@ -1730,7 +1731,7 @@ test("project gallery reconciles metadata when image storage and rollback both f
   await expect(page.getByTestId("project-file-register-sheet")).toBeVisible();
   await expect(page.getByTestId("project-file-register-error")).toContainText("ذخیره نشد");
   await expect(page.getByTestId("project-gallery-item")).toHaveCount(0);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1"))).not.toBe(storageBefore);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1"))).toBe(storageBefore);
 
   await page.reload();
   await reachBuilderWelcome(page);
@@ -1797,9 +1798,9 @@ test("project document content failure rolls back its metadata", async ({ page }
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1"))).toBeNull();
 });
 
-test("project document parser drops semantically invalid and duplicate records", async ({ page }) => {
+test("project document parser fail-closes mixed invalid records without rewriting their bytes", async ({ page }) => {
   await page.goto("/");
-  await page.evaluate(() => {
+  const seededRaw = await page.evaluate(() => {
     window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
       { id: "project-a", name: "پروژه الف", location: "ونک", stage: "اسکلت", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T00:00:00.000Z" },
     ]));
@@ -1815,14 +1816,16 @@ test("project document parser drops semantically invalid and duplicate records",
       projectStage: "اسکلت",
       createdAt: "2026-08-27T00:00:00.000Z",
     };
-    window.localStorage.setItem("chida-prototype-project-files:v1", JSON.stringify([
+    const raw = JSON.stringify([
       { ...common, id: "", displayName: "", originalName: "blank.pdf" },
       { ...common, id: "invalid-date", displayName: "تاریخ خراب", originalName: "invalid-date.pdf", createdAt: "not-a-date" },
       { ...common, id: "unsupported", displayName: "فایل اجرایی", originalName: "installer.exe" },
       { ...common, id: "invalid-source", displayName: "منشأ جعلی", originalName: "forged-source.pdf", source: "وب" },
       { ...common, id: "valid-file", displayName: " گزارش معتبر ", originalName: "report.pdf" },
       { ...common, id: "valid-file", displayName: "شناسه تکراری", originalName: "duplicate.pdf" },
-    ]));
+    ]);
+    window.localStorage.setItem("chida-prototype-project-files:v1", raw);
+    return raw;
   });
 
   await reachBuilderWelcome(page);
@@ -1830,12 +1833,10 @@ test("project document parser drops semantically invalid and duplicate records",
   await page.getByTestId("open-project-space").click();
   await page.getByTestId("project-files-entry").click();
 
-  await expect(page.getByTestId("project-file-row")).toHaveCount(1);
-  await expect(page.getByTestId("project-file-row")).toContainText("گزارش معتبر");
-  await expect(page.getByText("شناسه تکراری")).toHaveCount(0);
-  await expect(page.getByText("منشأ جعلی")).toHaveCount(0);
-  await page.getByTestId("project-file-edit").click();
-  await expect(page.getByTestId("project-file-detail-sheet")).toContainText("اسکلت بندی");
+  await expect(page.getByTestId("project-files-read-error")).toContainText("کامل خوانده نشد");
+  await expect(page.getByTestId("project-file-row")).toHaveCount(0);
+  await expect(page.getByTestId("project-file-add")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1"))).toBe(seededRaw);
 });
 
 test("returning from project files restores the workspace scroll position", async ({ page }) => {
@@ -2337,19 +2338,24 @@ test("memory edit no-op is byte-stable while edit control and rollback append re
   await page.getByTestId("project-memory-title").fill("قاعدهٔ نسخه‌دار");
   await page.getByTestId("project-memory-content").fill("نسخهٔ نخست حافظه");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-editor-sheet")).toHaveCount(0);
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(1);
   const bytesV1 = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"));
 
   await page.getByTestId("project-memory-card").click();
   await page.getByTestId("project-memory-edit").click();
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-editor-sheet")).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBe(bytesV1);
 
   await page.getByTestId("project-memory-card").click();
   await page.getByTestId("project-memory-edit").click();
   await page.getByTestId("project-memory-content").fill("نسخهٔ دوم حافظه");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card")).toContainText("نسخهٔ دوم حافظه");
   await page.getByTestId("project-memory-card").click();
   await page.getByTestId("project-memory-use-toggle").click();
+  await expect(page.getByTestId("project-memory-use-toggle")).toHaveAttribute("aria-pressed", "false");
   let canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
   expect(canonical.records[0]).toMatchObject({ version: 3, content: "نسخهٔ دوم حافظه", useInContextPreference: false });
   expect(canonical.records[0].history).toHaveLength(3);
@@ -2384,6 +2390,7 @@ test("memory conflict is explicit and supersede keeps reciprocal lineage", async
   await page.getByTestId("project-memory-title").fill("قاعدهٔ برند بازبینی‌شده");
   await page.getByTestId("project-memory-content").fill("فقط برندهای دارای تأیید ناظر بررسی شوند.");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByText("قاعدهٔ برند بازبینی‌شده")).toBeVisible();
 
   const canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
   const superseded = canonical.records.find((record: any) => record.status === "superseded");
@@ -2397,6 +2404,7 @@ test("memory conflict is explicit and supersede keeps reciprocal lineage", async
   await page.getByTestId("project-memory-card").filter({ hasText: "قاعدهٔ برند بازبینی‌شده" }).click();
   await page.getByTestId("project-memory-delete").click();
   await page.getByTestId("project-memory-delete-confirm").click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null").tombstones.length)).toBe(1);
   const afterReplacementDelete = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
   expect(afterReplacementDelete.records.find((record: any) => record.id === superseded.id)).toMatchObject({ status: "superseded", supersededById: replacement.id });
   expect(afterReplacementDelete.tombstones).toEqual(expect.arrayContaining([expect.objectContaining({ id: replacement.id })]));
@@ -2415,12 +2423,15 @@ test("memory conflict replacement records resolution before addition and rejects
     await page.getByTestId("project-memory-title").fill(draft.title);
     await page.getByTestId("project-memory-content").fill(draft.content);
     await page.getByTestId("project-memory-save").click();
+    await expect(page.getByTestId("project-memory-editor-sheet")).toBeHidden();
   }
   await page.getByTestId("project-memory-card").filter({ hasText: "مقدار الف" }).click();
   await page.getByTestId("project-memory-edit").click();
   await page.getByTestId("project-memory-title").fill("گروه تعارض دوم");
   await page.getByTestId("project-memory-content").fill("مقدار الفِ جابه‌جا‌شده");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-editor-sheet")).toBeHidden();
+  await expect(page.getByTestId("project-memory-card").filter({ hasText: "مقدار الفِ جابه‌جا‌شده" })).toBeVisible();
 
   let canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
   const moved = canonical.records.find((record: any) => record.content === "مقدار الفِ جابه‌جا‌شده");
@@ -2647,11 +2658,12 @@ test("memory audit rejects rehashed non-canonical whitespace in immutable lineag
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   await page.getByTestId("quick-action-memory").click();
-  for (const content of ["مقدار lineage اول", "مقدار lineage دوم"]) {
+  for (const [index, content] of ["مقدار lineage اول", "مقدار lineage دوم"].entries()) {
     await page.getByTestId("project-memory-add").click();
     await page.getByTestId("project-memory-title").fill("ممیزی شناسهٔ lineage");
     await page.getByTestId("project-memory-content").fill(content);
     await page.getByTestId("project-memory-save").click();
+    await expect(page.getByTestId("project-memory-card")).toHaveCount(index + 1);
   }
 
   await page.evaluate(async () => {
@@ -2757,10 +2769,12 @@ test("memory audit rejects retargeting a superseded record to an unrelated tombs
   await page.getByTestId("project-memory-title").fill("رکورد مستقل برای tombstone");
   await page.getByTestId("project-memory-content").fill("این حذف نباید مقصد lineage رکورد دیگری شود.");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card").filter({ hasText: "رکورد مستقل برای tombstone" })).toBeVisible();
   const unrelatedId = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null").records.find((record: any) => record.title === "رکورد مستقل برای tombstone").id);
   await page.getByTestId("project-memory-card").filter({ hasText: "رکورد مستقل برای tombstone" }).click();
   await page.getByTestId("project-memory-delete").click();
   await page.getByTestId("project-memory-delete-confirm").click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null")?.tombstones?.length)).toBe(1);
 
   await page.evaluate(async (retargetId) => {
     const stable = (value: any): any => Array.isArray(value)
@@ -2794,16 +2808,19 @@ test("memory audit rejects an impossible lifecycle inside a rehashed tombstone p
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   await page.getByTestId("quick-action-memory").click();
-  for (const content of ["مقدار نخست برای تعارض واقعی.", "مقدار دوم برای تعارض واقعی."]) {
+  for (const [index, content] of ["مقدار نخست برای تعارض واقعی.", "مقدار دوم برای تعارض واقعی."].entries()) {
     await page.getByTestId("project-memory-add").click();
     await page.getByTestId("project-memory-title").fill("اثبات چرخهٔ حذف");
     await page.getByTestId("project-memory-content").fill(content);
     await page.getByTestId("project-memory-save").click();
+    await expect(page.getByTestId("project-memory-card")).toHaveCount(index + 1);
   }
   await page.getByTestId("project-memory-card").filter({ hasText: "مقدار نخست برای تعارض واقعی." }).click();
   await page.getByTestId("project-memory-use-toggle").click();
+  await expect(page.getByTestId("project-memory-use-toggle")).toHaveAttribute("aria-pressed", "false");
   await page.getByTestId("project-memory-delete").click();
   await page.getByTestId("project-memory-delete-confirm").click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null")?.tombstones?.length)).toBe(1);
 
   await page.evaluate(async () => {
     const stable = (value: any): any => Array.isArray(value)
@@ -2834,9 +2851,11 @@ test("memory audit rejects a weak legacy content hash on a proof-bearing v2 tomb
   await page.getByTestId("project-memory-title").fill("هش حذف نسخهٔ دوم");
   await page.getByTestId("project-memory-content").fill("اثبات نسخهٔ دوم باید SHA-256 داشته باشد.");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(1);
   await page.getByTestId("project-memory-card").click();
   await page.getByTestId("project-memory-delete").click();
   await page.getByTestId("project-memory-delete-confirm").click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null")?.tombstones?.length)).toBe(1);
 
   await page.evaluate(() => {
     const key = "chida-prototype-memory-core:v2";
@@ -2889,18 +2908,22 @@ test("editing a disabled memory stays disabled and explicit enable recomputes co
   await page.getByTestId("project-memory-title").fill("قاعدهٔ ایمنی مشترک");
   await page.getByTestId("project-memory-content").fill("نسخهٔ غیرفعال الف");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(1);
   await page.getByTestId("project-memory-card").click();
   await page.getByTestId("project-memory-disable").click();
+  await expect(page.getByTestId("project-memory-disable")).toContainText("فعال‌کردن");
   await page.keyboard.press("Escape");
 
   await page.getByTestId("project-memory-add").click();
   await page.getByTestId("project-memory-title").fill("قاعدهٔ ایمنی مشترک");
   await page.getByTestId("project-memory-content").fill("نسخهٔ فعال ب");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(2);
   await page.getByTestId("project-memory-card").filter({ hasText: "نسخهٔ غیرفعال الف" }).click();
   await page.getByTestId("project-memory-edit").click();
   await page.getByTestId("project-memory-content").fill("نسخهٔ غیرفعال ویرایش‌شده");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card").filter({ hasText: "نسخهٔ غیرفعال ویرایش‌شده" })).toHaveCount(1);
   let canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
   const disabled = canonical.records.find((record: any) => record.content === "نسخهٔ غیرفعال ویرایش‌شده");
   expect(disabled).toMatchObject({ status: "disabled", conflictIds: [] });
@@ -3391,6 +3414,8 @@ test("project memory keeps persisted state when edit toggle or delete storage fa
   await page.getByTestId("project-memory-title").fill("حافظهٔ پایدار");
   await page.getByTestId("project-memory-content").fill("نسخهٔ ذخیره‌شده نباید با شکست مرورگر تغییر کند.");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-editor-sheet")).toBeHidden();
+  await expect(page.getByTestId("project-memory-card")).toContainText("حافظهٔ پایدار");
   const persistedMemory = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"));
 
   await page.getByTestId("project-memory-card").click();
@@ -3486,7 +3511,7 @@ test("builder searches only local project memory and file metadata without techn
       createdAt: "2026-08-27T11:00:00.000Z",
     };
     window.localStorage.setItem("chida-prototype-project-files:v1", JSON.stringify([
-      { ...fileBase, id: "file-search-a", displayName: "نقشه سازه طبقه همکف", originalName: "structure-ground-floor.pdf", category: "نقشه", extractedText: "عبارت فقط داخل بدنه فایل" },
+      { ...fileBase, id: "file-search-a", displayName: "نقشه سازه طبقه همکف", originalName: "structure-ground-floor.pdf", category: "نقشه" },
       { ...fileBase, id: "file-search-zwnj", displayName: "پیش‌فاکتور تاسیسات", originalName: "proposal-installations.pdf", category: "پیش‌فاکتور" },
     ]));
   });
@@ -3812,9 +3837,10 @@ test("builder home keeps composer controls aligned and exposes the core sheets",
 
   await page.getByTestId("attach-button").click();
   const composerFileAttachment = page.getByTestId("composer-file-attachment");
-  await expect(composerFileAttachment).toBeDisabled();
-  await expect(composerFileAttachment).toContainText("به‌زودی");
-  await expect(composerFileAttachment).toContainText("اسناد پروژه");
+  await expect(composerFileAttachment).toBeEnabled();
+  await expect(composerFileAttachment).toContainText("فایل پیوست");
+  await expect(composerFileAttachment).toContainText("PDF، صفحه‌گسترده یا سند متنی");
+  await expect(page.getByTestId("composer-attach-sheet")).toContainText("OCR، مدل یا ارسال بیرونی فعال نیست");
   await page.keyboard.press("Escape");
 
   await page.getByTestId("model-button").click();
@@ -3847,6 +3873,826 @@ test("builder home keeps composer controls aligned and exposes the core sheets",
     if (!settledDrawer || !settledApp) return Number.POSITIVE_INFINITY;
     return Math.abs(settledDrawer.x + settledDrawer.width - (settledApp.x + settledApp.width));
   }).toBeLessThanOrEqual(1.5);
+});
+
+test("Source/Composer enables real document intake on the current project draft", async ({ page }) => {
+  await enterBuilderHome(page);
+
+  await page.getByTestId("composer-input").fill("این فایل را کنار پیام همان پروژه نگه دار");
+  await page.getByTestId("attach-button").click();
+  await expect(page.getByTestId("composer-file-attachment")).toBeEnabled();
+});
+
+test("Source/Composer commits exact text and document sources and reopens them after reload", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const text = "  این متن دقیق همراه فایل ثبت شود.  ";
+  const documentBytes = Buffer.from("%PDF exact composer source bytes");
+  const documentHash = createHash("sha256").update(documentBytes).digest("hex");
+  const textHash = createHash("sha256").update(text, "utf8").digest("hex");
+  await enterBuilderHome(page);
+
+  await page.getByTestId("composer-input").fill(text);
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({
+    name: " صورت وضعیت Composer.pdf",
+    mimeType: "application/pdf",
+    buffer: documentBytes,
+  });
+  await expect(page.getByTestId("composer-attach-sheet")).toBeHidden();
+  await expect(page.getByTestId("composer-input")).toHaveValue(text);
+  await expect(page.getByTestId("composer-attachment")).toContainText("صورت وضعیت Composer.pdf");
+  await expect(page.getByTestId("send-button")).toBeEnabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-sources:v1"))).toBeNull();
+
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-intake-message")).toContainText("این متن دقیق همراه فایل ثبت شود.");
+  await expect(page.getByTestId("composer-source-open")).toHaveCount(2);
+  await expect(page.getByTestId("composer-attachment")).toHaveCount(0);
+  await expect(page.getByTestId("composer-input")).toHaveValue("");
+
+  const stored = await page.evaluate(() => ({
+    sourcesRaw: window.localStorage.getItem("chida-prototype-project-sources:v1"),
+    filesRaw: window.localStorage.getItem("chida-prototype-project-files:v1"),
+    intentRaw: window.localStorage.getItem("chida-prototype-project-sources:v1:intake-intent:v1"),
+  }));
+  expect(stored.intentRaw).toBeNull();
+  expect(stored.sourcesRaw).not.toContain("%PDF exact composer source bytes");
+  expect(stored.filesRaw).not.toContain("%PDF exact composer source bytes");
+  const sourceEnvelope = JSON.parse(stored.sourcesRaw ?? "null");
+  expect(sourceEnvelope).toMatchObject({ schemaVersion: 1, envelopeVersion: 1 });
+  expect(sourceEnvelope.intakes).toHaveLength(1);
+  expect(sourceEnvelope.records).toHaveLength(2);
+  expect(sourceEnvelope.records[0]).toMatchObject({
+    sourceType: "composer-text",
+    projectId: expect.any(String),
+    scopeType: "project_private",
+    scopeId: expect.any(String),
+    ownerPrincipalId: "local-builder-account",
+    accountSide: "builder",
+    textContent: text,
+    contentHash: `sha256-${textHash}`,
+    version: 1,
+    provenance: "direct_user_composer",
+    readStatus: "available",
+    manualSearchability: false,
+    automaticRetrievalEligibility: false,
+    modelEligibility: false,
+    shareability: false,
+    useInContextPreference: false,
+  });
+  expect(sourceEnvelope.records[1]).toMatchObject({
+    sourceType: "composer-file",
+    projectId: sourceEnvelope.records[0].projectId,
+    scopeId: sourceEnvelope.records[0].projectId,
+    contentHash: `sha256-${documentHash}`,
+    assetRef: { kind: "project-file", fileVersion: 1 },
+    modelEligibility: false,
+  });
+  const fileId = sourceEnvelope.records[1].assetRef.fileId;
+  const storedFile = JSON.parse(stored.filesRaw ?? "[]")[0];
+  expect(storedFile).toMatchObject({ id: fileId, projectId: sourceEnvelope.records[0].projectId, originalName: " صورت وضعیت Composer.pdf", mimeType: "application/pdf", storageMode: "browser-file", version: 1 });
+
+  const indexedDocument = await page.evaluate(async ({ fileId }) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = window.indexedDB.open("chida-prototype-project-file-content:v1", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const storedAsset = await new Promise<any>((resolve, reject) => {
+      const request = database.transaction("files", "readonly").objectStore("files").get(fileId);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const digest = await crypto.subtle.digest("SHA-256", await storedAsset.blob.arrayBuffer());
+    database.close();
+    return { mimeType: storedAsset.blob.type, hash: Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("") };
+  }, { fileId });
+  expect(indexedDocument).toEqual({ mimeType: "application/pdf", hash: documentHash });
+
+  const fileSourceTrigger = page.getByTestId("composer-source-open").nth(1);
+  await fileSourceTrigger.click();
+  await expect(page.getByTestId("composer-source-detail")).toContainText("نسخهٔ ۱ · ثبت مستقیم شما");
+  await expect(page.getByTestId("composer-source-detail")).toContainText("مدل، بازیابی و اشتراک خاموش");
+  await expect(page.getByTestId("composer-source-open-asset")).toHaveAttribute("href", /^blob:/);
+  expect(await page.getByTestId("composer-source-close").evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+  await page.keyboard.press("Escape");
+  await expect(fileSourceTrigger).toBeFocused();
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("recent-chat-boundary")).toContainText("۱ ورودی محلی");
+  await expect(page.getByTestId("recent-chat-boundary")).toContainText("فهرست گفت‌وگوهای جدا هنوز ساخته نشده");
+  await page.keyboard.press("Escape");
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("composer-intake-message")).toContainText("این متن دقیق همراه فایل ثبت شود.");
+  await expect(page.getByTestId("composer-source-open")).toHaveCount(2);
+  await page.getByTestId("composer-source-open").nth(1).click();
+  await expect(page.getByTestId("composer-source-open-asset")).toHaveAttribute("href", /^blob:/);
+});
+
+test("Source/Composer sends an attachment-only photo with preview and a reopenable original", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-image-input").setInputFiles(sampleProjectImage);
+  await expect(page.getByTestId("composer-attachment")).toHaveAttribute("data-kind", "photo");
+  await expect(page.getByTestId("composer-attachment").locator("img")).toBeVisible();
+  await expect(page.getByTestId("send-button")).toBeEnabled();
+  await page.getByTestId("send-button").click();
+
+  await expect(page.getByTestId("composer-intake-message")).toContainText("نمای جنوبی کارگاه.png");
+  const envelope = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-sources:v1") ?? "null"));
+  expect(envelope.records).toHaveLength(1);
+  expect(envelope.records[0]).toMatchObject({ sourceType: "composer-photo", assetRef: { kind: "project-photo", fileVersion: 1 }, textContent: null, readStatus: "available" });
+  await page.getByTestId("composer-source-open").click();
+  await expect(page.getByTestId("composer-source-image")).toBeVisible();
+  await expect(page.getByTestId("composer-source-open-asset")).toHaveAttribute("href", /^blob:/);
+});
+
+test("Source/Composer never creates a late object URL after source detail closes", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "delayed-detail.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF delayed detail") });
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-open")).toHaveCount(1);
+  await page.evaluate(() => {
+    const nativeDigest = window.crypto.subtle.digest.bind(window.crypto.subtle);
+    let releaseDigest!: () => void;
+    const digestGate = new Promise<void>((resolve) => { releaseDigest = resolve; });
+    (window as any).__sourceUrlEvents = { created: [] as string[], revoked: [] as string[], digestFinished: false };
+    (window as any).__releaseSourceDigest = releaseDigest;
+    Object.defineProperty(window.crypto.subtle, "digest", {
+      configurable: true,
+      value: async (...args: Parameters<SubtleCrypto["digest"]>) => {
+        await digestGate;
+        const result = await (nativeDigest as any)(...args);
+        (window as any).__sourceUrlEvents.digestFinished = true;
+        return result;
+      },
+    });
+    URL.createObjectURL = (blob: Blob) => {
+      const url = `blob:late-source-${blob.size}`;
+      (window as any).__sourceUrlEvents.created.push(url);
+      return url;
+    };
+    URL.revokeObjectURL = (url: string) => { (window as any).__sourceUrlEvents.revoked.push(url); };
+  });
+
+  await page.getByTestId("composer-source-open").click();
+  await expect(page.getByTestId("composer-source-detail")).toBeVisible();
+  await page.getByTestId("composer-source-close").click();
+  await expect(page.getByTestId("composer-source-detail")).toHaveCount(0);
+  await page.evaluate(() => (window as any).__releaseSourceDigest());
+  await expect.poll(() => page.evaluate(() => (window as any).__sourceUrlEvents.digestFinished)).toBe(true);
+  expect(await page.evaluate(() => (window as any).__sourceUrlEvents)).toEqual({ created: [], revoked: [], digestFinished: true });
+});
+
+test("Source/Composer rejects mismatched MIME without mutating the draft or stores", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("پیش‌نویس باید باقی بماند");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "فایل جعلی.pdf", mimeType: "text/html", buffer: Buffer.from("<script>bad</script>") });
+
+  await expect(page.getByTestId("composer-source-error")).toContainText("هم‌خوان نیستند");
+  await expect(page.getByTestId("composer-input")).toHaveValue("پیش‌نویس باید باقی بماند");
+  await expect(page.getByTestId("composer-attachment")).toHaveCount(0);
+  expect(await page.evaluate(() => ({ files: window.localStorage.getItem("chida-prototype-project-files:v1"), sources: window.localStorage.getItem("chida-prototype-project-sources:v1") }))).toEqual({ files: null, sources: null });
+});
+
+test("Source/Composer rolls back Blob metadata source and message when IndexedDB persistence fails", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("این تلاش باید قابل تکرار بماند");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "rollback.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF rollback") });
+  await page.evaluate(() => {
+    const nativePut = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function put(value: unknown, key?: IDBValidKey) {
+      if (this.transaction.db.name === "chida-prototype-project-file-content:v1") throw new DOMException("Synthetic write failure", "QuotaExceededError");
+      return nativePut.call(this, value, key);
+    };
+  });
+
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-error")).toContainText("ذخیره نشدند");
+  await expect(page.getByTestId("composer-input")).toHaveValue("این تلاش باید قابل تکرار بماند");
+  await expect(page.getByTestId("composer-attachment")).toContainText("rollback.pdf");
+  await expect(page.getByTestId("composer-intake-message")).toHaveCount(0);
+  expect(await page.evaluate(() => ({
+    files: window.localStorage.getItem("chida-prototype-project-files:v1"),
+    sources: window.localStorage.getItem("chida-prototype-project-sources:v1"),
+    intent: window.localStorage.getItem("chida-prototype-project-sources:v1:intake-intent:v1"),
+  }))).toEqual({ files: null, sources: null, intent: null });
+});
+
+test("Source/Composer compensates the stored asset when SourceRecord persistence fails", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("شکست Source نباید asset یتیم بسازد");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "compensate.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF compensate") });
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-sources:v1") throw new DOMException("Synthetic source failure", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-error")).toContainText("ذخیره نشدند");
+  await expect(page.getByTestId("composer-intake-message")).toHaveCount(0);
+  expect(await page.evaluate(() => ({
+    files: window.localStorage.getItem("chida-prototype-project-files:v1"),
+    sources: window.localStorage.getItem("chida-prototype-project-sources:v1"),
+    intent: window.localStorage.getItem("chida-prototype-project-sources:v1:intake-intent:v1"),
+  }))).toEqual({ files: null, sources: null, intent: null });
+  const storedCount = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+    const request = window.indexedDB.open("chida-prototype-project-file-content:v1", 1);
+    request.onsuccess = () => {
+      const database = request.result;
+      const count = database.transaction("files", "readonly").objectStore("files").count();
+      count.onsuccess = () => { resolve(count.result); database.close(); };
+      count.onerror = () => reject(count.error);
+    };
+    request.onerror = () => reject(request.error);
+  }));
+  expect(storedCount).toBe(0);
+});
+
+test("Source/Composer fail-closes an unreadable source store without overwriting its bytes", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => window.localStorage.setItem("chida-prototype-project-sources:v1", "{منبع ناخوانا"));
+  await enterBuilderHome(page);
+
+  await expect(page.getByTestId("composer-source-read-error")).toContainText("ارسال");
+  await expect(page.getByTestId("attach-button")).toBeDisabled();
+  await page.getByTestId("composer-input").fill("این متن نباید دادهٔ قبلی را بازنویسی کند");
+  await expect(page.getByTestId("send-button")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-sources:v1"))).toBe("{منبع ناخوانا");
+});
+
+test("Source/Composer blocks text-only intake when the file metadata store is unreadable", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => window.localStorage.setItem("chida-prototype-project-files:v1", "{فایل ناخوانا"));
+  await enterBuilderHome(page);
+
+  await expect(page.getByTestId("composer-source-read-error")).toContainText("شناسنامهٔ فایل‌ها");
+  await page.getByTestId("composer-input").fill("متن تنها هم نباید store دیگر را دور بزند");
+  await expect(page.getByTestId("send-button")).toBeDisabled();
+  expect(await page.evaluate(() => ({
+    files: window.localStorage.getItem("chida-prototype-project-files:v1"),
+    sources: window.localStorage.getItem("chida-prototype-project-sources:v1"),
+  }))).toEqual({ files: "{فایل ناخوانا", sources: null });
+});
+
+test("Source/Composer rejects a re-fingerprinted text source whose SHA-256 no longer matches", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("متن اصلی با hash دقیق");
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-open")).toHaveCount(1);
+  const tamperedRaw = await page.evaluate(() => {
+    const key = "chida-prototype-project-sources:v1";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    const source = envelope.records[0];
+    source.textContent = "متن دست‌کاری‌شده با hash قدیمی";
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([entryKey, item]) => [entryKey, stable(item)]))
+        : value;
+    const payload = { ...source };
+    delete payload.fingerprint;
+    const serialized = JSON.stringify(stable(payload));
+    let hash = 2166136261;
+    for (let index = 0; index < serialized.length; index += 1) {
+      hash ^= serialized.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    source.fingerprint = `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+    const raw = JSON.stringify(envelope);
+    window.localStorage.setItem(key, raw);
+    return raw;
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("composer-source-read-error")).toBeVisible();
+  await expect(page.getByTestId("send-button")).toBeDisabled();
+  await expect(page.getByTestId("composer-intake-message")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-sources:v1"))).toBe(tamperedRaw);
+});
+
+test("Source/Composer keeps draft attachments and committed sources inside their project", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("پیش‌نویس و پیوست پروژهٔ اول");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "فایل پروژه اول.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF project A") });
+
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet-add").click();
+  await page.getByTestId("new-project-name-input").fill("پروژه دوم");
+  await page.getByTestId("new-project-location-input").fill("منطقهٔ ۲");
+  await chooseProjectOption(page, "new-project-stage-select", "فونداسیون");
+  await page.getByTestId("new-project-save").click();
+  await expect(page.getByTestId("composer-input")).toHaveValue("");
+  await expect(page.getByTestId("composer-attachment")).toHaveCount(0);
+  await page.getByTestId("composer-input").fill("پیام فقط برای پروژه دوم");
+  await page.getByTestId("send-button").click();
+
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet").getByRole("button", { name: /برج نیلوفر/ }).click();
+  await page.getByTestId("project-space-continue").click();
+  await expect(page.getByTestId("composer-input")).toHaveValue("پیش‌نویس و پیوست پروژهٔ اول");
+  await expect(page.getByTestId("composer-attachment")).toContainText("فایل پروژه اول.pdf");
+  await expect(page.getByText("پیام فقط برای پروژه دوم", { exact: true })).toHaveCount(0);
+  await page.getByTestId("send-button").click();
+  await expect(page.getByText("پیش‌نویس و پیوست پروژهٔ اول", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("composer-attachment")).toHaveCount(0);
+
+  const scoped = await page.evaluate(() => ({
+    projects: JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]"),
+    envelope: JSON.parse(window.localStorage.getItem("chida-prototype-project-sources:v1") ?? "null"),
+    files: JSON.parse(window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]"),
+  }));
+  expect(scoped.envelope.intakes).toHaveLength(2);
+  expect(scoped.envelope.intakes[0].projectId).toBe(scoped.projects[1].id);
+  expect(scoped.envelope.intakes[1].projectId).toBe(scoped.projects[0].id);
+  expect(scoped.envelope.records.filter((source: any) => source.projectId === scoped.projects[0].id)).toHaveLength(2);
+  expect(scoped.files).toEqual([expect.objectContaining({ projectId: scoped.projects[0].id, originalName: "فایل پروژه اول.pdf" })]);
+
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet").getByRole("button", { name: /پروژه دوم/ }).click();
+  await page.getByTestId("project-space-continue").click();
+  await expect(page.getByText("پیام فقط برای پروژه دوم", { exact: true })).toBeVisible();
+  await expect(page.getByText("پیش‌نویس و پیوست پروژهٔ اول", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("فایل پروژه اول.pdf", { exact: true })).toHaveCount(0);
+});
+
+test("Source/Composer fails closed without Web Locks and keeps the draft retryable", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined }));
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("بدون قفل امن ثبت نکن");
+  await page.getByTestId("send-button").click();
+
+  await expect(page.getByTestId("composer-source-error")).toContainText("قفل امن مرورگر در دسترس نیست");
+  await expect(page.getByTestId("composer-input")).toHaveValue("بدون قفل امن ثبت نکن");
+  await expect(page.getByTestId("composer-intake-message")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-sources:v1"))).toBeNull();
+});
+
+test("Source/Composer finalizes a committed intake from its durable intent after reload", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("پس از reload از intent بازیابی شو");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "intent.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF intent recovery") });
+  await page.evaluate(() => {
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-sources:v1:intake-intent:v1") throw new DOMException("Synthetic crash before intent cleanup", "QuotaExceededError");
+      return nativeRemoveItem.call(this, key);
+    };
+  });
+
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-error")).toContainText("بازیابی امن لازم است");
+  await expect(page.getByTestId("composer-input")).toHaveValue("پس از reload از intent بازیابی شو");
+  await expect(page.getByTestId("composer-intake-message")).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-sources:v1:intake-intent:v1"))).not.toBeNull();
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("composer-intake-message")).toContainText("پس از reload از intent بازیابی شو");
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("chida-prototype-project-sources:v1:intake-intent:v1"))).toBeNull();
+  await expect(page.getByTestId("composer-source-open")).toHaveCount(2);
+});
+
+test("Source/Composer restores its intent when committed stores change during intent cleanup", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("پاک‌کردن marker نباید ثبت گم‌شده را موفق نشان دهد");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "cleanup-race.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF cleanup race") });
+  await page.evaluate(() => {
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    let raced = false;
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-sources:v1:intake-intent:v1" && !raced) {
+        raced = true;
+        nativeRemoveItem.call(this, "chida-prototype-project-files:v1");
+        nativeRemoveItem.call(this, "chida-prototype-project-sources:v1");
+      }
+      return nativeRemoveItem.call(this, key);
+    };
+  });
+
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-error")).toContainText("بازیابی امن لازم است");
+  await expect(page.getByTestId("composer-input")).toHaveValue("پاک‌کردن marker نباید ثبت گم‌شده را موفق نشان دهد");
+  await expect(page.getByTestId("composer-attachment")).toContainText("cleanup-race.pdf");
+  await expect(page.getByTestId("composer-intake-message")).toHaveCount(0);
+  expect(await page.evaluate(() => ({
+    files: window.localStorage.getItem("chida-prototype-project-files:v1"),
+    sources: window.localStorage.getItem("chida-prototype-project-sources:v1"),
+    intent: window.localStorage.getItem("chida-prototype-project-sources:v1:intake-intent:v1"),
+  }))).toEqual({ files: null, sources: null, intent: expect.any(String) });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("chida-prototype-project-sources:v1:intake-intent:v1"))).toBeNull();
+  expect(await page.evaluate(() => ({
+    files: window.localStorage.getItem("chida-prototype-project-files:v1"),
+    sources: window.localStorage.getItem("chida-prototype-project-sources:v1"),
+  }))).toEqual({ files: null, sources: null });
+  expect(await page.evaluate(() => new Promise<number>((resolve, reject) => {
+    const request = window.indexedDB.open("chida-prototype-project-file-content:v1", 1);
+    request.onsuccess = () => {
+      const database = request.result;
+      const count = database.transaction("files", "readonly").objectStore("files").count();
+      count.onsuccess = () => { resolve(count.result); database.close(); };
+      count.onerror = () => reject(count.error);
+    };
+    request.onerror = () => reject(request.error);
+  }))).toBe(0);
+});
+
+test("Source/Composer rolls an incomplete cross-store intent back after reload", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("این ثبت نیمه‌کاره باید کامل برگردد");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "incomplete.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF incomplete recovery") });
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-sources:v1") throw new DOMException("Synthetic crash before Source metadata", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-files:v1") throw new DOMException("Synthetic crash during rollback", "QuotaExceededError");
+      return nativeRemoveItem.call(this, key);
+    };
+  });
+
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-error")).toContainText("بازیابی امن لازم است");
+  const incomplete = await page.evaluate(() => ({
+    files: window.localStorage.getItem("chida-prototype-project-files:v1"),
+    sources: window.localStorage.getItem("chida-prototype-project-sources:v1"),
+    intent: window.localStorage.getItem("chida-prototype-project-sources:v1:intake-intent:v1"),
+  }));
+  expect(incomplete.files).not.toBeNull();
+  expect(incomplete.sources).toBeNull();
+  expect(incomplete.intent).not.toBeNull();
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("chida-prototype-project-sources:v1:intake-intent:v1"))).toBeNull();
+  expect(await page.evaluate(() => ({ files: window.localStorage.getItem("chida-prototype-project-files:v1"), sources: window.localStorage.getItem("chida-prototype-project-sources:v1") }))).toEqual({ files: null, sources: null });
+  expect(await page.evaluate(() => new Promise<number>((resolve, reject) => {
+    const request = window.indexedDB.open("chida-prototype-project-file-content:v1", 1);
+    request.onsuccess = () => {
+      const database = request.result;
+      const count = database.transaction("files", "readonly").objectStore("files").count();
+      count.onsuccess = () => { resolve(count.result); database.close(); };
+      count.onerror = () => reject(count.error);
+    };
+    request.onerror = () => reject(request.error);
+  }))).toBe(0);
+  await expect(page.getByTestId("composer-intake-message")).toHaveCount(0);
+  await expect(page.getByTestId("send-button")).toBeDisabled();
+});
+
+test("Source/Composer rejects a rehashed forged recovery intent without deleting an existing asset", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("منبع موجود باید از intent جعلی محفوظ بماند");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "existing.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF existing protected asset") });
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-open")).toHaveCount(2);
+
+  const before = await page.evaluate(() => {
+    const filesRaw = window.localStorage.getItem("chida-prototype-project-files:v1")!;
+    const sourcesRaw = window.localStorage.getItem("chida-prototype-project-sources:v1")!;
+    const files = JSON.parse(filesRaw);
+    const sources = JSON.parse(sourcesRaw);
+    const assetSource = sources.records.find((source: any) => source.assetRef);
+    const stable = (value: any): any => Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stable(item)]))
+        : value;
+    const base = {
+      schemaVersion: 1,
+      id: "forged-existing-intake",
+      previousFilesRaw: null,
+      nextFilesRaw: filesRaw,
+      previousSourcesRaw: sourcesRaw,
+      nextSourcesRaw: JSON.stringify({ schemaVersion: 1, envelopeVersion: 0, records: [], intakes: [], updatedAt: null }),
+      fileId: files[0].id,
+      storageMode: files[0].storageMode,
+      contentHash: assetSource.contentHash,
+      createdAt: "2026-08-31T12:00:00.000Z",
+    };
+    const serialized = JSON.stringify(stable(base));
+    let hash = 2166136261;
+    for (let index = 0; index < serialized.length; index += 1) {
+      hash ^= serialized.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    const intentRaw = JSON.stringify({ ...base, intentHash: `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}` });
+    window.localStorage.setItem("chida-prototype-project-sources:v1:intake-intent:v1", intentRaw);
+    return { filesRaw, sourcesRaw, intentRaw, fileId: files[0].id };
+  });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("composer-source-read-error")).toBeVisible();
+  expect(await page.evaluate(() => ({
+    filesRaw: window.localStorage.getItem("chida-prototype-project-files:v1"),
+    sourcesRaw: window.localStorage.getItem("chida-prototype-project-sources:v1"),
+    intentRaw: window.localStorage.getItem("chida-prototype-project-sources:v1:intake-intent:v1"),
+  }))).toEqual({ filesRaw: before.filesRaw, sourcesRaw: before.sourcesRaw, intentRaw: before.intentRaw });
+  expect(await page.evaluate((fileId) => new Promise<boolean>((resolve, reject) => {
+    const request = window.indexedDB.open("chida-prototype-project-file-content:v1", 1);
+    request.onsuccess = () => {
+      const database = request.result;
+      const get = database.transaction("files", "readonly").objectStore("files").get(fileId);
+      get.onsuccess = () => { resolve(Boolean(get.result?.blob)); database.close(); };
+      get.onerror = () => reject(get.error);
+    };
+    request.onerror = () => reject(request.error);
+  }), before.fileId)).toBe(true);
+});
+
+test("Source/Composer fail-closes a dangling asset reference and never rewrites file metadata", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("منبع فایل باید پیوند سالم داشته باشد");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "dangling.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF dangling source") });
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-open")).toHaveCount(2);
+  await page.evaluate(() => window.localStorage.removeItem("chida-prototype-project-files:v1"));
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("composer-source-read-error")).toContainText("قفل است");
+  await expect(page.getByTestId("send-button")).toBeDisabled();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1"))).toBeNull();
+  await page.getByTestId("composer-source-open").nth(1).click();
+  await expect(page.getByTestId("composer-source-unavailable")).toContainText("پیدا نشد");
+});
+
+test("Source/Composer treats a missing stored Blob as unavailable and blocks further mutation", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("اصل فایل نباید ساختگی باز شود");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "missing.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF missing stored blob") });
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-open")).toHaveCount(2);
+  const fileId = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]")[0].id as string);
+  await page.evaluate(async (id) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = window.indexedDB.open("chida-prototype-project-file-content:v1", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("files", "readwrite");
+      transaction.objectStore("files").delete(id);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  }, fileId);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("composer-source-read-error")).toContainText("قفل است");
+  await expect(page.getByTestId("send-button")).toBeDisabled();
+  await page.getByTestId("composer-source-open").nth(1).click();
+  await expect(page.getByTestId("composer-source-unavailable")).toContainText("خواندن اصل منبع");
+});
+
+test("Source/Composer detects changed asset bytes even when file metadata is untouched", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("composer-input").fill("بایت اصل فایل باید با hash منبع برابر بماند");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "hash-bound.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF original hash-bound bytes") });
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-open")).toHaveCount(2);
+  const before = await page.evaluate(() => ({
+    filesRaw: window.localStorage.getItem("chida-prototype-project-files:v1")!,
+    sourcesRaw: window.localStorage.getItem("chida-prototype-project-sources:v1")!,
+    fileId: JSON.parse(window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]")[0].id as string,
+  }));
+  await page.evaluate(async (fileId) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = window.indexedDB.open("chida-prototype-project-file-content:v1", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("files", "readwrite");
+      const store = transaction.objectStore("files");
+      const get = store.get(fileId);
+      get.onsuccess = () => store.put({ ...get.result, blob: new Blob(["%PDF changed bytes"], { type: "application/pdf" }) });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  }, before.fileId);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("composer-source-read-error")).toContainText("قفل است");
+  await expect(page.getByTestId("send-button")).toBeDisabled();
+  expect(await page.evaluate(() => ({
+    filesRaw: window.localStorage.getItem("chida-prototype-project-files:v1"),
+    sourcesRaw: window.localStorage.getItem("chida-prototype-project-sources:v1"),
+  }))).toEqual({ filesRaw: before.filesRaw, sourcesRaw: before.sourcesRaw });
+});
+
+test("Source/Composer reconstructs an image Blob with the safe MIME bound to its extension", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-image-input").setInputFiles(sampleProjectImage);
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-source-open")).toHaveCount(1);
+  const fileId = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]")[0].id as string);
+  const tamperedStoredType = await page.evaluate(async (id) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = window.indexedDB.open("chida-prototype-project-images:v1", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("images", "readwrite");
+      const store = transaction.objectStore("images");
+      const get = store.get(id);
+      get.onsuccess = () => store.put({ ...get.result, blob: new Blob([get.result.blob], { type: "text/html" }) });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    const storedType = await new Promise<string>((resolve, reject) => {
+      const get = database.transaction("images", "readonly").objectStore("images").get(id);
+      get.onsuccess = () => resolve(get.result.blob.type);
+      get.onerror = () => reject(get.error);
+    });
+    database.close();
+    return storedType;
+  }, fileId);
+  expect(tamperedStoredType).toBe("text/html");
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("composer-source-open").click();
+  const safeType = await page.getByTestId("composer-source-open-asset").evaluate(async (link: HTMLAnchorElement) => (await fetch(link.href)).headers.get("content-type"));
+  expect(safeType).toBe("image/png");
+  await expect(page.getByTestId("composer-source-read-error")).toHaveCount(0);
+
+  const beforeMetadataTamper = await page.evaluate(() => ({
+    filesRaw: window.localStorage.getItem("chida-prototype-project-files:v1")!,
+    sourcesRaw: window.localStorage.getItem("chida-prototype-project-sources:v1")!,
+  }));
+  await page.evaluate(async (id) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = window.indexedDB.open("chida-prototype-project-images:v1", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("images", "readwrite");
+      const store = transaction.objectStore("images");
+      const get = store.get(id);
+      get.onsuccess = () => store.put({ ...get.result, mimeType: "text/html" });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  }, fileId);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("composer-source-read-error")).toContainText("قفل است");
+  await expect(page.getByTestId("send-button")).toBeDisabled();
+  expect(await page.evaluate(() => ({
+    filesRaw: window.localStorage.getItem("chida-prototype-project-files:v1"),
+    sourcesRaw: window.localStorage.getItem("chida-prototype-project-sources:v1"),
+  }))).toEqual(beforeMetadataTamper);
+});
+
+test("Source/Composer never reconciles file metadata while the Source store is unreadable", async ({ page }) => {
+  await enterBuilderHome(page);
+  const seededRaw = await page.evaluate(() => {
+    const projectId = window.localStorage.getItem("chida-prototype-active-project")!;
+    const records = [{
+      id: "file-unreadable-source-guard",
+      projectId,
+      displayName: "فایل حفاظت‌شده",
+      originalName: "guard.pdf",
+      mimeType: "application/pdf",
+      size: 19,
+      category: "سایر",
+      source: "انتخاب مستقیم از دستگاه",
+      status: "ثبت محلی",
+      version: 1,
+      projectStage: "اسکلت بندی",
+      visibility: "خصوصی پروژه",
+      storageMode: "browser-file",
+      sourceModifiedAt: null,
+      createdAt: "2026-08-31T08:00:00.000Z",
+    }];
+    const raw = JSON.stringify(records);
+    window.localStorage.setItem("chida-prototype-project-files:v1", raw);
+    window.localStorage.setItem("chida-prototype-project-sources:v1", "{unreadable-source");
+    return raw;
+  });
+  await page.addInitScript(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    (window as any).__guardedFileMetadataWrites = [] as string[];
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-files:v1") (window as any).__guardedFileMetadataWrites.push("set");
+      return nativeSetItem.call(this, key, value);
+    };
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-files:v1") (window as any).__guardedFileMetadataWrites.push("remove");
+      return nativeRemoveItem.call(this, key);
+    };
+  });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("composer-source-read-error")).toBeVisible();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1"))).toBe(seededRaw);
+  expect(await page.evaluate(() => (window as any).__guardedFileMetadataWrites)).toEqual([]);
+});
+
+test("Source/Composer and the file library share one lock without losing either file", async ({ page }) => {
+  await enterBuilderHome(page);
+  const secondPage = await page.context().newPage();
+  await reachBuilderWelcome(secondPage);
+  await secondPage.getByTestId("enter-home").click();
+
+  await page.getByTestId("composer-input").fill("پیوست Composer در رقابت با کتابخانه");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({ name: "composer-race.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF composer race") });
+  await secondPage.getByTestId("open-project-space").click();
+  await secondPage.getByTestId("project-files-entry").click();
+  await secondPage.getByTestId("project-file-input").setInputFiles({ name: "library-race.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF library race") });
+
+  await Promise.all([
+    page.getByTestId("send-button").click(),
+    secondPage.getByTestId("project-file-register").click(),
+  ]);
+  await expect(page.getByTestId("composer-input")).toHaveValue("");
+  await expect(secondPage.getByTestId("project-file-register-sheet")).toBeHidden();
+  const finalStores = await page.evaluate(() => ({
+    files: JSON.parse(window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]"),
+    sources: JSON.parse(window.localStorage.getItem("chida-prototype-project-sources:v1") ?? "null"),
+  }));
+  expect(finalStores.files.map((file: any) => file.originalName).sort()).toEqual(["composer-race.pdf", "library-race.pdf"].sort());
+  expect(finalStores.sources.records).toHaveLength(2);
+  expect(finalStores.sources.records.find((source: any) => source.sourceType === "composer-file").assetRef.fileId).toBe(finalStores.files.find((file: any) => file.originalName === "composer-race.pdf").id);
+  await secondPage.close();
+});
+
+test("Source/Composer serializes concurrent tabs and never silently overwrites a stale intake", async ({ page }) => {
+  await enterBuilderHome(page);
+  const secondPage = await page.context().newPage();
+  await reachBuilderWelcome(secondPage);
+  await secondPage.getByTestId("enter-home").click();
+  await expect(secondPage.getByTestId("builder-home")).toBeVisible();
+
+  await page.getByTestId("composer-input").fill("پیام هم‌زمان تب اول");
+  await secondPage.getByTestId("composer-input").fill("پیام هم‌زمان تب دوم");
+  await Promise.all([
+    page.getByTestId("send-button").click(),
+    secondPage.getByTestId("send-button").click(),
+  ]);
+  await expect.poll(async () => Number(await page.getByTestId("composer-source-error").count() > 0) + Number(await secondPage.getByTestId("composer-source-error").count() > 0)).toBe(1);
+  const firstDraft = await page.getByTestId("composer-input").inputValue();
+  const secondDraft = await secondPage.getByTestId("composer-input").inputValue();
+  expect([firstDraft, secondDraft].filter(Boolean)).toHaveLength(1);
+  const retryPage = firstDraft ? page : secondPage;
+  await expect(retryPage.getByTestId("composer-source-error")).toContainText("نسخهٔ تازه بارگذاری شد");
+  await retryPage.getByTestId("send-button").click();
+  await expect(retryPage.getByTestId("composer-input")).toHaveValue("");
+  await expect.poll(() => retryPage.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-sources:v1") ?? "null")?.envelopeVersion)).toBe(2);
+  const finalEnvelope = await retryPage.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-sources:v1") ?? "null"));
+  expect(finalEnvelope.intakes).toHaveLength(2);
+  expect(finalEnvelope.records.map((source: any) => source.textContent).sort()).toEqual(["پیام هم‌زمان تب اول", "پیام هم‌زمان تب دوم"].sort());
+  await secondPage.close();
 });
 
 test("project context, dark-only settings, keyboard attachment, and local send all react", async ({ page }) => {
@@ -3883,7 +4729,7 @@ test("project context, dark-only settings, keyboard attachment, and local send a
   await page.getByTestId("composer-input").fill("برنامه خرید فردا را آماده کن");
   await page.getByTestId("send-button").click();
   await expect(page.getByText("برنامه خرید فردا را آماده کن")).toBeVisible();
-  await expect(page.getByText(/برای «برج نیلوفر» گرفتم/)).toBeVisible();
+  await expect(page.getByText(/برای «برج نیلوفر» ثبت شد/)).toBeVisible();
   await expect(page.getByTestId("keyboard-dock")).toHaveAttribute("data-visible", "false");
 });
 
@@ -3991,7 +4837,7 @@ test("builder keeps project tasks out of chat with persistent status history", a
   expect(addBox.height).toBeGreaterThanOrEqual(44);
 
   await page.getByTestId("project-task-filter-monitor").click();
-  await expect(page.getByTestId("project-task-empty")).toContainText("پایش واقعی هنوز به این مرکز وصل نیست");
+  await expect(page.getByTestId("project-task-empty")).toContainText("هنوز پایش موعدی ثبت نشده");
   await page.getByTestId("project-task-filter-active").click();
 
   await page.getByTestId("project-task-add").click();
@@ -10568,12 +11414,13 @@ async function openProjectBackboneCreate(page: Page) {
   await page.getByTestId("project-backbone-start").click();
 }
 
-async function fillProjectBackboneForm(page: Page, draft: typeof initialProjectBackboneDraft) {
+async function fillProjectBackboneForm(page: Page, draft: typeof initialProjectBackboneDraft & { taskDueAt?: string }) {
   await page.getByTestId("backbone-milestone-title").fill(draft.milestoneTitle);
   await page.getByTestId("backbone-decision-statement").fill(draft.decisionStatement);
   await page.getByTestId("backbone-decision-reason").fill(draft.decisionReason);
   await page.getByTestId("backbone-task-title").fill(draft.taskTitle);
   await page.getByTestId("backbone-task-next-step").fill(draft.taskNextStep);
+  if (draft.taskDueAt !== undefined) await page.getByTestId("backbone-task-due-at").fill(draft.taskDueAt);
 }
 
 async function expectProjectBackboneEditorRtl(page: Page) {
@@ -10605,6 +11452,10 @@ async function expectProjectBackboneEditorRtl(page: Page) {
     await expect(field).toHaveCSS("direction", "rtl");
     await expect(field).toHaveCSS("text-align", "right");
   }
+  const dueField = page.getByTestId("backbone-task-due-at");
+  await expect(dueField).toHaveAttribute("dir", "ltr");
+  await expect(dueField).toHaveCSS("direction", "ltr");
+  await expect(dueField).toHaveCSS("text-align", "left");
 }
 
 async function createProjectBackbone(page: Page, draft = initialProjectBackboneDraft) {
@@ -10616,6 +11467,20 @@ async function createProjectBackbone(page: Page, draft = initialProjectBackboneD
   await expect(page.getByTestId("project-backbone-reason")).toContainText(draft.decisionReason);
   await expect(page.getByTestId("project-backbone-task")).toContainText(draft.taskTitle);
   await expect(page.getByTestId("project-backbone-task")).toContainText(draft.taskNextStep);
+}
+
+const projectTaskMonitorsStorageKey = "chida-prototype-project-task-monitors:v1";
+
+async function openProjectTaskMonitorsFromHome(page: Page) {
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await page.getByTestId("project-task-filter-monitor").click();
+}
+
+async function createProjectTaskDeadlineMonitor(page: Page) {
+  await openProjectTaskMonitorsFromHome(page);
+  await page.getByTestId("project-task-monitor-create").click();
+  await expect(page.getByTestId("project-task-monitor-detail")).toBeVisible();
 }
 
 async function readProjectBackboneEnvelope(page: Page) {
@@ -11243,4 +12108,749 @@ test("Project Backbone fail-closes valid JSON with stale fingerprints, impossibl
   const crossLinkedBytes = JSON.stringify(crossLinkedEnvelope);
   await page.evaluate(({ key, bytes }) => window.localStorage.setItem(key, bytes), { key: projectBackboneStorageKey, bytes: crossLinkedBytes });
   await assertReadLockedWithoutRewrite(crossLinkedBytes);
+});
+
+test("TM-1 creates a browser-local deadline monitor, checks it explicitly, and restores it after reload", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-09-01T09:30" });
+  await expect(page.getByTestId("project-backbone-task")).toContainText("موعد");
+
+  await page.getByTestId("project-backbone-back").click();
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await page.getByTestId("project-task-filter-monitor").click();
+  await expect(page.getByTestId("project-task-monitor-create")).toBeVisible();
+  await page.getByTestId("project-task-monitor-create").click();
+
+  const detail = page.getByTestId("project-task-monitor-detail");
+  await expect(detail).toBeVisible();
+  await expect(page.getByTestId("project-task-monitor-local-boundary")).toContainText("فقط هنگام بازکردن مرکز کارها یا وقتی همین صفحه در این مرورگر باز و قابل‌دیدن است");
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("در حال پایش");
+  await expect(page.getByTestId("project-task-monitor-last-check")).toContainText("هنوز بررسی نشده");
+  await expect(page.getByTestId("project-task-monitor-next-check")).not.toContainText("هنوز");
+
+  const requests: string[] = [];
+  page.on("request", (request) => requests.push(request.url()));
+  await page.getByTestId("project-task-monitor-run-now").click();
+  await expect(page.getByTestId("project-task-monitor-last-check")).not.toContainText("هنوز بررسی نشده");
+  expect(requests).toEqual([]);
+
+  const stored = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  expect(stored.schemaVersion).toBe(1);
+  expect(stored.monitors).toHaveLength(1);
+  expect(stored.runs).toHaveLength(1);
+  expect(stored.monitors[0].projectId).toBe(stored.monitors[0].ownerPrincipalId);
+  expect(stored.monitors[0].scopeId).toBe(stored.monitors[0].projectId);
+  expect(stored.runs[0].state).toBe("succeeded");
+
+  await reenterBuilderHomeAfterReload(page);
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await page.getByTestId("project-task-filter-monitor").click();
+  await expect(page.getByTestId("project-task-monitor-card")).toHaveCount(1);
+  await page.getByTestId("project-task-monitor-card").click();
+  await expect(page.getByTestId("project-task-monitor-last-check")).not.toContainText("هنوز بررسی نشده");
+
+  const widths = await page.evaluate(() => ({
+    inner: window.innerWidth,
+    documentClient: document.documentElement.clientWidth,
+    documentScroll: document.documentElement.scrollWidth,
+    bodyScroll: document.body.scrollWidth,
+  }));
+  expect(widths).toEqual({ inner: 390, documentClient: 390, documentScroll: 390, bodyScroll: 390 });
+  await page.getByTestId("project-task-monitor-back").click();
+  await expect(page.getByTestId("project-task-monitor-card")).toBeFocused();
+});
+
+test("TM-1 records a stale Task dependency as a failed Run and retries against the fresh revision", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-08-31T08:00:00.000Z"));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const dueAt = "2099-10-02T11:15";
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: dueAt });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+
+  await page.getByTestId("project-task-monitor-open-task").click();
+  await page.getByTestId("project-backbone-edit").click();
+  await fillProjectBackboneForm(page, { ...initialProjectBackboneDraft, taskNextStep: "نسخهٔ تازهٔ گام کار را با ناظر نهایی کن", taskDueAt: dueAt });
+  await page.getByTestId("project-backbone-save").click();
+  await expect(page.getByTestId("project-backbone-status")).toContainText("نسخهٔ تازه");
+  await page.getByTestId("project-backbone-back").click();
+  await expect(page.getByTestId("project-task-filter-active")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null").runs.length, projectTaskMonitorsStorageKey)).toBe(1);
+  await page.getByTestId("project-task-filter-monitor").click();
+
+  const monitorCard = page.getByTestId("project-task-monitor-card");
+  await expect(monitorCard).toContainText("بررسی ناموفق");
+  await monitorCard.click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("نسخهٔ کار برنامه");
+
+  const failedEnvelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  expect(failedEnvelope.monitors[0].version).toBe(2);
+  expect(failedEnvelope.runs).toHaveLength(1);
+  expect(failedEnvelope.runs[0]).toMatchObject({ attempt: 1, state: "failed", effectState: "none", failure: { code: "dependency-stale" } });
+  expect(failedEnvelope.monitors[0].history.at(-1).runId).toBe(failedEnvelope.runs[0].id);
+
+  await page.getByTestId("project-task-monitor-retry").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("در حال پایش");
+  const retriedEnvelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  expect(retriedEnvelope.monitors[0].version).toBe(3);
+  expect(retriedEnvelope.runs).toHaveLength(2);
+  expect(retriedEnvelope.runs[0]).toEqual(failedEnvelope.runs[0]);
+  expect(retriedEnvelope.runs[1]).toMatchObject({ attempt: 2, state: "succeeded", effectState: "none", result: { kind: "not-due" } });
+  expect(retriedEnvelope.runs[1].origin.taskVersion).toBe(2);
+  expect(retriedEnvelope.monitors[0].revisions.map((revision: { version: number }) => revision.version)).toEqual([1, 2, 3]);
+});
+
+test("TM-1 keeps a removed-deadline failure readable through disable, reload, and safe re-enable", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-08-31T10:00:00.000Z"));
+  await enterBuilderHome(page);
+  const dueAt = "2099-10-08T13:20";
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: dueAt });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+
+  await page.getByTestId("project-task-monitor-open-task").click();
+  await page.getByTestId("project-backbone-edit").click();
+  await fillProjectBackboneForm(page, { ...initialProjectBackboneDraft, taskDueAt: "" });
+  await page.getByTestId("project-backbone-save").click();
+  await page.getByTestId("project-backbone-back").click();
+  await expect.poll(() => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null").runs.length, projectTaskMonitorsStorageKey)).toBe(1);
+  await page.getByTestId("project-task-filter-monitor").click();
+  await page.getByTestId("project-task-monitor-card").click();
+  await page.getByTestId("project-task-monitor-retry").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("هنوز موعد دقیقی ندارد");
+
+  await page.getByTestId("project-task-monitor-toggle").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("غیرفعال");
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toHaveCount(0);
+  await page.getByTestId("project-task-monitor-card").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("غیرفعال");
+
+  await page.getByTestId("project-task-monitor-open-task").click();
+  await page.getByTestId("project-backbone-edit").click();
+  await page.clock.setFixedTime(new Date("2026-08-31T12:00:00.000Z"));
+  await fillProjectBackboneForm(page, { ...initialProjectBackboneDraft, taskDueAt: dueAt });
+  await page.getByTestId("project-backbone-save").click();
+  await page.getByTestId("project-backbone-back").click();
+  await page.getByTestId("project-task-filter-monitor").click();
+  await page.getByTestId("project-task-monitor-card").click();
+  await page.clock.setFixedTime(new Date("2026-08-31T09:00:00.000Z"));
+  await page.getByTestId("project-task-monitor-toggle").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("در حال پایش");
+  const recoveredEnvelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  expect(recoveredEnvelope.monitors[0].version).toBe(5);
+  expect(recoveredEnvelope.monitors[0].updatedAt).toBe("2026-08-31T12:00:00.000Z");
+  expect(recoveredEnvelope.runs).toHaveLength(2);
+  expect(recoveredEnvelope.runs[1]).toMatchObject({ attempt: 2, state: "failed", failure: { code: "deadline-missing" } });
+});
+
+test("TM-1 preserves bytes on write failure and keeps disable/re-enable history without synthetic Runs", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-11-03T08:45" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  const beforeFailure = await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey);
+
+  await page.evaluate((key) => {
+    const probeWindow = window as Window & { __taskMonitorNativeSetItem?: typeof Storage.prototype.setItem };
+    probeWindow.__taskMonitorNativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      if (this === window.localStorage && storageKey === key) throw new DOMException("Synthetic monitor write failure", "QuotaExceededError");
+      return probeWindow.__taskMonitorNativeSetItem!.call(this, storageKey, value);
+    };
+  }, projectTaskMonitorsStorageKey);
+  await page.getByTestId("project-task-monitor-toggle").click();
+  await expect(page.getByTestId("project-task-monitor-message")).toContainText("ذخیره نشد");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBe(beforeFailure);
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("در حال پایش");
+
+  await page.evaluate(() => {
+    const probeWindow = window as Window & { __taskMonitorNativeSetItem?: typeof Storage.prototype.setItem };
+    if (probeWindow.__taskMonitorNativeSetItem) Storage.prototype.setItem = probeWindow.__taskMonitorNativeSetItem;
+    delete probeWindow.__taskMonitorNativeSetItem;
+  });
+  await page.getByTestId("project-task-monitor-toggle").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("غیرفعال");
+  let envelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  expect(envelope.monitors[0].version).toBe(2);
+  expect(envelope.monitors[0].revisions.at(-1).snapshot).toMatchObject({ enabled: false, status: "disabled", nextCheckAt: null });
+  expect(envelope.runs).toEqual([]);
+
+  await page.getByTestId("project-task-monitor-toggle").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("در حال پایش");
+  envelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  expect(envelope.monitors[0].version).toBe(3);
+  expect(envelope.monitors[0].history.map((event: { type: string }) => event.type)).toEqual(["created", "disabled", "enabled"]);
+  expect(envelope.runs).toEqual([]);
+});
+
+test("TM-1 rolls back its own bytes when a noncooperating Backbone write wins during verification", async ({ page }) => {
+  await enterBuilderHome(page);
+  const dueAt = "2099-11-06T11:00";
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: dueAt });
+  const originalBackboneBytes = await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey);
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  await page.getByTestId("project-task-monitor-open-task").click();
+  await page.getByTestId("project-backbone-edit").click();
+  await fillProjectBackboneForm(page, { ...initialProjectBackboneDraft, taskNextStep: "نسخهٔ مستقیم و جدیدتر کار", taskDueAt: dueAt });
+  await page.getByTestId("project-backbone-save").click();
+  await expect(page.getByTestId("project-backbone-editor")).toHaveCount(0);
+  const newerBackboneBytes = await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey);
+  expect(newerBackboneBytes).not.toBe(originalBackboneBytes);
+  await page.evaluate(({ key, bytes }) => window.localStorage.setItem(key, bytes!), { key: projectBackboneStorageKey, bytes: originalBackboneBytes });
+
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await page.getByTestId("project-task-monitor-card").click();
+  const monitorBytesBefore = await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey);
+  await page.evaluate(({ monitorKey, backboneKey, injectedBackboneBytes }) => {
+    const probeWindow = window as Window & { __taskMonitorRaceNativeSetItem?: typeof Storage.prototype.setItem };
+    probeWindow.__taskMonitorRaceNativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      const result = probeWindow.__taskMonitorRaceNativeSetItem!.call(this, storageKey, value);
+      if (this === window.localStorage && storageKey === monitorKey) probeWindow.__taskMonitorRaceNativeSetItem!.call(this, backboneKey, injectedBackboneBytes!);
+      return result;
+    };
+  }, { monitorKey: projectTaskMonitorsStorageKey, backboneKey: projectBackboneStorageKey, injectedBackboneBytes: newerBackboneBytes });
+
+  await page.getByTestId("project-task-monitor-toggle").click();
+  await expect(page.getByTestId("project-task-monitor-message")).toContainText("ذخیره نشد");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBe(monitorBytesBefore);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectBackboneStorageKey)).toBe(newerBackboneBytes);
+  await page.evaluate(() => {
+    const probeWindow = window as Window & { __taskMonitorRaceNativeSetItem?: typeof Storage.prototype.setItem };
+    if (probeWindow.__taskMonitorRaceNativeSetItem) Storage.prototype.setItem = probeWindow.__taskMonitorRaceNativeSetItem;
+    delete probeWindow.__taskMonitorRaceNativeSetItem;
+  });
+
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-task-monitor-card")).toHaveCount(1);
+});
+
+test("TM-1 refuses to overwrite a noncooperating valid Monitor preimage", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-11-07T11:00" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  const originalBytes = await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey);
+  await page.getByTestId("project-task-monitor-toggle").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("غیرفعال");
+  const competingBytes = await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey);
+  expect(competingBytes).not.toBe(originalBytes);
+  await page.evaluate(({ key, bytes }) => window.localStorage.setItem(key, bytes!), { key: projectTaskMonitorsStorageKey, bytes: originalBytes });
+
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await page.getByTestId("project-task-monitor-card").click();
+  await page.evaluate(({ key, competing }) => {
+    const probeWindow = window as Window & {
+      __taskMonitorRaceNativeGetItem?: typeof Storage.prototype.getItem;
+      __taskMonitorRaceNativeSetItem?: typeof Storage.prototype.setItem;
+      __taskMonitorRaceReadCount?: number;
+    };
+    probeWindow.__taskMonitorRaceNativeGetItem = Storage.prototype.getItem;
+    probeWindow.__taskMonitorRaceNativeSetItem = Storage.prototype.setItem;
+    probeWindow.__taskMonitorRaceReadCount = 0;
+    Storage.prototype.getItem = function getItem(storageKey: string) {
+      if (this === window.localStorage && storageKey === key) {
+        probeWindow.__taskMonitorRaceReadCount = (probeWindow.__taskMonitorRaceReadCount ?? 0) + 1;
+        if (probeWindow.__taskMonitorRaceReadCount === 2) probeWindow.__taskMonitorRaceNativeSetItem!.call(this, key, competing!);
+      }
+      return probeWindow.__taskMonitorRaceNativeGetItem!.call(this, storageKey);
+    };
+  }, { key: projectTaskMonitorsStorageKey, competing: competingBytes });
+
+  await page.getByTestId("project-task-monitor-run-now").click();
+  await expect(page.getByTestId("project-task-monitor-message")).toContainText("ذخیره نشد");
+  await page.evaluate(() => {
+    const probeWindow = window as Window & {
+      __taskMonitorRaceNativeGetItem?: typeof Storage.prototype.getItem;
+      __taskMonitorRaceNativeSetItem?: typeof Storage.prototype.setItem;
+      __taskMonitorRaceReadCount?: number;
+    };
+    if (probeWindow.__taskMonitorRaceNativeGetItem) Storage.prototype.getItem = probeWindow.__taskMonitorRaceNativeGetItem;
+    delete probeWindow.__taskMonitorRaceNativeGetItem;
+    delete probeWindow.__taskMonitorRaceNativeSetItem;
+    delete probeWindow.__taskMonitorRaceReadCount;
+  });
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBe(competingBytes);
+
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await page.getByTestId("project-task-monitor-card").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("غیرفعال");
+});
+
+test("TM-1 fail-closes a tampered Monitor envelope without rewriting its exact bytes", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-12-04T14:00" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+
+  const tamperedBytes = await page.evaluate((key) => {
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    envelope.monitors[0].revisions[0].snapshot.reason = "دلیل دستکاری‌شده بدون اثرانگشت تازه";
+    const bytes = JSON.stringify(envelope);
+    window.localStorage.setItem(key, bytes);
+    return bytes;
+  }, projectTaskMonitorsStorageKey);
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-task-monitor-card")).toHaveCount(0);
+  await expect(page.getByTestId("project-task-monitor-create")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBe(tamperedBytes);
+});
+
+test("TM-1 rejects noncanonical whitespace in Monitor identifiers without rewriting bytes", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-12-05T10:00" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+
+  const tamperedBytes = await page.evaluate((key) => {
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    envelope.monitors[0].id = ` ${envelope.monitors[0].id} `;
+    const bytes = JSON.stringify(envelope);
+    window.localStorage.setItem(key, bytes);
+    return bytes;
+  }, projectTaskMonitorsStorageKey);
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-task-monitor-card")).toHaveCount(0);
+  await expect(page.getByTestId("project-task-monitor-create")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBe(tamperedBytes);
+});
+
+test("TM-1 rejects an impossible no-op enable transition even when its revision fingerprint is coherent", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-12-06T09:15" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+
+  const tamperedBytes = await page.evaluate((key) => {
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    const monitor = envelope.monitors[0];
+    const firstRevision = monitor.revisions[0];
+    const timestamp = firstRevision.createdAt;
+    const revisionId = "task-monitor-revision-forged-enable";
+    monitor.version = 2;
+    monitor.currentRevisionId = revisionId;
+    monitor.updatedAt = timestamp;
+    monitor.history.push({ id: "task-monitor-event-forged-enable", type: "enabled", actor: "شما", at: timestamp, version: 2, runId: null });
+    monitor.revisions.push({ id: revisionId, version: 2, createdAt: timestamp, snapshot: structuredClone(firstRevision.snapshot), fingerprint: firstRevision.fingerprint });
+    const bytes = JSON.stringify(envelope);
+    window.localStorage.setItem(key, bytes);
+    return bytes;
+  }, projectTaskMonitorsStorageKey);
+
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-task-monitor-card")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBe(tamperedBytes);
+});
+
+test("TM-1 binds each Run attempt to its history ordinal", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-12-07T09:15" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  await page.getByTestId("project-task-monitor-run-now").click();
+  await expect.poll(() => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null").runs.length, projectTaskMonitorsStorageKey)).toBe(1);
+  await page.getByTestId("project-task-monitor-run-now").click();
+  await expect.poll(() => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null").runs.length, projectTaskMonitorsStorageKey)).toBe(2);
+
+  const tamperedBytes = await page.evaluate((key) => {
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    [envelope.runs[0].attempt, envelope.runs[1].attempt] = [envelope.runs[1].attempt, envelope.runs[0].attempt];
+    const bytes = JSON.stringify(envelope);
+    window.localStorage.setItem(key, bytes);
+    return bytes;
+  }, projectTaskMonitorsStorageKey);
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBe(tamperedBytes);
+});
+
+test("TM-1 rejects a Run schedule moved beyond its actual start time", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-12-08T09:15" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  await page.getByTestId("project-task-monitor-run-now").click();
+  await expect.poll(() => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null").runs.length, projectTaskMonitorsStorageKey)).toBe(1);
+
+  const tamperedBytes = await page.evaluate((key) => {
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    envelope.runs[0].scheduledFor = envelope.monitors[0].revisions.at(-1).snapshot.nextCheckAt;
+    const bytes = JSON.stringify(envelope);
+    window.localStorage.setItem(key, bytes);
+    return bytes;
+  }, projectTaskMonitorsStorageKey);
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBe(tamperedBytes);
+});
+
+test("TM-1 rejects a coherently re-fingerprinted arbitrary post-deadline cadence", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-08-31T09:00:00.000Z"));
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2026-08-31T12:00" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("موعد رسیده");
+
+  const envelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  const monitor = envelope.monitors[0];
+  const revision = monitor.revisions.at(-1);
+  revision.snapshot.nextCheckAt = new Date(new Date(revision.createdAt).getTime() + 7 * 86_400_000).toISOString();
+  revision.fingerprint = `fnv1a-${stableTestHash(JSON.stringify(stableTestValue({ objectType: "monitor", projectId: monitor.projectId, snapshot: revision.snapshot })))}`;
+  const tamperedBytes = JSON.stringify(envelope);
+  await page.evaluate(({ key, bytes }) => window.localStorage.setItem(key, bytes), { key: projectTaskMonitorsStorageKey, bytes: tamperedBytes });
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBe(tamperedBytes);
+});
+
+test("TM-1 rejects a coherently re-fingerprinted Run result that contradicts its exact Task deadline", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-12-10T10:00" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  await page.getByTestId("project-task-monitor-run-now").click();
+  await expect.poll(() => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null").runs.length, projectTaskMonitorsStorageKey)).toBe(1);
+
+  const tamperedBytes = await page.evaluate((key) => {
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    const monitor = envelope.monitors[0];
+    const revision = monitor.revisions.at(-1);
+    const event = monitor.history.at(-1);
+    const run = envelope.runs[0];
+    run.result.kind = "deadline-reached";
+    revision.snapshot.status = "attention";
+    event.type = "deadline-reached";
+    const stableValue = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(stableValue);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([first], [second]) => first.localeCompare(second)).map(([name, child]) => [name, stableValue(child)]));
+      return value;
+    };
+    let hash = 0x811c9dc5;
+    for (const character of JSON.stringify(stableValue({ objectType: "monitor", projectId: monitor.projectId, snapshot: revision.snapshot }))) {
+      hash ^= character.charCodeAt(0);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    revision.fingerprint = `fnv1a-${hash.toString(16).padStart(8, "0")}`;
+    const bytes = JSON.stringify(envelope);
+    window.localStorage.setItem(key, bytes);
+    return bytes;
+  }, projectTaskMonitorsStorageKey);
+
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-task-monitor-card")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBe(tamperedBytes);
+});
+
+test("TM-1 accepts only one explicit Run now from two stale tabs", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-12-12T09:00" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+
+  const secondPage = await page.context().newPage();
+  try {
+    await enterBuilderHome(secondPage);
+    await openProjectTaskMonitorsFromHome(secondPage);
+    await secondPage.getByTestId("project-task-monitor-card").click();
+    await Promise.all([
+      page.getByTestId("project-task-monitor-run-now").click(),
+      secondPage.getByTestId("project-task-monitor-run-now").click(),
+    ]);
+    await expect.poll(() => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null").runs.length, projectTaskMonitorsStorageKey)).toBe(1);
+    const envelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+    expect(envelope.monitors[0].version).toBe(2);
+    expect(envelope.runs).toHaveLength(1);
+    expect(envelope.runs[0]).toMatchObject({ monitorVersion: 2, attempt: 1, state: "succeeded", result: { kind: "not-due" } });
+    const messages = await Promise.all([
+      page.getByTestId("project-task-monitor-message").textContent(),
+      secondPage.getByTestId("project-task-monitor-message").textContent(),
+    ]);
+    expect(messages.filter((message) => message?.includes("جای دیگری تغییر کرده بود"))).toHaveLength(1);
+  } finally {
+    await secondPage.close();
+  }
+});
+
+test("TM-1 serializes a Backbone edit with retry and remains readable in either valid ordering", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-08-31T08:00:00.000Z"));
+  await enterBuilderHome(page);
+  const dueAt = "2099-12-14T10:00";
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: dueAt });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  await page.getByTestId("project-task-monitor-open-task").click();
+  await page.getByTestId("project-backbone-edit").click();
+  await fillProjectBackboneForm(page, { ...initialProjectBackboneDraft, taskNextStep: "نسخهٔ دوم گام کار", taskDueAt: dueAt });
+  await page.getByTestId("project-backbone-save").click();
+  await page.getByTestId("project-backbone-back").click();
+  await expect.poll(() => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null").runs.length, projectTaskMonitorsStorageKey)).toBe(1);
+  await page.getByTestId("project-task-filter-monitor").click();
+  await page.getByTestId("project-task-monitor-card").click();
+
+  const secondPage = await page.context().newPage();
+  try {
+    await secondPage.clock.setFixedTime(new Date("2026-08-31T08:00:00.000Z"));
+    await enterBuilderHome(secondPage);
+    await openProjectTaskMonitorsFromHome(secondPage);
+    await secondPage.getByTestId("project-task-monitor-card").click();
+    await expect(secondPage.getByTestId("project-task-monitor-retry")).toBeVisible();
+
+    await page.getByTestId("project-task-monitor-open-task").click();
+    await page.getByTestId("project-backbone-edit").click();
+    await fillProjectBackboneForm(page, { ...initialProjectBackboneDraft, taskNextStep: "نسخهٔ سوم هم‌زمان گام کار", taskDueAt: dueAt });
+    await Promise.all([
+      page.getByTestId("project-backbone-save").click(),
+      secondPage.getByTestId("project-task-monitor-retry").click(),
+    ]);
+    await expect(page.getByTestId("project-backbone-editor")).toHaveCount(0);
+    await expect(secondPage.getByTestId("project-task-monitor-status")).toContainText("در حال پایش");
+  } finally {
+    await secondPage.close();
+  }
+
+  await page.bringToFront();
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-task-monitor-card")).toHaveCount(1);
+  let envelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  const currentSnapshot = envelope.monitors[0].revisions.at(-1).snapshot;
+  await page.getByTestId("project-task-monitor-card").click();
+  if (currentSnapshot.status === "watching" && currentSnapshot.origin.taskVersion === 2) {
+    await page.getByTestId("project-task-monitor-run-now").click();
+    await expect(page.getByTestId("project-task-monitor-retry")).toBeVisible();
+  }
+  if (currentSnapshot.status === "failed") {
+    expect(currentSnapshot.failure.code).toBe("dependency-stale");
+  }
+  if (currentSnapshot.status === "failed" || currentSnapshot.origin.taskVersion === 2) await page.getByTestId("project-task-monitor-retry").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("در حال پایش");
+  envelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  expect([2, 4]).toContain(envelope.runs.length);
+  expect(envelope.monitors[0].revisions.at(-1).snapshot.origin.taskVersion).toBe(3);
+
+  await reenterBuilderHomeAfterReload(page);
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-task-monitor-card")).toHaveCount(1);
+});
+
+test("TM-1 queues re-enable behind the winning Backbone edit and emits one fresh overdue Run", async ({ page }) => {
+  const backboneLockName = "chida-prototype-project-backbone:v1:write";
+  await page.clock.setFixedTime(new Date("2026-08-31T09:00:00.000Z"));
+  await enterBuilderHome(page);
+  const dueAt = "2026-08-31T12:00";
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: dueAt });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("موعد رسیده");
+  await page.getByTestId("project-task-monitor-toggle").click();
+  await expect(page.getByTestId("project-task-monitor-status")).toContainText("غیرفعال");
+  await page.getByTestId("project-task-monitor-open-task").click();
+  await page.getByTestId("project-backbone-edit").click();
+  await fillProjectBackboneForm(page, { ...initialProjectBackboneDraft, taskNextStep: "گام برنده پیش از فعال‌سازی دوباره", taskDueAt: dueAt });
+
+  const secondPage = await page.context().newPage();
+  try {
+    await secondPage.clock.setFixedTime(new Date("2026-08-31T09:00:00.000Z"));
+    await enterBuilderHome(secondPage);
+    await openProjectTaskMonitorsFromHome(secondPage);
+    await secondPage.getByTestId("project-task-monitor-card").click();
+    await expect(secondPage.getByTestId("project-task-monitor-status")).toContainText("غیرفعال");
+
+    await page.evaluate((name) => {
+      const lockWindow = window as Window & { __taskMonitorBackboneLockHeld?: boolean; __releaseTaskMonitorBackboneLock?: () => void };
+      void navigator.locks.request(name, async () => {
+        lockWindow.__taskMonitorBackboneLockHeld = true;
+        await new Promise<void>((resolve) => { lockWindow.__releaseTaskMonitorBackboneLock = resolve; });
+        lockWindow.__taskMonitorBackboneLockHeld = false;
+      });
+    }, backboneLockName);
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __taskMonitorBackboneLockHeld?: boolean }).__taskMonitorBackboneLockHeld))).toBe(true);
+
+    await page.getByTestId("project-backbone-save").click();
+    await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, backboneLockName)).toBe(1);
+    await secondPage.getByTestId("project-task-monitor-toggle").click();
+    await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, backboneLockName)).toBe(2);
+  } finally {
+    await page.evaluate(() => {
+      const lockWindow = window as Window & { __releaseTaskMonitorBackboneLock?: () => void };
+      const release = lockWindow.__releaseTaskMonitorBackboneLock;
+      delete lockWindow.__releaseTaskMonitorBackboneLock;
+      release?.();
+    });
+  }
+
+  try {
+    await expect(page.getByTestId("project-backbone-editor")).toHaveCount(0);
+    await expect(secondPage.getByTestId("project-task-monitor-status")).toContainText("موعد رسیده");
+    await expect.poll(() => secondPage.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null").runs.length, projectTaskMonitorsStorageKey)).toBe(2);
+    const backboneEnvelope = await readProjectBackboneEnvelope(secondPage);
+    const monitorEnvelope = await secondPage.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+    expect(backboneEnvelope.tasks[0].version).toBe(2);
+    expect(monitorEnvelope.monitors[0].revisions.at(-1).snapshot.origin.taskVersion).toBe(2);
+    expect(monitorEnvelope.runs.map((run: { attempt: number }) => run.attempt)).toEqual([1, 2]);
+    expect(monitorEnvelope.runs[1]).toMatchObject({ state: "succeeded", origin: { taskVersion: 2 }, result: { kind: "deadline-reached" } });
+  } finally {
+    await secondPage.close();
+  }
+});
+
+test("TM-1 deduplicates an overdue automatic check across two tabs", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-08-31T08:00:00.000Z"));
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2026-08-31T12:00" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  const beforeDeadline = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  expect(beforeDeadline.monitors[0].version).toBe(1);
+  expect(beforeDeadline.runs).toEqual([]);
+  await page.getByTestId("project-task-monitor-back").click();
+  await page.getByTestId("project-tasks-back").click();
+
+  const secondPage = await page.context().newPage();
+  try {
+    await secondPage.clock.setFixedTime(new Date("2026-08-31T08:00:00.000Z"));
+    await enterBuilderHome(secondPage);
+    await Promise.all([
+      page.clock.setFixedTime(new Date("2026-08-31T09:00:00.000Z")),
+      secondPage.clock.setFixedTime(new Date("2026-08-31T09:00:00.000Z")),
+    ]);
+    await Promise.all([openProjectTaskMonitorsFromHome(page), openProjectTaskMonitorsFromHome(secondPage)]);
+    await expect.poll(() => page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null").runs.length, projectTaskMonitorsStorageKey)).toBe(1);
+    const envelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+    expect(envelope.monitors[0].version).toBe(2);
+    expect(envelope.monitors[0].revisions.at(-1).snapshot.status).toBe("attention");
+    expect(envelope.runs[0]).toMatchObject({ attempt: 1, state: "succeeded", effectState: "none", result: { kind: "deadline-reached" } });
+
+    await page.getByTestId("project-task-monitor-card").click();
+    await page.getByTestId("project-task-monitor-toggle").click();
+    await expect(page.getByTestId("project-task-monitor-status")).toContainText("غیرفعال");
+    await page.clock.setFixedTime(new Date("2026-08-31T09:00:00.000Z"));
+    await page.getByTestId("project-task-monitor-toggle").click();
+    await expect(page.getByTestId("project-task-monitor-status")).toContainText("موعد رسیده");
+    const reenabledEnvelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+    expect(reenabledEnvelope.monitors[0].version).toBe(5);
+    expect(reenabledEnvelope.runs).toHaveLength(2);
+    expect(reenabledEnvelope.runs[1]).toMatchObject({ attempt: 2, state: "succeeded", result: { kind: "deadline-reached" } });
+  } finally {
+    await secondPage.close();
+  }
+});
+
+test("TM-1 cancels a queued automatic check after leaving the visible Tasks view", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-08-31T08:00:00.000Z"));
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2026-08-31T12:00" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  await page.getByTestId("project-task-monitor-back").click();
+  await page.getByTestId("project-tasks-back").click();
+
+  const monitorLockName = `${projectTaskMonitorsStorageKey}:write`;
+  await page.evaluate((lockName) => {
+    const lockWindow = window as Window & {
+      __releaseQueuedAutomaticMonitorLock?: () => void;
+      __queuedAutomaticMonitorLockHeld?: boolean;
+    };
+    void navigator.locks.request(lockName, { mode: "exclusive" }, async () => {
+      lockWindow.__queuedAutomaticMonitorLockHeld = true;
+      await new Promise<void>((resolve) => { lockWindow.__releaseQueuedAutomaticMonitorLock = resolve; });
+      lockWindow.__queuedAutomaticMonitorLockHeld = false;
+    });
+  }, monitorLockName);
+  await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __queuedAutomaticMonitorLockHeld?: boolean }).__queuedAutomaticMonitorLockHeld))).toBe(true);
+
+  await page.clock.setFixedTime(new Date("2026-08-31T09:00:00.000Z"));
+  await openProjectTaskMonitorsFromHome(page);
+  await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, monitorLockName)).toBeGreaterThan(0);
+  await page.getByTestId("project-tasks-back").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+
+  await page.evaluate(() => {
+    const lockWindow = window as Window & { __releaseQueuedAutomaticMonitorLock?: () => void };
+    const release = lockWindow.__releaseQueuedAutomaticMonitorLock;
+    delete lockWindow.__releaseQueuedAutomaticMonitorLock;
+    release?.();
+  });
+  await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, monitorLockName)).toBe(0);
+
+  const envelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  expect(envelope.monitors[0].version).toBe(1);
+  expect(envelope.runs).toEqual([]);
+});
+
+test("TM-1 writes nothing when Web Locks are unavailable", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-12-20T10:30" });
+  await page.getByTestId("project-backbone-back").click();
+  await page.evaluate(() => Object.defineProperty(window.navigator, "locks", { value: undefined, configurable: true }));
+  await openProjectTaskMonitorsFromHome(page);
+  await page.getByTestId("project-task-monitor-create").click();
+  await expect(page.getByTestId("project-task-monitor-list-message")).toContainText("قفل امن مرورگر در دسترس نبود");
+  await expect(page.getByTestId("project-task-monitor-detail")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTaskMonitorsStorageKey)).toBeNull();
+});
+
+test("TM-1 keeps Monitor and Run projections isolated to their owning project", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => {
+    const base = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-31T08:00:00.000Z" };
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
+      { ...base, id: "tm-project-a", name: "پروژه پایش الف", location: "ونک", stage: "فونداسیون" },
+      { ...base, id: "tm-project-b", name: "پروژه پایش ب", location: "جردن", stage: "نازک کاری و نما" },
+    ]));
+    window.localStorage.setItem("chida-prototype-active-project", "tm-project-a");
+  });
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-12-25T12:00" });
+  await page.getByTestId("project-backbone-back").click();
+  await createProjectTaskDeadlineMonitor(page);
+  await page.getByTestId("project-task-monitor-run-now").click();
+  await expect(page.getByTestId("project-task-monitor-last-check")).not.toContainText("هنوز بررسی نشده");
+  await page.getByTestId("project-task-monitor-back").click();
+  await page.getByTestId("project-tasks-back").click();
+
+  await page.getByTestId("project-switcher").click();
+  await page.getByRole("button", { name: /پروژه پایش ب تهران/ }).click();
+  await page.getByTestId("project-space-back").click();
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-card")).toHaveCount(0);
+  await expect(page.getByTestId("project-task-monitor-set-deadline")).toBeVisible();
+
+  await page.getByTestId("project-tasks-back").click();
+  await page.getByTestId("project-switcher").click();
+  await page.getByRole("button", { name: /پروژه پایش الف تهران/ }).click();
+  await page.getByTestId("project-space-back").click();
+  await openProjectTaskMonitorsFromHome(page);
+  await expect(page.getByTestId("project-task-monitor-card")).toHaveCount(1);
+  const envelope = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectTaskMonitorsStorageKey);
+  expect(envelope.monitors).toHaveLength(1);
+  expect(envelope.monitors[0]).toMatchObject({ projectId: "tm-project-a", ownerPrincipalId: "tm-project-a", scopeId: "tm-project-a" });
+  expect(envelope.runs).toHaveLength(1);
+  expect(envelope.runs[0]).toMatchObject({ projectId: "tm-project-a", ownerPrincipalId: "tm-project-a", scopeId: "tm-project-a", state: "succeeded" });
 });

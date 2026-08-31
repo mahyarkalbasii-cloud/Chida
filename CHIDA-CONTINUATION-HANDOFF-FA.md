@@ -2,11 +2,11 @@
 
 **تاریخ آخرین به‌روزرسانی:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
 **مسیر پروژه:** `/Users/mahyarkl/Desktop/ChatGPT/CHIDA`
-**نقطهٔ ادامه:** MC-1 پس از baseline `32f9508f6b4483d95ec1213cb6eef93ad281c2ba` ساخته و با commit قابلیت `6169035074b4262b7576df638fa4a657f04fdee7` و prototype tree `a831c16ffb049bbbacd79aee533935eea33aa078` در GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۲۹ منتشر شده است. رسید دقیق در انتهای بخش MC-1 ثبت شده و commit مستندی بعدی همین prototype tree را حفظ می‌کند. Source/Composer Intake، Task/Monitor Core، Build Lifecycle، مدل، backend، شبکه/ارسال و مسیر تأمین‌کننده آغاز نشده‌اند و هرکدام مجوز تازه می‌خواهند.
+**نقطهٔ ادامه:** MC-1 با commit قابلیت `6169035074b4262b7576df638fa4a657f04fdee7` در GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۲۹ منتشر شده است. SI-1 سپس ساخته و توسط ماهیار تأیید شد؛ TM-1 نیز در همان checkout تکمیل، اصلاح و با gate release پاس شد. ماهیار با پیام «منتشر کن لطفا» انتشار snapshot ترکیبی SI-1/TM-1 را صریحاً مجاز کرده است. در لحظهٔ ثبت این بند، commit/push/deploy هنوز terminal نشده و نباید موفقیت انتشار ادعا شود؛ Build Lifecycle، مدل، backend، شبکه/ارسال و مسیر تأمین‌کننده همچنان مجوز تازه می‌خواهند.
 
 ## مأموریت گفت‌وگوی بعدی
 
-**توقف پس از انتشار MC-1:** snapshot آزموده و تأییدشدهٔ Memory Core روی GitHub، Cloudflare Pages و ChatGPT Sites منتشر و receipt آن ثبت شده است. هیچ برش تازه‌ای خودکار آغاز نمی‌شود؛ تسک ادامه فقط وضعیت را تطبیق می‌دهد و منتظر پیام اجرایی صریح ماهیار می‌ماند.
+**تسک جاری — انتشار same-source SI-1/TM-1:** snapshot آزموده را بدون گسترش دامنه commit و روی GitHub `main` push کن؛ Cloudflare Pages و ChatGPT Sites خصوصی را به دقیقاً همان source برسان، تا وضعیت terminal موفق poll کن و receipt را ثبت کن. هیچ worker، backend، مدل، شبکه، پایش وب/قیمت/مقررات، مسیر تأمین‌کننده یا Build Lifecycle نساز. درخواست انتشار فعلی مجوز شروع برش بعد نیست.
 
 ترتیب مشترک Sol و Codex پس از تأیید بسته:
 
@@ -14,11 +14,11 @@
 2. ماهیار بسته را صریحاً تأیید کرد؛ رسید تأیید بدون تغییر بایتی چهار Source در دفتر یادگیری و هنداف ثبت شد.
 3. تأیید اسناد implementation را خودکار آغاز نمی‌کند.
 4. ماهیار با پیام اجرایی جداگانه برش اول Project Backbone را مجاز کرد؛ پس از بازخوردهای خرید و RTL و پاس‌شدن gateها، انتشار همین snapshot را نیز صریحاً مجاز کرد.
-5. برش دوم Memory Core ساخته، آزموده، تأیید و در هر سه مقصد منتشر شده است؛ سه برش بعدی Source/Composer Intake، Task/Monitor Core و Build Lifecycle Minimum هستند و هرکدام فقط پس از پیام صریح تازه آغاز می‌شوند.
+5. برش دوم Memory Core ساخته، آزموده، تأیید و در هر سه مقصد منتشر شده است. SI-1 محلی تکمیل و توسط ماهیار تأیید شد؛ TM-1 نیز ساخته و gate release آن پاس شد. ماهیار انتشار snapshot ترکیبی این دو برش را صریحاً مجاز کرده است؛ Build Lifecycle Minimum هنوز پیام اجرایی تازه می‌خواهد.
 6. پس از PASS شدن Builder Prototype Architecture Gate، M1a فقط به‌صورت adapter محلی، opt-in، provider-neutral و text-only آزموده می‌شود؛ M1b برای `ContextManifest`/Memory فقط بعد از پذیرش M1a می‌آید.
 7. مسیر تأمین‌کننده، shared case واقعی، backend و شبکهٔ واقعی همچنان به gate و تأییدهای جدا نیاز دارند.
 
-هر بار فقط یک تسک کوچک ساخته می‌شود. پس از مشاهده، اصلاح و تأیید ماهیار به تسک بعد می‌رویم. commit، push، merge، انتشار Cloudflare یا انتشار ChatGPT Sites فقط با درخواست صریح تازه انجام می‌شود.
+هر بار فقط یک تسک کوچک ساخته می‌شود. مجوز فعلی فقط انتشار snapshot SI-1/TM-1 است؛ پس از receipt باید متوقف شد و برای Build Lifecycle یا هر تغییر بعدی منتظر پیام صریح تازه ماند.
 
 تعریف کاری پیشنهادی برای «تکمیل سمت سازنده» دیگر completion مبهم کل T13 نیست؛ یک acceptance matrix دودویی برای ownership/scope، isolation، schema/state/version، failure/rollback، memory control، Source/Composer intake محلی، Task/Monitor، lifecycle حداقلی `BuiltArtifact`، پذیرش UI و شواهد آزمون است. backend production، شبکهٔ واقعی، طرف دوم واقعی، marketplace، Connector، اجرای کد آزاد، مالی سبک و desktop نهایی شرط این gate نیستند.
 
@@ -28,7 +28,7 @@
 - store تازه `chida-prototype-project-backbone:v1` یک envelope اتمیک با سه Domain Object مستقل Milestone، Decision و Task است. هر سه project-scoped و دارای owner/scope، version، revision snapshot، fingerprint و history هستند؛ لینک Decision↔Task↔Milestone دقیق و در parser اعتبارسنجی می‌شود.
 - Decision بدون reason مرئی ثبت نمی‌شود. absent store با empty فرق دارد؛ malformed/schema-invalid/cross-project/orphan state read-error است و mutation را fail-close قفل می‌کند.
 - create/update/rollback زیر Web Lock سراسری همان origin اجرا می‌شوند؛ مسیر کامل read → expectedVersion/graph validation → write سریال است و نبود Web Locks بدون fallback ناامن fail-close می‌شود. stale editor overwrite نمی‌کند، no-op بایت و نسخه را ثابت نگه می‌دارد، timestamp با ساعت عقب‌رفته عقب نمی‌رود و rollback محتوای نسخهٔ قدیمی را به‌عنوان revision تازه ثبت می‌کند.
-- فرم این برش عمداً فقط دادهٔ حداقلی را می‌گیرد؛ target date/dueAt و transitionهای کامل status به Task/Monitor Core موکول‌اند. بدهی reader/write مخزن قدیمی BuilderProject نیز با این store تازه حل‌شده ادعا نمی‌شود.
+- فرم اولیهٔ این برش عمداً دادهٔ حداقلی می‌گرفت؛ TM-1 اکنون `dueAt` اختیاری Task را با ورودی زمان تهران و ذخیرهٔ canonical UTC اضافه کرده است. transitionهای کامل status هنوز deferred هستند. بدهی reader/write مخزن قدیمی BuilderProject نیز با این store تازه حل‌شده ادعا نمی‌شود.
 - پس از مشاهدهٔ ماهیار، یک نقص presentation در فرم create/edit پیدا شد: BottomSheet به‌علت portal شدن بیرون `.chida-app` مقدار `direction=ltr` می‌گرفت. اصلاح محدود، زمینهٔ RTL مستقل sheet و تراز راست پنج ورودی فارسی را اضافه کرد؛ regression اختصاصی ابتدا شکست را اثبات و سپس در create/edit با ۱/۱ پاس کرد. بازبینی مستقل finding باز P0/P1/P2 نداشت. پس از اعلام پایان و شواهد آزمون، ماهیار انتشار همین snapshot را صریحاً مجاز کرد؛ این مجوز به Memory Core یا برش بعدی گسترش ندارد.
 - یازده regression متمرکز Project Backbone برابر ۱۱/۱۱ پاس شده‌اند؛ ساخت/لینک/reload و نبود duplication، RTL واقعی create/edit، reason مرئی و دسترس‌پذیری، جداسازی پروژه، no-op/edit/rollback، ساعت عقب‌رفته، stale conflict، رقابت واقعی دو تب، نبود Web Locks، write failure، JSON خراب و semantic tamper شامل fingerprint، تاریخ ناممکن و cross-project link را پوشش می‌دهند.
 - `npm run test:app` برابر ۱۷۸/۱۷۸، `npm run test:runtime` برابر ۱۸۶/۱۸۶، `npm run test:sites` برابر ۴/۴، build/TypeScript و integrity هر ۲۸ فایل پاس شدند. QA دیداری پیشین مرورگر داخلی در `390 × 844` حالت خالی، sheet سه‌بخشی، ثبت، ویرایش، تاریخچه/rollback و کارت Task را تأیید کرد؛ `document/body scrollWidth = 390`، عنصر افقی بیرون‌زده صفر و console error/warning صفر بود. بازخورد RTL فعلی با computed style واقعی در همان viewport برای header، توضیح، section copy، labelها و هر پنج فیلد create/edit آزموده شد.
@@ -53,12 +53,12 @@
 
 1. `AGENTS.md` و `prototype/AGENTS.md` را کامل بخوان.
 2. منبع حقیقت را فقط `CHIDA-Product-Definition-FA.md` بدان؛ `BUILDER-FEATURE-BACKLOG-FA.md` فقط ترتیب اجرایی و این فایل فقط هنداف است.
-3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007 تا C-010، T7/T8، T8-UX1/T8-UX2/T8-UX3، H1 و H2 بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه C-010 است و قاعدهٔ Quick Action grid در C-010 با تصمیم صریح T8-UX3 منسوخ شده است.
+3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007 تا C-010، T7/T8، T8-UX1/T8-UX2/T8-UX3، H1، H2، MC-1، SI-1 و TM-1 بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه C-010 است و قاعدهٔ Quick Action grid در C-010 با تصمیم صریح T8-UX3 منسوخ شده است.
 4. `CHIDA-SOL-HANDOFF-FA.md` و بخش MC-1 همین هنداف را کامل بخوان و سپس `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را فقط read-only تطبیق بده. baseline پیش از MC-1 برابر `32f9508f6b4483d95ec1213cb6eef93ad281c2ba` است؛ SHA release و receipt جاری باید از `HEAD`/remote و رسید MC-1 خوانده شود.
-5. Project Backbone منتشرشده را همراه `PB-1` و Memory Core تأییدشده را همراه `MC-1` دفتر یادگیری بررسی کن؛ checkout تحویلی باید تمیز و `HEAD`/`origin/main` هم‌تراز باشد و هیچ تغییر محلی را بدون تعیین منشأ پاک نکن.
-6. MC-1 پس از مجوز صریح ماهیار منتشر و receipt آن ثبت شده است؛ در تسک ادامه preview، تست artifact‌ساز، commit، push یا deploy تازه انجام نده مگر اینکه ماهیار جداگانه بخواهد.
-7. مدل، Source/Composer Intake، Task/Monitor Core، Build Lifecycle، backend و مسیر تأمین‌کننده را آغاز نکن.
-8. MC-1 بسته و تأییدشده است؛ برای انتخاب یا اجرای برش بعدی منتظر پیام صریح ماهیار بمان.
+5. Project Backbone منتشرشده را همراه `PB-1`، Memory Core را همراه `MC-1` و snapshot ترکیبی SI-1/TM-1 را همراه بخش‌های همنام دفتر یادگیری بررسی کن. هیچ تغییر محلی را stash، reset، discard یا بدون تعیین منشأ پاک نکن.
+6. MC-1 منتشر و receipt آن ثبت شده است. SI-1/TM-1 gate release پاس و مجوز انتشار دارند؛ تا وقتی receipt terminal هر سه مقصد ثبت نشده، آن‌ها را منتشرشده نخوان.
+7. انتشار را فقط از commit آزموده و same-source انجام بده و دسترسی owner-only Sites را حفظ کن. Build Lifecycle، مدل، backend و مسیر تأمین‌کننده را آغاز نکن.
+8. پس از terminal success، receipt دقیق GitHub/Cloudflare/Sites را ثبت کن و متوقف شو؛ عبور به تسک بعد نیازمند پیام اجرایی جداست.
 
 ## سلسله‌مراتب تصمیم
 
@@ -332,7 +332,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 - موعد پاسخ، انقضای پیشنهاد، درخواست بی‌پاسخ و آستانهٔ زمان. پایش هزینه فقط پس از وجود دادهٔ مالی T12 فعال شود.
 - دلیل، آخرین اجرا، اجرای بعدی، خاموش‌کردن، توقف، شکست و retry دیده شوند.
-- تا نبود worker/backend فقط «بررسی هنگام بازشدن یا بازبودن مرورگر» ادعا شود؛ نه اجرای دائمی پس‌زمینه.
+- تا نبود worker/backend فقط «بررسی هنگام بازشدن مرکز کارها یا وقتی همان مرکز در صفحهٔ باز و قابل‌دیدن است» ادعا شود؛ نه اجرای تب بسته/پنهان یا پس‌زمینهٔ دائمی.
 - Brief به دادهٔ واقعی محلی متصل شود.
 
 ### T9-C — دامنه‌های حافظهٔ سازنده
@@ -353,8 +353,8 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - پیوست Composer واقعاً به draft همان پیام متصل بماند؛ کتابخانهٔ پروژه جای پیوست جا زده نشود.
 - عکس، چندفایل و صدا پیش‌نمایش، حذف پیش از ارسال، منشأ و رضایت استفاده داشته باشند.
 - فایل lifecycle نسخه، rename، حذف/بازیابی و خطای quota داشته باشد.
-- T8-UX2 فقط نگه‌داری و بازکردن محلی سند منتخب را برای نمونه مجاز کرد: Blob سند در IndexedDB همان مرورگر و شناسنامه در مخزن موجود می‌ماند؛ Blob/base64 وارد `localStorage` نمی‌شود. سیاست کامل حجم، quota، retention، حذف/بازیابی، migration و ورودی غیرقابل‌اعتماد همچنان بدهی T11 است و هیچ parser یا extraction فعال نیست.
-- پس از عبور از gate، برای محتوای واقعاً خوانده‌شده `SourceRecord` صفحه/بخش‌محور و قابل‌بازشدن ساخته شود؛ مدل به‌تنهایی منبع نیست.
+- T8-UX2 فقط نگه‌داری و بازکردن محلی سند منتخب را مجاز کرده بود. SI-1 اکنون متن دقیق و کل asset منتخب Composer را به‌صورت `SourceRecord` پروژه‌محور و قابل‌بازشدن ثبت می‌کند؛ Blob در IndexedDB و metadata در `localStorage` جدا می‌مانند. سیاست کامل حجم، quota، retention، حذف/بازیابی، migration، چندفایل و ورودی غیرقابل‌اعتماد همچنان بدهی T11 است و هیچ parser یا extraction فعال نیست.
+- `SourceRecord` فعلی whole-text/whole-asset است، نه locator صفحه/بخش یا ادعای خواندن محتوا. Source صفحه‌/بخش‌محور فقط پس از extraction معتبر ساخته می‌شود؛ مدل به‌تنهایی منبع نیست.
 - یک برش مستقل تحقیق فنی، منابع دستیِ واقعی را با URL/منشأ/تاریخ و بدون خلاصهٔ AI نمایش دهد؛ وب عملیاتی تا وجود ابزار کنترل‌شده و قرارداد حریم صریحاً integration موکول‌شده است و پایان فاز سازنده به معنی آمادگی production این قابلیت نیست.
 - هیچ فایل، عکس یا حافظه‌ای خودکار وارد context آیندهٔ مدل نشود.
 
@@ -382,13 +382,13 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 ## بدهی‌ها و affordanceهای نیمه‌کارهٔ شناخته‌شده
 
 - عدد پین‌شده‌ها واقعی نیست؛ «گفتگوی تازه»، پین‌ها، جست‌وجوی گفتگو و امکانات چیدا ظاهر فعال دارند اما رفتار کامل ندارند. Settings اکنون فقط وضعیت‌های واقعی را نمایش می‌دهد؛ usage/token/billing/quota تا اتصال منبع معتبر عمداً نامتصل‌اند.
-- دوربین و گالری Composer attachment نمی‌سازند؛ Voice handler ندارد.
+- دوربین، گالری و فایل Composer اکنون یک attachment واقعی همان draft می‌سازند؛ چندفایل و Voice handler هنوز وجود ندارند.
 - Quick Action «پیشنهادها» صندوق دستی T7-A و «برنامه پروژه» Project Backbone را باز می‌کنند؛ فقط «شروع صورت‌جلسه» هنوز draft متن می‌سازد. خود Quick Action یک rail افقی dragپذیر با overflow داخلی است؛ فیلترهای کار همچنان grid بدون overflow صفحه‌اند.
 - «دستیار فنی» در Tools رفتار واقعی ندارد.
-- draft و پیام‌های چت در نشست فعلی بر اساس پروژه جدا شده‌اند، اما persistence چت، thread واقعی و پاسخ مدل هنوز وجود ندارد و پاسخ فعلی canned است.
+- draftهای Composer در نشست جاری بر اساس پروژه جدا هستند و intakeهای commit‌شده از Source envelope پس از reload بازسازی می‌شوند؛ persistence یک thread کامل، پاسخ مدل و تاریخچهٔ مستقل گفت‌وگو هنوز وجود ندارند و پاسخ فعلی canned و غیرمرجع است.
 - لغو/بازگشایی Approval محلی برنامهٔ ارسال در T6-D ساخته شده است؛ این چرخه به Approval محتوای درخواست یا مجوز ارسال واقعی تعمیم داده نمی‌شود.
-- خدمت، چندقلمی و سؤال روشن‌سازی در T6-B2، گیرنده/DispatchDraft محلی در T6-C و Approval محلی برنامه در T6-D ساخته شده‌اند؛ ارسال یا شبکهٔ واقعی وجود ندارد، attachment همچنان در T11 و confidence واقعی فقط پس از استخراج معتبر در M6 می‌آید.
-- سند تازهٔ منتخب در همان مرورگر قابل‌بازشدن است؛ رکورد قدیمی `metadata-only` برای دسترسی به محتوا نیاز به انتخاب فایل پشتیبانی‌شده‌ای با نام و اندازهٔ ثبت‌شده دارد و اصالت محتوا تأیید نمی‌شود. آپلود، sync، backup، استخراج/OCR، جست‌وجوی محتوا، SourceRecord و پاسخ منبع‌دار واقعی همچنان غیرفعال‌اند.
+- خدمت، چندقلمی و سؤال روشن‌سازی در T6-B2، گیرنده/DispatchDraft محلی در T6-C و Approval محلی برنامه در T6-D ساخته شده‌اند؛ ارسال یا شبکهٔ واقعی وجود ندارد. attachment عمومی Composer در SI-1 ساخته شده، اما پیوست دامنه‌ای خود درخواست خرید و confidence واقعی فقط پس از قرارداد و extraction معتبر می‌آیند.
+- سند تازهٔ منتخب در همان مرورگر قابل‌بازشدن است؛ رکورد قدیمی `metadata-only` برای دسترسی به محتوا نیاز به انتخاب فایل پشتیبانی‌شده‌ای با نام و اندازهٔ ثبت‌شده دارد و اصالت محتوا تأیید نمی‌شود. SourceRecord محلی متن/asset Composer اکنون فعال است؛ آپلود، sync، backup، استخراج/OCR، جست‌وجوی محتوا، locator صفحه/بخش و پاسخ منبع‌دار واقعی همچنان غیرفعال‌اند.
 - Brief موفق اکنون صفحه را می‌بندد و شکست را صریح نگه می‌دارد، اما هنوز Report واقعی نیست؛ Build نیز چرخهٔ کامل نسخه/حذف ندارد.
 - READMEهای ریشه و prototype از T5/T6 عقب‌اند و در یک تسک مستندی باید هم‌تراز شوند.
 
@@ -459,7 +459,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 
 ## متن کوتاه آماده برای آغاز گفت‌وگوی جدید
 
-> این تسک ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز و از محیط local همین پروژه استفاده کن. ابتدا `AGENTS.md`، `prototype/AGENTS.md`، `CHIDA-CONTINUATION-HANDOFF-FA.md`، `CHIDA-SOL-HANDOFF-FA.md`، بخش H2 و PB-1/UX-R1/MC-1 در `CHIDA-PRODUCT-LEARNINGS-FA.md`، سند مادر، backlog و بستهٔ چهار سند Proposed معماری را کامل بخوان. وضعیت Git و receiptهای انتشار MC-1 را فقط read-only با `HEAD`/`origin/main` تطبیق بده. هیچ commit، push، deploy، مدل، backend، sync، Source/Composer Intake، Task/Monitor Core، Build Lifecycle یا مسیر تأمین‌کننده را شروع نکن. MC-1 تأییدشده است؛ فقط وضعیت را گزارش کن و برای هر تغییر یا برش بعدی منتظر پیام اجرایی صریح ماهیار بمان.
+> این تسک ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز و dirty work را حفظ کن. ابتدا `AGENTS.md`، `prototype/AGENTS.md`، `CHIDA-CONTINUATION-HANDOFF-FA.md`، بخش‌های H2/MC-1/SI-1/TM-1 در `CHIDA-PRODUCT-LEARNINGS-FA.md`، سند مادر و backlog را بخوان. MC-1 منتشرشده است و snapshot محلی SI-1/TM-1 پس از اصلاح release-verification، suiteهای کامل و QA موبایل مجوز commit/push/deploy دارد؛ تا پیش از receipt قطعی، انتشار را کامل ادعا نکن. همان source را به GitHub `main`، Cloudflare Pages و ChatGPT Sites خصوصی برسان، رسیدها را ثبت کن و سپس متوقف شو؛ بدون پیام تازه مدل، backend، sync، Build Lifecycle یا مسیر تأمین‌کننده را شروع نکن.
 
 ## آخرین اصلاح منتشرشده — بازیابی امن درخواست خرید ناخوانا
 
@@ -491,7 +491,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - **تاریخ مجوز و اجرا:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
 - **محرک:** پس از یادآوری ترتیب بستهٔ معماری، ماهیار گفت «خوبه بریم قدم بعد»؛ این پیام فقط اجرای برش دوم یعنی Memory Core را مجاز کرد.
 - **وضعیت:** پیاده‌سازی و regressionهای متمرکز در checkout اصلی انجام شدند. ماهیار پس از مشاهده، با پیام «منتشر کن» انتشار همین snapshot را مجاز کرد و GitHub، Cloudflare Pages و ChatGPT Sites نسخهٔ ۲۹ با موفقیت منتشر شدند.
-- **مرز:** هیچ مدل، producer مدل، backend، sync، retrieval خودکار، share، Source/Composer Intake، Task/Monitor Core، Build Lifecycle، تأمین‌کننده یا اثر بیرونی آغاز نشده است.
+- **مرز تاریخی هنگام بسته‌شدن MC-1:** در آن release هیچ مدل، producer مدل، backend، sync، retrieval خودکار، share، Source/Composer Intake، Task/Monitor Core، Build Lifecycle، تأمین‌کننده یا اثر بیرونی آغاز نشده بود. وضعیت جاری Source/Composer در SI-1 زیر ثبت شده است.
 
 ### قرارداد داده و cutover
 
@@ -513,7 +513,7 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 1. gate نهایی MC-1 پاس است: focused Memory/MemoryCandidate برابر ۳۵/۳۵، app برابر ۲۱۰/۲۱۰، runtime برابر ۲۱۸/۲۱۸ و Sites برابر ۴/۴؛ build/TypeScript، `npx tsc --noEmit`، integrity هر ۲۸ فایل و `git diff --check` نیز پاس شدند. هشدار شناخته‌شدهٔ chunk جاوااسکریپت بزرگ‌تر از 500kB باقی است. Builder Architecture Gate کامل فقط پس از برش پنجم و acceptance matrix مستقل سنجیده می‌شود.
 2. QA موبایل `390 × 844` روی فهرست، دو scope، فرم/جزئیات، تاریخچه و تأیید حذف انجام شد؛ RTL، focus/keyboard، خطای قابل‌دیدن در modal و نبود overflow افقی تأیید شدند. ممیزی مستقل قرارداد پس از بستن proof/graph finding باز P0/P1/P2 نداشت.
 3. ماهیار MC-1 را تأیید کرد و receipt موفق هر سه مقصد ثبت شده است؛ MC-1 بسته و منتشرشده محسوب می‌شود.
-4. نامزد بعدی برش مستقل Source/Composer Intake است؛ این handoff و مجوز انتشار MC-1 مجوز شروع آن نیست.
+4. این بند وضعیت تاریخی پایان MC-1 است: نامزد بعدی آن زمان Source/Composer Intake بود. ماهیار بعداً SI-1 را با پیام جداگانه مجاز کرد؛ وضعیت جاری در بخش زیر است.
 
 ### رسید انتشار MC-1
 
@@ -521,3 +521,97 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - Cloudflare Pages deployment `6d59d990-f82b-4f76-b5e8-7ad46c09ecda` با trigger برابر `github:push`، شاخهٔ `main`، `commit_dirty=false` و همین source commit به وضعیت `success` رسید. canonical و immutable هر دو HTTP 200 و با build محلی یکسان‌اند: HTML `ea15863272858e53ad1036f6b3a3be91b90ac57162f86a49346a5726fafa499e`، JavaScript `0f6e02bb244327f2935a38e3ab211d8f3a45ea457c58947753974f5df49fccd6` و CSS `683758425f5aebacaf0be2fd353418bf216e7f221185768cd5bb4c86903767a6`.
 - ChatGPT Sites نسخهٔ ۲۹ با source commit همان release، ۱۹ فایل و archive hash `sha256:a540f36f4447d3a200ad04295f967602366e3ea4025c4faf5bace206c8c89e0d` ذخیره شد؛ version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_43b1a0eaf8888191af729ef9a417fdb7` و deployment خصوصی `appgdep_6a94f2d1bebc8191a46ffa27d1d1b76c` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی `custom`/owner-only با دقیقاً یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
 - commit مستندی حاوی این receipt فقط اسناد را تغییر می‌دهد و prototype tree را حفظ می‌کند؛ SHA و deployment/version خود آن به‌دلیل حلقهٔ self-reference در پیام تحویل و payload تسک ادامه ثبت می‌شوند.
+
+## SI-1 — Source/Composer Intake محلی؛ تجربه تأییدشده و مجاز برای انتشار
+
+- **مجوز و بازخورد:** ماهیار با پیام «شروع کن لطفا» اجرای همین برش را مجاز کرد و پس از مشاهده با پیام «خوبه بریم تسک بعدی» تجربهٔ SI-1 و عبور به TM-1 را تأیید کرد. سپس با پیام «منتشر کن لطفا» انتشار snapshot ترکیبی SI-1/TM-1 را صریحاً مجاز کرد؛ این پیام Build Lifecycle یا دامنهٔ دیگری را مجاز نمی‌کند.
+- **وضعیت جاری:** کد، تست و اسناد SI-1 در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ فعلی حاضرند و gate release snapshot ترکیبی پاس است. در لحظهٔ ثبت این بند، انتشار هنوز terminal نشده و نتیجهٔ موفق فقط در receipt بعدی ثبت می‌شود.
+- **نقطهٔ توقف:** SI-1 و QA `390 × 844` کامل و تجربهٔ آن توسط ماهیار تأیید شده است. این برش همراه TM-1 same-source منتشر می‌شود و پس از receipt نباید خودکار به Build Lifecycle رفت.
+
+### قرارداد ساخته‌شده
+
+1. Composer متن دقیق و حداکثر یک عکس یا سند پشتیبانی‌شده را در یک draft پروژه‌محور می‌پذیرد؛ preview/remove و attachment-only واقعی‌اند.
+2. هر commit یک `ComposerIntake` و یک یا دو `SourceRecord` نسخه‌دار می‌سازد. Source متنی متن دقیق و SHA-256 آن را دارد؛ Source دارایی به `FileRecord` مستقل، نسخهٔ آن و hash دقیق Blob bind است.
+3. metadata فایل در `localStorage` و bytes فقط در IndexedDB همان مرورگر قرار می‌گیرند. پسوند/MIME allowlist، MIME canonical هنگام بازخوانی و منع Blob/Base64 در `localStorage` اجرا می‌شوند.
+4. Source/file writerها یک Web Lock مشترک دارند. commit چندمخزنی Composer با intent ماندگار و snapshot-bound، reread، verification، rollback/resume و cleanup بدون overwrite intent خارجی اجرا می‌شود؛ writer مستقل فایل Blob-first و read-back-before-metadata است.
+5. parserها duplicate، unknown key/stage، cross-project binding، stale version/fingerprint، SHA/MIME/bytes tamper، missing Blob و store ناخوانا را fail-close می‌کنند. read-error با empty یکی نیست و mutation وابسته تا خواندن معتبر بسته می‌ماند.
+6. ورودی ثبت‌شده بعد از reload به‌صورت رسید محلی از envelope Source بازسازی می‌شود؛ این projection نه پاسخ مدل است و نه thread کامل ماندگار. Drawer نیز فقط شمار intakeهای محلی را گزارش می‌کند.
+7. هنگام commit ورودی Composer کوتاه‌مدت غیرفعال است و پاک‌سازی موفق فقط snapshot همان project/draft/attachment را هدف می‌گیرد تا متن تازه یا draft پروژهٔ دیگر حذف نشود.
+
+### مسیرهای تغییرکرده
+
+- `prototype/src/Prototype.tsx`: schema/parser/storage/recovery Source، اتصال inputهای Composer، projection رسید، جزئیات Source و هماهنگی writerهای فایل.
+- `prototype/src/prototype.css`: حالت‌های Composer attachment/Source/detail/error و مرز محلیِ بدون OCR/model/send.
+- `prototype/tests/chida-flow.spec.ts`: regressionهای Source/Composer، integrity، rollback/recovery، race/cross-tab/project isolation و سازگاری تست‌های فایل.
+- `AGENTS.md` و `prototype/AGENTS.md`: invariantهای ماندگار و محدودشده به writer/intakeهایی که واقعاً پیاده شده‌اند.
+- `BUILDER-FEATURE-BACKLOG-FA.md`، `CHIDA-PRODUCT-LEARNINGS-FA.md` و همین هنداف: وضعیت، شکاف سند مادر، مرز اختیار و نقطهٔ ادامه.
+- `CHIDA-Product-Definition-FA.md` تغییر نکرده است؛ پیشنهادهای اصلاح فقط در Learnings ثبت شده‌اند.
+
+### مرز صادقانه و بدهی
+
+- OCR، vision، extraction، مدل، MemoryCandidate، retrieval، index جست‌وجو، پاسخ منبع‌دار واقعی، backend، sync، cloud upload، share، network و external effect ساخته نشده‌اند.
+- `FileRecord` مستقل هنوز content hash ماندگار ندارد؛ hash دقیق فقط Source لینک‌شده را پوشش می‌دهد. چندپیوستی، retention/quota/eviction، export/delete و migration جامع نیز باقی‌اند.
+- فایل‌های قدیمی `metadata-only` همان قرارداد پیشین انتخاب دوبارهٔ نام/اندازه را دارند و اصالت bytes قدیمی قابل‌تأیید نیست.
+- Builder Architecture Gate کامل همچنان FAIL طراحی‌شده است. SI-1 PASS و تأیید شد؛ Task/Monitor Core نیز با پیام بعدی ماهیار مجاز و در TM-1 زیر ساخته شده است.
+
+### شواهد و رسید محلی
+
+- اجرای اولیهٔ کامل app برابر ۲۲۹/۲۳۳ بود. سه انتظار تست ناسازگار با قرارداد سخت‌گیرانه/محل پیام و یک race واقعی پاک‌شدن draft تازه اصلاح شدند؛ اجرای هدفمند چهار مورد ۴/۴ و اجرای کامل نهایی ۲۳۳/۲۳۳ پاس شد.
+- regressionهای متمرکز SI-1 شامل متن+سند، عکس تنها، reload/reopen، MIME mismatch، rollback، recovery، tamper/missing Blob، MIME امن، fail-close، project isolation، نبود Web Locks، رقابت تب‌ها و قفل مشترک نویسنده‌های فایل ۲۳/۲۳ پاس شدند.
+- `npm run check:runtime` برای ۲۸ فایل محافظت‌شده، `npm run build`، `npm run test:app` با ۲۳۳/۲۳۳، `npm run test:runtime` با ۲۴۱/۲۴۱، `npm run test:sites` با ۴/۴، `npx tsc --noEmit` و `git diff --check` پاس شدند. build فقط هشدار شناخته‌شدهٔ chunk جاوااسکریپت بزرگ‌تر از 500kB دارد.
+- QA مرورگر داخلی در `390 × 844` متن دقیق+PDF، preview/remove، عکس attachment-only، reopen/reload، اصل Blob، project isolation، رسید محلی، focus/Escape، target لمسی و مرز بدون OCR/model/send را پوشش داد. عرض inner/html/body برابر ۳۹۰، overflow خارج از carousel صفر، console warning/error صفر، دکمهٔ بستن `354 × 50`، دکمه‌های Source حداقل ۴۴px و کنترل‌های اصلی Composer حداقل ۴۸px بودند.
+- بازبینی‌های مستقل پیاده‌سازی، دامنه و تست finding باز P0/P1 نداشتند. gate محلی SI-1 PASS و تجربهٔ آن توسط ماهیار تأیید شد؛ Builder Architecture Gate کامل همچنان FAIL طراحی‌شده باقی می‌ماند.
+
+### دستور ادامهٔ مستقیم
+
+1. ابتدا وضعیت dirty را با `git status --short` ببین و هیچ تغییری را discard نکن.
+2. gateها و QA این snapshot ثبت شده‌اند؛ فقط اگر کد پس از این رسید تغییر کرد همان شواهد متناسب را تازه کن و دامنه را گسترش نده.
+3. preview محلی را در `390 × 844` برای متن+سند یا عکس، preview/remove، ارسال، reopen، reload، project isolation، focus/Escape، target لمسی، overflow و console بررسی کن.
+4. نتیجهٔ جاری را در بخش TM-1 همین هنداف و Learnings ثبت کن و همان snapshot آزموده را برای انتشار حفظ کن.
+5. مجوز commit/push/deploy SI-1/TM-1 دریافت شده است؛ پس از receipt terminal متوقف شو و بدون پیام تازه Build Lifecycle را آغاز نکن.
+
+## TM-1 — Task/Monitor Core؛ gate release PASS و مجاز برای انتشار
+
+- **مجوز و ترتیب واقعی:** ماهیار با پیام «خوبه بریم تسک بعدی» اجرای TM-1 را مجاز کرد و سپس با پیام «منتشر کن لطفا» انتشار دامنهٔ جاری SI-1/TM-1 را خواست. release-verification پس از همین پیام یک رگرسیون presentation در نمایش «کار جدید»، دو P2 قرارداد TM-1 و چند race صرفاً test-only را آشکار کرد؛ همه بدون گسترش دامنه بسته شدند و suiteهای کامل و QA موبایل پاس شدند. درخواست انتشار مجوز انجام workflow انتشار همین دامنه است، نه تأیید UX تفصیلی، تأیید بایت‌به‌بایت post-fix یا مجوز برش بعدی.
+- **دامنه:** یک deadline اختیاری برای Task متصل Project Backbone و دقیقاً یک Monitor موعد project-private با Runهای append-only؛ وظیفهٔ دستی قدیمی producer نیست.
+- **وضعیت جاری:** پیاده‌سازی، اصلاح رگرسیون، suiteهای کامل و QA موبایل پاس شده‌اند. در لحظهٔ ثبت این بخش، release authorized است ولی receipt terminal هنوز ثبت نشده است.
+
+### قرارداد ساخته‌شده
+
+1. ورودی `datetime-local` در `Asia/Tehran` تفسیر و در snapshot Task به ISO UTC canonical ذخیره می‌شود؛ پنج ورودی متنی sheet RTL و کنترل موعد LTR باقی می‌مانند.
+2. Monitor/Run در envelope مستقل exact و نسخه‌دارند و به id/version/revision/fingerprint دقیق Task bind می‌شوند. history و Runs append-only، attemptها پیوسته، schedule و result قابل replay و cadence پس از deadline دقیقاً ۲۴ ساعت است.
+3. همهٔ mutationهای Monitor→Backbone ترتیب قفل ثابت Monitor سپس Backbone، expected preimage، reread پیش/پس از commit و rollback فقط candidate bytes خود را دارند. preimage تازهٔ رقیب، postimage ناسازگار، نبود Web Locks یا read/write failure همگی fail-close هستند.
+4. stale Task revision و حذف موعد failure قابل‌retry می‌سازند. Task حذف‌شده یا dependency ناخوانا بدون tombstone معتبر store-level fail-close است و recoverable ادعا نمی‌شود.
+5. بررسی خودکار فقط هنگام mounted و visible بودن مرکز «کارها»، در mount/focus/visibility و هر ۶۰ ثانیه انجام می‌شود. اگر درخواست پشت lock منتظر بماند، پس از گرفتن lockهای Monitor و Backbone و پیش از هر read/mutation دوباره mounted/visible بودن را می‌سنجد. Run دستی، disable/re-enable و retry موجودند؛ service worker، تب بسته/پنهان، Notification API، backend، مدل، وب/قیمت/مقررات، شبکه و اثر بیرونی وجود ندارند.
+6. فیلترهای «ناموفق» و «پایش‌ها» projection همان storeها هستند. افزودن فیلتر پایش نباید «کار جدید» را در فیلترهای دیگر پنهان یا failure domain Approval را به Task دستی سرایت دهد.
+
+### مسیرهای تغییرکرده
+
+- `prototype/src/Prototype.tsx`: deadline Task، schema/parser/storage Monitor/Run، lock/reread/rollback، scheduler visible-only و UI مرکز کارها/جزئیات پایش.
+- `prototype/src/prototype.css`: RTL/LTR موعد، فیلتر و کارت پایش، جزئیات و status/failure موبایل.
+- `prototype/tests/chida-flow.spec.ts`: بیست regression TM-1 و انتظارهای دقیق async برای Memory/Run/Backbone؛ اصلاح regression نمایش «کار جدید» نیز در suite پوشش داده شد.
+- `AGENTS.md` و `prototype/AGENTS.md`: invariantهای deadline/Monitor و مرز browser-local.
+- `BUILDER-FEATURE-BACKLOG-FA.md`، `CHIDA-PRODUCT-LEARNINGS-FA.md` و همین هنداف: وضعیت gate، شواهد، مجوز انتشار و نقطهٔ توقف.
+- `CHIDA-Product-Definition-FA.md` تغییر نکرده است؛ شکاف‌ها و پیشنهادها فقط در Learnings ثبت شده‌اند.
+
+### شواهد release
+
+- focused TM-1 برابر ۲۰/۲۰ پاس است. `npm run test:app` برابر ۲۵۳/۲۵۳ و `npm run test:runtime` برابر ۲۶۱/۲۶۱ پاس شدند؛ runtime شامل هشت آزمون اختصاصی نیز بود.
+- `npm run test:sites` برابر ۴/۴، `npm run check:runtime` برای ۲۸ فایل، `npm run build`، `npx tsc --noEmit` و `git diff --check` پاس شدند. هشدار شناخته‌شدهٔ chunk جاوااسکریپت بزرگ‌تر از 500kB باقی است.
+- QA مرورگر داخلی در viewport واقعی `390 × 844` ثبت موعد تهران، ساخت Monitor، Run دستی «موعد نرسیده»، disable/re-enable، حفظ last/next/result و focus restoration به کارت را تأیید کرد. overflow افقی document/body صفر، کنترل کوچک‌تر از ۴۴px صفر و console warning/error صفر بود.
+- یک رگرسیون واقعی نمایش «کار جدید» در فیلتر Approval اصلاح شد. بازبینی مستقل سپس دو P2 یافت و بست: درخواست automatic queued دیگر پس از خروج/hidden شدن Tasks commit نمی‌شود و parser دقیق Monitor/Run whitespace non-canonical را normalize نمی‌کند. regressionهای مستقیم این دو مسیر و دو tamper/run مرتبط در ۱۲/۱۲ تکرار پاس شدند.
+- raceهای test-only در Memory، Run و Backbone با انتظار روی commit واقعی پایدار شدند؛ رفتار محصول این دامنه‌ها تغییر نکرد. مجموعهٔ Memory اصلاح‌شده ۹/۹ و سناریوی rollback Backbone→Monitor برابر ۳/۳ تکرار پاس شد.
+- بازبینی مستقل نهایی finding باز P0/P1/P2 ندارد. Builder Architecture Gate کامل هنوز تا Build Lifecycle و acceptance matrix مستقل بسته نیست.
+
+### مرز و بدهی
+
+- این reminder قابل‌اتکا یا background service نیست؛ بسته یا پنهان‌شدن تب بررسی را متوقف می‌کند.
+- full Task status transition، recurrence، چند Monitor، cancellation/rollback، Task tombstone، Run retention و cadenceهای دیگر deferred هستند.
+- هیچ مدل، backend، sync، اعلان، شبکه، پایش وب/قیمت/مقررات، ارسال یا اثر بیرونی ساخته نشده است.
+
+### دستور انتشار و توقف
+
+1. همین snapshot آزموده را commit کن و GitHub `main`، Cloudflare Pages و ChatGPT Sites خصوصی را به همان SHA برسان.
+2. Cloudflare را تا `success` و Sites را تا `succeeded` poll کن؛ دسترسی Sites باید `custom`/owner-only با همان مالک باقی بماند.
+3. receipt شامل SHA، prototype tree، gateها، Cloudflare deployment/source/status و Sites version/deployment/access را ثبت کن.
+4. پس از receipt متوقف شو. Build Lifecycle، مدل، backend و مسیر تأمین‌کننده فقط با پیام اجرایی جدا آغاز می‌شوند.
