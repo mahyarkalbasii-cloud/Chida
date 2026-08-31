@@ -1691,3 +1691,167 @@
 - Cloudflare Pages deployment `d54faf50-c7e7-43d1-974f-2925c9bdfe9a` از source دقیق همین commit روی شاخهٔ `main` به وضعیت `success` رسید. canonical `https://chida-prototype.pages.dev` و immutable `https://d54faf50.chida-prototype.pages.dev` با build محلی یکسان‌اند: HTML `f2b2d951c0f887a39988262e866ba95dab4a3223d84c3e9a148570e70342c748`، JavaScript `49bf9d38241b5988e88378408bb58f3f1bbd8287919c3ba9592f23b75884fca2` و CSS `8817d8eb8799652bd56c0f62935e7ed34e578d9d40ded4c16fbc83ffb2d72f33`.
 - ChatGPT Sites نسخهٔ ۳۱ با source commit دقیق قابلیت، ۱۹ فایل و archive hash `sha256:1168adc4638bf0373060eaa2cc6175c4eca5f6dfa1b84f8df97ec5c1b8914b86` ذخیره شد؛ version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_82b99fac3d2481919a8c51f8c5898ce1` و deployment خصوصی `appgdep_6a95754e5e3481918c0a6679b0ab6016` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی `custom`/owner-only با دقیقاً یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
 - commit مستندی حاوی این receipt فقط اسناد را تغییر می‌دهد و prototype tree را ثابت نگه می‌دارد؛ SHA و deployment/version نهایی آن به‌دلیل حلقهٔ self-reference در پیام تحویل ثبت می‌شوند.
+
+## REL-1 — Fast Publish بدون اجرای تکراری گیت و بدون receipt deployment
+
+### تجربهٔ مشاهده‌شده
+
+- ممیزی release نشان داد `test:runtime` همهٔ specها را اجرا می‌کرد: ۲۵۳ آزمون app یک بار در `test:app` و دوباره همراه هشت آزمون runtime اجرا می‌شدند. `build` نیز `check:runtime` و TypeScript را درون خودش داشت، اما دستورهای هنداف آن‌ها را دوباره اجرا می‌کردند.
+- ثبت شناسه‌های terminal انتشار در یک commit مستندی پس از release، push دوم و در نتیجه Cloudflare deployment دوم می‌ساخت؛ هیچ byte پروتوتایپ عوض نمی‌شد، اما انتشار دوباره آغاز می‌شد. این دو تکرار علت اصلی طولانی‌شدن محسوس workflow بودند.
+
+### شکاف یا ابهام
+
+- دستورهای قبلی مجموعهٔ توسعه، runtime و release را از هم جدا نمی‌کردند و evidence به commit/source دقیق bind نبود. receipt self-referential نیز به‌اشتباه جزو تاریخچهٔ Git تلقی می‌شد.
+
+### تصمیم و وضعیت آن
+
+- **[تصمیم فرایندی؛ پیاده‌سازی‌شده و در انتظار نخستین publish واقعی]** `test:runtime` فقط هشت آزمون `mobile-runtime.spec.ts` را اجرا می‌کند؛ `test:all` مجموعهٔ app+runtime را یک بار اجرا می‌کند.
+- `gate:release` تنها گیت candidate نهایی است: build/integrity/TypeScript، همهٔ Playwright یک بار، Sites و diff را اجرا و fingerprint همهٔ فایل‌های tracked و untracked-nonignored candidate را خارج worktree در `.git` ثبت می‌کند.
+- پس از مجوز جداگانهٔ انتشار، همان bytes در یک commit قرار می‌گیرند و `gate:publish` cleanliness و fingerprint را می‌سنجد. هر تغییر گیت را باطل می‌کند؛ candidate دست‌نخورده suite کامل را دوباره اجرا نمی‌کند. همان SHA یک بار push و مبنای GitHub، Cloudflare و Sites است. شناسه‌های terminal فقط در پیام تحویل می‌آیند و receipt-only commit/deployment حذف می‌شود.
+- fingerprint علاوه بر bytes، مسیر، mode/type و مقصد symlink را می‌بندد؛ snapshot source و artifact پیش و پس از گیت باید ثابت بماند. publish فقط HEAD همان gate یا دقیقاً یک فرزند مستقیم non-merge و clean آن را می‌پذیرد و `dist` را نیز دوباره می‌سنجد. ممیزی مستقل scriptها finding باز P0/P1 نداشت؛ فهرست suite اکنون app `271`، runtime `8` و full Playwright `279` است.
+
+### پیشنهاد اصلاح سند مادر
+
+- این تصمیم فرایند توسعه و انتشار است و تغییر مستقیم سند مادر محصول نمی‌خواهد؛ قواعد کنترل کیفیت پروژه باید همین single-candidate/single-push contract را نگه دارند.
+
+## BL-1 — BuiltArtifact Lifecycle Minimum
+
+### تجربهٔ مشاهده‌شده
+
+- Build قدیمی یک state سه‌مرحله‌ای و یک رشتهٔ سراسری در `chida-prototype-installed-tool` بود. ابزار پروژهٔ اول در پروژهٔ دوم دیده می‌شد، خطای write پس از تغییر state موفقیت کاذب و `pageerror` می‌ساخت، read failure مثل empty تلقی و overwrite می‌شد و sheet پس از ساخت اول روی حالت نصب‌شده گیر می‌کرد.
+- کاربر برای این برش پیام اجرایی صریح داد. قرارداد Build از سند مادر و بستهٔ معماری دوباره تطبیق داده شد: خروجی این برش `BuiltArtifact` است، نه Plugin، RuntimeTool، Connector یا کد تولیدشده.
+
+### شکاف یا ابهام سند مادر
+
+- سند مادر چرخهٔ preview، تأیید، اضافه‌شدن، نسخه، حذف و بازگشت را می‌خواهد، اما schema دقیق `BuiltArtifact`، state machine، fingerprint، expectedVersion، read/write failure، tombstone، project isolation و جداسازی مفهومی capability/skill را تعریف نمی‌کند.
+- «محل نصب» می‌تواند نصب خارجی یا plugin generation را القا کند؛ در prototype فعلی فقط فعال‌سازی محلی ساخته در Tools همان پروژه وجود دارد.
+
+### تصمیم و وضعیت آن
+
+- **[تصمیم این برش؛ پیاده‌سازی و آزموده، تجربه تأیید و انتشار snapshot مجاز]** یک catalog بسته و نسخه‌دار با شناسهٔ `project-followup-view` فقط یک نمای declarative از برنامه و کارهای همان پروژه می‌سازد. manifest دقیق data binding، permission، safe component، action محدود، محل فعال‌سازی، relationship-only capability/skill و مرزهای ثابت `codeExecution=false`، `networkAccess=false`، `externalInstall=false` و `externalEffect=none` را نگه می‌دارد. تأیید اولیهٔ تجربه مجوز انتشار نبود؛ ماهیار بعداً در ۲۰۲۶/۰۸/۳۱ انتشار snapshot ترکیبی جاری را صریحاً مجاز کرد.
+- envelope `chida-prototype-built-artifacts:v1` project-private است و owner/scope، object version، revision، SHA-256 fingerprint و history هم‌اندازه را نگه می‌دارد. همهٔ writerها ترتیب قفل ثابت journal سپس مخزن اصلی دارند، store را هنگام commit دوباره می‌خوانند، expectedVersion و transition را می‌سنجند، write را پیش از state انجام می‌دهند و شکست را بدون ghost success به نسخهٔ قبلی برمی‌گردانند.
+- lifecycle ساخته‌شده شامل draft، preview_ready، active، disabled، blocked-readable، revision تازه، rollback به draft تازه و remove دوگامی با tombstone است. فعال‌سازی فقط با checkbox تأیید همان preview و fingerprint دقیق ممکن است؛ reactivation command صریح با revalidation کامل store است.
+- رکورد legacy سراسری خاموش به پروژهٔ فعال نسبت داده نمی‌شود و فقط هشدار عدم‌قابلیت انتساب می‌گیرد. read-error از empty جداست و تا retry موفق mutation قفل می‌ماند.
+- reader واقعی برنامه و کارهای پروژه روی mount/focus/visibility/storage بازخوانی می‌شود. اگر هرکدام ناخوانا شود، observation دقیق `active@N` با bindingهای همان لحظه پیش از انتظار برای قفل اصلی در journal hash‌شده ثبت می‌شود؛ دو mirror معتبر در `localStorage` و `sessionStorage` همان تب با union محافظه‌کارانه خوانده می‌شوند و خطای خواندن هر mirror fail-close است. artifact تا ثبت `blocked@N+1` مستقیم و reactivation صریح، حتی بعد از repair، reload یا تعویض پروژه مؤثرانه متوقف می‌ماند.
+- write اصلی فقط وقتی معتبر است که reread همان direct descendant را اثبات کند. cleanup journal پس از همین proof انجام می‌شود؛ cleanup شکست‌خورده همان revision را تکثیر نمی‌کند و بدون trigger تازه یا دکمهٔ retry وارد loop نمی‌شود. اگر journal قابل‌نوشتن نباشد اما main store سالم باشد، ثبت مستقیم `blocked` مرز ماندگار را حفظ می‌کند.
+
+### وضعیت پیاده‌سازی و شواهد
+
+- ۱۹ regression متمرکز exact preview، stale approval، parser/chronology tamper، overflow نام ۸۰حرفی، project isolation، read-error/retry، write rollback بدون ghost، رد free-code/catalog tamper، disable/reactivate، invalidation واقعی، ماندگاری پس از تعویض پروژه/reload، خرابی main/journal و mirror، recovery بدون revision تکراری، retry محدود همان mount، repair حین انتظار lock، revision/rollback و tombstone remove را پوشش می‌دهند و ۱۹/۱۹ پاس شده‌اند. TypeScript پاس است و فهرست تفکیک‌شده app/runtime/all به‌ترتیب ۲۷۱، ۸ و ۲۷۹ آزمون دارد.
+- QA مرورگر داخلی پس از cold reload در viewport واقعی `390 × 844`، بازشدن Tools و ساختهٔ فعال نسخهٔ ۳، Dark/RTL، عرض دقیق html/body برابر ۳۹۰، overflow افقی صفر و نبود کنترل قابل‌دیدن کوچک‌تر از ۴۴px را تأیید کرد؛ پس از cold reload warning/error تازه‌ای در console نبود. بازبینی مستقل نهایی نیز با build، `git diff --check` و شش fault-path متمرکز finding باز P0/P1 گزارش نکرد.
+- نتیجهٔ terminal گیت واحد candidate عمداً داخل سند self-referential ثبت نمی‌شود؛ receipt دقیق source/dist خارج working tree در `.git/chida-release-gate.json` و نتیجه در پیام تحویل می‌آید.
+
+### محدودیت و بدهی باقی‌مانده
+
+- ساخته فقط یک نمای declarative محلی با یک catalog entry است؛ داده را محاسبه یا mutate نمی‌کند و اجرای runtime، مدل، backend، sync، worker، marketplace، plugin/skill generation، Connector، شبکه و اثر بیرونی ندارد.
+- invalidation برنامه/کارها واقعی است، اما permission changeهای گسترده‌تر، retention production، idempotency ledger مستقل، تضمین دوام در حالتی که main store و هر دو journal mirror هم‌زمان غیرقابل‌نوشتن باشند، refresh قابل‌آزمون چندتب، catalog چندقالبی و runtime واقعی به gateهای بعدی نیاز دارند. در شکست هم‌زمان هر سه محل، mount جاری با state مؤثر fail-close می‌ماند ولی دوام پس از reload قابل‌اثبات نیست.
+
+### پیشنهاد اصلاح سند مادر
+
+- `BuiltArtifact` به‌عنوان شیء declarative و project-scoped مستقل از Plugin/RuntimeTool/Connector تعریف شود و state machine، exact preview approval، version/revision/fingerprint/history، expectedVersion، read-error fail-close، rollback تازه و tombstone remove به قرارداد رسمی افزوده شوند.
+- واژهٔ «نصب» در Build پایه به «فعال‌سازی در فضای پروژه» محدود شود؛ هر نصب خارجی، generation پلاگین/اسکیل، اجرای کد یا Connector به محیط کنترل‌شده و gate مستقل منتقل شود.
+
+## بازخورد پس از BL-1 و مجوز BG-GATE-1
+
+- ماهیار پس از تحویل REL-1/BL-1 گفت «تسک بعدی رو بگو چیه و بعد شروع کن». مطابق قاعدهٔ یک‌تسک‌درهرنوبت، این پیام تأیید تجربهٔ BL-1 و مجوز اجرای review-only Builder Prototype Architecture Gate بود.
+- این بازخورد در همان زمان مجوز commit، push، Cloudflare/ChatGPT Sites deploy، remediation، M1a، backend، شبکه یا مسیر تأمین‌کننده نبود. ماهیار بعداً فقط انتشار snapshot ترکیبی جاری را صریحاً مجاز کرد؛ این مجوز M1a، backend، شبکه یا مسیر تأمین‌کننده را باز نمی‌کند.
+
+## BG-GATE-1 — Acceptance Matrix و سنجش دودویی Builder Prototype Architecture Gate
+
+### تجربهٔ مشاهده‌شده
+
+- بستهٔ چهار سند معماری، backlog، هنداف، سند مادر و پیاده‌سازی/تست‌های فعلی به‌صورت مستقل تطبیق داده شدند. inventory هنجاریِ گمشده و ماتریس ۱۲ ردیفی در `CHIDA-BUILDER-PROTOTYPE-ARCHITECTURE-GATE-FA.md` ثبت شد.
+- سه ردیف Source/Composer Local Intake، Task/Monitor و BuiltArtifact Lifecycle شواهد قرارداد، failure path و regression منفی کافی دارند و PASS شدند. ۹ ردیف دیگر FAIL هستند؛ بنابراین نتیجهٔ Gate بدون حالت خاکستری `FAIL` است.
+- سه finding سطح P1 مانع عبورند: Project/Profile canonical خراب را به legacy/empty تبدیل و روی همان canonical بازنویسی می‌کند؛ Identity/Policy fixture نسخه‌دار شامل Membership/RoleAssignment/AuthorizationContext وجود ندارد؛ و Task/Request/Approval/Dispatchهای قدیمی commit-time reread، Web Lock و expectedVersion یکنواخت ندارند.
+- suite کامل پیش از artifact مستندی ۲۷۹/۲۷۹ app+runtime، Sites برابر ۴/۴ و build/integrity/TypeScript/diff را پاس کرده بود. بااین‌حال count سبز قراردادهای بدون oracle را اثبات نمی‌کند و receipt `.git` فقط fingerprint bytes را نگه می‌دارد، نه نتیجهٔ acceptance matrix یا QA matrix.
+
+### شکاف یا ابهام سند مادر و بستهٔ معماری
+
+- بستهٔ معماری به inventory اجباری `Required=Yes` ارجاع می‌داد، اما جدول هنجاری دقیقی برای object/storeها نداشت. artifact Gate این فهرست را برای ارزیابی جاری صریح کرده است.
+- سند مادر Project، identity/role، Memory و PWA را در سطح محصول توصیف می‌کند، اما fixture حداقلی Gate، Project/Profile envelope، migration fail-close، mutation seam مشترک و evidence مورد انتظار هر object را به قرارداد اجرایی دقیق تبدیل نمی‌کند.
+- frontmatter چهار سند منبع هنوز «Proposed — منتظر تأیید» است، در حالی که تأیید صریح آن‌ها در Learnings/Handoff ثبت شده است. byte parity منبع عمداً حفظ شد و این ناسازگاری باید در بازنگری جداگانهٔ سندی حل شود.
+- پنج بدهی offline draft، export/delete، quota failure، Mock reset و PWA/installability فقط Gate-or-defer هستند؛ هیچ تصمیم صریح ماهیار برای defer آن‌ها ثبت نشده است.
+
+### تصمیم و وضعیت آن
+
+- **[تصمیم این ارزیابی؛ ثبت‌شده]** Gate فقط با PASS شدن هر ۱۲ ردیف بسته می‌شود. پیاده‌سازی جزئی یا suite سبز بدهی بدون تصمیم را PASS نمی‌کند و `PENDING_DECISION` معادل Deferred نیست.
+- **[نتیجهٔ جاری]** Builder Prototype Architecture Gate برابر `FAIL` است؛ M1a و هر مدل محلی تا remediation، rerun و تأیید صریح بعدی مجاز نیستند.
+- `case_private`، migration همهٔ storeهای Gate، inventory کامل File/Photo/Source و حذف affordance مرده طبق بستهٔ جاری required باقی می‌مانند. پنج تصمیم Gate-or-defer نیز بازند.
+- هیچ runtime، سند مادر یا چهار سند منبع معماری تغییر نکرد؛ فقط artifact Gate و status docs به‌روز شدند. commit، push و deploy انجام نشد.
+- تغییرهای مستندی این دور fingerprint candidate را عوض می‌کنند؛ receipt پیش از ماتریس برای publish معتبر نیست. چون انتشار درخواست نشده است، full release gate برای تغییرهای صرفاً مستندی دوباره اجرا نمی‌شود.
+
+### تسک کوچک بعدی پیشنهادی
+
+- `BG-F1 — Project/Identity Foundation`: fixture محلی و نسخه‌دار Account/Identity، Membership، RoleAssignment و AuthorizationContext؛ جداسازی AccountSide از MembershipRole؛ و انتقال Project/Profile به envelope exact با owner/scope، version/revision/fingerprint/history، migration fail-close، Web Lock، expectedVersion، write-before-state و regression دو تب.
+- mutation service مشترک Task/Request/Approval/Dispatch، `case_private`، بدهی‌های UI و Gate rerun به برش‌های بعدی می‌روند و داخل BG-F1 کشیده نمی‌شوند. شروع BG-F1 پیام اجرایی تازه می‌خواهد.
+
+### پیشنهاد اصلاح سند مادر
+
+- یک پیوست normative برای Builder foundation اضافه شود که minimum Identity/Policy fixture، common object fields، Project/Profile state machine، migration/cutover، optimistic concurrency/idempotency و evidence matrix هر Gate object را تعریف کند.
+- مرز Builder Prototype Gate از production auth، backend، مدل، shared-case واقعی و supplier runtime جدا بماند؛ اما `case_private`، project isolation و failure semantics browser-local به‌عنوان قراردادهای قابل‌آزمون صریح شوند.
+
+## BG-F1 — Project/Identity Foundation؛ داخل snapshot مجازِ انتشار
+
+### تجربهٔ مشاهده‌شده
+
+- ماهیار پس از دریافت نام تسک گفت «بزن بریم» و اجرای محدود BG-F1 را مجاز کرد. list قدیمی پروژه و active pointer مستقل در failure، migration و رقابت چندتب مرز اتمیک نداشتند؛ canonical خراب نیز پیش از این می‌توانست به fallback و بازنویسی سکوت‌آمیز برسد.
+- انتقال consumerهای قدیمی نشان داد تعدادی regression بعد از cutover هنوز با نوشتن مستقیم v2/pointer پروژه عوض می‌کردند. این fixtureها به migration-only یا جریان واقعی UI تبدیل شدند؛ خطاهای Web Locks نیز پس از آماده‌شدن foundation هدف تزریق شدند تا failure domain درست آزموده شود.
+
+### شکاف یا ابهام سند مادر و بستهٔ معماری
+
+- سند مادر هویت تک‌سمتی و پروژه را در سطح محصول تعریف می‌کند، اما شکل exact fixture، تفکیک AccountSide از MembershipRole، binding یک AuthorizationContext به projectId، precedence نسل‌های migration، marker crash-safe و idempotency/rollback writer را تعیین نمی‌کند.
+- AuthorizationContext واقعی به پروژه وابسته است؛ ذخیرهٔ یک context جدا برای هر پروژه در Identity store، create را بی‌دلیل چندمخزنی می‌کرد. قرارداد کمینه به یک template ثابت و نسخه‌دار در fixture و context دقیق مشتق‌شده برای هر projectId تبدیل شد؛ fingerprint همان context در history رویداد نگه‌داری و هنگام parse بازتولید می‌شود.
+- بازبینی مستقل نشان داد صحت fingerprint به‌تنهایی برای اثبات state قابل‌تولید writer کافی نیست: receipt، ترتیب آرایه‌ها، شناسه‌های revision/event، active-project replay و snapshot فرمان باید هم‌زمان بازپخش شوند. همچنین rollback یا تغییر پروژه در تب دیگر می‌تواند شناسنامهٔ ناقص معتبر را active کند؛ این حالت خطا یا صفحهٔ سفید نیست و باید به جریان تکمیل برگردد.
+
+### تصمیم و وضعیت آن
+
+- **[تصمیم این برش؛ پیاده‌سازی و آزمون محلی]** mirror دقیق `chida-prototype-identity-policy-fixture:v1` فقط با برابری بایتی fixture کامپایل‌شده معتبر است و AccountIdentity، Membership، RoleAssignment و AuthorizationContext template نسخه‌دار را نگه می‌دارد. AccountSide برابر builder از Identity می‌آید؛ MembershipRole برابر owner فقط نقش همان membership است و role switch ساخته نشده است.
+- canonical پروژه فقط `chida-prototype-builder-projects:v3` است. Project و ProjectProfile رکوردهای جدا با owner/scope/accountSide/custodian، lifecycle، revision/history هم‌اندازه، SHA-256 fingerprint و اتصال exact profileId هستند؛ `activeProjectId` و receiptهای idempotency داخل همان envelope اتمیک‌اند. `BuilderProject` فقط projection UI است.
+- migration precedence دقیق `v3 → v2 → legacy → empty` است. وجود v2، حتی empty معتبر، legacy را کنار می‌زند؛ v2 یا v3 خراب fallback ندارد. representability envelope پیش از نوشتن marker/candidate سنجیده می‌شود. marker durable سه‌مرحله‌ای `pending→verified→committed` source/pointer hash، active hint، generation-selection preimage و readback را تا persisted+rechecked شدن verified می‌بندد؛ همان لحظه cutover authority است و committed فقط همان candidate تأییدشده را منتشر می‌کند. اگر برگشت verified به pending هم شکست بخورد، reload فقط همان verified را دوباره می‌سنجد و candidate ردشده ready نمی‌شود. پس از commit، v3 تنها authority است و v2/legacy/pointer قدیمی دیگر dependency خواندن نیستند؛ parser نیز invariantهای migrated genesis را مستقیم enforce می‌کند. منابع قدیمی برای recovery حذف نمی‌شوند اما تغییر دیرهنگامشان canonical سالم را قفل یا جایگزین نمی‌کند.
+- create/select/update/rollback زیر Web Lock با authority reread، expected store/profile version، idempotency key، شناسهٔ deterministic create، no-op بایت‌ثابت، write-before-state، exact postimage و rollback فقط candidate اجرا می‌شوند. validator مشترک قبل از idempotency شکل exact فرمان و پیش‌شرط‌های create/update را می‌سنجد؛ parser نیز همان فرمان را از receipt بازسازی و snapshot canonical، شناسه‌ها، زمان، ترتیب Project/Profile و active-project replay را exact تطبیق می‌دهد. marker یا Identity تغییرکرده read-failure است، نه conflict قابل‌ادامه؛ canonical سالمِ جدید فقط version conflict است.
+- UI خطای foundation را از empty جدا و mutation را سراسری قفل می‌کند. listener canonical/marker/identity و رویداد عمومی `localStorage.clear()` را می‌پاید؛ ورودی‌های migration پس از committed عمداً non-authoritative هستند. failure ساخت یا ویرایش sheet/draft را حفظ می‌کند؛ history شناسنامه content-first است و rollback نسخهٔ تازه می‌سازد. اگر rollback یا storage event شناسنامهٔ active را ناقص کند، هر تب به فرم تکمیل همان پروژه برمی‌گردد و صفحهٔ خالی نشان نمی‌دهد. دامنه همچنان موبایل Dark/RTL و browser-local است.
+
+### شواهد و محدودیت
+
+- regressionهای BG-F1 migration معتبر/خراب/empty، fixture exact و AuthorizationContext، tamper هماهنگ، فرمان نامعتبر، receipt/شناسه/ترتیب غیرقابل‌تولید، active hint و no-op set-active، verified resume و شکست دوگانهٔ rollback marker، تغییر منبع حین cutover، non-authority نسل قدیمی پس از commit، create retry، write failure، edit/rollback به شناسنامهٔ ناقص، stale editor، storage event و clear تب دوم، رقابت قطعی دو تب و UX خطای `390 × 844` را پوشش می‌دهند. build/TypeScript و گروه‌های متمرکز پیش از گیت نهایی پاس شدند؛ receipt terminal گیت واحد candidate بیرون worktree می‌ماند و در پیام تحویل گزارش می‌شود.
+- این برش production auth، تیم/سازمان، backend/sync، حذف/archive پروژه، mutation service عمومی همهٔ objectها، Task/Request/Approval/Dispatch، `case_private`، Gate rerun، مدل، شبکه یا مسیر تأمین‌کننده را نساخت. Builder Gate کامل همچنان `FAIL` است تا ردیف‌های باقی‌مانده جداگانه بسته و دوباره ارزیابی شوند.
+- BG-F1 در زمان تحویل اولیه local-only بود؛ ماهیار بعداً در ۲۰۲۶/۰۸/۳۱ انتشار snapshot ترکیبی جاری را صریحاً مجاز کرد. این مجوز Gate تاریخی را PASS و BG-F2 را مجاز نمی‌کند؛ رسیدهای terminal بیرون repo گزارش می‌شوند.
+
+### بازخورد پس از تحویل — snapshot میان‌راهی origin توسعه
+
+- **تجربهٔ مشاهده‌شده:** ماهیار در origin قدیمی `127.0.0.1:4173` صفحهٔ «پروژه‌ها کامل خوانده نشدند» دید و تصریح کرد هیچ دادهٔ معناداری برای نگه‌داری وجود ندارد. Retry همان خطا را تکرار می‌کرد، در حالی که origin تازهٔ همان سرور مستقیماً تا فرم «اولین پروژه‌ات را بساز» پیش رفت؛ کنسول خطا و overflow موبایل نیز نداشت.
+- **شکاف:** نخستین نسخهٔ محلی BG-F1 طی Hot Module Reload همان key و `fixtureVersion` را پیش از اضافه‌شدن AuthorizationContext template نوشته بود. reader نهایی به‌درستی equality بایتی را fail-close می‌کند، اما متن عمومی خطا میان «snapshot فنیِ پیش‌انتشار» و «دادهٔ واقعی کاربر» تفاوتی نشان نمی‌دهد.
+- **تصمیم و وضعیت:** **[رفع عملی محلی؛ بدون تغییر محصول]** چون BG-F1 هنوز commit یا deploy نشده و هیچ دادهٔ کاربری وجود نداشت، origin قدیمی دست‌نخورده ماند و پیش‌نمایش روی origin تازهٔ `localhost:4173` ادامه یافت. هیچ `localStorage.clear()`، حذف کلید، fallback یا rewrite انجام نشد و upgrader برای format میان‌راهیِ منتشرنشده به کد محصول اضافه نمی‌شود.
+- **پیشنهاد اصلاح سند/فرایند:** برای تغییر shape یا hash fixture در حین توسعه، یا نسل/key موقت bump شود یا preview روی origin تازه باز شود. اگر حفظ snapshotهای توسعه بعداً نیاز واقعی شد، recovery محدود با شناسایی exact نسل قدیمی، Web Lock و readback باید یک تسک مستقل باشد؛ نه relaxation عمومی parser یا reset خودکار.
+
+### پیشنهاد اصلاح سند مادر
+
+- پیوست foundation باید fixture منطقی Identity/Policy، AuthorizationContext template و resolved context، common fields Project/ProjectProfile، envelope/active selection، migration precedence و marker durable، expectedVersion/idempotency، read/write/rollback semantics و evidence دو تب را normative کند.
+- تفاوت «هویت معتبر محلی برای Gate» با production authentication/authorization و تفاوت Project domain record با projection نمایشی `BuilderProject` صریح شود.
+
+## بازخورد چیدمان فرم درخواست خرید — توضیح بیشتر در انتهای فرم
+
+- **تاریخ بازخورد:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
+- **تجربهٔ مشاهده‌شده:** ماهیار در نمای موبایل فرم «درخواست خرید» دید که «توضیح بیشتر (اختیاری)» پیش از اقلام و جزئیات اصلی قرار گرفته است و خواست این ورودی در پایین فرم، درست بالای «ادامه» قرار بگیرد.
+- **شکاف یا ابهام سند مادر:** قرارداد فعلی حالت ساده/پیشرفته و حفظ داده هنگام جابه‌جایی را مشخص می‌کند، اما ترتیب فیلد مشترک توضیح آزاد نسبت به شاخه‌های محصول/خدمت و اقدام اصلی را هنجاری نکرده است.
+- **تصمیم و وضعیت:** **[بازخورد صریح؛ پیاده‌سازی و آزمون‌شده؛ داخل snapshot مجازِ انتشار]** فیلد مشترک «توضیح بیشتر» از ابتدای فرم برداشته و پس از تمام فیلدهای محصول یا خدمت قرار گرفت؛ در حالت عادی عنصر بعدی آن مستقیماً دکمهٔ «ادامه» یا «ذخیرهٔ تغییرات» است. این ترتیب در ساده و پیشرفته و برای محصول و خدمت یکسان است، مقدار واردشده هنگام تغییر حالت حفظ می‌شود و schema، ذخیره‌سازی، validation و قرارداد unknown/clarification تغییر نکرده‌اند. انتشار snapshot جاری صریحاً مجاز شده، اما تأیید UX تفصیلی این اصلاح جداگانه ثبت نشده است.
+- **شواهد تحویل محلی:** دو regression متمرکز محصول/خدمت با assertion ترتیب مستقیم، حالت ساده/پیشرفته و حفظ مقدار ۲/۲ پاس شدند؛ build/TypeScript، integrity بیست‌وهشت فایل runtime و `git diff --check` نیز پاس است. QA پس از reload واقعی در مرورگر داخلی با viewport `390 × 844` مجاورت مستقیم فیلد و دکمه، سرریز افقی صفر برای `html/body`، نبود Vite overlay و console warning/error صفر را تأیید کرد.
+- **پیشنهاد اصلاح سند مادر:** در تعریف تجربهٔ درخواست محصول/خدمت ثبت شود که ورودی توضیح آزادِ مشترک آخرین ورودی فرم و بلافاصله پیش از اقدام اصلی است؛ خطاهای همان ورودی یا ذخیره‌سازی می‌توانند مطابق دسترس‌پذیری میان ورودی و اقدام نمایش داده شوند، بدون اینکه داده یا حالت پیشرفته از بین برود.
+
+## بازخورد مرکز واحد کارها و سرعت چرخهٔ تست
+
+- **تاریخ بازخورد:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
+- **تجربهٔ مشاهده‌شده:** ماهیار گفت تفاوت «برنامه»، «تصمیم‌ها» و «کارها» در تجربهٔ روزمره روشن نیست و باید یک مقصد باشد. ممیزی واقعی `390 × 844` نشان داد خانه هم‌زمان Quick Actionهای «کار جدید» و «برنامه پروژه» داشت، فضای پروژه «برنامه و تصمیم‌ها» را جدا نشان می‌داد و Drawer «کارها» را به صفحه‌ای دیگر می‌برد. همچنین اجرای همهٔ تست‌ها پس از هر تغییر کوچک، چرخهٔ بازخورد را ساعت‌ها طولانی کرده و سرعت انجام تسک‌ها را پایین آورده بود.
+- **شکاف یا ابهام سند مادر:** سند مادر یک «مرکز کارها» برای کارهای جاری، تأییدها، پایش‌ها و اعلان‌های قابل‌اقدام تعریف می‌کند، اما صریح نمی‌گوید Milestone/Decision/Task برنامه نباید به‌عنوان مقصدهای سطح اول جدا در رابط روزمره ظاهر شوند. راهنمای کنترل کیفیت نیز مرز regression متمرکز، برش عادی و گیت کامل انتشار را به‌اندازهٔ کافی روشن نکرده بود.
+- **تصمیم و وضعیت:** **[تصمیم صریح کاربر؛ پیاده‌سازی و آزمون‌شده؛ تجربه تأیید و انتشار مجاز]** تنها مقصد سطح اول «کارها» است. Quick Action جداگانهٔ «برنامه پروژه» حذف، Quick Action «کار جدید» به «کارها» تغییر و ورودی فضای پروژه به همان مرکز متصل شد. «برنامهٔ فعلی» درون مرکز کارها ساخته/باز می‌شود و صفحهٔ Backbone فقط جزئیات داخلی آن است. این یکی‌شدن فقط معماری اطلاعات و متن رابط است؛ Milestone، Decision، Task متصل، Task دستی، Approval، Monitor و storeهایشان برای lineage، fail-close، تاریخچه و پایش دقیق ادغام یا تکثیر نشدند. ماهیار با «خوبه» تجربه را تأیید و انتشار snapshot جاری را صریحاً خواست.
+- **تصمیم فرایندی:** کنترل کیفیت سه‌سطحی است: تغییر کوچک UX فقط regression مرتبط، runtime integrity، QA موبایل، console/overflow و diff-check می‌گیرد و build پس از بستهٔ بازخورد یک بار اجرا می‌شود؛ برش عادی focused regression + build + QA می‌گیرد؛ `gate:release` فقط یک بار روی candidate منجمد انتشار صریح یا پایان برش واقعاً پرریسک معماری اجرا می‌شود.
+- **شواهد تحویل محلی:** پنج regression متمرکز مسیرهای Quick Action، فضای پروژه، Drawer/Task، Project Backbone و Task/Monitor برابر ۵/۵ پاس شدند. `npm run build` شامل TypeScript و integrity بیست‌وهشت فایل runtime پاس شد. QA واقعی `390 × 844` خانه، مرکز واحد کارها، جزئیات برنامه و رفت‌وبرگشت فضای پروژه را پوشش داد؛ overflow افقی `html/body` صفر، کوچک‌ترین کنترل قابل‌دیدن حداقل `48 × 44` و console warning/error صفر بود. full release gate عمداً اجرا نشد.
+- **پیشنهاد اصلاح سند مادر:** «کارها» به‌عنوان تنها مقصد روزمرهٔ سطح اول تصریح شود و برنامه، دلیل تصمیم، قدم بعدی، تأیید و پایش به‌عنوان نماها/اقلام داخل آن تعریف شوند؛ تفکیک دقیق اشیای داده نباید به تفکیک ناوبری سطح اول تبدیل شود. راهنمای مهندسی نیز سه سطح verification را رسمی کند و full release gate را از چرخهٔ feedback روزمره خارج نگه دارد.
+
+## بازخورد شفافیت پیشرفت و انتقال به گفت‌وگوی تازه
+
+- **تاریخ بازخورد:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
+- **تجربهٔ مشاهده‌شده:** ماهیار گفت در دو روز اخیر نفهمیده روی چه چیزی کار شده، چون ظاهر و دکمه‌های چیدا تقریباً ثابت مانده‌اند. حجم عمدهٔ کار واقعاً زیر رابط بوده است: REL-1 چرخهٔ انتشار تکراری را اصلاح کرد؛ BL-1 lifecycle امن BuiltArtifact را افزود؛ BG-GATE-1 شکاف‌های معماری را عینی کرد؛ و BG-F1 foundation پروژه/هویت، migration، concurrency و failure semantics را ایمن کرد. تغییرهای دیداری محدود به ترتیب توضیح فرم خرید و مرکز واحد «کارها» بودند.
+- **شکاف یا ابهام فرایند:** گزارش فنیِ تست، fingerprint و قرارداد storage برای فهم پیشرفت محصول کافی نیست. کار زیرساختی اگر با اثرش بر تجربه، ریسک حذف‌شده و تفاوت قابل‌دیدن توضیح داده نشود، از دید کاربر معادل توقف پیشرفت به نظر می‌رسد.
+- **تصمیم و وضعیت:** **[بازخورد صریح؛ لازم‌الاجرا در هنداف‌های بعدی]** هر تحویل بعدی باید جداگانه بگوید: ۱) کاربر چه تغییر قابل‌دیدنی می‌بیند، ۲) چه foundation یا ریسکی بسته شده، و ۳) تسک بعدی دقیقاً چه خروجی می‌دهد. برای سبک‌شدن ادامه، یک تسک تازه در همان پروژه و checkout ساخته شد و فقط در نقطهٔ توقف ثبت‌شده منتظر پیام ماهیار می‌ماند.
+- **پیشنهاد اصلاح سند/فرایند:** قالب هنداف زنده یک خلاصهٔ کوتاه «تغییر قابل‌دیدن / کار زیرساختی / چرا لازم بود / بعدی» داشته باشد؛ رسیدهای فنی و شناسه‌های انتشار در سطح دوم بمانند و جای این خلاصه را نگیرند.

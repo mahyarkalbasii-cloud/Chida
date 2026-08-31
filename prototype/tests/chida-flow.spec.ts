@@ -13,6 +13,62 @@ const expectedProjectStages = [
   "پایان کار",
 ];
 
+const projectFoundationTestStorageKey = "chida-prototype-builder-projects:v3";
+const projectFoundationMarkerTestStorageKey = `${projectFoundationTestStorageKey}:cutover:v1`;
+const projectFoundationIdentityTestStorageKey = "chida-prototype-identity-policy-fixture:v1";
+
+async function readProjectFoundationEnvelope(page: Page) {
+  return page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectFoundationTestStorageKey);
+}
+
+async function readActiveProjectId(page: Page) {
+  return (await readProjectFoundationEnvelope(page))?.activeProjectId ?? null;
+}
+
+type LegacyProjectSeed = {
+  id: string;
+  name: string;
+  location: string;
+  stage: string;
+  usage: string;
+  landArea: string;
+  builtArea: string;
+  aboveGroundFloors: string;
+  basementFloors: string;
+  unitCount: string;
+  createdAt: string;
+};
+
+async function seedLegacyProjectsBeforeFirstAppLoad(page: Page, projects: LegacyProjectSeed[], activeProjectId: string) {
+  await page.addInitScript(({ seededProjects, seededActiveProjectId }) => {
+    const seedMarker = "chida-e2e-project-foundation-seeded:v1";
+    if (window.sessionStorage.getItem(seedMarker) === "done") return;
+    window.sessionStorage.setItem(seedMarker, "done");
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(seededProjects));
+    window.localStorage.setItem("chida-prototype-active-project", seededActiveProjectId);
+  }, { seededProjects: projects, seededActiveProjectId: activeProjectId });
+}
+
+function projectFoundationViews(envelope: any) {
+  return envelope.projects.map((project: any) => {
+    const profile = envelope.profiles.find((item: any) => item.projectId === project.id);
+    const snapshot = profile.revisions.find((revision: any) => revision.id === profile.currentRevisionId).snapshot;
+    return {
+      id: project.id,
+      name: snapshot.name ?? "",
+      location: snapshot.area ?? "",
+      stage: snapshot.stage ?? "",
+      usage: snapshot.usage ?? "",
+      landArea: snapshot.landAreaSquareMeters ?? "",
+      builtArea: snapshot.totalBuiltAreaSquareMeters ?? "",
+      aboveGroundFloors: snapshot.aboveGroundFloors === null ? "" : String(snapshot.aboveGroundFloors),
+      basementFloors: snapshot.basementFloors === null ? "" : String(snapshot.basementFloors),
+      unitCount: snapshot.unitCount === null ? "" : String(snapshot.unitCount),
+      createdAt: project.createdAt,
+    };
+  });
+}
+
 const sampleProjectImage = {
   name: "نمای جنوبی کارگاه.png",
   mimeType: "image/png",
@@ -27,6 +83,11 @@ function stableTestValue(value: unknown): unknown {
       .map(([key, item]) => [key, stableTestValue(item)]));
   }
   return value;
+}
+
+function rehashProjectFoundationValue(value: Record<string, any>) {
+  const { fingerprint: _fingerprint, ...payload } = value;
+  value.fingerprint = `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue(payload))).digest("hex")}`;
 }
 
 function stableTestHash(serialized: string) {
@@ -102,6 +163,70 @@ async function enterBuilderHome(page: Page) {
   await expect(page.getByTestId("builder-home")).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-chida-theme", "dark");
   await expect(page.getByTestId("builder-home")).toHaveAttribute("data-mode", "fullscreen");
+}
+
+const builtArtifactsTestStorageKey = "chida-prototype-built-artifacts:v1";
+const builtArtifactInvalidationIntentsTestStorageKey = `${builtArtifactsTestStorageKey}:dependency-invalidation-intents:v1`;
+const projectTasksTestStorageKey = "chida-prototype-project-tasks:v1";
+
+async function openBuiltArtifactCreator(page: Page) {
+  await page.getByTestId("capability-cluster").click();
+  await page.getByTestId("build-tool-entry").click();
+  await expect(page.getByTestId("build-flow")).toHaveAttribute("data-step", "define");
+}
+
+async function createBuiltArtifactPreview(page: Page, name: string, description: string) {
+  await openBuiltArtifactCreator(page);
+  await page.getByTestId("build-name-input").fill(name);
+  await page.getByTestId("build-description-input").fill(description);
+  await page.getByTestId("build-start-button").click();
+  await expect(page.getByTestId("built-artifact-preview")).toBeVisible();
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records.at(-1)?.status).toBe("preview_ready");
+}
+
+async function approveAndActivateBuiltArtifact(page: Page) {
+  await expect(page.getByTestId("built-artifact-activate")).toBeDisabled();
+  await page.getByTestId("built-artifact-approval").check();
+  await page.getByTestId("built-artifact-activate").click();
+  await expect(page.getByTestId("built-artifact-detail")).toBeVisible();
+  await expect(page.getByTestId("built-artifact-card")).toHaveAttribute("data-state", "active");
+  await expect(page.getByTestId("built-artifact-status")).toHaveText("فعال");
+}
+
+async function readBuiltArtifactEnvelope(page: Page) {
+  return page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), builtArtifactsTestStorageKey);
+}
+
+function builtArtifactTestFingerprint(record: Record<string, any>, revision: Record<string, any>) {
+  const { fingerprint: _fingerprint, ...revisionWithoutFingerprint } = revision;
+  const payload = { artifactId: record.id, projectId: record.projectId, revision: revisionWithoutFingerprint };
+  return `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue(payload))).digest("hex")}`;
+}
+
+async function addAndActivateProject(page: Page, name: string) {
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet-add").click();
+  await page.getByTestId("new-project-name-input").fill(name);
+  await page.getByTestId("new-project-location-input").fill("منطقهٔ ۵");
+  await chooseProjectOption(page, "new-project-stage-select", "فونداسیون");
+  await page.getByTestId("new-project-save").click();
+  await expect(page.getByTestId("project-switcher")).toContainText(name);
+  return readActiveProjectId(page);
+}
+
+async function reloadIntoBuilderHome(page: Page) {
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+}
+
+async function activateExistingProjectFromHome(page: Page, projectName: RegExp) {
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet").getByRole("button", { name: projectName }).click();
+  await expect(page.getByTestId("project-workspace")).toBeVisible();
+  await page.getByTestId("project-space-continue").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
 }
 
 async function createReadyPurchaseRequestForApproval(page: Page) {
@@ -491,7 +616,7 @@ async function createExactServiceNegotiationDraft(page: Page, values: { purpose:
   const proposal = JSON.parse(sourceStoresBeforeDraft.proposals ?? "[]")
     .find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
   const proposalRevision = proposal.revisions.find((revision: { id: string }) => revision.id === proposal.currentRevisionId);
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   const appOrigin = new URL(page.url()).origin;
   const externalRequests: string[] = [];
   const requestListener = (request: Request) => {
@@ -856,10 +981,11 @@ test("builder starts one new-project flow only from the Projects collection", as
   await expect(page.getByTestId("composer-input")).toHaveAttribute("placeholder", "پیامت برای پروژه آفتاب...");
   await expect(page.getByTestId("composer-input")).toHaveValue("");
   await expect(page.getByText("پیام پروژهٔ نخست", { exact: true })).toHaveCount(0);
-  const projects = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]"));
+  const envelope = await readProjectFoundationEnvelope(page);
+  const projects = projectFoundationViews(envelope);
   expect(projects).toHaveLength(2);
   expect(projects[1]).toMatchObject({ name: "پروژه آفتاب", location: "منطقهٔ ۵", stage: "فونداسیون" });
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"))).toBe(projects[1].id);
+  expect(envelope.activeProjectId).toBe(projects[1].id);
 
   await page.getByTestId("project-switcher").click();
   await page.getByTestId("projects-sheet").getByRole("button", { name: /برج نیلوفر/ }).click();
@@ -888,14 +1014,13 @@ test("the bottom project dock contains a 100-character unbroken project name at 
 test("new-project creation stays on the current project when local persistence fails", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const originalActiveProject = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const originalEnvelopeRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  const originalActiveProject = await readActiveProjectId(page);
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
-    const originalActiveProject = window.localStorage.getItem("chida-prototype-active-project");
     Object.defineProperty(window, "__projectNativeSetItem", { value: nativeSetItem, configurable: true });
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-builder-projects:v2") throw new DOMException("Project write failed", "QuotaExceededError");
-      if (this === window.localStorage && key === "chida-prototype-active-project" && value === originalActiveProject && window.localStorage.getItem(key) !== originalActiveProject) throw new DOMException("Project rollback failed", "QuotaExceededError");
+      if (this === window.localStorage && key === "chida-prototype-builder-projects:v3") throw new DOMException("Project write failed", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
   });
@@ -910,21 +1035,25 @@ test("new-project creation stays on the current project when local persistence f
   await expect(page.getByTestId("new-project-storage-error")).toContainText("ذخیره نشد");
   await expect(page.getByTestId("new-project-sheet")).toBeVisible();
   await expect(page.getByTestId("project-switcher")).toContainText("برج نیلوفر");
-  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]"))).toHaveLength(1);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(originalEnvelopeRaw);
 
   await page.evaluate(() => {
     Storage.prototype.setItem = (window as Window & { __projectNativeSetItem: typeof Storage.prototype.setItem }).__projectNativeSetItem;
   });
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
-  await expect(page.getByTestId("project-switcher")).toContainText("برج نیلوفر");
-  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"))).toBe(originalActiveProject);
+  await page.getByTestId("new-project-save").click();
+  await expect(page.getByTestId("new-project-sheet")).toBeHidden();
+  await expect(page.getByTestId("project-switcher")).toContainText("پروژه ذخیره‌نشده");
+  const retriedEnvelope = await readProjectFoundationEnvelope(page);
+  expect(retriedEnvelope.projects).toHaveLength(2);
+  expect(retriedEnvelope.activeProjectId).not.toBe(originalActiveProject);
+  const retryReceipt = retriedEnvelope.idempotencyReceipts.at(-1);
+  expect(retryReceipt).toMatchObject({ action: "create-project", result: "created", projectId: retriedEnvelope.activeProjectId });
+  const deterministicDigest = createHash("sha256").update(`project-create:${retryReceipt.key}`).digest("hex");
+  expect(retryReceipt.projectId).toBe(`project-${deterministicDigest.slice(0, 8)}-${deterministicDigest.slice(8, 12)}-${deterministicDigest.slice(12, 16)}-${deterministicDigest.slice(16, 20)}-${deterministicDigest.slice(20, 32)}`);
 });
 
 test("a saved Tehran-only project is completed in place instead of duplicated", async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => {
-    window.localStorage.removeItem("chida-prototype-builder-projects:v2");
+  await page.addInitScript(() => {
     window.localStorage.setItem("chida-prototype-builder-projects", JSON.stringify([{
       id: "project-legacy",
       name: "برج قدیمی",
@@ -942,11 +1071,13 @@ test("a saved Tehran-only project is completed in place instead of duplicated", 
   await expect(page.getByTestId("project-stage-select")).toContainText("اسکلت بندی");
   await page.getByTestId("project-location-input").fill("منطقهٔ ۶");
   await page.getByTestId("project-create-button").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
 
-  const savedProjects = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]"));
+  const savedEnvelope = await readProjectFoundationEnvelope(page);
+  const savedProjects = projectFoundationViews(savedEnvelope);
   expect(savedProjects).toHaveLength(1);
   expect(savedProjects[0]).toMatchObject({ id: "project-legacy", name: "برج قدیمی", location: "منطقهٔ ۶", stage: "اسکلت بندی" });
-  await expect(page.getByTestId("builder-home")).toBeVisible();
+  expect(savedEnvelope.profiles[0].version).toBe(2);
 });
 
 test("stored legacy construction stages migrate to the approved taxonomy", async ({ page }) => {
@@ -960,8 +1091,7 @@ test("stored legacy construction stages migrate to the approved taxonomy", async
     "پایان کار",
   ];
 
-  await page.goto("/");
-  await page.evaluate((stages) => {
+  await page.addInitScript((stages) => {
     window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(stages.map((stage, index) => ({
       id: `legacy-stage-${index}`,
       name: `پروژه ${index + 1}`,
@@ -974,15 +1104,11 @@ test("stored legacy construction stages migrate to the approved taxonomy", async
 
   await reachBuilderWelcome(page);
   await expect(page.getByTestId("saved-project-summary")).toContainText("طراحی و اخذ مجوز");
-  await expect.poll(() => page.evaluate(() => {
-    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
-    return projects.map((project: { stage: string }) => project.stage);
-  })).toEqual(migratedStages);
+  expect(projectFoundationViews(await readProjectFoundationEnvelope(page)).map((project: { stage: string }) => project.stage)).toEqual(migratedStages);
 });
 
-test("an unreadable v2 project store falls back to the valid legacy projects", async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => {
+test("an unreadable v2 project store fails closed without falling back or rewriting bytes", async ({ page }) => {
+  await page.addInitScript(() => {
     window.localStorage.setItem("chida-prototype-builder-projects:v2", "{");
     window.localStorage.setItem("chida-prototype-builder-projects", JSON.stringify([{
       id: "project-legacy-fallback",
@@ -995,24 +1121,18 @@ test("an unreadable v2 project store falls back to the valid legacy projects", a
   });
 
   await reachBuilderWelcome(page);
-  await expect(page.getByTestId("saved-project-summary")).toContainText("برج بازیابی‌شده");
-  await expect(page.getByTestId("saved-project-summary")).toContainText("تهران · یوسف‌آباد · دیوارچینی و سفت کاری");
-
-  const migratedProjects = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]"));
-  expect(migratedProjects).toHaveLength(1);
-  expect(migratedProjects[0]).toMatchObject({
-    id: "project-legacy-fallback",
-    name: "برج بازیابی‌شده",
-    stage: "دیوارچینی و سفت کاری",
-    usage: "",
-    landArea: "",
-    unitCount: "",
-  });
+  await expect(page.getByTestId("project-foundation-read-error")).toContainText("بازنویسی");
+  await expect(page.getByTestId("project-setup-form")).toHaveCount(0);
+  await expect(page.getByText("برج بازیابی‌شده", { exact: false })).toHaveCount(0);
+  expect(await page.evaluate(() => ({
+    prior: window.localStorage.getItem("chida-prototype-builder-projects:v2"),
+    legacy: window.localStorage.getItem("chida-prototype-builder-projects"),
+    canonical: window.localStorage.getItem("chida-prototype-builder-projects:v3"),
+  }))).toMatchObject({ prior: "{", canonical: null });
 });
 
-test("a schema-invalid non-empty v2 store also falls back without resurrecting an intentional empty store", async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => {
+test("a schema-invalid non-empty v2 store fails closed even when legacy is valid", async ({ page }) => {
+  await page.addInitScript(() => {
     window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([{ broken: true }]));
     window.localStorage.setItem("chida-prototype-builder-projects", JSON.stringify([{
       id: "project-schema-fallback",
@@ -1025,21 +1145,58 @@ test("a schema-invalid non-empty v2 store also falls back without resurrecting a
   });
 
   await reachBuilderWelcome(page);
-  await expect(page.getByTestId("saved-project-summary")).toContainText("برج سالم");
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  await expect(page.getByText("برج سالم", { exact: false })).toHaveCount(0);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-projects:v3"))).toBeNull();
+});
 
-  await page.evaluate(() => {
+test("a non-representable v2 project fails before writing a cutover marker or canonical candidate", async ({ page }) => {
+  const sourceRaw = JSON.stringify([{
+    id: "future-project",
+    name: "پروژه با زمان نامعتبر",
+    location: "ونک",
+    stage: "فونداسیون",
+    createdAt: "2099-01-01T00:00:00.000Z",
+  }]);
+  await page.addInitScript((raw) => {
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", raw);
+    window.localStorage.setItem("chida-prototype-active-project", "future-project");
+  }, sourceRaw);
+
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationMarkerTestStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBeNull();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-projects:v2"))).toBe(sourceRaw);
+});
+
+test("a valid empty v2 cutover never resurrects legacy projects", async ({ page }) => {
+  await page.addInitScript(() => {
     window.localStorage.setItem("chida-prototype-builder-projects:v2", "[]");
+    window.localStorage.setItem("chida-prototype-builder-projects", JSON.stringify([{
+      id: "project-must-not-resurrect",
+      name: "پروژه قدیمی",
+      location: "ونک",
+      stage: "نازک‌کاری",
+      createdAt: "2026-08-27T00:00:00.000Z",
+    }]));
+    window.localStorage.setItem("chida-prototype-active-project", "project-must-not-resurrect");
   });
-  await page.reload();
   await reachBuilderWelcome(page);
   await expect(page.getByTestId("project-setup-form")).toBeVisible();
   await expect(page.getByTestId("saved-project-summary")).toHaveCount(0);
+  const envelope = await readProjectFoundationEnvelope(page);
+  expect(envelope.projects).toEqual([]);
+  expect(envelope.profiles).toEqual([]);
+  expect(envelope.activeProjectId).toBeNull();
+  expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key)!, projectFoundationMarkerTestStorageKey)).state).toBe("committed");
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-setup-form")).toBeVisible();
 });
 
 test("selecting an incomplete saved project opens its completion form", async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => {
-    window.localStorage.removeItem("chida-prototype-builder-projects:v2");
+  await page.addInitScript(() => {
     window.localStorage.setItem("chida-prototype-builder-projects", JSON.stringify([
       { id: "project-ready", name: "برج آماده", location: "سعادت‌آباد", stage: "اسکلت", createdAt: "2026-08-27T00:00:00.000Z" },
       { id: "project-incomplete", name: "برج قدیمی", location: "تهران", stage: "نازک‌کاری", createdAt: "2026-08-26T00:00:00.000Z" },
@@ -1059,11 +1216,987 @@ test("selecting an incomplete saved project opens its completion form", async ({
   await expect(page.getByTestId("project-stage-select")).toContainText("نازک کاری و نما");
   await page.getByTestId("project-location-input").fill("تهرانپارس");
   await page.getByTestId("project-create-button").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
 
-  const savedProjects = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]"));
+  const savedProjects = projectFoundationViews(await readProjectFoundationEnvelope(page));
   expect(savedProjects).toHaveLength(2);
   expect(savedProjects[1]).toMatchObject({ id: "project-incomplete", location: "تهرانپارس" });
   await expect(page.getByTestId("project-switcher")).toContainText("برج قدیمی");
+});
+
+test("project foundation seeds exact identity policy and creates separate scoped Project and ProjectProfile records", async ({ page }) => {
+  await enterBuilderHome(page);
+  const envelope = await readProjectFoundationEnvelope(page);
+  const fixture = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectFoundationIdentityTestStorageKey);
+  const marker = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectFoundationMarkerTestStorageKey);
+  const project = envelope.projects[0];
+  const profile = envelope.profiles[0];
+
+  const hashFixtureValue = (value: unknown) => `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue(value))).digest("hex")}`;
+  const expectedIdentity = {
+    schemaVersion: 1,
+    objectType: "account-identity",
+    id: "local-builder-account",
+    ownerPrincipalType: "account",
+    ownerPrincipalId: "local-builder-account",
+    accountSide: "builder",
+    scopeType: "account_private",
+    scopeId: "local-builder-account",
+    custodianService: "Identity/Policy",
+    status: "active",
+    version: 1,
+  };
+  const expectedMembership = {
+    schemaVersion: 1,
+    objectType: "membership",
+    id: "local-builder-membership",
+    principalId: "local-builder-account",
+    scope: { type: "account", id: "local-builder-account" },
+    status: "active",
+    version: 1,
+  };
+  const expectedRoleAssignment = {
+    schemaVersion: 1,
+    objectType: "role-assignment",
+    id: "local-builder-owner-role",
+    membershipId: "local-builder-membership",
+    role: "owner",
+    status: "active",
+    version: 1,
+  };
+  const expectedAclSnapshotHash = hashFixtureValue({ identity: expectedIdentity, membership: expectedMembership, roleAssignment: expectedRoleAssignment, policyVersion: "builder-prototype-policy:v1" });
+  const expectedAuthorizationTemplateWithoutFingerprint = {
+    schemaVersion: 1,
+    objectType: "authorization-context-template",
+    id: "local-builder-project-private-authorization-template",
+    actorPrincipalId: "local-builder-account",
+    identityVersion: 1,
+    accountSide: "builder",
+    membershipId: "local-builder-membership",
+    membershipVersion: 1,
+    roleAssignmentId: "local-builder-owner-role",
+    roleAssignmentVersion: 1,
+    membershipRole: "owner",
+    aclSnapshotHash: expectedAclSnapshotHash,
+    policyVersion: "builder-prototype-policy:v1",
+    scopeBinding: { scopeType: "project_private", scopeIdSource: "projectId" },
+    status: "active",
+    version: 1,
+  };
+  const expectedAuthorizationTemplate = { ...expectedAuthorizationTemplateWithoutFingerprint, fingerprint: hashFixtureValue(expectedAuthorizationTemplateWithoutFingerprint) };
+  const expectedFixtureWithoutFingerprint = {
+    schemaVersion: 1,
+    fixtureVersion: 1,
+    policyVersion: "builder-prototype-policy:v1",
+    identity: expectedIdentity,
+    memberships: [expectedMembership],
+    roleAssignments: [expectedRoleAssignment],
+    authorizationContextTemplate: expectedAuthorizationTemplate,
+    aclSnapshotHash: expectedAclSnapshotHash,
+  };
+  expect(fixture).toEqual({ ...expectedFixtureWithoutFingerprint, fixtureFingerprint: hashFixtureValue(expectedFixtureWithoutFingerprint) });
+  expect(marker.state).toBe("committed");
+  expect(project).toMatchObject({ ownerPrincipalType: "account", ownerPrincipalId: "local-builder-account", accountSide: "builder", scopeType: "project_private", scopeId: project.id, custodianService: "Domain Service", sensitivity: "private", version: 1 });
+  expect(profile).toMatchObject({ projectId: project.id, ownerPrincipalType: "project", ownerPrincipalId: project.id, accountSide: "builder", scopeType: "project_private", scopeId: project.id, custodianService: "Domain Service", sensitivity: "private", version: 1 });
+  expect(project.revisions).toHaveLength(1);
+  expect(project.history).toHaveLength(1);
+  expect(profile.revisions).toHaveLength(1);
+  expect(profile.history).toHaveLength(1);
+  expect(envelope.activeProjectId).toBe(project.id);
+  const authorizationContextWithoutFingerprint = {
+    schemaVersion: 1,
+    objectType: "authorization-context",
+    id: `authorization-context:${project.id}`,
+    templateId: fixture.authorizationContextTemplate.id,
+    templateVersion: fixture.authorizationContextTemplate.version,
+    templateFingerprint: fixture.authorizationContextTemplate.fingerprint,
+    actorPrincipalId: fixture.authorizationContextTemplate.actorPrincipalId,
+    identityVersion: fixture.authorizationContextTemplate.identityVersion,
+    accountSide: fixture.authorizationContextTemplate.accountSide,
+    membershipId: fixture.authorizationContextTemplate.membershipId,
+    membershipVersion: fixture.authorizationContextTemplate.membershipVersion,
+    roleAssignmentId: fixture.authorizationContextTemplate.roleAssignmentId,
+    roleAssignmentVersion: fixture.authorizationContextTemplate.roleAssignmentVersion,
+    membershipRole: fixture.authorizationContextTemplate.membershipRole,
+    aclSnapshotHash: fixture.authorizationContextTemplate.aclSnapshotHash,
+    policyVersion: fixture.authorizationContextTemplate.policyVersion,
+    resolvedScope: { scopeType: "project_private", scopeId: project.id },
+    status: "active",
+    version: 1,
+  };
+  const expectedAuthorizationContextHash = `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue(authorizationContextWithoutFingerprint))).digest("hex")}`;
+  expect(project.history[0].authorizationContextHash).toBe(expectedAuthorizationContextHash);
+  expect(profile.history[0].authorizationContextHash).toBe(expectedAuthorizationContextHash);
+});
+
+test("project foundation rejects a coherently rehashed create receipt whose genesis violates create preconditions", async ({ page }) => {
+  await enterBuilderHome(page);
+  const envelope = await readProjectFoundationEnvelope(page);
+  const profile = envelope.profiles[0];
+  const receipt = envelope.idempotencyReceipts.find((item: { action: string }) => item.action === "create-project");
+  profile.revisions[0].snapshot.name = null;
+  receipt.payloadHash = `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue({
+    inputSchemaVersion: 1,
+    action: "create-project",
+    projectId: receipt.projectId,
+    draft: { name: "", location: profile.revisions[0].snapshot.area ?? "", stage: profile.revisions[0].snapshot.stage ?? "" },
+    expectedStoreVersion: receipt.resultingStoreVersion - 1,
+  }))).digest("hex")}`;
+  rehashProjectFoundationValue(profile.revisions[0]);
+  rehashProjectFoundationValue(profile);
+  rehashProjectFoundationValue(receipt);
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectFoundationTestStorageKey, raw: tamperedRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("project foundation rejects a coherently rehashed update that clears a required profile field", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await chooseProjectOption(page, "project-edit-usage", "مسکونی");
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-details-sheet")).toBeHidden();
+
+  const envelope = await readProjectFoundationEnvelope(page);
+  const profile = envelope.profiles[0];
+  const revision = profile.revisions.at(-1);
+  const receipt = envelope.idempotencyReceipts.at(-1);
+  revision.snapshot.name = null;
+  const updateDraft = {
+    name: "",
+    location: revision.snapshot.area ?? "",
+    stage: revision.snapshot.stage ?? "",
+    usage: revision.snapshot.usage ?? "",
+    landArea: revision.snapshot.landAreaSquareMeters ?? "",
+    builtArea: revision.snapshot.totalBuiltAreaSquareMeters ?? "",
+    aboveGroundFloors: revision.snapshot.aboveGroundFloors === null ? "" : String(revision.snapshot.aboveGroundFloors),
+    basementFloors: revision.snapshot.basementFloors === null ? "" : String(revision.snapshot.basementFloors),
+    unitCount: revision.snapshot.unitCount === null ? "" : String(revision.snapshot.unitCount),
+  };
+  receipt.payloadHash = `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue({
+    inputSchemaVersion: 1,
+    action: "update-profile",
+    projectId: receipt.projectId,
+    draft: updateDraft,
+    expectedProfileVersion: receipt.resultingObjectVersion - 1,
+  }))).digest("hex")}`;
+  rehashProjectFoundationValue(revision);
+  rehashProjectFoundationValue(profile);
+  rehashProjectFoundationValue(receipt);
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectFoundationTestStorageKey, raw: tamperedRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("project foundation rejects a coherently rehashed no-op set-active receipt", async ({ page }) => {
+  await enterBuilderHome(page);
+  const envelope = await readProjectFoundationEnvelope(page);
+  const project = envelope.projects[0];
+  const resultingStoreVersion = envelope.storeVersion + 1;
+  const recordedAt = new Date(Date.parse(envelope.updatedAt) + 1).toISOString();
+  const key = "project-select:forged-no-op";
+  const receipt: Record<string, any> = {
+    schemaVersion: 1,
+    key,
+    action: "set-active",
+    payloadHash: `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue({ inputSchemaVersion: 1, action: "set-active", projectId: project.id, expectedStoreVersion: envelope.storeVersion }))).digest("hex")}`,
+    projectId: project.id,
+    result: "updated",
+    resultingStoreVersion,
+    resultingObjectVersion: project.version,
+    recordedAt,
+  };
+  rehashProjectFoundationValue(receipt);
+  envelope.storeVersion = resultingStoreVersion;
+  envelope.updatedAt = recordedAt;
+  envelope.idempotencyReceipts.push(receipt);
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ storageKey, raw }) => window.localStorage.setItem(storageKey, raw), { storageKey: projectFoundationTestStorageKey, raw: tamperedRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((storageKey) => window.localStorage.getItem(storageKey), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("project foundation rejects reordered created Project and Profile arrays", async ({ page }) => {
+  await enterBuilderHome(page);
+  await addAndActivateProject(page, "پروژه دوم ترتیب");
+  const envelope = await readProjectFoundationEnvelope(page);
+  envelope.projects.reverse();
+  envelope.profiles.reverse();
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectFoundationTestStorageKey, raw: tamperedRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("project foundation rejects a committed marker whose active hint was never a migrated project", async ({ page }) => {
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [{
+    id: "project-pointer-lineage",
+    name: "پروژه نشانگر فعال",
+    location: "ونک",
+    stage: "فونداسیون",
+    usage: "",
+    landArea: "",
+    builtArea: "",
+    aboveGroundFloors: "",
+    basementFloors: "",
+    unitCount: "",
+    createdAt: "2026-08-27T00:00:00.000Z",
+  }], "project-pointer-lineage");
+  await reachBuilderWelcome(page);
+  const marker = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectFoundationMarkerTestStorageKey);
+  marker.activeProjectIdHint = "project-never-migrated";
+  rehashProjectFoundationValue(marker);
+  const tamperedMarkerRaw = JSON.stringify(marker);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectFoundationMarkerTestStorageKey, raw: tamperedMarkerRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationMarkerTestStorageKey)).toBe(tamperedMarkerRaw);
+});
+
+test("project foundation rejects a rehashed migrated genesis with a missing source-required name", async ({ page }) => {
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [{
+    id: "project-source-bound-genesis",
+    name: "پروژه منشأ دقیق",
+    location: "ونک",
+    stage: "فونداسیون",
+    usage: "",
+    landArea: "",
+    builtArea: "",
+    aboveGroundFloors: "",
+    basementFloors: "",
+    unitCount: "",
+    createdAt: "2026-08-27T00:00:00.000Z",
+  }], "project-source-bound-genesis");
+  await reachBuilderWelcome(page);
+  const envelope = await readProjectFoundationEnvelope(page);
+  const marker = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectFoundationMarkerTestStorageKey);
+  envelope.profiles[0].revisions[0].snapshot.name = null;
+  rehashProjectFoundationValue(envelope.profiles[0].revisions[0]);
+  rehashProjectFoundationValue(envelope.profiles[0]);
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  marker.initialCanonicalHash = `sha256-${createHash("sha256").update(tamperedRaw).digest("hex")}`;
+  rehashProjectFoundationValue(marker);
+  const tamperedMarkerRaw = JSON.stringify(marker);
+  await page.evaluate(({ canonicalKey, canonicalRaw, markerKey, markerRaw }) => {
+    window.localStorage.setItem(canonicalKey, canonicalRaw);
+    window.localStorage.setItem(markerKey, markerRaw);
+  }, { canonicalKey: projectFoundationTestStorageKey, canonicalRaw: tamperedRaw, markerKey: projectFoundationMarkerTestStorageKey, markerRaw: tamperedMarkerRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationMarkerTestStorageKey)).toBe(tamperedMarkerRaw);
+});
+
+test("project foundation rejects coherently rehashed non-deterministic revision and event ids", async ({ page }) => {
+  await enterBuilderHome(page);
+  const envelope = await readProjectFoundationEnvelope(page);
+  const profile = envelope.profiles[0];
+  profile.revisions[0].id = "arbitrary-profile-revision";
+  profile.history[0].id = "arbitrary-profile-event";
+  profile.history[0].revisionId = profile.revisions[0].id;
+  profile.currentRevisionId = profile.revisions[0].id;
+  rehashProjectFoundationValue(profile.revisions[0]);
+  rehashProjectFoundationValue(profile.history[0]);
+  rehashProjectFoundationValue(profile);
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectFoundationTestStorageKey, raw: tamperedRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("project foundation fail-closes coherently rehashed migration provenance after a later mutation", async ({ page }) => {
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [{
+    id: "project-lineage",
+    name: "پروژه مهاجرت lineage",
+    location: "ونک",
+    stage: "اسکلت",
+    usage: "",
+    landArea: "",
+    builtArea: "",
+    aboveGroundFloors: "",
+    basementFloors: "",
+    unitCount: "",
+    createdAt: "2026-08-27T00:00:00.000Z",
+  }], "project-lineage");
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await chooseProjectOption(page, "project-edit-usage", "مسکونی");
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-details-sheet")).toBeHidden();
+
+  const envelope = await readProjectFoundationEnvelope(page);
+  expect(envelope.storeVersion).toBe(2);
+  envelope.projects[0].history[0].eventType = "created";
+  envelope.profiles[0].history[0].eventType = "created";
+  rehashProjectFoundationValue(envelope.projects[0].history[0]);
+  rehashProjectFoundationValue(envelope.profiles[0].history[0]);
+  rehashProjectFoundationValue(envelope.projects[0]);
+  rehashProjectFoundationValue(envelope.profiles[0]);
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectFoundationTestStorageKey, raw: tamperedRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  await expect(page.getByText("پروژه مهاجرت lineage", { exact: false })).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("project foundation rejects a self-rehashed non-monotonic revision and receipt timeline", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await chooseProjectOption(page, "project-edit-usage", "مسکونی");
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-details-sheet")).toBeHidden();
+
+  const envelope = await readProjectFoundationEnvelope(page);
+  const profile = envelope.profiles[0];
+  const duplicateTimestamp = profile.revisions[0].createdAt;
+  profile.revisions[1].createdAt = duplicateTimestamp;
+  profile.history[1].occurredAt = duplicateTimestamp;
+  profile.updatedAt = duplicateTimestamp;
+  envelope.idempotencyReceipts.at(-1).recordedAt = duplicateTimestamp;
+  envelope.updatedAt = duplicateTimestamp;
+  rehashProjectFoundationValue(profile.revisions[1]);
+  rehashProjectFoundationValue(profile.history[1]);
+  rehashProjectFoundationValue(profile);
+  rehashProjectFoundationValue(envelope.idempotencyReceipts.at(-1));
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectFoundationTestStorageKey, raw: tamperedRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("project foundation rejects a rehashed receipt ledger that omits a Profile update event", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await chooseProjectOption(page, "project-edit-usage", "مسکونی");
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-details-sheet")).toBeHidden();
+
+  const envelope = await readProjectFoundationEnvelope(page);
+  const project = envelope.projects[0];
+  const receipt = envelope.idempotencyReceipts.at(-1);
+  receipt.action = "set-active";
+  receipt.result = "updated";
+  receipt.resultingObjectVersion = project.version;
+  receipt.payloadHash = `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue({
+    inputSchemaVersion: 1,
+    action: "set-active",
+    projectId: project.id,
+    expectedStoreVersion: receipt.resultingStoreVersion - 1,
+  }))).digest("hex")}`;
+  rehashProjectFoundationValue(receipt);
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectFoundationTestStorageKey, raw: tamperedRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("project foundation rejects an active-project change with no create or set-active receipt", async ({ page }) => {
+  const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T00:00:00.000Z" };
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [
+    { ...projectBase, id: "active-lineage-a", name: "پروژه فعال الف", location: "ونک", stage: "فونداسیون" },
+    { ...projectBase, id: "active-lineage-b", name: "پروژه فعال ب", location: "جردن", stage: "نازک کاری و نما" },
+  ], "active-lineage-a");
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await chooseProjectOption(page, "project-edit-usage", "مسکونی");
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-details-sheet")).toBeHidden();
+
+  const envelope = await readProjectFoundationEnvelope(page);
+  expect(envelope.idempotencyReceipts.map((receipt: { action: string }) => receipt.action)).toEqual(["update-profile"]);
+  envelope.activeProjectId = "active-lineage-b";
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectFoundationTestStorageKey, raw: tamperedRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("project foundation rejects a coherently rehashed cross-scope Project record", async ({ page }) => {
+  await enterBuilderHome(page);
+  const envelope = await readProjectFoundationEnvelope(page);
+  envelope.projects[0].scopeId = "another-project";
+  rehashProjectFoundationValue(envelope.projects[0]);
+  rehashProjectFoundationValue(envelope);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectFoundationTestStorageKey, raw: tamperedRaw });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("a malformed committed project envelope never falls back and retry never heals its bytes", async ({ page }) => {
+  await enterBuilderHome(page);
+  const legacyRawBefore = await page.evaluate(() => {
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([{ id: "fallback", name: "نباید دیده شود", location: "ونک", stage: "اسکلت", createdAt: "2026-08-27T00:00:00.000Z" }]));
+    window.localStorage.setItem("chida-prototype-builder-projects:v3", "{");
+    return window.localStorage.getItem("chida-prototype-builder-projects:v2");
+  });
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  await expect(page.getByText("نباید دیده شود", { exact: false })).toHaveCount(0);
+  await page.getByTestId("project-foundation-retry").click();
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-projects:v3"))).toBe("{");
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-projects:v2"))).toBe(legacyRawBefore);
+});
+
+test("identity fixture tamper blocks private project data without rewriting either store", async ({ page }) => {
+  await enterBuilderHome(page);
+  const canonicalRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  await page.evaluate((key) => window.localStorage.setItem(key, "{}"), projectFoundationIdentityTestStorageKey);
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  await expect(page.getByText("برج نیلوفر", { exact: false })).toHaveCount(0);
+  await page.getByTestId("project-foundation-retry").click();
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationIdentityTestStorageKey)).toBe("{}");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(canonicalRaw);
+});
+
+test("a verified project cutover resumes the exact candidate after committed-marker failure", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([{ id: "resume-project", name: "پروژه بازیابی", location: "ونک", stage: "اسکلت", createdAt: "2026-08-27T00:00:00.000Z" }]));
+    window.localStorage.setItem("chida-prototype-active-project", "resume-project");
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__projectMarkerNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-builder-projects:v3:cutover:v1" && value.includes('"state":"committed"')) {
+        throw new DOMException("Committed marker failed", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  const verified = await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectFoundationMarkerTestStorageKey);
+  const candidateRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  expect(verified.state).toBe("verified");
+  expect(candidateRaw).not.toBeNull();
+
+  await page.evaluate(() => { Storage.prototype.setItem = (window as Window & { __projectMarkerNativeSetItem: typeof Storage.prototype.setItem }).__projectMarkerNativeSetItem; });
+  await page.getByTestId("project-foundation-retry").click();
+  await expect(page.getByTestId("saved-project-summary")).toContainText("پروژه بازیابی");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(candidateRaw);
+  expect((await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectFoundationMarkerTestStorageKey)).state).toBe("committed");
+  expect((await readProjectFoundationEnvelope(page)).projects).toHaveLength(1);
+});
+
+test("project cutover restores its pending marker when the migration source changes during verified-marker write", async ({ page }) => {
+  await page.addInitScript(() => {
+    const sourceKey = "chida-prototype-builder-projects:v2";
+    const markerKey = "chida-prototype-builder-projects:v3:cutover:v1";
+    window.localStorage.setItem(sourceKey, JSON.stringify([{ id: "raced-project", name: "پروژه پیش از race", location: "ونک", stage: "اسکلت", createdAt: "2026-08-27T00:00:00.000Z" }]));
+    const nativeSetItem = Storage.prototype.setItem;
+    let raced = false;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === markerKey && value.includes('"state":"verified"') && !raced) {
+        raced = true;
+        nativeSetItem.call(this, key, value);
+        nativeSetItem.call(this, sourceKey, JSON.stringify([{ id: "raced-project", name: "پروژه تغییرکرده حین cutover", location: "ونک", stage: "اسکلت", createdAt: "2026-08-27T00:00:00.000Z" }]));
+        return;
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  const candidateRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  const pendingRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationMarkerTestStorageKey);
+  expect(JSON.parse(pendingRaw ?? "null").state).toBe("pending");
+  expect(candidateRaw).not.toBeNull();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-projects:v2"))).toContain("تغییرکرده حین cutover");
+
+  await page.getByTestId("project-foundation-retry").click();
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationMarkerTestStorageKey)).toBe(pendingRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(candidateRaw);
+});
+
+test("a source write after verified cutover cannot replace the candidate during committed finalization", async ({ page }) => {
+  await page.addInitScript(() => {
+    const sourceKey = "chida-prototype-builder-projects:v2";
+    const markerKey = "chida-prototype-builder-projects:v3:cutover:v1";
+    window.localStorage.setItem(sourceKey, JSON.stringify([{ id: "verified-authority-project", name: "نسخه تأییدشده", location: "ونک", stage: "اسکلت", createdAt: "2026-08-27T00:00:00.000Z" }]));
+    window.localStorage.setItem("chida-prototype-active-project", "verified-authority-project");
+    const nativeSetItem = Storage.prototype.setItem;
+    let finalized = false;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === markerKey && value.includes('"state":"committed"') && !finalized) {
+        finalized = true;
+        nativeSetItem.call(this, sourceKey, JSON.stringify([{ id: "verified-authority-project", name: "نسخه دیرهنگام قدیمی", location: "ونک", stage: "اسکلت", createdAt: "2026-08-27T00:00:00.000Z" }]));
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("saved-project-summary")).toContainText("نسخه تأییدشده");
+  await expect(page.getByText("نسخه دیرهنگام قدیمی", { exact: false })).toHaveCount(0);
+  expect((await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectFoundationMarkerTestStorageKey)).state).toBe("committed");
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("saved-project-summary")).toContainText("نسخه تأییدشده");
+});
+
+test("legacy project cutover stays pending when a higher-precedence v2 generation appears", async ({ page }) => {
+  await page.addInitScript(() => {
+    const legacyKey = "chida-prototype-builder-projects";
+    const priorKey = "chida-prototype-builder-projects:v2";
+    const canonicalKey = "chida-prototype-builder-projects:v3";
+    window.localStorage.setItem(legacyKey, JSON.stringify([{ id: "legacy-precedence-race", name: "پروژه نسل قدیمی", location: "ونک", stage: "اسکلت", createdAt: "2026-08-27T00:00:00.000Z" }]));
+    window.localStorage.setItem("chida-prototype-active-project", "legacy-precedence-race");
+    const nativeSetItem = Storage.prototype.setItem;
+    let raced = false;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      const result = nativeSetItem.call(this, key, value);
+      if (this === window.localStorage && key === canonicalKey && !raced) {
+        raced = true;
+        nativeSetItem.call(this, priorKey, "{");
+      }
+      return result;
+    };
+  });
+
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  const pendingRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationMarkerTestStorageKey);
+  const candidateRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  expect(JSON.parse(pendingRaw ?? "null").state).toBe("pending");
+  expect(candidateRaw).not.toBeNull();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-projects:v2"))).toBe("{");
+
+  await page.getByTestId("project-foundation-retry").click();
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationMarkerTestStorageKey)).toBe(pendingRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(candidateRaw);
+});
+
+test("a verified marker cannot revive a rejected cutover when pending-marker rollback also fails", async ({ page }) => {
+  await page.addInitScript(() => {
+    const installMarker = "chida-e2e-double-cutover-fault:v1";
+    if (window.sessionStorage.getItem(installMarker) === "done") return;
+    window.sessionStorage.setItem(installMarker, "done");
+    const sourceKey = "chida-prototype-builder-projects:v2";
+    const markerKey = "chida-prototype-builder-projects:v3:cutover:v1";
+    window.localStorage.setItem(sourceKey, JSON.stringify([{ id: "double-fault-project", name: "پروژه پیش از خطای دوگانه", location: "ونک", stage: "اسکلت", createdAt: "2026-08-27T00:00:00.000Z" }]));
+    window.localStorage.setItem("chida-prototype-active-project", "double-fault-project");
+    const nativeSetItem = Storage.prototype.setItem;
+    let verifiedWritten = false;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === markerKey && value.includes('"state":"verified"') && !verifiedWritten) {
+        verifiedWritten = true;
+        nativeSetItem.call(this, key, value);
+        nativeSetItem.call(this, sourceKey, JSON.stringify([{ id: "double-fault-project", name: "پروژه تغییرکرده پس از verify", location: "ونک", stage: "اسکلت", createdAt: "2026-08-27T00:00:00.000Z" }]));
+        return;
+      }
+      if (this === window.localStorage && key === markerKey && verifiedWritten && value.includes('"state":"pending"')) throw new DOMException("Pending rollback failed", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  const verifiedRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationMarkerTestStorageKey);
+  const candidateRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  expect(JSON.parse(verifiedRaw ?? "null").state).toBe("verified");
+  expect(candidateRaw).not.toBeNull();
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  await expect(page.getByText("پروژه پیش از خطای دوگانه", { exact: false })).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationMarkerTestStorageKey)).toBe(verifiedRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(candidateRaw);
+});
+
+test("project profile no-op is byte-stable and rollback appends a fresh revision", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  const beforeNoop = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-details-sheet")).toBeHidden();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(beforeNoop);
+
+  await page.getByTestId("project-space-edit").click();
+  await chooseProjectOption(page, "project-edit-usage", "مسکونی");
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-details-sheet")).toBeHidden();
+  let envelope = await readProjectFoundationEnvelope(page);
+  expect(envelope.projects[0].version).toBe(1);
+  expect(envelope.profiles[0].version).toBe(2);
+  expect(envelope.profiles[0].history.at(-1)).toMatchObject({ eventType: "updated", version: 2, targetVersion: null });
+
+  await page.getByTestId("project-space-edit").click();
+  await page.getByTestId("project-profile-history").locator("summary").click();
+  await page.getByTestId("project-profile-rollback").click();
+  await expect(page.getByTestId("project-details-sheet")).toBeHidden();
+  envelope = await readProjectFoundationEnvelope(page);
+  expect(envelope.projects[0].version).toBe(1);
+  expect(envelope.profiles[0].version).toBe(3);
+  expect(envelope.profiles[0].history.at(-1)).toMatchObject({ eventType: "rolled-back", version: 3, targetVersion: 1 });
+  expect(envelope.profiles[0].revisions.at(-1).snapshot).toEqual(envelope.profiles[0].revisions[0].snapshot);
+});
+
+test("rollback to an incomplete migrated profile returns to the completion flow at 390 by 844", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [{
+    id: "project-incomplete-rollback",
+    name: "پروژه نیمه‌کاره",
+    location: "تهران",
+    stage: "نازک‌کاری",
+    usage: "",
+    landArea: "",
+    builtArea: "",
+    aboveGroundFloors: "",
+    basementFloors: "",
+    unitCount: "",
+    createdAt: "2026-08-27T00:00:00.000Z",
+  }], "project-incomplete-rollback");
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-setup-form")).toBeVisible();
+  await expect(page.getByTestId("project-location-input")).toHaveValue("");
+  await page.getByTestId("project-location-input").fill("ونک");
+  await page.getByTestId("project-create-button").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await page.getByTestId("project-profile-history").locator("summary").click();
+  await page.getByTestId("project-profile-rollback").click();
+
+  await expect(page.getByTestId("builder-home")).toHaveCount(0);
+  await expect(page.getByTestId("project-setup-form")).toBeVisible();
+  await expect(page.getByTestId("project-name-input")).toHaveValue("پروژه نیمه‌کاره");
+  await expect(page.getByTestId("project-location-input")).toHaveValue("");
+  await expect(page.getByTestId("project-stage-select")).toContainText("نازک کاری و نما");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+});
+
+test("a second home tab renders the completion flow when another tab activates an incomplete project", async ({ context, page }) => {
+  const base = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T00:00:00.000Z" };
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [
+    { ...base, id: "project-ready-tab", name: "پروژه آماده تب", location: "ونک", stage: "فونداسیون" },
+    { ...base, id: "project-incomplete-tab", name: "پروژه ناقص تب", location: "تهران", stage: "اسکلت" },
+  ], "project-ready-tab");
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  const secondPage = await context.newPage();
+  try {
+    await reachBuilderWelcome(secondPage);
+    await secondPage.getByTestId("enter-home").click();
+    await expect(secondPage.getByTestId("builder-home")).toBeVisible();
+
+    await page.getByTestId("project-switcher").click();
+    await page.getByRole("button", { name: /پروژه ناقص تب نیازمند تکمیل/ }).click();
+    await expect(page.getByTestId("project-setup-form")).toBeVisible();
+    await expect(secondPage.getByTestId("project-setup-form")).toBeVisible();
+    await expect(secondPage.getByTestId("project-location-input")).toHaveValue("");
+    await expect(secondPage.getByTestId("builder-home")).toHaveCount(0);
+  } finally {
+    await secondPage.close();
+  }
+});
+
+test("committed v3 stays authoritative when another tab changes an old migration input", async ({ context, page }) => {
+  await enterBuilderHome(page);
+  const canonicalRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  const writerPage = await context.newPage();
+  try {
+    await writerPage.goto("/");
+    await writerPage.evaluate(() => window.localStorage.setItem("chida-prototype-builder-projects:v2", "[]"));
+    await expect(page.getByTestId("builder-home")).toBeVisible();
+    await expect(page.getByTestId("project-foundation-read-error")).toHaveCount(0);
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(canonicalRaw);
+    await page.reload();
+    await reachBuilderWelcome(page);
+    await expect(page.getByTestId("saved-project-summary")).toContainText("برج نیلوفر");
+    await page.getByTestId("enter-home").click();
+    await expect(page.getByTestId("builder-home")).toBeVisible();
+  } finally {
+    await writerPage.close();
+  }
+});
+
+test("an open home tab fail-closes immediately when another tab clears local storage", async ({ context, page }) => {
+  await enterBuilderHome(page);
+  const writerPage = await context.newPage();
+  try {
+    await writerPage.goto("/");
+    await writerPage.evaluate(() => window.localStorage.clear());
+    await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+    await expect(page.getByTestId("builder-home")).toHaveCount(0);
+    expect(await writerPage.evaluate(() => window.localStorage.length)).toBe(0);
+  } finally {
+    await writerPage.close();
+  }
+});
+
+test("project profile keeps its sheet and draft while a failed write preserves exact prior bytes", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await page.getByTestId("project-edit-name").fill("پیش‌نویس ذخیره‌نشده شناسنامه");
+  const originalEnvelopeRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  await page.evaluate(() => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__projectProfileNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === "chida-prototype-builder-projects:v3") throw new DOMException("Project profile write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  });
+
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-edit-storage-error")).toContainText("ذخیره نشد");
+  await expect(page.getByTestId("project-details-sheet")).toBeVisible();
+  await expect(page.getByTestId("project-edit-name")).toHaveValue("پیش‌نویس ذخیره‌نشده شناسنامه");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(originalEnvelopeRaw);
+  expect((await readProjectFoundationEnvelope(page)).profiles[0].version).toBe(1);
+});
+
+test("project profile rolls back its own candidate after a post-write readback failure", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await page.getByTestId("project-edit-name").fill("نامی که باید rollback شود");
+  const originalEnvelopeRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  await page.evaluate(({ key, originalRaw }) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    const nativeSetItem = Storage.prototype.setItem;
+    const testWindow = window as Window & { __projectPostWriteNativeGetItem?: typeof nativeGetItem; __projectPostWriteNativeSetItem?: typeof nativeSetItem; __projectFailedReceiptKey?: string };
+    testWindow.__projectPostWriteNativeGetItem = nativeGetItem;
+    testWindow.__projectPostWriteNativeSetItem = nativeSetItem;
+    let failNextReadback = false;
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      const result = nativeSetItem.call(this, storageKey, value);
+      if (this === window.localStorage && storageKey === key && value !== originalRaw) {
+        failNextReadback = true;
+        testWindow.__projectFailedReceiptKey = JSON.parse(value).idempotencyReceipts.at(-1)?.key;
+      }
+      return result;
+    };
+    Storage.prototype.getItem = function getItem(storageKey: string) {
+      if (this === window.localStorage && storageKey === key && failNextReadback) {
+        failNextReadback = false;
+        return "{readback-failure";
+      }
+      return nativeGetItem.call(this, storageKey);
+    };
+  }, { key: projectFoundationTestStorageKey, originalRaw: originalEnvelopeRaw });
+
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-edit-storage-error")).toContainText("ذخیره نشد");
+  await expect(page.getByTestId("project-details-sheet")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(originalEnvelopeRaw);
+  const failedReceiptKey = await page.evaluate(() => (window as Window & { __projectFailedReceiptKey?: string }).__projectFailedReceiptKey);
+  await page.evaluate(() => {
+    const testWindow = window as Window & { __projectPostWriteNativeGetItem?: typeof Storage.prototype.getItem; __projectPostWriteNativeSetItem?: typeof Storage.prototype.setItem };
+    if (testWindow.__projectPostWriteNativeGetItem) Storage.prototype.getItem = testWindow.__projectPostWriteNativeGetItem;
+    if (testWindow.__projectPostWriteNativeSetItem) Storage.prototype.setItem = testWindow.__projectPostWriteNativeSetItem;
+  });
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-details-sheet")).toBeHidden();
+  const retriedEnvelope = await readProjectFoundationEnvelope(page);
+  expect(retriedEnvelope.profiles[0].version).toBe(2);
+  expect(retriedEnvelope.idempotencyReceipts).toHaveLength(JSON.parse(originalEnvelopeRaw ?? "{}").idempotencyReceipts.length + 1);
+  expect(retriedEnvelope.idempotencyReceipts.at(-1).key).toBe(failedReceiptKey);
+});
+
+test("project profile never overwrites a foreign candidate while handling readback failure", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await page.getByTestId("project-edit-name").fill("ویرایش بازنده");
+  const originalEnvelopeRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey);
+  const foreignRaw = JSON.stringify({ foreignCandidate: true });
+  await page.evaluate(({ key, originalRaw, foreign }) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    const nativeSetItem = Storage.prototype.setItem;
+    const testWindow = window as Window & { __projectForeignNativeGetItem?: typeof nativeGetItem; __projectForeignNativeSetItem?: typeof nativeSetItem };
+    testWindow.__projectForeignNativeGetItem = nativeGetItem;
+    testWindow.__projectForeignNativeSetItem = nativeSetItem;
+    let replaceAtReadback = false;
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      const result = nativeSetItem.call(this, storageKey, value);
+      if (this === window.localStorage && storageKey === key && value !== originalRaw) replaceAtReadback = true;
+      return result;
+    };
+    Storage.prototype.getItem = function getItem(storageKey: string) {
+      if (this === window.localStorage && storageKey === key && replaceAtReadback) {
+        replaceAtReadback = false;
+        nativeSetItem.call(this, storageKey, foreign);
+        return foreign;
+      }
+      return nativeGetItem.call(this, storageKey);
+    };
+  }, { key: projectFoundationTestStorageKey, originalRaw: originalEnvelopeRaw, foreign: foreignRaw });
+
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-details-sheet")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectFoundationTestStorageKey)).toBe(foreignRaw);
+  await page.evaluate(() => {
+    const testWindow = window as Window & { __projectForeignNativeGetItem?: typeof Storage.prototype.getItem; __projectForeignNativeSetItem?: typeof Storage.prototype.setItem };
+    if (testWindow.__projectForeignNativeGetItem) Storage.prototype.getItem = testWindow.__projectForeignNativeGetItem;
+    if (testWindow.__projectForeignNativeSetItem) Storage.prototype.setItem = testWindow.__projectForeignNativeSetItem;
+  });
+});
+
+test("a stale project profile editor cannot overwrite the winning tab", async ({ context, page }) => {
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await page.getByTestId("project-edit-name").fill("پیش‌نویس تب قدیمی");
+
+  const winnerPage = await context.newPage();
+  await reachBuilderWelcome(winnerPage);
+  await winnerPage.getByTestId("enter-home").click();
+  await winnerPage.getByTestId("open-project-space").click();
+  await winnerPage.getByTestId("project-space-edit").click();
+  await winnerPage.getByTestId("project-edit-name").fill("نسخهٔ برنده");
+  await winnerPage.getByTestId("project-edit-save").click();
+  await expect(winnerPage.getByTestId("project-details-sheet")).toBeHidden();
+
+  await page.getByTestId("project-edit-save").click();
+  await expect(page.getByTestId("project-edit-storage-error")).toContainText("جای دیگری تغییر کرده");
+  await expect(page.getByTestId("project-details-sheet")).toBeVisible();
+  const envelope = await readProjectFoundationEnvelope(page);
+  expect(envelope.profiles[0].version).toBe(2);
+  expect(envelope.profiles[0].revisions.at(-1).snapshot.name).toBe("نسخهٔ برنده");
+  await winnerPage.close();
+});
+
+test("project profile serializes two version-one editors and commits exactly one version-two winner", async ({ context, page }) => {
+  const lockName = "chida-prototype-builder-projects:v3:write";
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-space-edit").click();
+  await page.getByTestId("project-edit-name").fill("نام ویرایشگر نخست");
+
+  const secondPage = await context.newPage();
+  await secondPage.setViewportSize({ width: 390, height: 844 });
+  try {
+    await reachBuilderWelcome(secondPage);
+    await secondPage.getByTestId("enter-home").click();
+    await secondPage.getByTestId("open-project-space").click();
+    await secondPage.getByTestId("project-space-edit").click();
+    await secondPage.getByTestId("project-edit-name").fill("نام ویرایشگر دوم");
+    const versionOneEnvelope = await readProjectFoundationEnvelope(page);
+
+    await page.evaluate((name) => {
+      const lockWindow = window as Window & { __projectFoundationLockHeld?: boolean; __releaseProjectFoundationLock?: () => void };
+      void navigator.locks.request(name, { mode: "exclusive" }, async () => {
+        lockWindow.__projectFoundationLockHeld = true;
+        await new Promise<void>((resolve) => { lockWindow.__releaseProjectFoundationLock = resolve; });
+        lockWindow.__projectFoundationLockHeld = false;
+      });
+    }, lockName);
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __projectFoundationLockHeld?: boolean }).__projectFoundationLockHeld))).toBe(true);
+
+    await Promise.all([
+      page.getByTestId("project-edit-save").click(),
+      secondPage.getByTestId("project-edit-save").click(),
+    ]);
+    try {
+      await expect.poll(() => page.evaluate(async (name) => {
+        const snapshot = await navigator.locks.query();
+        return { held: snapshot.held.filter((lock) => lock.name === name).length, pending: snapshot.pending.filter((lock) => lock.name === name).length };
+      }, lockName)).toEqual({ held: 1, pending: 2 });
+      expect((await readProjectFoundationEnvelope(page)).profiles[0].version).toBe(1);
+    } finally {
+      await page.evaluate(() => {
+        const lockWindow = window as Window & { __releaseProjectFoundationLock?: () => void };
+        const release = lockWindow.__releaseProjectFoundationLock;
+        delete lockWindow.__releaseProjectFoundationLock;
+        release?.();
+      });
+    }
+
+    await expect.poll(async () => ({
+      success: 2 - await page.getByTestId("project-details-sheet").count() - await secondPage.getByTestId("project-details-sheet").count(),
+      conflict: await page.getByTestId("project-edit-storage-error").filter({ hasText: "جای دیگری تغییر کرده" }).count() + await secondPage.getByTestId("project-edit-storage-error").filter({ hasText: "جای دیگری تغییر کرده" }).count(),
+    })).toEqual({ success: 1, conflict: 1 });
+
+    const winnerEnvelope = await readProjectFoundationEnvelope(page);
+    expect(winnerEnvelope.storeVersion).toBe(versionOneEnvelope.storeVersion + 1);
+    expect(winnerEnvelope.profiles[0].version).toBe(2);
+    expect(["نام ویرایشگر نخست", "نام ویرایشگر دوم"]).toContain(winnerEnvelope.profiles[0].revisions.at(-1).snapshot.name);
+    expect(winnerEnvelope.profiles[0].history.map((event: { eventType: string }) => event.eventType)).toEqual(["created", "updated"]);
+  } finally {
+    await page.evaluate(() => {
+      const lockWindow = window as Window & { __releaseProjectFoundationLock?: () => void };
+      lockWindow.__releaseProjectFoundationLock?.();
+      delete lockWindow.__releaseProjectFoundationLock;
+    }).catch(() => undefined);
+    await secondPage.close();
+  }
+});
+
+test("project foundation read error stays usable without horizontal overflow at 390 by 844", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => { window.localStorage.setItem("chida-prototype-builder-projects:v2", "{"); });
+  await reachBuilderWelcome(page);
+  await expect(page.getByTestId("project-foundation-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-foundation-retry")).toBeEnabled();
+  expect(await page.getByTestId("success-screen").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });
 
 test("quick action chips form one readable draggable row at the RTL start", async ({ page }) => {
@@ -1074,18 +2207,18 @@ test("quick action chips form one readable draggable row at the RTL start", asyn
   const overflow = await rail.evaluate((element) => element.scrollWidth - element.clientWidth);
   expect(overflow).toBeGreaterThan(20);
   await expect(rail).toHaveCSS("direction", "ltr");
-  await expect(rail.locator(".quick-chip")).toHaveCount(10);
+  await expect(rail.locator(".quick-chip")).toHaveCount(9);
   await expect.poll(() => rail.evaluate((element) => element.scrollLeft)).toBeCloseTo(overflow, 0);
   await expect(page.getByTestId("quick-action-purchase-request")).toContainText("درخواست قیمت");
   await expect(page.getByTestId("quick-action-compare-offers")).toContainText("پیشنهادها");
-  await expect(page.getByTestId("quick-action-tasks")).toContainText("کار جدید");
+  await expect(page.getByTestId("quick-action-tasks")).toContainText("کارها");
   await expect(page.getByTestId("quick-action-files")).toContainText("افزودن فایل");
   await expect(page.getByTestId("quick-action-gallery")).toContainText("افزودن عکس");
   await expect(page.getByTestId("quick-action-memory")).toContainText("ثبت حافظه");
   await expect(page.getByTestId("quick-action-search")).toContainText("جست‌وجوی پروژه");
   await expect(page.getByTestId("quick-action-build")).toContainText("برایم بساز");
   await expect(page.getByTestId("quick-action-meeting-notes")).toContainText("شروع صورت‌جلسه");
-  await expect(page.getByTestId("quick-action-project-plan")).toContainText("برنامه پروژه");
+  await expect(page.getByTestId("quick-action-project-plan")).toHaveCount(0);
 
   const railBox = await rail.boundingBox();
   if (!railBox) throw new Error("Quick-action rail is not rendered");
@@ -1104,6 +2237,8 @@ test("quick actions open every built project destination and label prompt starte
 
   await page.getByTestId("quick-action-tasks").click();
   await expect(page.getByTestId("project-tasks-view")).toBeVisible();
+  await expect(page.getByTestId("project-tasks-view")).toContainText("برنامهٔ فعلی، کارها و تأییدهای پروژه");
+  await expect(page.getByTestId("project-work-plan-entry")).toBeVisible();
   await page.getByTestId("project-tasks-back").click();
 
   await page.getByTestId("quick-action-files").click();
@@ -1122,9 +2257,13 @@ test("quick actions open every built project destination and label prompt starte
   await expect(page.getByTestId("project-source-search-view")).toBeVisible();
   await page.getByTestId("project-source-search-back").click();
 
-  await page.getByTestId("quick-action-project-plan").click();
-  await expect(page.getByTestId("project-backbone-view")).toBeVisible();
-  await page.getByTestId("project-backbone-back").click();
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-work-center-entry").click();
+  await expect(page.getByTestId("project-tasks-view")).toBeVisible();
+  await expect(page.getByTestId("project-tasks-back")).toHaveAttribute("aria-label", "بازگشت به فضای پروژه");
+  await page.getByTestId("project-tasks-back").click();
+  await expect(page.getByTestId("project-workspace")).toBeVisible();
+  await page.getByTestId("project-space-back").click();
 
   await page.getByTestId("quick-action-build").click();
   await expect(page.getByTestId("build-flow")).toBeVisible();
@@ -1224,7 +2363,7 @@ test("builder stores a project document locally, opens the real file, and keeps 
   test.slow();
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const activeProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const activeProjectId = await readActiveProjectId(page);
   expect(activeProjectId).toBeTruthy();
   await page.getByTestId("open-project-space").click();
 
@@ -1385,7 +2524,7 @@ test("builder stores a project document locally, opens the real file, and keeps 
 test("an older metadata-only document can be reselected by recorded name and size without claiming content identity", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const activeProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const activeProjectId = await readActiveProjectId(page);
   if (!activeProjectId) throw new Error("Active project was not created");
   const legacyDocument = {
     name: "صورت وضعیت قدیمی.pdf",
@@ -1486,7 +2625,7 @@ test("an older metadata-only document can be reselected by recorded name and siz
 test("builder adds a project image and the project gallery restores its real preview", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const activeProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const activeProjectId = await readActiveProjectId(page);
   expect(activeProjectId).toBeTruthy();
   await page.getByTestId("open-project-space").click();
 
@@ -1562,11 +2701,12 @@ test("builder adds a project image and the project gallery restores its real pre
   await expect.poll(() => page.evaluate(() => (window as typeof window & { __projectImageRevokeCount?: number }).__projectImageRevokeCount ?? 0)).toBeGreaterThanOrEqual(2);
   await page.getByTestId("project-gallery-entry").click();
 
-  await page.evaluate(() => {
-    const storedProjects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
-    storedProjects.push({ id: "project-gallery-b", name: "پروژه دوم", location: "ونک", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T00:00:00.000Z" });
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(storedProjects));
-  });
+  await page.getByTestId("project-gallery-back").click();
+  await page.getByTestId("project-space-back").click();
+  await addAndActivateProject(page, "پروژه دوم");
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet").getByRole("button", { name: /برج نیلوفر/ }).click();
+  await page.getByTestId("project-space-continue").click();
 
   await page.reload();
   await reachBuilderWelcome(page);
@@ -1799,12 +2939,11 @@ test("project document content failure rolls back its metadata", async ({ page }
 });
 
 test("project document parser fail-closes mixed invalid records without rewriting their bytes", async ({ page }) => {
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [
+    { id: "project-a", name: "پروژه الف", location: "ونک", stage: "اسکلت", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T00:00:00.000Z" },
+  ], "project-a");
   await page.goto("/");
   const seededRaw = await page.evaluate(() => {
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
-      { id: "project-a", name: "پروژه الف", location: "ونک", stage: "اسکلت", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T00:00:00.000Z" },
-    ]));
-    window.localStorage.setItem("chida-prototype-active-project", "project-a");
     const common = {
       projectId: "project-a",
       mimeType: "application/pdf",
@@ -1873,8 +3012,7 @@ test("quick actions realign to the RTL start after returning to chat", async ({ 
 });
 
 test("project documents never appear in another project", async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => {
+  await page.addInitScript(() => {
     window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
       { id: "project-a", name: "پروژه الف", location: "ونک", stage: "اسکلت", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T00:00:00.000Z" },
       { id: "project-b", name: "پروژه ب", location: "جردن", stage: "نازک‌کاری", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T00:00:00.000Z" },
@@ -2277,7 +3415,7 @@ test("snapshot migration replays a resolved conflict instead of deriving history
 test("memory core migrates legacy aliases conservatively and never turns context preference into permission", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("Active project id is unavailable");
   const timestamp = "2026-08-30T12:00:00.000Z";
   await page.evaluate(({ ownerProjectId, storedAt }) => {
@@ -2316,7 +3454,7 @@ test("memory core migrates legacy aliases conservatively and never turns context
 test("a valid empty memory envelope never resurrects legacy bytes", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("Active project id is unavailable");
   const emptyEnvelope = { schemaVersion: 2, fingerprintVersion: "memory-v2", envelopeVersion: 1, records: [], candidates: [], tombstones: [], migrationReports: [], updatedAt: "2026-08-30T12:00:00.000Z" };
   await page.evaluate(({ canonical, ownerProjectId }) => {
@@ -2475,21 +3613,28 @@ test("memory conflict replacement records resolution before addition and rejects
 
 test("memory refuses writes when an exclusive browser lock is unavailable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined }));
   await enterBuilderHome(page);
+  await page.evaluate(() => Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined }));
   await page.getByTestId("quick-action-memory").click();
-  await expect(page.getByTestId("project-memory-read-error")).toContainText("خوانده نشد");
-  await expect(page.getByTestId("project-memory-add")).toBeDisabled();
+  await expect(page.getByTestId("project-memory-add")).toBeEnabled();
+  await page.getByTestId("project-memory-add").click();
+  await page.getByTestId("project-memory-title").fill("حافظه بدون قفل");
+  await page.getByTestId("project-memory-content").fill("این ثبت باید fail-close بماند.");
+  await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-storage-error")).toContainText("قفل امن مرورگر در دسترس نیست");
+  await expect(page.getByTestId("project-memory-editor-sheet")).toBeVisible();
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBeNull();
 });
 
 test("legacy memory migration also fails closed when Web Locks are unavailable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => {
-    Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined });
+  await enterBuilderHome(page);
+  await page.evaluate(() => {
     window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([{ id: "legacy-no-lock", projectId: "legacy-project", title: "مهاجرت بدون قفل", content: "این بایت‌ها نباید بیرون قفل به canonical تبدیل شوند.", kind: "یادداشت سازنده", source: "ثبت مستقیم شما", visibility: "خصوصی پروژه", useInContext: true, status: "ثبت محلی", version: 1, createdAt: "2026-08-30T11:00:00.000Z", updatedAt: "2026-08-30T11:00:00.000Z" }]));
   });
-  await enterBuilderHome(page);
+  await page.addInitScript(() => Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined }));
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
   await page.getByTestId("open-project-space").click();
   await expect(page.getByTestId("project-memory-entry")).toContainText("بازیابی محلی کامل نشد");
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).toBeNull();
@@ -3023,7 +4168,7 @@ test("failed legacy migration preserves source bytes and does not create a canon
 test("an interrupted multi-store memory hard-delete resumes from its durable intent", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("Active project id is unavailable");
   await page.evaluate((ownerProjectId) => {
     window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([{ id: "legacy-delete-resume", projectId: ownerProjectId, title: "حذف نیمه‌تمام", content: "این متن باید پس از reload نیز از legacy پاک شود.", kind: "یادداشت سازنده", source: "ثبت مستقیم شما", visibility: "خصوصی پروژه", useInContext: true, status: "ثبت محلی", version: 1, createdAt: "2026-08-30T11:00:00.000Z", updatedAt: "2026-08-30T11:00:00.000Z" }]));
@@ -3061,7 +4206,7 @@ test("an interrupted multi-store memory hard-delete resumes from its durable int
 test("a pre-cutover v2 delete intent crosses the old control key without losing the deletion", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("Active project id is unavailable");
   await page.evaluate((ownerProjectId) => {
     window.localStorage.setItem("chida-prototype-project-memories:v1", JSON.stringify([{ id: "legacy-bridge-delete", projectId: ownerProjectId, title: "حذف پل نسل", content: "این متن نباید با جابه‌جایی کلید intent زنده شود.", kind: "یادداشت سازنده", source: "ثبت مستقیم شما", visibility: "خصوصی پروژه", useInContext: true, status: "ثبت محلی", version: 1, createdAt: "2026-08-30T11:00:00.000Z", updatedAt: "2026-08-30T11:00:00.000Z" }]));
@@ -3114,7 +4259,7 @@ test("a pre-cutover v2 delete intent crosses the old control key without losing 
 test("a pending MemoryCandidate stays separate until exact user consent promotes it", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("Active project id is unavailable");
   const proposedSnapshot = { title: "پیشنهاد ثبت‌نشده", content: "این متن هنوز حافظه نیست.", kind: "یادداشت سازنده", memoryType: "note" };
   const evidenceRefs: string[] = [];
@@ -3174,7 +4319,7 @@ test("a pending MemoryCandidate stays separate until exact user consent promotes
 test("an expired MemoryCandidate transitions once under lock without becoming memory", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("Active project id is unavailable");
   const proposedSnapshot = { title: "پیشنهاد منقضی", content: "این متن نباید پس از انقضا حافظه شود.", kind: "یادداشت سازنده", memoryType: "note" };
   const evidenceRefs: string[] = [];
@@ -3212,7 +4357,7 @@ test("an expired MemoryCandidate transitions once under lock without becoming me
 test("a pending MemoryCandidate whose history crossed its expiry fails closed", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("Active project id is unavailable");
   const proposedSnapshot = { title: "پیشنهاد زمانی ناسازگار", content: "این پیشنهاد نباید در حالت در انتظار قابل‌استفاده بماند.", kind: "یادداشت سازنده", memoryType: "note" };
   const evidenceRefs: string[] = [];
@@ -3246,7 +4391,7 @@ test("a pending MemoryCandidate whose history crossed its expiry fails closed", 
 test("a malformed v2 Candidate decision fails closed without falling back to valid legacy bytes", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("Active project id is unavailable");
   const proposedSnapshot = { title: "تصمیم خراب", content: "این payload نباید canonical شود.", kind: "یادداشت سازنده", memoryType: "note" };
   const exactPayload = JSON.stringify(stableTestValue({ scopeType: "project_private", scopeId: projectId, proposedSnapshot, evidenceRefs: [] }));
@@ -3272,7 +4417,7 @@ test("a malformed v2 Candidate decision fails closed without falling back to val
 test("project memory stays inside its owning project", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const firstProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const firstProjectId = await readActiveProjectId(page);
   await page.getByTestId("open-project-space").click();
   await page.getByTestId("project-memory-entry").click();
   await page.getByTestId("project-memory-add").click();
@@ -3282,17 +4427,10 @@ test("project memory stays inside its owning project", async ({ page }) => {
   await expect(page.getByTestId("project-memory-card")).toContainText("تصمیم پروژهٔ اول");
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"))).not.toBeNull();
 
-  await page.evaluate(() => {
-    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
-    projects.push({ id: "project-memory-b", name: "پروژه دوم", location: "ونک", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T00:00:00.000Z" });
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
-  });
-
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
-  await page.getByTestId("project-switcher").click();
-  await page.getByRole("button", { name: /پروژه دوم تهران/ }).click();
+  await page.getByTestId("project-memory-back").click();
+  await page.getByTestId("project-space-back").click();
+  await addAndActivateProject(page, "پروژه دوم");
+  await page.getByTestId("open-project-space").click();
   await expect(page.getByTestId("project-memory-entry")).toContainText("هنوز موردی ثبت نشده");
   await page.getByTestId("project-memory-entry").click();
   await expect(page.getByTestId("project-memory-empty")).toBeVisible();
@@ -3329,7 +4467,7 @@ test("project memory reports storage failure instead of showing false success", 
 test("memory migration quarantines malformed and duplicate records without silent drop", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("Active project id is unavailable");
   const timestamp = new Date().toISOString();
 
@@ -3466,22 +4604,21 @@ test("project memory keeps persisted state when edit toggle or delete storage fa
 
 test("builder searches only local project memory and file metadata without technical card clutter", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [{
+    id: "project-search-a",
+    name: "برج نیلوفر",
+    location: "سعادت‌آباد",
+    stage: "اسکلت بندی",
+    usage: "مسکونی",
+    landArea: "650",
+    builtArea: "4200",
+    aboveGroundFloors: "8",
+    basementFloors: "2",
+    unitCount: "16",
+    createdAt: "2026-08-27T08:00:00.000Z",
+  }], "project-search-a");
   await page.goto("/");
   await page.evaluate(() => {
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([{
-      id: "project-search-a",
-      name: "برج نیلوفر",
-      location: "سعادت‌آباد",
-      stage: "اسکلت بندی",
-      usage: "مسکونی",
-      landArea: "650",
-      builtArea: "4200",
-      aboveGroundFloors: "8",
-      basementFloors: "2",
-      unitCount: "16",
-      createdAt: "2026-08-27T08:00:00.000Z",
-    }]));
-    window.localStorage.setItem("chida-prototype-active-project", "project-search-a");
     const memoryBase = {
       projectId: "project-search-a",
       kind: "واقعیت تأییدشده توسط سازنده",
@@ -3606,14 +4743,13 @@ test("builder searches only local project memory and file metadata without techn
 
 test("local project search never leaks records when the active project changes", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T08:00:00.000Z" };
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [
+    { ...projectBase, id: "project-isolation-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
+    { ...projectBase, id: "project-isolation-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
+  ], "project-isolation-a");
   await page.goto("/");
   await page.evaluate(() => {
-    const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T08:00:00.000Z" };
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
-      { ...projectBase, id: "project-isolation-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
-      { ...projectBase, id: "project-isolation-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
-    ]));
-    window.localStorage.setItem("chida-prototype-active-project", "project-isolation-a");
     const memoryBase = {
       kind: "یادداشت سازنده",
       source: "ثبت مستقیم شما",
@@ -3670,13 +4806,12 @@ test("local project search reports an incomplete read instead of claiming an emp
   await page.addInitScript(() => {
     const nativeGetItem = Storage.prototype.getItem;
     Storage.prototype.getItem = function getItem(key: string) {
-      if (this === window.localStorage) {
+      if (this === window.localStorage && key === "chida-prototype-memory-core:v2") {
         throw new DOMException("Storage read failed", "SecurityError");
       }
       return nativeGetItem.call(this, key);
     };
   });
-
   await enterBuilderHome(page);
   await page.getByTestId("capability-cluster").click();
   await page.getByTestId("source-search-tool").click();
@@ -4211,15 +5346,15 @@ test("Source/Composer keeps draft attachments and committed sources inside their
   await expect(page.getByTestId("composer-attachment")).toHaveCount(0);
 
   const scoped = await page.evaluate(() => ({
-    projects: JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]"),
     envelope: JSON.parse(window.localStorage.getItem("chida-prototype-project-sources:v1") ?? "null"),
     files: JSON.parse(window.localStorage.getItem("chida-prototype-project-files:v1") ?? "[]"),
   }));
+  const scopedProjects = projectFoundationViews(await readProjectFoundationEnvelope(page));
   expect(scoped.envelope.intakes).toHaveLength(2);
-  expect(scoped.envelope.intakes[0].projectId).toBe(scoped.projects[1].id);
-  expect(scoped.envelope.intakes[1].projectId).toBe(scoped.projects[0].id);
-  expect(scoped.envelope.records.filter((source: any) => source.projectId === scoped.projects[0].id)).toHaveLength(2);
-  expect(scoped.files).toEqual([expect.objectContaining({ projectId: scoped.projects[0].id, originalName: "فایل پروژه اول.pdf" })]);
+  expect(scoped.envelope.intakes[0].projectId).toBe(scopedProjects[1].id);
+  expect(scoped.envelope.intakes[1].projectId).toBe(scopedProjects[0].id);
+  expect(scoped.envelope.records.filter((source: any) => source.projectId === scopedProjects[0].id)).toHaveLength(2);
+  expect(scoped.files).toEqual([expect.objectContaining({ projectId: scopedProjects[0].id, originalName: "فایل پروژه اول.pdf" })]);
 
   await page.getByTestId("project-switcher").click();
   await page.getByTestId("projects-sheet").getByRole("button", { name: /پروژه دوم/ }).click();
@@ -4230,8 +5365,8 @@ test("Source/Composer keeps draft attachments and committed sources inside their
 });
 
 test("Source/Composer fails closed without Web Locks and keeps the draft retryable", async ({ page }) => {
-  await page.addInitScript(() => Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined }));
   await enterBuilderHome(page);
+  await page.evaluate(() => Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined }));
   await page.getByTestId("composer-input").fill("بدون قفل امن ثبت نکن");
   await page.getByTestId("send-button").click();
 
@@ -4591,8 +5726,8 @@ test("Source/Composer reconstructs an image Blob with the safe MIME bound to its
 
 test("Source/Composer never reconciles file metadata while the Source store is unreadable", async ({ page }) => {
   await enterBuilderHome(page);
-  const seededRaw = await page.evaluate(() => {
-    const projectId = window.localStorage.getItem("chida-prototype-active-project")!;
+  const projectId = await readActiveProjectId(page);
+  const seededRaw = await page.evaluate((projectId) => {
     const records = [{
       id: "file-unreadable-source-guard",
       projectId,
@@ -4614,7 +5749,7 @@ test("Source/Composer never reconciles file metadata while the Source store is u
     window.localStorage.setItem("chida-prototype-project-files:v1", raw);
     window.localStorage.setItem("chida-prototype-project-sources:v1", "{unreadable-source");
     return raw;
-  });
+  }, projectId);
   await page.addInitScript(() => {
     const nativeSetItem = Storage.prototype.setItem;
     const nativeRemoveItem = Storage.prototype.removeItem;
@@ -4733,32 +5868,655 @@ test("project context, dark-only settings, keyboard attachment, and local send a
   await expect(page.getByTestId("keyboard-dock")).toHaveAttribute("data-visible", "false");
 });
 
-test("Build creates a safe project plugin and installs its skill in the prototype", async ({ page }) => {
+test("BuiltArtifact activates only the exact safe preview inside the active project", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+
+  await createBuiltArtifactPreview(page, "رهگیر جریان نقدی", "هزینه‌های ۳۰ روز آینده را جمع‌بندی و انحراف بودجه را هشدار بده");
+
+  const preview = page.getByTestId("built-artifact-preview");
+  await expect(preview).toContainText("رهگیر جریان نقدی");
+  await expect(preview).toContainText("برج نیلوفر");
+  await expect(preview).toContainText("داده");
+  await expect(preview).toContainText("مجوز");
+  await expect(preview).toContainText("اجزای امن");
+  await expect(preview).toContainText("فعال‌سازی محلی");
+  await expect(preview).toContainText("بدون اجرای کد آزاد");
+  await expect(preview).toContainText("هیچ بستهٔ خارجی یا مهارت اجرایی به دستگاه افزوده نمی‌شود");
+  await expect(page.getByTestId("build-install-button")).toHaveCount(0);
+  await expect(page.getByTestId("plugin-install-status")).toHaveCount(0);
+  await expect(page.getByTestId("built-artifact-edit-preview")).toBeVisible();
+  await expect(page.getByTestId("built-artifact-history")).toBeVisible();
+  await expect(page.getByTestId("built-artifact-remove")).toBeVisible();
+
+  await approveAndActivateBuiltArtifact(page);
+
+  const stored = await readBuiltArtifactEnvelope(page);
+  const activeProjectId = await readActiveProjectId(page);
+  expect(stored).toMatchObject({ envelopeVersion: 1, storeVersion: expect.any(Number), records: [expect.objectContaining({ type: "built_artifact", ownerPrincipalType: "project", accountSide: "builder", scopeType: "project_private", custodianService: "Artifact Domain Service", status: "active", version: expect.any(Number), currentRevisionId: expect.any(String), revisions: expect.any(Array), history: expect.any(Array) })], tombstones: [] });
+  const record = stored.records[0];
+  const currentRevision = record.revisions.at(-1);
+  expect(record.projectId).toBe(activeProjectId);
+  expect(record.ownerPrincipalId).toBe(record.projectId);
+  expect(record.scopeId).toBe(record.projectId);
+  expect(record.revisions).toHaveLength(record.version);
+  expect(record.history).toHaveLength(record.version);
+  expect(record.currentRevisionId).toBe(currentRevision.id);
+  expect(record.history.slice(0, 3).map((event: any) => event.type)).toEqual(["created", "previewed", "activated"]);
+  expect(currentRevision).toMatchObject({ name: "رهگیر جریان نقدی", description: "هزینه‌های ۳۰ روز آینده را جمع‌بندی و انحراف بودجه را هشدار بده", catalogEntryId: "project-followup-view", catalogEntryVersion: 1, status: "active", blockedReason: null, manifest: expect.objectContaining({ activationLocation: { kind: "project-tools", projectId: activeProjectId }, boundaries: { codeExecution: false, networkAccess: false, externalInstall: false, externalEffect: "none" } }), fingerprint: expect.stringMatching(/^sha256-[0-9a-f]{64}$/) });
+  expect(record.history.at(-1).approvalFingerprint).toBe(record.revisions.at(-2).fingerprint);
+
+  await page.keyboard.press("Escape");
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-tool-row")).toContainText("رهگیر جریان نقدی");
+  await expect(page.getByTestId("built-artifact-tool-row")).toHaveAttribute("data-state", "active");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+});
+
+test("BuiltArtifact rejects activation when the approved preview changed behind the UI", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "پیگیری کارهای باز", "کارهای باز برنامهٔ پروژه را در یک نمای امن جمع‌بندی کن");
+  await page.getByTestId("built-artifact-approval").check();
+
+  const envelope = await readBuiltArtifactEnvelope(page);
+  const record = envelope.records[0];
+  const previewRevision = record.revisions.at(-1);
+  const approvedFingerprint = previewRevision.fingerprint;
+  previewRevision.description = "نسخه‌ای متفاوت که در پیش‌نمایش تأییدشده دیده نشده است";
+  previewRevision.fingerprint = builtArtifactTestFingerprint(record, previewRevision);
+  expect(previewRevision.fingerprint).not.toBe(approvedFingerprint);
+  const changedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: builtArtifactsTestStorageKey, raw: changedRaw });
+
+  await page.getByTestId("built-artifact-activate").click();
+  await expect(page.getByTestId("built-artifact-error")).toBeVisible();
+  await expect(page.getByTestId("build-flow")).toHaveAttribute("data-step", "preview");
+  await expect(page.getByTestId("built-artifact-detail")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(changedRaw);
+  const persisted = await readBuiltArtifactEnvelope(page);
+  expect(persisted.records[0]).toMatchObject({ status: "preview_ready", version: record.version });
+  expect(persisted.records[0].revisions.at(-1).fingerprint).toBe(previewRevision.fingerprint);
+});
+
+test("BuiltArtifact parser rejects an activated revision whose payload differs from the exact approved preview", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای دقیق پروژه", "همان دادهٔ تأییدشده را بدون تغییر فعال کن");
+  await approveAndActivateBuiltArtifact(page);
+
+  const envelope = await readBuiltArtifactEnvelope(page);
+  const record = envelope.records[0];
+  const activeRevision = record.revisions.at(-1);
+  activeRevision.description = "payload تازه‌ای که در preview تأییدشده نبود";
+  activeRevision.fingerprint = builtArtifactTestFingerprint(record, activeRevision);
+  const tamperedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: builtArtifactsTestStorageKey, raw: tamperedRaw });
+  await page.reload();
+
+  await enterBuilderHome(page);
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-read-error")).toBeVisible();
+  await expect(page.getByTestId("build-tool-entry")).toBeDisabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(tamperedRaw);
+});
+
+test("BuiltArtifact parser rejects a forged initial revision chronology without changing its bytes", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای تاریخچه امن", "ترتیب زمانی نسخه‌ها را به شکل معتبر نگه دار");
+
+  const envelope = await readBuiltArtifactEnvelope(page);
+  const record = envelope.records[0];
+  record.revisions[0].createdAt = "2000-01-01T00:00:00.000Z";
+  record.revisions[0].fingerprint = builtArtifactTestFingerprint(record, record.revisions[0]);
+  const forgedRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: builtArtifactsTestStorageKey, raw: forgedRaw });
+  await page.reload();
+
+  await enterBuilderHome(page);
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(forgedRaw);
+});
+
+test("BuiltArtifact keeps an 80-character name inside the 390px preview and Tools surface", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const longName = "ن".repeat(80);
+  await createBuiltArtifactPreview(page, longName, "این نام بلند باید در کارت و فهرست ابزارهای پروژه بدون اسکرول افقی شکسته شود");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+  await page.getByTestId("built-artifact-edit-preview").click();
+  await expect(page.getByTestId("build-flow")).toHaveAttribute("data-step", "define");
+  await expect(page.getByTestId("built-artifact-history")).toBeVisible();
+  await expect(page.getByTestId("built-artifact-remove")).toBeVisible();
+  await page.getByTestId("built-artifact-save-revision").click();
+  await expect(page.getByTestId("built-artifact-preview")).toBeVisible();
+  await approveAndActivateBuiltArtifact(page);
+  await page.keyboard.press("Escape");
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-tool-row")).toContainText(longName);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+});
+
+test("BuiltArtifact keeps artifacts inside their project and opens the active tool from Tools", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "ابزار پروژه نیلوفر", "فقط کارهای باز همین پروژه را نمایش بده");
+  await approveAndActivateBuiltArtifact(page);
+  const firstProjectId = await readActiveProjectId(page);
+
+  await page.keyboard.press("Escape");
+  await addAndActivateProject(page, "پروژه آفتاب");
+  const secondProjectId = await readActiveProjectId(page);
+  expect(secondProjectId).not.toBe(firstProjectId);
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-tool-row")).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet").getByRole("button", { name: /برج نیلوفر/ }).click();
+  await page.getByTestId("project-space-continue").click();
+  await page.getByTestId("capability-cluster").click();
+  const projectTool = page.getByTestId("built-artifact-tool-row");
+  await expect(projectTool).toHaveCount(1);
+  await expect(projectTool).toContainText("ابزار پروژه نیلوفر");
+  await projectTool.click();
+  await expect(page.getByTestId("built-artifact-detail")).toContainText("ابزار پروژه نیلوفر");
+
+  const stored = await readBuiltArtifactEnvelope(page);
+  expect(stored.records).toEqual([expect.objectContaining({ projectId: firstProjectId, scopeId: firstProjectId, status: "active" })]);
+  expect(stored.records.some((artifact: any) => artifact.projectId === secondProjectId)).toBe(false);
+});
+
+test("BuiltArtifact treats an unreadable store as an error and locks mutation until retry succeeds", async ({ page }) => {
+  const unreadableRaw = "{not-valid-built-artifact-json";
+  await page.addInitScript(({ key, raw }) => window.localStorage.setItem(key, raw), { key: builtArtifactsTestStorageKey, raw: unreadableRaw });
   await enterBuilderHome(page);
 
   await page.getByTestId("capability-cluster").click();
-  await page.getByTestId("build-tool-entry").click();
-  await expect(page.getByTestId("build-flow")).toHaveAttribute("data-step", "define");
+  await expect(page.getByTestId("built-artifact-read-error")).toBeVisible();
+  await expect(page.getByTestId("built-artifact-retry-read")).toBeVisible();
+  await expect(page.getByTestId("build-tool-entry")).toBeDisabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(unreadableRaw);
+  await page.getByTestId("built-artifact-retry-read").click();
+  await expect(page.getByTestId("built-artifact-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(unreadableRaw);
 
-  await page.getByTestId("build-name-input").fill("رهگیر جریان نقدی");
-  await page.getByTestId("build-description-input").fill("هزینه‌های ۳۰ روز آینده را جمع‌بندی و انحراف بودجه را هشدار بده");
-  await page.getByTestId("build-start-button").click();
+  await page.evaluate((key) => window.localStorage.removeItem(key), builtArtifactsTestStorageKey);
+  await page.getByTestId("built-artifact-retry-read").click();
+  await expect(page.getByTestId("built-artifact-read-error")).toBeHidden();
+  await expect(page.getByTestId("build-tool-entry")).toBeEnabled();
+});
 
+test("BuiltArtifact write failure preserves the exact preview without ghost activation", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای پیگیری ایمن", "کارهای باز را بدون اثر بیرونی نمایش بده");
+  const beforeRaw = await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey);
+  await page.evaluate((key) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    let failed = false;
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      if (this === window.localStorage && storageKey === key && !failed) {
+        failed = true;
+        throw new DOMException("BuiltArtifact write failed", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, storageKey, value);
+    };
+  }, builtArtifactsTestStorageKey);
+
+  await page.getByTestId("built-artifact-approval").check();
+  await page.getByTestId("built-artifact-activate").click();
+  await expect(page.getByTestId("built-artifact-error")).toBeVisible();
   await expect(page.getByTestId("build-flow")).toHaveAttribute("data-step", "preview");
-  await expect(page.getByTestId("build-stage-spec")).toHaveAttribute("data-state", "complete");
-  await expect(page.getByTestId("build-stage-plugin")).toHaveAttribute("data-state", "complete");
-  await expect(page.getByTestId("build-stage-skill")).toHaveAttribute("data-state", "complete");
-  await expect(page.getByTestId("build-flow")).toContainText("بدون اجرای کد آزاد");
-  await expect(page.getByTestId("build-flow")).toContainText("بودجه و هزینه‌های پروژه");
+  await expect(page.getByTestId("built-artifact-preview")).toBeVisible();
+  await expect(page.getByTestId("built-artifact-detail")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(beforeRaw);
+  expect((await readBuiltArtifactEnvelope(page)).records[0].status).toBe("preview_ready");
+  expect(pageErrors).toEqual([]);
+});
 
-  await page.getByTestId("build-install-button").click();
-  await expect(page.getByTestId("build-flow")).toHaveAttribute("data-step", "installed");
-  await expect(page.getByTestId("plugin-install-status")).toHaveAttribute("data-state", "installed");
-  await expect(page.getByTestId("skill-install-status")).toHaveAttribute("data-state", "installed");
-  await page.getByTestId("build-done-button").click();
+test("BuiltArtifact rejects free-code input and a catalog or manifest outside the closed catalog", async ({ page }) => {
+  await enterBuilderHome(page);
+  await openBuiltArtifactCreator(page);
+  await page.getByTestId("build-name-input").fill("ابزار اجرای دلخواه");
+  await page.getByTestId("build-description-input").fill("javascript:alert('free code')");
+  await page.getByTestId("build-start-button").click();
+  await expect(page.getByTestId("built-artifact-error")).toBeVisible();
+  await expect(page.getByTestId("build-flow")).toHaveAttribute("data-step", "define");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBeNull();
+  await expect(page.getByTestId("build-code-input")).toHaveCount(0);
 
+  await page.getByTestId("build-description-input").fill("نمای ثابت کارهای باز را با اجزای امن نشان بده");
+  await page.getByTestId("build-start-button").click();
+  await expect(page.getByTestId("built-artifact-preview")).toBeVisible();
+  await page.getByTestId("built-artifact-approval").check();
+  const envelope = await readBuiltArtifactEnvelope(page);
+  const revision = envelope.records[0].revisions.at(-1);
+  revision.catalogEntryId = "free-form-script";
+  revision.manifest.safeComponents = [{ id: "custom-script", version: 1 }];
+  revision.manifest.boundaries.codeExecution = true;
+  const invalidRaw = JSON.stringify(envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: builtArtifactsTestStorageKey, raw: invalidRaw });
+
+  await page.getByTestId("built-artifact-activate").click();
+  await expect(page.getByTestId("built-artifact-read-error")).toBeVisible();
+  await expect(page.locator('[data-testid="built-artifact-card"][data-state="active"]')).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(invalidRaw);
+});
+
+test("BuiltArtifact disable and reactivation are persisted lifecycle transitions", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای وضعیت پروژه", "وضعیت برنامه و کارهای پروژه را به‌صورت فقط‌خواندنی نشان بده");
+  await approveAndActivateBuiltArtifact(page);
+  const activeRecord = (await readBuiltArtifactEnvelope(page)).records[0];
+
+  await page.getByTestId("built-artifact-disable").click();
+  await expect(page.getByTestId("built-artifact-card")).toHaveAttribute("data-state", "disabled");
+  await expect(page.getByTestId("built-artifact-status")).toHaveText("غیرفعال");
+  const disabledRecord = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(disabledRecord).toMatchObject({ status: "disabled", version: activeRecord.version + 1 });
+  expect(disabledRecord.history.at(-1).type).toBe("disabled");
+  expect(disabledRecord.revisions.at(-1)).toMatchObject({ status: "disabled", name: "نمای وضعیت پروژه" });
+
+  await page.getByTestId("built-artifact-reactivate").click();
+  await expect(page.getByTestId("built-artifact-card")).toHaveAttribute("data-state", "active");
+  await expect(page.getByTestId("built-artifact-status")).toHaveText("فعال");
+  const reactivatedRecord = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(reactivatedRecord).toMatchObject({ status: "active", version: disabledRecord.version + 1 });
+  expect(reactivatedRecord.history.at(-1)).toMatchObject({ type: "reactivated", approvalFingerprint: disabledRecord.revisions.at(-1).fingerprint });
+});
+
+test("BuiltArtifact blocks on a real unreadable dependency and resumes only after repair and explicit revalidation", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای وابسته به کارها", "کارهای ثبت‌شدهٔ همین پروژه را فقط بخوان");
+  await approveAndActivateBuiltArtifact(page);
+
+  const unreadableTaskBytes = "{not-valid-project-task-json";
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: projectTasksTestStorageKey, raw: unreadableTaskBytes });
+  await page.reload();
+  await enterBuilderHome(page);
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records[0]?.status).toBe("blocked");
   await page.getByTestId("capability-cluster").click();
-  await expect(page.getByTestId("installed-tool-row")).toContainText("رهگیر جریان نقدی");
+  await expect(page.getByTestId("built-artifact-dependency-error")).toBeVisible();
+  await expect(page.getByTestId("build-tool-entry")).toBeDisabled();
+  await page.getByTestId("built-artifact-tool-row").click();
+  await expect(page.getByTestId("built-artifact-card")).toHaveAttribute("data-state", "blocked");
+  await expect(page.getByTestId("built-artifact-detail")).toContainText("استفاده از ساخته تا بازیابی وابستگی متوقف شد");
+  await expect(page.getByTestId("built-artifact-reactivate")).toBeDisabled();
+  const blocked = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(blocked).toMatchObject({ status: "blocked", version: 4 });
+  expect(blocked.history.at(-1)).toMatchObject({ type: "blocked", actor: "سامانهٔ محلی", approvalFingerprint: null });
+  expect(blocked.revisions.at(-1)).toMatchObject({ status: "blocked", blockedReason: expect.stringContaining("تا بازیابی وابستگی متوقف شد") });
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectTasksTestStorageKey)).toBe(unreadableTaskBytes);
+
+  await page.evaluate((key) => window.localStorage.removeItem(key), projectTasksTestStorageKey);
+  await page.reload();
+  await enterBuilderHome(page);
+  await page.getByTestId("capability-cluster").click();
+  await page.getByTestId("built-artifact-tool-row").click();
+  await expect(page.getByTestId("built-artifact-reactivate")).toBeEnabled();
+  await page.getByTestId("built-artifact-reactivate").click();
+  await expect(page.getByTestId("built-artifact-card")).toHaveAttribute("data-state", "active");
+  const reactivated = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(reactivated).toMatchObject({ status: "active", version: 5 });
+  expect(reactivated.history.at(-1)).toMatchObject({ type: "reactivated", approvalFingerprint: blocked.revisions.at(-1).fingerprint });
+});
+
+test("BuiltArtifact keeps a failed invalidation blocked across project switches and reload", async ({ page }) => {
+  await enterBuilderHome(page);
+  const firstProjectId = await readActiveProjectId(page);
+  await addAndActivateProject(page, "پروژه پایداری Build");
+  const secondProjectId = await readActiveProjectId(page);
+  expect(secondProjectId).not.toBe(firstProjectId);
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet").getByRole("button", { name: /برج نیلوفر/ }).click();
+  await page.getByTestId("project-space-continue").click();
+  await createBuiltArtifactPreview(page, "نمای توقف fail-close", "در خطای ذخیره نیز نباید به‌عنوان ابزار فعال قابل‌استفاده بماند");
+  await approveAndActivateBuiltArtifact(page);
+  const activeRaw = await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey);
+  await page.evaluate((key) => window.localStorage.setItem(key, "{unreadable-project-tasks"), projectTasksTestStorageKey);
+  await page.addInitScript(({ key, allowKey }) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      if (this === window.localStorage && storageKey === key && window.sessionStorage.getItem(allowKey) !== "1") {
+        throw new DOMException("BuiltArtifact invalidation write failed", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, storageKey, value);
+    };
+  }, { key: builtArtifactsTestStorageKey, allowKey: "qa-allow-built-artifact-invalidation-write" });
+  await page.reload();
+
+  await enterBuilderHome(page);
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-tool-row")).toHaveAttribute("data-state", "blocked");
+  await expect(page.getByTestId("built-artifact-dependency-error")).toContainText("استفاده از ساختهٔ فعال فوراً متوقف است");
+  await expect(page.getByTestId("built-artifact-dependency-error")).toContainText("ثبت ماندگار وضعیت توقف انجام نشد");
+  await expect(page.getByTestId("built-artifact-retry-invalidation")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(activeRaw);
+  expect((await readBuiltArtifactEnvelope(page)).records[0].status).toBe("active");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).not.toBeNull();
+
+  await page.keyboard.press("Escape");
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet").getByRole("button", { name: /پروژه پایداری Build/ }).click();
+  await page.getByTestId("project-space-continue").click();
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-tool-row")).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await page.getByTestId("project-switcher").click();
+  await page.getByTestId("projects-sheet").getByRole("button", { name: /برج نیلوفر/ }).click();
+  await page.getByTestId("project-space-continue").click();
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-tool-row")).toHaveAttribute("data-state", "blocked");
+  expect((await readBuiltArtifactEnvelope(page)).records[0].status).toBe("active");
+
+  await page.evaluate((key) => {
+    window.localStorage.removeItem(key);
+  }, projectTasksTestStorageKey);
+  await page.reload();
+  await enterBuilderHome(page);
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-tool-row")).toHaveAttribute("data-state", "blocked");
+  await expect(page.getByTestId("built-artifact-retry-invalidation")).toBeVisible();
+  expect((await readBuiltArtifactEnvelope(page)).records[0].status).toBe("active");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).not.toBeNull();
+
+  await page.evaluate(() => window.sessionStorage.setItem("qa-allow-built-artifact-invalidation-write", "1"));
+  await page.getByTestId("built-artifact-retry-invalidation").click();
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records[0]?.status).toBe("blocked");
+  await expect(page.getByTestId("built-artifact-tool-row")).toHaveAttribute("data-state", "blocked");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).toBeNull();
+  await page.getByTestId("built-artifact-tool-row").click();
+  await expect(page.getByTestId("built-artifact-status")).toHaveText("متوقف‌شده");
+  await expect(page.getByTestId("built-artifact-reactivate")).toBeEnabled();
+  expect((await readBuiltArtifactEnvelope(page)).records[0].history.at(-1).type).toBe("blocked");
+
+  await page.getByTestId("built-artifact-reactivate").click();
+  await expect(page.getByTestId("built-artifact-card")).toHaveAttribute("data-state", "active");
+  expect((await readBuiltArtifactEnvelope(page)).records[0].history.at(-1).type).toBe("reactivated");
+});
+
+test("BuiltArtifact survives simultaneous local journal and main-store write failures through the session mirror", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای mirror وقفه", "اگر journal محلی و رکورد اصلی شکست خوردند، reload همان تب باید fail-close بماند");
+  await approveAndActivateBuiltArtifact(page);
+  const activeRaw = await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey);
+
+  await page.evaluate(({ artifactKey, intentKey, tasksKey }) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      if (this === window.localStorage && (storageKey === artifactKey || storageKey === intentKey)) {
+        throw new DOMException("Local BuiltArtifact persistence failed", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, storageKey, value);
+    };
+    window.localStorage.setItem(tasksKey, "{unreadable-project-tasks");
+    window.dispatchEvent(new StorageEvent("storage", { key: tasksKey }));
+  }, { artifactKey: builtArtifactsTestStorageKey, intentKey: builtArtifactInvalidationIntentsTestStorageKey, tasksKey: projectTasksTestStorageKey });
+
+  await expect(page.getByTestId("built-artifact-dependency-error")).toContainText("ثبت ماندگار وضعیت توقف انجام نشد");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(activeRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).not.toBeNull();
+
+  await page.evaluate((key) => window.localStorage.removeItem(key), projectTasksTestStorageKey);
+  await page.reload();
+  await enterBuilderHome(page);
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records[0]?.status).toBe("blocked");
+  const blocked = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(blocked.version).toBe(4);
+  expect(blocked.history.filter((event: any) => event.type === "blocked")).toHaveLength(1);
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).toBeNull();
+});
+
+test("BuiltArtifact fails closed when the only populated invalidation mirror becomes unreadable", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای mirror ناخوانا", "mirror پرشده نباید هنگام خطای read به empty تبدیل شود");
+  await approveAndActivateBuiltArtifact(page);
+  const activeRaw = await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey);
+
+  await page.evaluate(({ artifactKey, intentKey, tasksKey }) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(storageKey: string, value: string) {
+      if (this === window.localStorage && storageKey === artifactKey || this === window.sessionStorage && storageKey === intentKey) {
+        throw new DOMException("Selected persistence failed", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, storageKey, value);
+    };
+    window.localStorage.setItem(tasksKey, "{unreadable-project-tasks");
+    window.dispatchEvent(new StorageEvent("storage", { key: tasksKey }));
+  }, { artifactKey: builtArtifactsTestStorageKey, intentKey: builtArtifactInvalidationIntentsTestStorageKey, tasksKey: projectTasksTestStorageKey });
+
+  await expect(page.getByTestId("built-artifact-dependency-error")).toContainText("ثبت ماندگار وضعیت توقف انجام نشد");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).not.toBeNull();
+  expect(await page.evaluate((key) => window.sessionStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(activeRaw);
+
+  await page.addInitScript((intentKey) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function getItem(storageKey: string) {
+      if (this === window.localStorage && storageKey === intentKey) throw new DOMException("Populated mirror read failed", "SecurityError");
+      return nativeGetItem.call(this, storageKey);
+    };
+  }, builtArtifactInvalidationIntentsTestStorageKey);
+  await page.evaluate((key) => window.localStorage.removeItem(key), projectTasksTestStorageKey);
+  await page.reload();
+  await enterBuilderHome(page);
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-tools-read-error")).toBeVisible();
+  await expect(page.getByTestId("build-tool-entry")).toBeDisabled();
+  await expect(page.getByTestId("built-artifact-tool-row")).toHaveAttribute("data-state", "blocked");
+  expect((await readBuiltArtifactEnvelope(page)).records[0].status).toBe("active");
+});
+
+test("BuiltArtifact recovers a completed invalidation intent without duplicating the blocked revision", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای بازیابی وقفه", "پس از crash فرضی، توقف ثبت‌شده نباید دوباره نسخه بسازد");
+  await approveAndActivateBuiltArtifact(page);
+
+  await page.evaluate((intentKey) => {
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function removeItem(storageKey: string) {
+      if (this === window.localStorage && storageKey === intentKey) {
+        throw new DOMException("Intent cleanup interrupted", "QuotaExceededError");
+      }
+      return nativeRemoveItem.call(this, storageKey);
+    };
+  }, builtArtifactInvalidationIntentsTestStorageKey);
+  await page.evaluate((key) => {
+    window.localStorage.setItem(key, "{unreadable-project-tasks");
+    window.dispatchEvent(new StorageEvent("storage", { key }));
+  }, projectTasksTestStorageKey);
+
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records[0]?.status).toBe("blocked");
+  const blockedBeforeReload = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(blockedBeforeReload.version).toBe(4);
+  expect(blockedBeforeReload.history.filter((event: any) => event.type === "blocked")).toHaveLength(1);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).not.toBeNull();
+
+  await page.evaluate((key) => window.localStorage.removeItem(key), projectTasksTestStorageKey);
+  await page.reload();
+  await enterBuilderHome(page);
+  await expect.poll(async () => page.evaluate((key) => window.localStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).toBeNull();
+  const blockedAfterReload = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(blockedAfterReload.version).toBe(blockedBeforeReload.version);
+  expect(blockedAfterReload.currentRevisionId).toBe(blockedBeforeReload.currentRevisionId);
+  expect(blockedAfterReload.history.filter((event: any) => event.type === "blocked")).toHaveLength(1);
+});
+
+test("BuiltArtifact retries completed invalidation cleanup in the same mount", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای retry وقفه", "پاک‌سازی intent تکمیل‌شده بدون reload دوباره تلاش شود");
+  await approveAndActivateBuiltArtifact(page);
+
+  await page.evaluate(({ intentKey, allowKey }) => {
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function removeItem(storageKey: string) {
+      if (this === window.localStorage && storageKey === intentKey && window.sessionStorage.getItem(allowKey) !== "1") {
+        const qaWindow = window as Window & { __qaInvalidationIntentRemoveAttempts?: number };
+        qaWindow.__qaInvalidationIntentRemoveAttempts = (qaWindow.__qaInvalidationIntentRemoveAttempts ?? 0) + 1;
+        throw new DOMException("Intent cleanup interrupted", "QuotaExceededError");
+      }
+      return nativeRemoveItem.call(this, storageKey);
+    };
+  }, { intentKey: builtArtifactInvalidationIntentsTestStorageKey, allowKey: "qa-allow-invalidation-intent-cleanup" });
+  await page.evaluate((key) => {
+    window.localStorage.setItem(key, "{unreadable-project-tasks");
+    window.dispatchEvent(new StorageEvent("storage", { key }));
+  }, projectTasksTestStorageKey);
+
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records[0]?.status).toBe("blocked");
+  const blockedBeforeRetry = (await readBuiltArtifactEnvelope(page)).records[0];
+  await expect(page.getByTestId("built-artifact-retry-invalidation")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).not.toBeNull();
+  await page.waitForTimeout(300);
+  const cleanupAttemptsAfterSettle = await page.evaluate(() => (window as Window & { __qaInvalidationIntentRemoveAttempts?: number }).__qaInvalidationIntentRemoveAttempts ?? 0);
+  expect(cleanupAttemptsAfterSettle).toBeGreaterThan(0);
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => (window as Window & { __qaInvalidationIntentRemoveAttempts?: number }).__qaInvalidationIntentRemoveAttempts ?? 0)).toBe(cleanupAttemptsAfterSettle);
+
+  await page.evaluate(() => {
+    window.sessionStorage.setItem("qa-allow-invalidation-intent-cleanup", "1");
+    (document.querySelector('[data-testid="built-artifact-retry-invalidation"]') as HTMLButtonElement | null)?.click();
+  });
+  await expect.poll(async () => page.evaluate((key) => window.localStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).toBeNull();
+  const blockedAfterRetry = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(blockedAfterRetry.version).toBe(blockedBeforeRetry.version);
+  expect(blockedAfterRetry.currentRevisionId).toBe(blockedBeforeRetry.currentRevisionId);
+  expect(blockedAfterRetry.history.filter((event: any) => event.type === "blocked")).toHaveLength(1);
+});
+
+test("BuiltArtifact journals an observed dependency failure before a queued main-store lock sees repaired bytes", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای race وابستگی", "خرابی مشاهده‌شده باید پیش از انتظار برای قفل اصلی ماندگار شود");
+  await approveAndActivateBuiltArtifact(page);
+  const active = (await readBuiltArtifactEnvelope(page)).records[0];
+  const builtArtifactWriteLockName = `${builtArtifactsTestStorageKey}:write`;
+
+  await page.evaluate((lockName) => {
+    const qaWindow = window as Window & {
+      __qaReleaseBuiltArtifactWriteLock?: () => void;
+      __qaBuiltArtifactWriteLockHeld?: boolean;
+    };
+    void navigator.locks.request(lockName, { mode: "exclusive" }, async () => {
+      qaWindow.__qaBuiltArtifactWriteLockHeld = true;
+      await new Promise<void>((resolve) => { qaWindow.__qaReleaseBuiltArtifactWriteLock = resolve; });
+      qaWindow.__qaBuiltArtifactWriteLockHeld = false;
+    });
+  }, builtArtifactWriteLockName);
+  await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __qaBuiltArtifactWriteLockHeld?: boolean }).__qaBuiltArtifactWriteLockHeld))).toBe(true);
+
+  await page.evaluate((key) => {
+    window.localStorage.setItem(key, "{unreadable-project-tasks");
+    window.dispatchEvent(new StorageEvent("storage", { key }));
+  }, projectTasksTestStorageKey);
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), builtArtifactInvalidationIntentsTestStorageKey)).not.toBeNull();
+  expect((await readBuiltArtifactEnvelope(page)).records[0]).toMatchObject({ status: "active", version: active.version });
+  await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, builtArtifactWriteLockName)).toBeGreaterThan(0);
+
+  await page.evaluate((key) => {
+    window.localStorage.removeItem(key);
+    window.dispatchEvent(new StorageEvent("storage", { key }));
+  }, projectTasksTestStorageKey);
+  await page.evaluate(() => {
+    const qaWindow = window as Window & { __qaReleaseBuiltArtifactWriteLock?: () => void };
+    const release = qaWindow.__qaReleaseBuiltArtifactWriteLock;
+    delete qaWindow.__qaReleaseBuiltArtifactWriteLock;
+    release?.();
+  });
+
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records[0]?.status).toBe("blocked");
+  const blockedBeforeReload = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(blockedBeforeReload.version).toBe(active.version + 1);
+  expect(blockedBeforeReload.history.filter((event: any) => event.type === "blocked")).toHaveLength(1);
+  await page.reload();
+  await enterBuilderHome(page);
+  await page.getByTestId("capability-cluster").click();
+  await page.getByTestId("built-artifact-tool-row").click();
+  await expect(page.getByTestId("built-artifact-card")).toHaveAttribute("data-state", "blocked");
+  await expect(page.getByTestId("built-artifact-reactivate")).toBeEnabled();
+  const blockedAfterReload = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(blockedAfterReload.version).toBe(blockedBeforeReload.version);
+  expect(blockedAfterReload.history.filter((event: any) => event.type === "blocked")).toHaveLength(1);
+});
+
+test("BuiltArtifact revision and rollback preserve history and create a fresh draft", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای پایه پروژه", "نسخهٔ پایهٔ کارهای باز پروژه را نمایش بده");
+  await approveAndActivateBuiltArtifact(page);
+  const original = (await readBuiltArtifactEnvelope(page)).records[0];
+
+  await page.getByTestId("built-artifact-create-revision").click();
+  await expect(page.getByTestId("build-flow")).toHaveAttribute("data-step", "define");
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records[0].status).toBe("draft");
+  await expect(page.getByTestId("build-name-input")).toHaveValue("نمای پایه پروژه");
+  await expect(page.getByTestId("built-artifact-history")).toBeVisible();
+  await expect(page.getByTestId("built-artifact-remove")).toBeVisible();
+  await page.getByTestId("build-name-input").fill("نمای بازبینی‌شده پروژه");
+  await page.getByTestId("build-description-input").fill("نسخهٔ دوم، کارهای باز و وضعیت برنامه را نمایش بده");
+  await page.getByTestId("built-artifact-save-revision").click();
+  await expect(page.getByTestId("built-artifact-preview")).toBeVisible();
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records[0].status).toBe("preview_ready");
+  await approveAndActivateBuiltArtifact(page);
+  const revised = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(revised.version).toBeGreaterThan(original.version);
+  expect(revised.revisions.at(-1)).toMatchObject({ name: "نمای بازبینی‌شده پروژه", status: "active" });
+
+  await page.getByTestId("built-artifact-history").click();
+  await expect(page.getByTestId("build-flow")).toHaveAttribute("data-step", "history");
+  const rollbackButtons = page.getByTestId("built-artifact-rollback");
+  await expect(rollbackButtons.first()).toBeVisible();
+  await page.locator('[data-testid="built-artifact-rollback"][data-version="1"]').click();
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records[0].status).toBe("draft");
+  const rolledBack = (await readBuiltArtifactEnvelope(page)).records[0];
+  const rollbackEvent = rolledBack.history.at(-1);
+  const rollbackTarget = revised.revisions[rollbackEvent.rollbackFromVersion - 1];
+  expect(rollbackEvent.type).toBe("rolled-back");
+  expect(rolledBack.version).toBe(revised.version + 1);
+  expect(rolledBack.revisions.at(-1)).toMatchObject({ name: rollbackTarget.name, description: rollbackTarget.description, status: "draft" });
+  expect(rolledBack.revisions.at(-1).id).not.toBe(rollbackTarget.id);
+  await expect(page.getByTestId("build-name-input")).toHaveValue(rollbackTarget.name);
+
+  await page.getByTestId("built-artifact-save-revision").click();
+  await expect(page.getByTestId("built-artifact-preview")).toBeVisible();
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records[0].status).toBe("preview_ready");
+  await approveAndActivateBuiltArtifact(page);
+  const finalRecord = (await readBuiltArtifactEnvelope(page)).records[0];
+  expect(finalRecord.status).toBe("active");
+  expect(finalRecord.history.some((event: any) => event.type === "rolled-back" && event.rollbackFromVersion === rollbackEvent.rollbackFromVersion)).toBe(true);
+});
+
+test("BuiltArtifact remove is two-step and leaves only a project-scoped tombstone", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createBuiltArtifactPreview(page, "نمای موقت پروژه", "این نمای امن بعد از تأیید دوگامی حذف می‌شود");
+  await approveAndActivateBuiltArtifact(page);
+  const before = await readBuiltArtifactEnvelope(page);
+  const record = before.records[0];
+  const beforeRaw = await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey);
+
+  await page.getByTestId("built-artifact-remove").click();
+  await expect(page.getByTestId("build-flow")).toHaveAttribute("data-step", "remove");
+  await expect(page.getByTestId("built-artifact-confirm-remove")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(beforeRaw);
+  await page.getByTestId("built-artifact-confirm-remove").click();
+
+  await expect.poll(async () => (await readBuiltArtifactEnvelope(page)).records.length).toBe(0);
+  const removed = await readBuiltArtifactEnvelope(page);
+  expect(removed.records).toEqual([]);
+  expect(removed.tombstones).toEqual([expect.objectContaining({ id: record.id, projectId: record.projectId, reason: "user_requested", lastVersion: record.version + 1, priorFingerprint: record.revisions.at(-1).fingerprint, removedAt: expect.any(String) })]);
+  if (await page.getByTestId("build-flow").isVisible()) await page.keyboard.press("Escape");
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-tool-row")).toHaveCount(0);
+
+  removed.tombstones[0].projectId = "project-forged-owner";
+  const forgedTombstoneRaw = JSON.stringify(removed);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: builtArtifactsTestStorageKey, raw: forgedTombstoneRaw });
+  await page.reload();
+  await enterBuilderHome(page);
+  await page.getByTestId("capability-cluster").click();
+  await expect(page.getByTestId("built-artifact-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), builtArtifactsTestStorageKey)).toBe(forgedTombstoneRaw);
 });
 
 test("Brief saves a weekly cadence, closes, and keeps its summary visible in the drawer", async ({ page }) => {
@@ -4808,7 +6566,7 @@ test("Brief stays open and preserves the previous schedule when local persistenc
 test("builder keeps project tasks out of chat with persistent status history", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const activeProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const activeProjectId = await readActiveProjectId(page);
   await page.getByTestId("composer-input").fill("این پیش‌نویس باید بعد از رفت‌وبرگشت بماند");
 
   await page.getByTestId("menu-button").click();
@@ -4825,7 +6583,7 @@ test("builder keeps project tasks out of chat with persistent status history", a
   await expect(page.getByTestId("project-task-filter-monitor")).toContainText("پایش‌ها");
   expect(await page.locator(".project-task-filters").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   await expect(page.getByTestId("project-task-empty")).toContainText("هنوز کار در حال انجامی ثبت نشده");
-  await expect(taskCenter).toContainText("کارهای جاری و تصمیم‌های منتظر شما");
+  await expect(taskCenter).toContainText("برنامهٔ فعلی، کارها و تأییدهای پروژه");
   expect(await taskCenter.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 
@@ -4948,14 +6706,13 @@ test("builder keeps project tasks out of chat with persistent status history", a
 
 test("task center keeps every record inside its active project", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T08:00:00.000Z" };
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [
+    { ...projectBase, id: "project-task-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
+    { ...projectBase, id: "project-task-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
+  ], "project-task-a");
   await page.goto("/");
   await page.evaluate(() => {
-    const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-27T08:00:00.000Z" };
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
-      { ...projectBase, id: "project-task-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
-      { ...projectBase, id: "project-task-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
-    ]));
-    window.localStorage.setItem("chida-prototype-active-project", "project-task-a");
     const timestamp = "2026-08-27T09:00:00.000Z";
     const taskBase = {
       status: "in-progress",
@@ -5064,23 +6821,22 @@ test("task editing keeps the previous version when local persistence fails", asy
 });
 
 test("task parser treats duplicate local records as an incomplete read", async ({ page }) => {
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [{
+    id: "project-task-corrupt",
+    name: "برج نیلوفر",
+    location: "سعادت‌آباد",
+    stage: "اسکلت بندی",
+    usage: "",
+    landArea: "",
+    builtArea: "",
+    aboveGroundFloors: "",
+    basementFloors: "",
+    unitCount: "",
+    createdAt: "2026-08-27T08:00:00.000Z",
+  }], "project-task-corrupt");
   await page.goto("/");
   await page.evaluate(() => {
     const timestamp = "2026-08-27T09:00:00.000Z";
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([{
-      id: "project-task-corrupt",
-      name: "برج نیلوفر",
-      location: "سعادت‌آباد",
-      stage: "اسکلت بندی",
-      usage: "",
-      landArea: "",
-      builtArea: "",
-      aboveGroundFloors: "",
-      basementFloors: "",
-      unitCount: "",
-      createdAt: "2026-08-27T08:00:00.000Z",
-    }]));
-    window.localStorage.setItem("chida-prototype-active-project", "project-task-corrupt");
     const task = {
       id: "task-duplicate",
       projectId: "project-task-corrupt",
@@ -5167,6 +6923,15 @@ test("purchase request opens simple, preserves advanced values, and keeps detail
   await expect(page.getByTestId("purchase-request-delivery-area-input")).toBeVisible();
   await expect(page.getByTestId("purchase-request-brand-input")).toHaveCount(0);
   await expect(page.getByTestId("purchase-request-transport-input")).toHaveCount(0);
+  const editor = page.getByTestId("purchase-request-editor-sheet");
+  expect(await editor.evaluate((form) => {
+    const lastSimpleField = form.querySelector('[data-testid="purchase-request-needed-by-input"]');
+    const extraNote = form.querySelector('[data-testid="purchase-request-extra-note"]');
+    const continueButton = form.querySelector('[data-testid="purchase-request-save"]');
+    return Boolean(lastSimpleField && extraNote && continueButton
+      && lastSimpleField.compareDocumentPosition(extraNote) & Node.DOCUMENT_POSITION_FOLLOWING
+      && extraNote.nextElementSibling === continueButton);
+  })).toBe(true);
 
   await page.getByTestId("purchase-request-raw-input").fill("پنج تن میلگرد برای ادامهٔ اسکلت لازم است");
   await page.getByTestId("purchase-request-item-input").fill("میلگرد آجدار");
@@ -5181,6 +6946,15 @@ test("purchase request opens simple, preserves advanced values, and keeps detail
   await page.getByTestId("purchase-request-mode-advanced").click();
   await expect(page.getByTestId("purchase-request-brand-input")).toHaveValue("A3");
   await expect(page.getByTestId("purchase-request-transport-input")).toHaveValue("تحویل در کارگاه");
+  await expect(page.getByTestId("purchase-request-raw-input")).toHaveValue("پنج تن میلگرد برای ادامهٔ اسکلت لازم است");
+  expect(await editor.evaluate((form) => {
+    const lastAdvancedField = form.querySelector('[data-testid="purchase-request-payment-input"]');
+    const extraNote = form.querySelector('[data-testid="purchase-request-extra-note"]');
+    const continueButton = form.querySelector('[data-testid="purchase-request-save"]');
+    return Boolean(lastAdvancedField && extraNote && continueButton
+      && lastAdvancedField.compareDocumentPosition(extraNote) & Node.DOCUMENT_POSITION_FOLLOWING
+      && extraNote.nextElementSibling === continueButton);
+  })).toBe(true);
   await page.getByTestId("purchase-request-mode-simple").click();
   await page.getByTestId("purchase-request-save").click();
 
@@ -5208,6 +6982,14 @@ test("simple service request shows only essential fields and saves the rest as e
   await expect(page.getByTestId("purchase-request-service-size-input")).toBeVisible();
   await expect(page.getByTestId("purchase-request-service-timing-input")).toBeVisible();
   await expect(page.getByTestId("purchase-request-service-method-input")).toHaveCount(0);
+  expect(await page.getByTestId("purchase-request-editor-sheet").evaluate((form) => {
+    const lastServiceField = form.querySelector('[data-testid="purchase-request-service-timing-input"]');
+    const extraNote = form.querySelector('[data-testid="purchase-request-extra-note"]');
+    const continueButton = form.querySelector('[data-testid="purchase-request-save"]');
+    return Boolean(lastServiceField && extraNote && continueButton
+      && lastServiceField.compareDocumentPosition(extraNote) & Node.DOCUMENT_POSITION_FOLLOWING
+      && extraNote.nextElementSibling === continueButton);
+  })).toBe(true);
   await page.getByTestId("purchase-request-raw-input").fill("اجرای عایق رطوبتی بام لازم است");
   await page.getByTestId("purchase-request-service-scope-input").fill("اجرای عایق دولایهٔ بام");
   await page.getByTestId("purchase-request-service-location-input").fill("بام پروژه");
@@ -5344,15 +7126,11 @@ test("builder creates, completes, and readies a private local purchase request w
 
 test("purchase requests never cross the active project boundary", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
-  await page.evaluate(() => {
-    const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-28T08:00:00.000Z" };
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
-      { ...projectBase, id: "purchase-project-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
-      { ...projectBase, id: "purchase-project-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
-    ]));
-    window.localStorage.setItem("chida-prototype-active-project", "purchase-project-a");
-  });
+  const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-28T08:00:00.000Z" };
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [
+    { ...projectBase, id: "purchase-project-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
+    { ...projectBase, id: "purchase-project-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
+  ], "purchase-project-a");
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
   await page.getByRole("button", { name: "درخواست قیمت" }).click();
@@ -6640,15 +8418,11 @@ test("approval parser requires every audit history to start with a created event
 
 test("purchase request approvals never cross the active project boundary", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
-  await page.evaluate(() => {
-    const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-28T08:00:00.000Z" };
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
-      { ...projectBase, id: "approval-project-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
-      { ...projectBase, id: "approval-project-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
-    ]));
-    window.localStorage.setItem("chida-prototype-active-project", "approval-project-a");
-  });
+  const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-28T08:00:00.000Z" };
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [
+    { ...projectBase, id: "approval-project-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
+    { ...projectBase, id: "approval-project-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
+  ], "approval-project-a");
   await createReadyPurchaseRequestForApproval(page);
   await page.getByTestId("purchase-request-request-approval").click();
   await page.getByTestId("project-approval-detail-back").click();
@@ -7020,6 +8794,19 @@ test("T6-B2 keeps request item and clarification versions stable on a no-op save
 });
 
 test("T6-B2 keeps exact current and historical v1 approvals readable across deterministic reload migration", async ({ page }) => {
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [{
+    id: "legacy-t6b2-project",
+    name: "پروژه مهاجرت",
+    location: "سعادت‌آباد",
+    stage: "اسکلت بندی",
+    usage: "",
+    landArea: "",
+    builtArea: "",
+    aboveGroundFloors: "",
+    basementFloors: "",
+    unitCount: "",
+    createdAt: "2026-08-28T08:00:00.000Z",
+  }], "legacy-t6b2-project");
   await page.goto("/");
   await page.evaluate(() => {
     const projectId = "legacy-t6b2-project";
@@ -7027,20 +8814,6 @@ test("T6-B2 keeps exact current and historical v1 approvals readable across dete
     const createdAt = "2026-08-28T09:00:00.000Z";
     const readyAt = "2026-08-28T09:01:00.000Z";
     const requestedAt = "2026-08-28T09:02:00.000Z";
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([{
-      id: projectId,
-      name: "پروژه مهاجرت",
-      location: "سعادت‌آباد",
-      stage: "اسکلت بندی",
-      usage: "",
-      landArea: "",
-      builtArea: "",
-      aboveGroundFloors: "",
-      basementFloors: "",
-      unitCount: "",
-      createdAt: "2026-08-28T08:00:00.000Z",
-    }]));
-    window.localStorage.setItem("chida-prototype-active-project", projectId);
     window.localStorage.setItem("chida-prototype-project-purchase-requests:v1", JSON.stringify([{
       id: requestId,
       projectId,
@@ -7301,17 +9074,11 @@ test("T6-C keeps contacts and dispatch drafts isolated when the builder changes 
   await openApprovedPurchaseRequestDispatch(page);
   await addLocalSupplierContact(page, { name: "گیرنده پروژه الف", category: "میلگرد", coverage: "غرب تهران", capability: "product" });
   await page.getByTestId("dispatch-draft-save").click();
-  const firstProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const firstProjectId = await readActiveProjectId(page);
 
-  await page.evaluate(() => {
-    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
-    projects.push({ id: "t6c-isolation-project-b", name: "پروژه ب", location: "جردن", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-28T12:00:00.000Z" });
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
-    window.localStorage.setItem("chida-prototype-active-project", "t6c-isolation-project-b");
-  });
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  const secondProjectId = await addAndActivateProject(page, "پروژه ب");
+  if (!secondProjectId) throw new Error("Second active project is unavailable for the T6-C isolation oracle");
   await expect(page.getByTestId("project-switcher")).toContainText("پروژه ب");
   await page.getByTestId("quick-action-purchase-request").click();
   await page.getByTestId("purchase-request-raw-input").fill("صد عدد بلوک سبک برای پروژه ب لازم است");
@@ -7327,12 +9094,14 @@ test("T6-C keeps contacts and dispatch drafts isolated when the builder changes 
   await expect(page.getByTestId("supplier-contact-card")).toHaveCount(0);
   await expect(page.getByTestId("dispatch-draft-empty")).toBeVisible();
   await expect(page.getByTestId("dispatch-draft-preview")).toHaveCount(0);
-  const isolationState = await page.evaluate(() => ({
-    activeProjectId: window.localStorage.getItem("chida-prototype-active-project"),
+  const isolationState = {
+    activeProjectId: await readActiveProjectId(page),
+    ...await page.evaluate(() => ({
     contacts: JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]"),
     dispatches: JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]"),
-  }));
-  expect(isolationState.activeProjectId).toBe("t6c-isolation-project-b");
+    })),
+  };
+  expect(isolationState.activeProjectId).toBe(secondProjectId);
   expect(isolationState.contacts).toHaveLength(1);
   expect(isolationState.dispatches).toHaveLength(1);
   expect(isolationState.contacts[0].projectId).toBe(firstProjectId);
@@ -9278,25 +11047,16 @@ test("T8-A1 pins a private local question draft to one exact service comparison,
   await expect(page.getByTestId("negotiation-draft-detail")).toContainText(created.values.message);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(created.draftStore);
 
-  await page.evaluate(() => {
-    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
-    projects.push({ id: "t8a1-isolation-project-b", name: "پروژه مستقل مذاکره", location: "منطقهٔ ۲", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
-    window.localStorage.setItem("chida-prototype-active-project", "t8a1-isolation-project-b");
-  });
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  await addAndActivateProject(page, "پروژه مستقل مذاکره");
   await page.getByTestId("quick-action-compare-offers").click();
   await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
   await expect(page.getByTestId("negotiation-draft-empty-state")).toBeVisible();
   expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey) ?? "[]")).toHaveLength(1);
 
-  await page.evaluate((firstProjectId) => window.localStorage.setItem("chida-prototype-active-project", firstProjectId), created.projectId);
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  await activateExistingProjectFromHome(page, /برج نیلوفر/);
   await page.getByTestId("quick-action-compare-offers").click();
   await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
@@ -9610,25 +11370,17 @@ test("T8-A2 supports the same exact-response contract for a product-line questio
   await page.getByTestId("manual-negotiation-response-open").click();
   await expect(page.getByTestId("manual-negotiation-response-detail")).toContainText("پایان هفته معتبر است");
 
-  const firstProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
-  await page.evaluate(() => {
-    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
-    projects.push({ id: "t8a2-isolation-project-b", name: "پروژه مستقل پاسخ", location: "منطقهٔ ۴", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
-    window.localStorage.setItem("chida-prototype-active-project", "t8a2-isolation-project-b");
-  });
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  const firstProjectId = await readActiveProjectId(page);
+  if (!firstProjectId) throw new Error("Active project is unavailable for the T8-A2 isolation oracle");
+  await reloadIntoBuilderHome(page);
+  await addAndActivateProject(page, "پروژه مستقل پاسخ");
   await page.getByTestId("quick-action-compare-offers").click();
   await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
   expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey) ?? "[]")).toHaveLength(1);
 
-  await page.evaluate((projectId) => window.localStorage.setItem("chida-prototype-active-project", projectId!), firstProjectId);
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  await activateExistingProjectFromHome(page, /برج نیلوفر/);
   await page.getByTestId("quick-action-compare-offers").click();
   await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
@@ -10118,25 +11870,17 @@ test("T8-A3 applies the same exact-review contract to a product response and kee
   });
   expect(await commercialSourceStoreBytes(page)).toEqual(sourceStoresBeforeReview);
 
-  const firstProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
-  await page.evaluate(() => {
-    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
-    projects.push({ id: "t8a3-isolation-project-b", name: "پروژه مستقل بازبینی", location: "منطقهٔ ۵", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
-    window.localStorage.setItem("chida-prototype-active-project", "t8a3-isolation-project-b");
-  });
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  const firstProjectId = await readActiveProjectId(page);
+  if (!firstProjectId) throw new Error("Active project is unavailable for the T8-A3 isolation oracle");
+  await reloadIntoBuilderHome(page);
+  await addAndActivateProject(page, "پروژه مستقل بازبینی");
   await page.getByTestId("quick-action-compare-offers").click();
   await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
   expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey) ?? "[]")).toHaveLength(1);
 
-  await page.evaluate((projectId) => window.localStorage.setItem("chida-prototype-active-project", projectId!), firstProjectId);
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  await activateExistingProjectFromHome(page, /برج نیلوفر/);
   await page.getByTestId("quick-action-compare-offers").click();
   await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(1);
@@ -10275,26 +12019,17 @@ test("T8-A4 applies the same exact-response contract to a product impact and kee
     manualResponseReviews: await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseReviewStorageKey),
   }).toEqual(sourceStoresBeforeImpact);
 
-  const firstProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const firstProjectId = await readActiveProjectId(page);
   if (!firstProjectId) throw new Error("Active project is unavailable for the T8-A4 isolation oracle");
-  await page.evaluate(() => {
-    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
-    projects.push({ id: "t8a4-isolation-project-b", name: "پروژه مستقل اثر شرایط", location: "منطقهٔ ۶", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
-    window.localStorage.setItem("chida-prototype-active-project", "t8a4-isolation-project-b");
-  });
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  await addAndActivateProject(page, "پروژه مستقل اثر شرایط");
   await page.getByTestId("quick-action-compare-offers").click();
   await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await expect(page.getByTestId("negotiation-draft-card")).toHaveCount(0);
   expect(JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationConditionImpactStorageKey) ?? "[]")).toHaveLength(1);
 
-  await page.evaluate((projectId) => window.localStorage.setItem("chida-prototype-active-project", projectId), firstProjectId);
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  await activateExistingProjectFromHome(page, /برج نیلوفر/);
   await page.getByTestId("quick-action-compare-offers").click();
   await openProposalSecondaryView(page, "negotiation-drafts-entry");
   await page.getByTestId("negotiation-draft-card").click();
@@ -10608,7 +12343,7 @@ async function createExactProductProposalRevisionPair(page: Page, supplierName =
   const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
   const proposal = JSON.parse(proposalStore ?? "[]").find((item: { supplierSnapshot: { displayName: string } }) => item.supplierSnapshot.displayName === supplierName);
   if (!proposal || proposal.revisions.length !== 2) throw new Error("T8-A5a exact two-revision proposal fixture is unavailable");
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("T8-A5a active project fixture is unavailable");
   return {
     supplierName,
@@ -10808,24 +12543,15 @@ test("T8-A5a remains storage-free, preserves proposal version and history bytes,
 test("T8-A5a keeps a product revision comparison inside its active project", async ({ page }) => {
   const created = await createExactProductProposalRevisionPair(page, "فولاد جداسازی پروژه");
   await expect(page.getByTestId("proposal-revision-diff-open")).toBeVisible();
-  await page.evaluate(() => {
-    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
-    projects.push({ id: "t8a5a-isolation-project-b", name: "پروژه مستقل مقایسه نسخه", location: "منطقهٔ ۶", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
-    window.localStorage.setItem("chida-prototype-active-project", "t8a5a-isolation-project-b");
-  });
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  await addAndActivateProject(page, "پروژه مستقل مقایسه نسخه");
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-card")).toHaveCount(0);
   await expect(page.getByTestId("proposal-revision-diff-open")).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(created.proposalStore);
 
-  await page.evaluate((projectId) => window.localStorage.setItem("chida-prototype-active-project", projectId), created.projectId);
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  await activateExistingProjectFromHome(page, /برج نیلوفر/);
   await page.getByTestId("quick-action-compare-offers").click();
   await page.getByTestId("proposal-card").filter({ hasText: created.supplierName }).click();
   await expect(page.getByTestId("proposal-revision-diff-open")).toBeVisible();
@@ -10966,7 +12692,7 @@ async function createExactServiceProposalRevisionPair(page: Page, supplierName =
   const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
   const proposal = JSON.parse(proposalStore ?? "[]").find((item: { supplierSnapshot: { displayName: string } }) => item.supplierSnapshot.displayName === supplierName);
   if (!proposal || proposal.revisions.length !== 2 || proposal.target.requestKind !== "service") throw new Error("T8-A5b exact two-revision service proposal fixture is unavailable");
-  const projectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const projectId = await readActiveProjectId(page);
   if (!projectId) throw new Error("T8-A5b active project fixture is unavailable");
   return {
     supplierName,
@@ -11137,24 +12863,15 @@ test("T8-A5b remains storage-free, mutation-free, and makes zero external reques
 test("T8-A5b keeps a service revision comparison inside its active project", async ({ page }) => {
   const created = await createExactServiceProposalRevisionPair(page, "مجری جداسازی پروژه خدمت");
   await expect(page.getByTestId("proposal-revision-diff-open")).toBeVisible();
-  await page.evaluate(() => {
-    const projects = JSON.parse(window.localStorage.getItem("chida-prototype-builder-projects:v2") ?? "[]");
-    projects.push({ id: "t8a5b-isolation-project-b", name: "پروژه مستقل مقایسه نسخه خدمت", location: "منطقهٔ ۶", stage: "فونداسیون", usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-29T00:00:00.000Z" });
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify(projects));
-    window.localStorage.setItem("chida-prototype-active-project", "t8a5b-isolation-project-b");
-  });
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  await addAndActivateProject(page, "پروژه مستقل مقایسه نسخه خدمت");
   await page.getByTestId("quick-action-compare-offers").click();
   await expect(page.getByTestId("proposal-card")).toHaveCount(0);
   await expect(page.getByTestId("proposal-revision-diff-open")).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(created.proposalStore);
 
-  await page.evaluate((projectId) => window.localStorage.setItem("chida-prototype-active-project", projectId), created.projectId);
-  await page.reload();
-  await reachBuilderWelcome(page);
-  await page.getByTestId("enter-home").click();
+  await reloadIntoBuilderHome(page);
+  await activateExistingProjectFromHome(page, /برج نیلوفر/);
   await page.getByTestId("quick-action-compare-offers").click();
   await page.getByTestId("proposal-card").filter({ hasText: created.supplierName }).click();
   await expect(page.getByTestId("proposal-revision-diff-open")).toBeVisible();
@@ -11405,7 +13122,10 @@ const updatedProjectBackboneDraft = {
 };
 
 async function openProjectBackbone(page: Page) {
-  await page.getByTestId("quick-action-project-plan").click();
+  await page.getByTestId("quick-action-tasks").click();
+  const currentPlan = page.getByTestId("project-backbone-task-card");
+  if (await currentPlan.count()) await currentPlan.click();
+  else await page.getByTestId("project-work-plan-entry").click();
   await expect(page.getByTestId("project-backbone-view")).toBeVisible();
 }
 
@@ -11472,8 +13192,10 @@ async function createProjectBackbone(page: Page, draft = initialProjectBackboneD
 const projectTaskMonitorsStorageKey = "chida-prototype-project-task-monitors:v1";
 
 async function openProjectTaskMonitorsFromHome(page: Page) {
-  await page.getByTestId("menu-button").click();
-  await page.getByTestId("drawer-tasks-entry").click();
+  if (await page.getByTestId("project-tasks-view").count() === 0) {
+    await page.getByTestId("menu-button").click();
+    await page.getByTestId("drawer-tasks-entry").click();
+  }
   await page.getByTestId("project-task-filter-monitor").click();
 }
 
@@ -11527,7 +13249,7 @@ async function reenterBuilderHomeAfterReload(page: Page) {
 test("Project Backbone creates one exactly linked project plan, reloads it, and stays inside 390px", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
-  const activeProjectId = await page.evaluate(() => window.localStorage.getItem("chida-prototype-active-project"));
+  const activeProjectId = await readActiveProjectId(page);
   const legacyTaskBytes = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-tasks:v1"));
   expect(legacyTaskBytes).toBeNull();
 
@@ -11567,10 +13289,8 @@ test("Project Backbone creates one exactly linked project plan, reloads it, and 
   }
 
   await page.getByTestId("project-backbone-back").click();
-  await page.getByTestId("menu-button").click();
-  await page.getByTestId("drawer-tasks-entry").click();
   await expect(page.getByTestId("project-backbone-task-card")).toContainText(initialProjectBackboneDraft.taskTitle);
-  await expect(page.getByTestId("project-backbone-task-card")).toContainText("متصل به برنامهٔ پروژه");
+  await expect(page.getByTestId("project-backbone-task-card")).toContainText("برنامهٔ فعلی");
   await page.getByTestId("project-backbone-task-card").click();
   await expect(page.getByTestId("project-backbone-view")).toBeVisible();
 
@@ -11627,15 +13347,11 @@ test("Project Backbone rejects a reason made only of bidi controls with an acces
 
 test("Project Backbone keeps plans and links inside their owning project", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
-  await page.evaluate(() => {
-    const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-30T08:00:00.000Z" };
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
-      { ...projectBase, id: "project-backbone-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
-      { ...projectBase, id: "project-backbone-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
-    ]));
-    window.localStorage.setItem("chida-prototype-active-project", "project-backbone-a");
-  });
+  const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-30T08:00:00.000Z" };
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [
+    { ...projectBase, id: "project-backbone-a", name: "پروژه الف", location: "ونک", stage: "فونداسیون" },
+    { ...projectBase, id: "project-backbone-b", name: "پروژه ب", location: "جردن", stage: "نازک کاری و نما" },
+  ], "project-backbone-a");
   await enterBuilderHome(page);
   const projectADraft = { ...initialProjectBackboneDraft, milestoneTitle: "نقطه عطف فقط پروژه الف" };
   await createProjectBackbone(page, projectADraft);
@@ -12021,15 +13737,11 @@ test("Project Backbone preserves exact bytes on write failure and fail-closes a 
 });
 
 test("Project Backbone fail-closes valid JSON with stale fingerprints, impossible dates, or coordinated cross-project links without rewriting bytes", async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => {
-    const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-30T08:00:00.000Z" };
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
-      { ...projectBase, id: "project-backbone-tamper-a", name: "پروژه دستکاری الف", location: "ونک", stage: "فونداسیون" },
-      { ...projectBase, id: "project-backbone-tamper-b", name: "پروژه دستکاری ب", location: "جردن", stage: "نازک کاری و نما" },
-    ]));
-    window.localStorage.setItem("chida-prototype-active-project", "project-backbone-tamper-a");
-  });
+  const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-30T08:00:00.000Z" };
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [
+    { ...projectBase, id: "project-backbone-tamper-a", name: "پروژه دستکاری الف", location: "ونک", stage: "فونداسیون" },
+    { ...projectBase, id: "project-backbone-tamper-b", name: "پروژه دستکاری ب", location: "جردن", stage: "نازک کاری و نما" },
+  ], "project-backbone-tamper-a");
   await enterBuilderHome(page);
   await createProjectBackbone(page, { ...initialProjectBackboneDraft, milestoneTitle: "نقطه عطف سالم پروژه الف" });
 
@@ -12041,7 +13753,7 @@ test("Project Backbone fail-closes valid JSON with stale fingerprints, impossibl
   await page.getByTestId("project-backbone-start").click();
   await fillProjectBackboneForm(page, { ...updatedProjectBackboneDraft, milestoneTitle: "نقطه عطف سالم پروژه ب" });
   await page.getByTestId("project-backbone-save").click();
-  await expect(page.getByTestId("project-backbone-status")).toContainText("سه رکورد متصل ثبت شد");
+  await expect(page.getByTestId("project-backbone-status")).toContainText("برنامهٔ فعلی و کار متصل آن ثبت شد");
 
   const validEnvelope = await readProjectBackboneEnvelope(page);
   const assertReadLockedWithoutRewrite = async (exactBytes: string) => {
@@ -12117,8 +13829,6 @@ test("TM-1 creates a browser-local deadline monitor, checks it explicitly, and r
   await expect(page.getByTestId("project-backbone-task")).toContainText("موعد");
 
   await page.getByTestId("project-backbone-back").click();
-  await page.getByTestId("menu-button").click();
-  await page.getByTestId("drawer-tasks-entry").click();
   await page.getByTestId("project-task-filter-monitor").click();
   await expect(page.getByTestId("project-task-monitor-create")).toBeVisible();
   await page.getByTestId("project-task-monitor-create").click();
@@ -12817,15 +14527,11 @@ test("TM-1 writes nothing when Web Locks are unavailable", async ({ page }) => {
 });
 
 test("TM-1 keeps Monitor and Run projections isolated to their owning project", async ({ page }) => {
-  await page.goto("/");
-  await page.evaluate(() => {
-    const base = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-31T08:00:00.000Z" };
-    window.localStorage.setItem("chida-prototype-builder-projects:v2", JSON.stringify([
-      { ...base, id: "tm-project-a", name: "پروژه پایش الف", location: "ونک", stage: "فونداسیون" },
-      { ...base, id: "tm-project-b", name: "پروژه پایش ب", location: "جردن", stage: "نازک کاری و نما" },
-    ]));
-    window.localStorage.setItem("chida-prototype-active-project", "tm-project-a");
-  });
+  const projectBase = { usage: "", landArea: "", builtArea: "", aboveGroundFloors: "", basementFloors: "", unitCount: "", createdAt: "2026-08-31T08:00:00.000Z" };
+  await seedLegacyProjectsBeforeFirstAppLoad(page, [
+    { ...projectBase, id: "tm-project-a", name: "پروژه پایش الف", location: "ونک", stage: "فونداسیون" },
+    { ...projectBase, id: "tm-project-b", name: "پروژه پایش ب", location: "جردن", stage: "نازک کاری و نما" },
+  ], "tm-project-a");
   await enterBuilderHome(page);
   await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2099-12-25T12:00" });
   await page.getByTestId("project-backbone-back").click();

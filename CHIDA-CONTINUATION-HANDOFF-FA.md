@@ -2,11 +2,11 @@
 
 **تاریخ آخرین به‌روزرسانی:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
 **مسیر پروژه:** `/Users/mahyarkl/Desktop/ChatGPT/CHIDA`
-**نقطهٔ ادامه:** snapshot ترکیبی SI-1/TM-1 با commit قابلیت `525f1bb1577b495416a4e5944341862f0ae5cfbf` و prototype tree `ea1af0b50b2e131ffc139a6f092cf5aa81c82875` در GitHub، Cloudflare Pages deployment `d54faf50-c7e7-43d1-974f-2925c9bdfe9a` و ChatGPT Sites نسخهٔ ۳۱/deployment `appgdep_6a95754e5e3481918c0a6679b0ab6016` same-source منتشر شده است. SI-1 پیش‌تر توسط ماهیار تأیید شد؛ TM-1 با gate release کامل منتشر شد، اما مجوز انتشار به معنی تأیید UX تفصیلی آن نیست. Build Lifecycle، مدل، backend، شبکه/ارسال و مسیر تأمین‌کننده همچنان مجوز تازه می‌خواهند.
+**نقطهٔ ادامه:** baseline منتشرشده همان snapshot ترکیبی SI-1/TM-1 با commit قابلیت `525f1bb1577b495416a4e5944341862f0ae5cfbf` و receipt نهایی `29fb52e6bdfb69b6e4773a68b28b5fc891f42f27` است. `REL-1`، `BL-1`، artifact `BG-GATE-1` و remediation `BG-F1` فقط در working tree محلی `main` هستند؛ commit، push یا deploy نشده‌اند. BG-F1 با پیام اجرایی تازهٔ ماهیار ساخته شد و Project/Identity foundation را محلی بست، اما Builder Gate کامل همچنان از ارزیابی تاریخی `FAIL` عبور نکرده است. مدل، backend، شبکه/ارسال و مسیر تأمین‌کننده همچنان مجوز ندارند.
 
 ## مأموریت گفت‌وگوی بعدی
 
-**نقطهٔ توقف پس از انتشار:** انتشار same-source SI-1/TM-1 بسته و receipt آن ثبت شده است. هیچ تسک اجرایی بعدی مجاز نیست؛ برای Build Lifecycle Minimum یا هر worker، backend، مدل، شبکه، پایش وب/قیمت/مقررات و مسیر تأمین‌کننده منتظر پیام صریح تازهٔ ماهیار بمان.
+**تسک جاری:** `BG-F1 — Project/Identity Foundation` در candidate محلی پیاده‌سازی و با regressionهای failure/migration/concurrency آزموده شده است. fixture نسخه‌دار Identity/Policy و Project/ProjectProfile envelope v3 جای list/pointer قدیمی را به‌عنوان canonical گرفته‌اند؛ دو finding تاریخی Project fail-open و نبود fixture معتبر در دامنهٔ همین برش remediation شده‌اند. تأیید تجربه، commit/push/deploy و عبور به `BG-F2` باز هستند و هرکدام پیام جداگانه می‌خواهند.
 
 ترتیب مشترک Sol و Codex پس از تأیید بسته:
 
@@ -14,11 +14,13 @@
 2. ماهیار بسته را صریحاً تأیید کرد؛ رسید تأیید بدون تغییر بایتی چهار Source در دفتر یادگیری و هنداف ثبت شد.
 3. تأیید اسناد implementation را خودکار آغاز نمی‌کند.
 4. ماهیار با پیام اجرایی جداگانه برش اول Project Backbone را مجاز کرد؛ پس از بازخوردهای خرید و RTL و پاس‌شدن gateها، انتشار همین snapshot را نیز صریحاً مجاز کرد.
-5. برش دوم Memory Core ساخته، آزموده، تأیید و در هر سه مقصد منتشر شده است. SI-1 و TM-1 نیز با snapshot ترکیبی same-source منتشر شده‌اند؛ SI-1 توسط ماهیار تأیید شد و TM-1 gate release کامل دارد. Build Lifecycle Minimum هنوز پیام اجرایی تازه می‌خواهد.
-6. پس از PASS شدن Builder Prototype Architecture Gate، M1a فقط به‌صورت adapter محلی، opt-in، provider-neutral و text-only آزموده می‌شود؛ M1b برای `ContextManifest`/Memory فقط بعد از پذیرش M1a می‌آید.
-7. مسیر تأمین‌کننده، shared case واقعی، backend و شبکهٔ واقعی همچنان به gate و تأییدهای جدا نیاز دارند.
+5. برش دوم Memory Core و برش‌های SI-1/TM-1 ساخته و منتشر شده‌اند. `REL-1/BL-1` در working tree محلی ساخته، آزموده و QA شدند؛ ماهیار با درخواست شروع تسک بعدی تجربهٔ BL-1 و عبور به Gate را تأیید کرد، نه انتشار را.
+6. `BG-GATE-1` inventory و acceptance matrix را بست و نتیجهٔ Builder Prototype Architecture Gate را `FAIL` ثبت کرد. ماهیار سپس BG-F1 را صریحاً مجاز کرد و آن remediation در checkout اصلی ساخته و آزموده شد؛ این به‌تنهایی rerun یا PASS کل Gate نیست.
+7. نامزد کوچک بعد فقط `BG-F2 — Manual Task Concurrency Foundation` است و شروع آن پیام اجرایی تازه می‌خواهد.
+8. M1a فقط پس از PASS همان gate و با پیام جدا، به‌صورت adapter محلی، opt-in، provider-neutral و text-only آزموده می‌شود؛ M1b برای `ContextManifest`/Memory فقط بعد از پذیرش M1a می‌آید.
+9. مسیر تأمین‌کننده، shared case واقعی، backend و شبکهٔ واقعی همچنان به gate و تأییدهای جدا نیاز دارند.
 
-هر بار فقط یک تسک کوچک ساخته می‌شود. مجوز انتشار snapshot SI-1/TM-1 مصرف و release بسته شده است؛ برای Build Lifecycle یا هر تغییر بعدی باید منتظر پیام صریح تازه ماند.
+هر بار فقط یک تسک کوچک ساخته می‌شود. پیام «بزن بریم» اجرای BG-F1 را مجاز کرد؛ این پیام مجوز BG-F2، commit/push/deploy، Gate rerun یا عبور به مدل نبود.
 
 تعریف کاری پیشنهادی برای «تکمیل سمت سازنده» دیگر completion مبهم کل T13 نیست؛ یک acceptance matrix دودویی برای ownership/scope، isolation، schema/state/version، failure/rollback، memory control، Source/Composer intake محلی، Task/Monitor، lifecycle حداقلی `BuiltArtifact`، پذیرش UI و شواهد آزمون است. backend production، شبکهٔ واقعی، طرف دوم واقعی، marketplace، Connector، اجرای کد آزاد، مالی سبک و desktop نهایی شرط این gate نیستند.
 
@@ -53,12 +55,13 @@
 
 1. `AGENTS.md` و `prototype/AGENTS.md` را کامل بخوان.
 2. منبع حقیقت را فقط `CHIDA-Product-Definition-FA.md` بدان؛ `BUILDER-FEATURE-BACKLOG-FA.md` فقط ترتیب اجرایی و این فایل فقط هنداف است.
-3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007 تا C-010، T7/T8، T8-UX1/T8-UX2/T8-UX3، H1، H2، MC-1، SI-1 و TM-1 بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه C-010 است و قاعدهٔ Quick Action grid در C-010 با تصمیم صریح T8-UX3 منسوخ شده است.
-4. `CHIDA-SOL-HANDOFF-FA.md`، بخش تاریخی MC-1 و بخش‌های جاری SI-1/TM-1 همین هنداف را کامل بخوان و سپس `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را فقط read-only تطبیق بده. baseline پیش از MC-1 برابر `32f9508f6b4483d95ec1213cb6eef93ad281c2ba` است؛ tip جاری را از `HEAD`/`origin/main` و receipt قابلیت SI-1/TM-1 را از بخش رسید همان snapshot بخوان. رسید MC-1 تاریخی است.
+3. `CHIDA-PRODUCT-LEARNINGS-FA.md` را، به‌ویژه C-007 تا C-010، T7/T8، T8-UX1/T8-UX2/T8-UX3، H1، H2، MC-1، SI-1، TM-1، REL-1، BL-1 و BG-GATE-1 بخوان. سپس `CHIDA-BUILDER-PROTOTYPE-ARCHITECTURE-GATE-FA.md` را کامل بخوان. تصمیم سه‌ورودی C-009 تاریخی و منسوخ است؛ قرارداد جاری افزودن پروژه C-010 است و قاعدهٔ Quick Action grid در C-010 با تصمیم صریح T8-UX3 منسوخ شده است.
+4. `CHIDA-SOL-HANDOFF-FA.md`، بخش تاریخی MC-1، بخش‌های جاری SI-1/TM-1 و بخش محلی REL-1/BL-1 همین هنداف را کامل بخوان و سپس `git status --short --branch`، `git diff --check`، `git log -1` و هم‌ترازی `origin/main` را فقط read-only تطبیق بده. baseline منتشرشدهٔ جاری receipt `29fb52e6bdfb69b6e4773a68b28b5fc891f42f27` است؛ تغییرهای پس از آن محلی‌اند.
 5. Project Backbone منتشرشده را همراه `PB-1`، Memory Core را همراه `MC-1` و snapshot ترکیبی SI-1/TM-1 را همراه بخش‌های همنام دفتر یادگیری بررسی کن. هیچ تغییر محلی را stash، reset، discard یا بدون تعیین منشأ پاک نکن.
-6. MC-1 و snapshot ترکیبی SI-1/TM-1 منتشر و receipt هر سه مقصدشان ثبت شده است. release جاری را از روی بخش‌های رسید همین هنداف و HEAD/remote فقط read-only تطبیق بده.
-7. دسترسی owner-only Sites و هم‌ترازی same-source را حفظ کن. Build Lifecycle، مدل، backend و مسیر تأمین‌کننده را بدون پیام تازه آغاز نکن.
-8. اکنون نقطهٔ توقف است؛ عبور به تسک بعد نیازمند پیام اجرایی جداست.
+6. MC-1 و snapshot ترکیبی SI-1/TM-1 منتشرند؛ REL-1/BL-1 را local-only بدان مگر receipt تازهٔ هر سه مقصد ثبت شده باشد.
+7. قرارداد Fast Publish را حفظ کن: `gate:release` یک بار روی candidate نهایی، سپس فقط پس از مجوز انتشار commit همان bytes، `gate:publish`، یک push و یک release same-source؛ receipt terminal فقط در پیام تحویل.
+8. دسترسی owner-only Sites را حفظ کن. BG-F2، Gate rerun، مدل، backend و مسیر تأمین‌کننده را بدون پیام تازه آغاز نکن.
+9. پس از تحویل BG-F1 نقطهٔ توقف است؛ عبور به BG-F2 یا هر تسک دیگر نیازمند پیام اجرایی جداست.
 
 ## سلسله‌مراتب تصمیم
 
@@ -453,15 +456,17 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 4. تغییر را کوچک و فقط در مرز مجاز انجام بده؛ runtime محافظت‌شده را تغییر نده.
 5. رابط را برای drag/tap، keyboard/focus، target لمسی، RTL/LTR، a11y و overflow بررسی کن.
 6. دفتر یادگیری را پیش از تحویل و دوباره پس از بازخورد/تأیید به‌روزرسانی کن.
-7. در `prototype/` متناسب با ریسک اجرا کن: `npm run check:runtime`، `npm run build`، `npm run test:app`، `npm run test:runtime`، `npm run test:sites` و در ریشه `git diff --check`.
+7. هنگام توسعه فقط بررسی‌های متمرکز متناسب با ریسک را اجرا کن؛ پس از نهایی‌شدن همهٔ کد، سند و QA، `npm run gate:release` را دقیقاً یک‌بار روی candidate نهایی اجرا کن. این فرمان build/integrity/TypeScript، کل Playwright، Sites و `git diff --check` را یکجا می‌بندد و نباید با اجرای جداگانهٔ دوبارهٔ همان suiteها تکرار شود.
 8. مشاهده، ذخیرهٔ محلی، Git و انتشار را جدا گزارش کن.
 9. بدون درخواست صریح commit، push، merge یا deploy نکن.
 
 ## متن کوتاه آماده برای آغاز گفت‌وگوی جدید
 
-> این تسک ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز و dirty work را حفظ کن. ابتدا `AGENTS.md`، `prototype/AGENTS.md`، `CHIDA-CONTINUATION-HANDOFF-FA.md`، بخش‌های H2/MC-1/SI-1/TM-1 در `CHIDA-PRODUCT-LEARNINGS-FA.md`، سند مادر و backlog را بخوان. MC-1 و snapshot ترکیبی SI-1/TM-1 در GitHub، Cloudflare Pages و ChatGPT Sites خصوصی same-source منتشر و receipt آن‌ها ثبت شده است. اکنون نقطهٔ توقف است؛ بدون پیام اجرایی تازه مدل، backend، sync، Build Lifecycle یا مسیر تأمین‌کننده را شروع نکن.
+> این تسک ادامهٔ مستقیم پروژهٔ CHIDA در checkout اصلی `/Users/mahyarkl/Desktop/ChatGPT/CHIDA` و شاخهٔ `main` است؛ worktree جدا نساز و تغییرهای کاربر را حفظ کن. ابتدا `AGENTS.md`، `prototype/AGENTS.md`، `CHIDA-CONTINUATION-HANDOFF-FA.md`، بخش‌های H2/MC-1/SI-1/TM-1/REL-1/BL-1/BG-GATE-1/BG-F1 و بازخوردهای انتهایی در `CHIDA-PRODUCT-LEARNINGS-FA.md`، سند مادر، backlog و artifact گیت را بخوان. baseline پیش از انتشار جاری `29fb52e6bdfb69b6e4773a68b28b5fc891f42f27` بود؛ snapshot ترکیبی REL-1، BL-1، BG-GATE-1، BG-F1، اصلاح جای «توضیح بیشتر» و مرکز واحد «کارها» در ۲۰۲۶/۰۸/۳۱ مجوز انتشار گرفت و SHA/deploymentهای terminal آن فقط در پیام انتقال همین تسک اعلام می‌شوند. Builder Gate کامل همچنان `FAIL` است. اکنون نقطهٔ توقف است؛ BG-F2، Gate rerun، مدل، backend، sync یا مسیر تأمین‌کننده را بدون پیام اجرایی تازه شروع نکن و هیچ commit/push/deploy تازه‌ای را مجوزگرفته فرض نکن.
 
-## آخرین اصلاح منتشرشده — بازیابی امن درخواست خرید ناخوانا
+## سابقهٔ اصلاح منتشرشده — بازیابی امن درخواست خرید ناخوانا
+
+این بخش یک سابقهٔ تاریخی است؛ baseline منتشرشدهٔ جدیدتر snapshot ترکیبی SI-1/TM-1 با receipt ثبت‌شده در بالای همین هنداف است.
 
 - **محرک:** ماهیار در preview لوکال گزارش کرد درخواست‌های خرید قابل‌ثبت نیستند و با پیام «درستش کن» اصلاح را مجاز کرد. علت، read-error مخزن `PurchaseRequest` و قفل fail-close درست، اما بدون مسیر recovery بود؛ این رفتار disable عمدی قابلیت نبود.
 - **زمینهٔ محفوظ:** بستهٔ اسناد تأییدشده و برش PB-1 دست‌نخورده ادامه دارند. این hotfix همراه PB-1 و اصلاح RTL در source commit `bcb22465c0f6e1f04252c40a65f6249a5084ff6b` منتشر شده است.
@@ -613,3 +618,63 @@ release تأییدشدهٔ قبلی `bd766bc` نیز در همین تاریخ ب
 - Cloudflare Pages deployment `d54faf50-c7e7-43d1-974f-2925c9bdfe9a` از source دقیق همین commit روی شاخهٔ `main` به وضعیت `success` رسید. canonical `https://chida-prototype.pages.dev` و immutable `https://d54faf50.chida-prototype.pages.dev` با build محلی یکسان‌اند: HTML `f2b2d951c0f887a39988262e866ba95dab4a3223d84c3e9a148570e70342c748`، JavaScript `49bf9d38241b5988e88378408bb58f3f1bbd8287919c3ba9592f23b75884fca2` و CSS `8817d8eb8799652bd56c0f62935e7ed34e578d9d40ded4c16fbc83ffb2d72f33`.
 - ChatGPT Sites نسخهٔ ۳۱ با source commit دقیق قابلیت، ۱۹ فایل و archive hash `sha256:1168adc4638bf0373060eaa2cc6175c4eca5f6dfa1b84f8df97ec5c1b8914b86` ذخیره شد؛ version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_82b99fac3d2481919a8c51f8c5898ce1` و deployment خصوصی `appgdep_6a95754e5e3481918c0a6679b0ab6016` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی `custom`/owner-only با دقیقاً یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
 - commit مستندی حاوی این receipt فقط اسناد را تغییر می‌دهد و prototype tree را ثابت نگه می‌دارد؛ SHA و deployment/version نهایی آن به‌دلیل حلقهٔ self-reference در پیام تحویل ثبت می‌شوند. پس از receipt متوقف شو؛ Build Lifecycle، مدل، backend و مسیر تأمین‌کننده فقط با پیام اجرایی جدا آغاز می‌شوند.
+
+## REL-1 — Fast Publish؛ داخل snapshot مجازِ انتشار
+
+- **مجوز و مسئله:** ماهیار پس از مشاهدهٔ طولانی‌شدن مکرر انتشار، اصلاح workflow را صریحاً خواست. ممیزی نشان داد `test:runtime` مجموعهٔ app را دوباره اجرا می‌کرد، build/integrity/TypeScript در دستورهای دستی تکرار می‌شد و commit مستندی receipt پس از انتشار یک push و deployment دوم می‌ساخت.
+- **قرارداد تازه:** `npm run gate:release` فقط یک بار روی candidate نهایی build/integrity/TypeScript، full Playwright، Sites و `git diff --check` را اجرا می‌کند. fingerprint source و `dist` شامل path، mode/type، bytes و symlink target در `.git/chida-release-gate.json` می‌ماند و ثبات snapshot پیش/پس از گیت بررسی می‌شود.
+- **مرحلهٔ publish:** پس از مجوز جدا، همان bytes یک commit می‌شوند؛ `npm run gate:publish` فقط clean بودن، branch، artifact و HEAD همان gate یا دقیقاً یک فرزند مستقیم non-merge را می‌سنجد. suite کامل تکرار نمی‌شود، یک SHA یک بار push و مبنای هر دو deployment است و شناسه‌های terminal فقط در پیام تحویل می‌آیند؛ receipt-only commit حذف است.
+- **شواهد:** scriptها برای tracked/untracked-nonignored، حذف فایل، mode/type/symlink، artifact کامل، snapshot پیش/پس و history مستقیم fault-review شدند؛ ممیزی مستقل finding باز P0/P1 نداشت. `test:app` اکنون ۲۷۱ تست، `test:runtime` دقیقاً ۸ تست و `test:all` مجموعاً ۲۷۹ تست را فهرست می‌کنند.
+- **وضعیت:** ماهیار در ۲۰۲۶/۰۸/۳۱ انتشار snapshot ترکیبی جاری را صریحاً مجاز کرد؛ همین انتشار نخستین مصرف واقعی این قرارداد است. وضعیت terminal و شناسه‌ها فقط در پیام تحویل ثبت می‌شوند.
+
+## BL-1 — BuiltArtifact Lifecycle Minimum؛ gate فنی PASS، تجربه تأیید و انتشار مجاز
+
+- **مجوز و دامنه:** ماهیار اجرای تسک بعدی را صریحاً خواست. خروجی یک `BuiltArtifact` امن، declarative، private/project-scoped از catalog بستهٔ `project-followup-view` است؛ Plugin، RuntimeTool، Connector، skill/plugin generation، کد آزاد، model، backend، network یا external install/effect ساخته نشده است.
+- **preview و lifecycle:** preview دقیق data bindingها، permissionها، safe componentها، action فقط‌خواندنی، محل Tools، metadata رابطه‌ای capability/skill و مرزهای عدم اجرا/شبکه/نصب را نشان می‌دهد. فقط checkbox همان fingerprint می‌تواند `preview_ready` را فعال کند. disable/reactivate، draft revision تازه، rollback به draft تازه، blocked و حذف دوگامی با tombstone در revision/history نسخه‌دار ثبت می‌شوند.
+- **storage و failure:** envelope exact با owner/scope، expectedVersion، SHA-256 revision fingerprint و commit-time reread زیر ترتیب قفل ثابت journal سپس main store نگه‌داری می‌شود. read-error empty نیست؛ write پیش از state و rollback byte-preserving است و ghost success ندارد. رکورد legacy سراسری به هیچ پروژه‌ای migrate نمی‌شود.
+- **dependency invalidation:** reader واقعی Project Backbone و Tasks در mount/focus/visibility/storage refresh می‌شود. observation خرابی `active@N` پیش از انتظار main-lock در journal hash‌شده و mirrorشدهٔ local/session همان تب ثبت می‌شود؛ `active@N + intent@N` در repair، reload و project switch مؤثرانه blocked می‌ماند. فقط reread و اثبات direct `blocked@N+1` intent را پاک می‌کند؛ cleanup crash نسخهٔ blocked را تکثیر نمی‌کند و retry خودکار loop نمی‌زند.
+- **شواهد:** focused BuiltArtifact برابر ۱۹/۱۹ و TypeScript پاس است. بازبینی مستقل شش fault-path journal/mirror/read-failure/crash/bounded-retry/queued-lock را ۶/۶، build و `git diff --check` را پاس و finding باز P0/P1 را صفر گزارش کرد. QA مرورگر داخلی پس از cold reload در `390 × 844` ساختهٔ فعال نسخهٔ ۳ را از Tools باز کرد؛ html/body دقیقاً ۳۹۰، overflow افقی صفر، کنترل قابل‌دیدن کوچک‌تر از ۴۴px صفر و console warning/error تازه صفر بود. receipt terminal گیت واحد candidate عمداً بیرون tree نگه‌داری و در پیام تحویل گزارش می‌شود.
+- **مسیرهای تغییرکرده:** `prototype/src/Prototype.tsx`، `prototype/src/prototype.css`، `prototype/tests/chida-flow.spec.ts`، دو script تازهٔ release، `package.json`، READMEها، AGENTSها، backlog، Learnings و همین هنداف. `CHIDA-Product-Definition-FA.md` تغییر نکرده است.
+- **مرز باقی‌مانده:** catalog چندقالبی، permission invalidation گسترده، retention/idempotency production، refresh چندتب جامع و دوام در شکست هم‌زمان main store و هر دو journal mirror، runtime واقعی، model/backend/network و مسیر تأمین‌کننده deferred هستند.
+- **بازخورد و نقطهٔ توقف:** ماهیار با درخواست «تسک بعدی رو بگو چیه و بعد شروع کن» تجربهٔ BL-1 و عبور به BG-GATE-1 را تأیید کرد؛ آن پیام مجوز انتشار نبود. ماهیار بعداً در ۲۰۲۶/۰۸/۳۱ انتشار snapshot ترکیبی جاری را صریحاً مجاز کرد. M1a همچنان فقط پس از PASS Gate و پیام جدا مجاز می‌شود.
+
+## BG-GATE-1 — Acceptance Matrix هنجاری؛ نتیجهٔ Builder Gate = FAIL
+
+- **مجوز و دامنه:** ماهیار گفت تسک بعدی گفته و سپس شروع شود. این پیام فقط review-only Gate را مجاز کرد. هیچ runtime، سند مادر یا چهار سند منبع معماری تغییر نکرد و remediation، مدل، backend، شبکه، مسیر تأمین‌کننده و انتشار آغاز نشدند.
+- **artifact هنجاری:** `CHIDA-BUILDER-PROTOTYPE-ARCHITECTURE-GATE-FA.md` inventory دقیق `Required=Yes`، قاعدهٔ دودویی، ۱۲ ردیف، findingها، شواهد/کمبودهای تست، پنج تصمیم Gate-or-defer و Non-goals را ثبت می‌کند.
+- **نتیجه:** Source/Composer Local Intake، Task/Monitor و BuiltArtifact Lifecycle PASS هستند. Ownership/Scope، Project Isolation، Schema/State/Version، Failure/Rollback، Optimistic Concurrency، Idempotency، Memory Control، UI Acceptance و Test Evidence FAIL هستند؛ بنابراین Gate نهایی `FAIL` است و M1a مجاز نیست.
+- **سه مانع P1:** Project/Profile canonical خراب را به legacy/empty تبدیل و دوباره می‌نویسد؛ fixture نسخه‌دار Identity/Policy شامل Membership/RoleAssignment/AuthorizationContext وجود ندارد؛ و Task/Request/Approval/Dispatchهای قدیمی mutation seam، Web Lock، commit-time reread و expectedVersion یکنواخت ندارند.
+- **بدهی‌های دیگر:** `case_private`، migration همهٔ storeهای Gate، inventory کامل File/Photo/Source و affordanceهای مرده بازند. offline draft، export/delete، quota failure، Mock reset و PWA/installability نیز `PENDING_DECISION` هستند و بدون تصمیم ماهیار Deferred محسوب نمی‌شوند.
+- **شواهد:** گیت کامل پیش از artifact مستندی ۲۷۹/۲۷۹ app+runtime، Sites برابر ۴/۴ و build/integrity/TypeScript/diff را پاس کرده بود، اما receipt `.git` فقط fingerprint bytes را نگه می‌دارد و جای acceptance matrix نیست. تغییرهای مستندی BG-GATE-1 همان receipt را برای publish نامعتبر می‌کنند؛ چون انتشار درخواست نشده، full gate دوباره اجرا نشد.
+- **نامزد بعد:** فقط `BG-F1 — Project/Identity Foundation`: fixture محلی و نسخه‌دار Identity/Policy و envelope امن Project/Profile با fail-close migration، Web Lock، expectedVersion و regressionهای دو تب. شروع آن پیام اجرایی تازه می‌خواهد.
+
+## BG-F1 — Project/Identity Foundation؛ داخل snapshot مجازِ انتشار
+
+- **مجوز و دامنه:** ماهیار با «بزن بریم» اجرای همین برش را مجاز کرد. دامنه فقط Identity/Policy fixture و Project/ProjectProfile foundation بود؛ Task/Request/Approval/Dispatch، `case_private`، Gate rerun، مدل، backend، شبکه، مسیر تأمین‌کننده و انتشار وارد نشدند.
+- **Identity/Policy:** mirror exact در `chida-prototype-identity-policy-fixture:v1` فقط با fixture کامپایل‌شده معتبر است. AccountIdentity، Membership، RoleAssignment و AuthorizationContext template نسخه‌دارند؛ context دقیق هر projectId با scope واقعی resolve می‌شود و fingerprint آن در history Project/Profile bind است. AccountSide از Identity و MembershipRole از RoleAssignment مستقل می‌آیند.
+- **Project domain:** canonical در `chida-prototype-builder-projects:v3` یک envelope اتمیک با storeVersion، activeProjectId، Project/ProjectProfile جدا، revision/history/SHA-256 fingerprint، migration report و idempotency receipt است. parser علاوه بر fingerprint، شناسه و chronology، ترتیب Project/Profile، receipt به event و active-project را از ledger بازپخش می‌کند و فقط state قابل‌تولید writer را می‌پذیرد. projection قدیمی `BuilderProject` فقط برای UI ساخته می‌شود و دیگر persist نمی‌شود.
+- **migration/cutover:** precedence برابر v3، سپس v2، سپس legacy و سپس empty است. نسل حاضرِ خراب fail-close می‌شود و به نسل پایین‌تر برنمی‌گردد؛ empty معتبر legacy را زنده نمی‌کند و source غیرقابل‌نمایش پیش از نوشتن marker/candidate رد می‌شود. marker سه‌مرحله‌ای pending/verified/committed source/pointer hash، active hint و generation-selection preimage دقیق، candidate exact و postimage را تا persisted+rechecked شدن verified می‌بندد؛ همان verify نقطهٔ cutover authority است و committed فقط همان candidate را منتشر می‌کند. verified باقی‌مانده پس از شکست rollback روی reload دوباره validate می‌شود و ready نیست. پس از commit، v3 تنها authority است و old source/pointer فقط دادهٔ recovery غیرauthoritative هستند.
+- **mutation:** create/select/profile update/rollback زیر Web Lock واحد، authority و canonical reread، expectedVersion، idempotency deterministic، write-before-state، exact marker/identity/canonical readback و candidate-owned rollback اجرا می‌شوند. validator مشترک فرمان پیش از idempotency و parser receipt، پیش‌شرط و snapshot canonical create/update را exact می‌سنجد؛ no-op نسخه یا bytes را تغییر نمی‌دهد، rollback revision تازه و targetVersion صریح می‌سازد و stale tab overwrite نمی‌کند.
+- **UI و consumerها:** خطای foundation با empty یکی نیست و تا retry معتبر همهٔ مسیرهای پروژه قفل می‌شوند؛ تغییر canonical/marker/identity و `localStorage.clear()` در تب دیگر فوراً fail-close می‌شود، اما ورودی قدیمی migration پس از committed عمداً نادیده گرفته می‌شود. فرم ساخت/ویرایش روی شکست باز و draft محفوظ می‌ماند؛ rollback یا storage event که پروژهٔ active ناقص بسازد در هر تب فرم تکمیل همان پروژه را نشان می‌دهد. consumerها و regressionهای isolation دیگر پس از cutover v2/pointer را authority فرض نمی‌کنند و پروژه را از UI/envelope v3 عوض می‌کنند.
+- **شواهد:** build/TypeScript و regressionهای متمرکز fixture exact/AuthorizationContext، migration malformed/schema-invalid/empty، identity/canonical و coordinated-rehash tamper، command/receipt/ID/order/active replay، verified resume و rollback-marker double fault، cutover race، non-authority ورودی قدیمی پس از commit، create retry، no-op/edit/rollback، rollback ناقص، write failure، stale editor، storage event/clear و رقابت قطعی دو تب و read-error موبایل پاس شده‌اند. گیت نهایی یک‌بارهٔ candidate و receipt بیرون worktree در پیام تحویل ثبت می‌شود.
+- **وضعیت و نقطهٔ توقف:** BG-F1 داخل candidate ترکیبی جاری است و ماهیار در پیام ۲۰۲۶/۰۸/۳۱ انتشار همین snapshot را صریحاً مجاز کرد. این مجوز، نتیجهٔ تاریخی Builder Gate را PASS نمی‌کند: BG-F1 فقط دو finding Project/Identity را remediation کرده و ردیف‌های دیگر rerun نشده‌اند. رسید terminal انتشار بیرون worktree و فقط در پیام تحویل/تسک ادامه ثبت می‌شود.
+- **نامزد کوچک بعد:** `BG-F2 — Manual Task Concurrency Foundation`: Task دستی قدیمی به envelope/mutation seam exact با Web Lock، commit-time reread، expectedVersion/idempotency، migration و regression دو تب منتقل شود. بدون پیام اجرایی تازه شروع نشود.
+
+## بازخورد چیدمان فرم درخواست خرید — ۲۰۲۶/۰۸/۳۱
+
+- ماهیار خواست «توضیح بیشتر (اختیاری)» از بالای جزئیات فرم به انتهای آن و درست بالای «ادامه» منتقل شود. این بازخورد در working tree محلی برای محصول/خدمت و حالت‌های ساده/پیشرفته پیاده‌سازی شد؛ مقدار فیلد هنگام تغییر حالت حفظ می‌شود و schema یا مسیر ذخیره تغییر نکرده است.
+- regression ترتیب DOM، مجاورت با اقدام اصلی و حفظ مقدار ۲/۲ پاس شد. build/TypeScript، integrity runtime و diff-check پاس‌اند؛ QA مرورگر داخلی پس از reload در `390 × 844` مجاورت مستقیم فیلد/اقدام، overflow افقی صفر، نبود overlay و console warning/error صفر را ثبت کرد. این اصلاح داخل snapshot مجازِ انتشار جاری است؛ تأیید UX تفصیلی آن جداگانه ثبت نشده و مجوز شروع `BG-F2`، Gate rerun معماری، مدل، backend یا مسیر تأمین‌کننده نیست.
+
+## بازخورد مرکز واحد «کارها» و سیاست تست سریع — ۲۰۲۶/۰۸/۳۱
+
+- ماهیار جدایی «برنامه»، «تصمیم‌ها» و «کارها» را گیج‌کننده دانست و خواست یک مقصد باشند. Quick Action «برنامه پروژه» حذف شد، «کار جدید» به «کارها» تغییر کرد و خانه، Drawer و فضای پروژه اکنون یک `ProjectTasksView` را باز می‌کنند. ساخت/بازکردن «برنامهٔ فعلی» از داخل همین مرکز انجام می‌شود و Backbone فقط صفحهٔ جزئیات با بازگشت مستقیم به «کارها»ست.
+- تغییر فقط IA/navigation/copy است. Milestone، Decision، Task متصل، Task دستی، Approval و Monitor و همهٔ قراردادهای storage/version/lineage/fail-close جدا باقی ماندند؛ Task برنامه در store دستی تکثیر نشد و scheduler همچنان فقط هنگام mounted/visible بودن مرکز کارها اجرا می‌شود.
+- پنج regression متمرکز Quick Actions، مسیرهای ساخته‌شده، کارهای دستی، Project Backbone و Task/Monitor برابر ۵/۵ پاس شدند. build/TypeScript و integrity ۲۸ فایل runtime پاس است. QA واقعی `390 × 844` خانه، مرکز کارها، برنامهٔ فعلی و رفت‌وبرگشت فضای پروژه را با overflow افقی صفر، کنترل‌های حداقل `48 × 44` و console warning/error صفر تأیید کرد.
+- سیاست کنترل کیفیت در هر دو AGENTS و READMEها سه‌سطحی شد: micro UX فقط focused regression + runtime integrity + mobile QA + diff-check و یک build پس از بستهٔ بازخورد؛ برش عادی focused domain + build + QA؛ `gate:release` فقط candidate منجمد انتشار صریح یا پایان برش واقعاً پرریسک معماری. گیت کامل در این بازخورد عمداً اجرا نشد.
+- ماهیار با «خوبه» تجربهٔ مرکز واحد را تأیید و بلافاصله انتشار snapshot ترکیبی جاری را صریحاً مجاز کرد. انتشار باید فقط با یک `gate:release` روی candidate منجمد، یک commit/push و همان SHA برای GitHub، Cloudflare Pages و ChatGPT Sites انجام شود؛ شناسه‌های terminal فقط در پیام تحویل و تسک ادامه می‌آیند. `BG-F2`، Gate rerun، مدل، backend و مسیر تأمین‌کننده همچنان مجوز تازه می‌خواهند.
+
+## هنداف گفت‌وگوی تازه و شفافیت پیشرفت — ۲۰۲۶/۰۸/۳۱
+
+- ماهیار گفت با وجود دو روز کار، چون دکمه‌ها و ظاهر تقریباً ثابت مانده‌اند روشن نبوده روی چه چیزی کار شده است. علت واقعی این بود که بخش عمدهٔ snapshot زیر رابط قرار دارد: REL-1 مسیر انتشار را از اجرای تکراری suite و deployment دوم جدا کرد؛ BL-1 چرخهٔ امن BuiltArtifact را ساخت؛ BG-GATE-1 شکاف‌های معماری را به‌صورت دودویی ثبت کرد؛ BG-F1 foundation پروژه/هویت و migration/concurrency آن را ایمن کرد. دو تغییر قابل‌دیدن این دور، انتقال «توضیح بیشتر» به انتهای فرم و یکی‌کردن «کارها» بود.
+- تصمیم فرایندی: هر تحویل بعدی باید سه خط جدا داشته باشد: «چه چیزی کاربر می‌بیند»، «چه زیرساخت/ریسکی بسته شد» و «تسک بعدی چه تغییر قابل‌دیدنی یا فنی می‌دهد». سبزبودن تست‌ها یا حجم diff جای توضیح محصولی را نمی‌گیرد.
+- به درخواست صریح ماهیار، یک تسک تازه در همان پروژهٔ ذخیره‌شدهٔ CHIDA، همان checkout و شاخهٔ `main` ساخته شد. آن تسک فقط هنداف را می‌خواند و تا پیام بعدی ماهیار هیچ پیاده‌سازی، گیت، commit، push یا deploy آغاز نمی‌کند. پس از انتشار، SHA و رسیدهای terminal همان نسخه با پیام جدا به آن تسک فرستاده می‌شوند؛ فایل‌های repo برای receipt پویا دوباره تغییر نمی‌کنند.

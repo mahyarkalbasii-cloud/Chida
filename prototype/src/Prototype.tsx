@@ -23,6 +23,7 @@ import {
   Image as ImageIcon,
   KeyRound,
   LayoutGrid,
+  LoaderCircle,
   MapPin,
   Menu,
   MessageSquare,
@@ -37,6 +38,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  ShieldAlert,
   ShoppingCart,
   SlidersHorizontal,
   Sparkles,
@@ -64,7 +66,85 @@ type Screen = "role" | "invite" | "phone" | "otp" | "success" | "home";
 type SheetName = "supplier" | "models" | "attach" | "tools" | "build" | "brief" | "projects" | "new-project" | "settings" | null;
 type ModelMode = "خودکار" | "سریع" | "عمیق";
 type ChatMessage = { id: string; role: "user" | "assistant"; text: string; sourceIds: string[] };
-type BuildStep = "define" | "preview" | "installed";
+type BuildStep = "define" | "preview" | "detail" | "history" | "remove";
+type BuiltArtifactLifecycleState = "draft" | "preview_ready" | "active" | "disabled" | "blocked";
+type BuiltArtifactEventType = "created" | "previewed" | "activated" | "disabled" | "blocked" | "reactivated" | "revision-created" | "rolled-back" | "removed";
+type BuiltArtifactManifest = {
+  dataBindings: { id: "project-plan" | "project-tasks"; access: "read"; projectId: string }[];
+  permissions: { id: "read-project-plan" | "read-project-tasks" | "open-project-tasks"; effect: "read" | "navigate"; scope: "active-project" }[];
+  safeComponents: { id: "summary-card" | "status-list" | "filter-chip"; version: 1 }[];
+  allowedActions: { id: "open-project-tasks"; externalEffect: "none" }[];
+  activationLocation: { kind: "project-tools"; projectId: string };
+  capabilityRef: { id: "built-artifact-renderer"; relationshipOnly: true };
+  relatedSkillRef: { id: "project-followup-view"; relationshipOnly: true };
+  boundaries: { codeExecution: false; networkAccess: false; externalInstall: false; externalEffect: "none" };
+};
+type BuiltArtifactRevision = {
+  id: string;
+  version: number;
+  createdAt: string;
+  name: string;
+  description: string;
+  catalogEntryId: "project-followup-view";
+  catalogEntryVersion: 1;
+  manifest: BuiltArtifactManifest;
+  status: BuiltArtifactLifecycleState;
+  blockedReason: string | null;
+  fingerprint: string;
+};
+type BuiltArtifactHistoryEvent = {
+  id: string;
+  type: BuiltArtifactEventType;
+  actor: "شما" | "سامانهٔ محلی";
+  at: string;
+  version: number;
+  rollbackFromVersion: number | null;
+  approvalFingerprint: string | null;
+};
+type BuiltArtifactRecord = {
+  schemaVersion: 1;
+  id: string;
+  type: "built_artifact";
+  projectId: string;
+  ownerPrincipalType: "project";
+  ownerPrincipalId: string;
+  accountSide: "builder";
+  scopeType: "project_private";
+  scopeId: string;
+  custodianService: "Artifact Domain Service";
+  status: BuiltArtifactLifecycleState;
+  version: number;
+  currentRevisionId: string;
+  createdAt: string;
+  updatedAt: string;
+  revisions: BuiltArtifactRevision[];
+  history: BuiltArtifactHistoryEvent[];
+};
+type BuiltArtifactTombstone = {
+  id: string;
+  projectId: string;
+  lastVersion: number;
+  removedAt: string;
+  reason: "user_requested";
+  priorFingerprint: string;
+  fingerprint: string;
+};
+type BuiltArtifactEnvelope = { envelopeVersion: 1; storeVersion: number; records: BuiltArtifactRecord[]; tombstones: BuiltArtifactTombstone[] };
+type BuiltArtifactReadResult = { envelope: BuiltArtifactEnvelope; readError: boolean };
+type BuiltArtifactInvalidationIntent = {
+  schemaVersion: 1;
+  artifactId: string;
+  projectId: string;
+  observedVersion: number;
+  observedRevisionId: string;
+  observedRevisionFingerprint: string;
+  unreadableBindings: ("project-plan" | "project-tasks")[];
+  recordedAt: string;
+  fingerprint: string;
+};
+type BuiltArtifactInvalidationIntentEnvelope = { envelopeVersion: 1; intents: BuiltArtifactInvalidationIntent[] };
+type BuiltArtifactInvalidationIntentReadResult = { envelope: BuiltArtifactInvalidationIntentEnvelope; readError: boolean };
+type BuiltArtifactMutationResult = "created" | "updated" | "unchanged" | "removed" | "invalid" | "read-failure" | "dependency-stale" | "scope-mismatch" | "version-conflict" | "approval-stale" | "unsupported-transition" | "write-failure" | "lock-unavailable";
 type BriefFrequency = "daily" | "weekly";
 type BriefSchedule = { frequency: BriefFrequency; weekday: string; time: string };
 type BuilderProject = {
@@ -80,6 +160,259 @@ type BuilderProject = {
   unitCount: string;
   createdAt: string;
 };
+type ProjectFoundationIdentity = {
+  schemaVersion: 1;
+  objectType: "account-identity";
+  id: typeof localBuilderAccountId;
+  ownerPrincipalType: "account";
+  ownerPrincipalId: typeof localBuilderAccountId;
+  accountSide: "builder";
+  scopeType: "account_private";
+  scopeId: typeof localBuilderAccountId;
+  custodianService: "Identity/Policy";
+  status: "active";
+  version: 1;
+};
+type ProjectFoundationMembership = {
+  schemaVersion: 1;
+  objectType: "membership";
+  id: "local-builder-membership";
+  principalId: typeof localBuilderAccountId;
+  scope: { type: "account"; id: typeof localBuilderAccountId };
+  status: "active";
+  version: 1;
+};
+type ProjectFoundationRoleAssignment = {
+  schemaVersion: 1;
+  objectType: "role-assignment";
+  id: "local-builder-owner-role";
+  membershipId: "local-builder-membership";
+  role: "owner";
+  status: "active";
+  version: 1;
+};
+type ProjectFoundationAuthorizationContextTemplate = {
+  schemaVersion: 1;
+  objectType: "authorization-context-template";
+  id: "local-builder-project-private-authorization-template";
+  actorPrincipalId: typeof localBuilderAccountId;
+  identityVersion: 1;
+  accountSide: "builder";
+  membershipId: "local-builder-membership";
+  membershipVersion: 1;
+  roleAssignmentId: "local-builder-owner-role";
+  roleAssignmentVersion: 1;
+  membershipRole: "owner";
+  aclSnapshotHash: string;
+  policyVersion: "builder-prototype-policy:v1";
+  scopeBinding: { scopeType: "project_private"; scopeIdSource: "projectId" };
+  status: "active";
+  version: 1;
+  fingerprint: string;
+};
+type ProjectFoundationIdentityFixture = {
+  schemaVersion: 1;
+  fixtureVersion: 1;
+  policyVersion: "builder-prototype-policy:v1";
+  identity: ProjectFoundationIdentity;
+  memberships: readonly [ProjectFoundationMembership];
+  roleAssignments: readonly [ProjectFoundationRoleAssignment];
+  authorizationContextTemplate: ProjectFoundationAuthorizationContextTemplate;
+  aclSnapshotHash: string;
+  fixtureFingerprint: string;
+};
+type ProjectFoundationAuthorizationContext = {
+  schemaVersion: 1;
+  objectType: "authorization-context";
+  id: string;
+  templateId: ProjectFoundationAuthorizationContextTemplate["id"];
+  templateVersion: 1;
+  templateFingerprint: string;
+  actorPrincipalId: typeof localBuilderAccountId;
+  identityVersion: 1;
+  accountSide: "builder";
+  membershipId: "local-builder-membership";
+  membershipVersion: 1;
+  roleAssignmentId: "local-builder-owner-role";
+  roleAssignmentVersion: 1;
+  membershipRole: "owner";
+  aclSnapshotHash: string;
+  policyVersion: "builder-prototype-policy:v1";
+  resolvedScope: { scopeType: "project_private"; scopeId: string };
+  status: "active";
+  version: 1;
+  fingerprint: string;
+};
+type ProjectFoundationLifecycleState = "active" | "archived";
+type ProjectFoundationProfileSnapshot = {
+  name: string | null;
+  city: "تهران";
+  area: string | null;
+  stage: ProjectStage | null;
+  usage: ProjectUsage | null;
+  landAreaSquareMeters: string | null;
+  totalBuiltAreaSquareMeters: string | null;
+  aboveGroundFloors: number | null;
+  basementFloors: number | null;
+  unitCount: number | null;
+};
+type ProjectFoundationProjectSnapshot = { lifecycleState: ProjectFoundationLifecycleState; profileId: string };
+type ProjectFoundationRevision<Snapshot> = {
+  id: string;
+  version: number;
+  createdAt: string;
+  snapshot: Snapshot;
+  fingerprint: string;
+};
+type ProjectFoundationHistoryEventType = "created" | "migrated" | "updated" | "archived" | "restored" | "rolled-back";
+type ProjectFoundationHistoryEvent = {
+  id: string;
+  eventType: ProjectFoundationHistoryEventType;
+  version: number;
+  revisionId: string;
+  actorPrincipalId: typeof localBuilderAccountId;
+  occurredAt: string;
+  authorizationContextHash: string;
+  targetVersion: number | null;
+  fingerprint: string;
+};
+type ProjectFoundationProjectRecord = {
+  schemaVersion: 1;
+  objectType: "project";
+  id: string;
+  ownerPrincipalType: "account";
+  ownerPrincipalId: typeof localBuilderAccountId;
+  accountSide: "builder";
+  scopeType: "project_private";
+  scopeId: string;
+  custodianService: "Domain Service";
+  sensitivity: "private";
+  lifecycleState: ProjectFoundationLifecycleState;
+  version: number;
+  currentRevisionId: string;
+  createdBy: typeof localBuilderAccountId;
+  updatedBy: typeof localBuilderAccountId;
+  createdAt: string;
+  updatedAt: string;
+  history: ProjectFoundationHistoryEvent[];
+  revisions: ProjectFoundationRevision<ProjectFoundationProjectSnapshot>[];
+  sourceRefs: [];
+  fingerprint: string;
+};
+type ProjectFoundationProfileRecord = {
+  schemaVersion: 1;
+  objectType: "project-profile";
+  id: string;
+  projectId: string;
+  ownerPrincipalType: "project";
+  ownerPrincipalId: string;
+  accountSide: "builder";
+  scopeType: "project_private";
+  scopeId: string;
+  custodianService: "Domain Service";
+  sensitivity: "private";
+  lifecycleState: "active";
+  version: number;
+  currentRevisionId: string;
+  createdBy: typeof localBuilderAccountId;
+  updatedBy: typeof localBuilderAccountId;
+  createdAt: string;
+  updatedAt: string;
+  history: ProjectFoundationHistoryEvent[];
+  revisions: ProjectFoundationRevision<ProjectFoundationProfileSnapshot>[];
+  sourceRefs: [];
+  fingerprint: string;
+};
+type ProjectFoundationMigrationSource = "v2-array" | "legacy-array" | "none";
+type ProjectFoundationMigrationReport = {
+  schemaVersion: 1;
+  id: string;
+  sourceGeneration: ProjectFoundationMigrationSource;
+  sourceKey: string | null;
+  sourceRawHash: string | null;
+  activePointerRawHash: string | null;
+  migratedAt: string;
+  projectCount: number;
+  fingerprint: string;
+};
+type ProjectFoundationIdempotencyAction = "create-project" | "update-profile" | "rollback-profile" | "set-active";
+type ProjectFoundationIdempotencyReceipt = {
+  schemaVersion: 1;
+  key: string;
+  action: ProjectFoundationIdempotencyAction;
+  payloadHash: string;
+  projectId: string;
+  result: "created" | "updated" | "rolled-back";
+  resultingStoreVersion: number;
+  resultingObjectVersion: number;
+  recordedAt: string;
+  fingerprint: string;
+};
+type ProjectFoundationEnvelope = {
+  schemaVersion: 3;
+  fingerprintVersion: "project-domain-v1";
+  storeVersion: number;
+  activeProjectId: string | null;
+  projects: ProjectFoundationProjectRecord[];
+  profiles: ProjectFoundationProfileRecord[];
+  idempotencyReceipts: ProjectFoundationIdempotencyReceipt[];
+  migrationReports: [ProjectFoundationMigrationReport];
+  updatedAt: string;
+  fingerprint: string;
+};
+type ProjectFoundationPendingMarker = {
+  schemaVersion: 1;
+  state: "pending";
+  migrationId: string;
+  sourceGeneration: ProjectFoundationMigrationSource;
+  sourceKey: string | null;
+  sourceRawHash: string | null;
+  activePointerRawHash: string | null;
+  activeProjectIdHint: string | null;
+  migrationAt: string;
+  fingerprint: string;
+};
+type ProjectFoundationVerifiedMarker = {
+  schemaVersion: 1;
+  state: "verified";
+  migrationId: string;
+  sourceGeneration: ProjectFoundationMigrationSource;
+  sourceKey: string | null;
+  sourceRawHash: string | null;
+  activePointerRawHash: string | null;
+  activeProjectIdHint: string | null;
+  migrationAt: string;
+  initialStoreVersion: number;
+  initialCanonicalHash: string;
+  migrationReportHash: string;
+  verifiedAt: string;
+  fingerprint: string;
+};
+type ProjectFoundationCommittedMarker = {
+  schemaVersion: 1;
+  state: "committed";
+  migrationId: string;
+  sourceGeneration: ProjectFoundationMigrationSource;
+  sourceKey: string | null;
+  sourceRawHash: string | null;
+  activePointerRawHash: string | null;
+  activeProjectIdHint: string | null;
+  migrationAt: string;
+  initialStoreVersion: number;
+  initialCanonicalHash: string;
+  migrationReportHash: string;
+  committedAt: string;
+  fingerprint: string;
+};
+type ProjectFoundationMarker = ProjectFoundationPendingMarker | ProjectFoundationVerifiedMarker | ProjectFoundationCommittedMarker;
+type ProjectFoundationState = { status: "loading" | "ready" | "read-error"; envelope: ProjectFoundationEnvelope | null; reason: string };
+type ProjectFoundationMutationStatus = "created" | "updated" | "rolled-back" | "unchanged" | "not-found" | "unauthorized" | "scope-mismatch" | "read-failure" | "schema-invalid" | "version-conflict" | "dependency-stale" | "idempotency-payload-mismatch" | "write-failure" | "lock-unavailable" | "unsupported-transition";
+type ProjectFoundationMutationResult = { status: ProjectFoundationMutationStatus; envelope?: ProjectFoundationEnvelope; reason?: string };
+type ProjectFoundationCommand =
+  | { inputSchemaVersion: 1; action: "create-project"; projectId: string; draft: ProjectSetupDraft; expectedStoreVersion: number; idempotencyKey: string }
+  | { inputSchemaVersion: 1; action: "update-profile"; projectId: string; draft: ProjectProfileDraft; expectedProfileVersion: number; idempotencyKey: string }
+  | { inputSchemaVersion: 1; action: "rollback-profile"; projectId: string; targetVersion: number; expectedProfileVersion: number; idempotencyKey: string }
+  | { inputSchemaVersion: 1; action: "set-active"; projectId: string; expectedStoreVersion: number; idempotencyKey: string };
 type ProjectSetupDraft = Pick<BuilderProject, "name" | "location" | "stage">;
 type ProjectProfileDraft = Pick<BuilderProject, "name" | "location" | "stage" | "usage" | "landArea" | "builtArea" | "aboveGroundFloors" | "basementFloors" | "unitCount">;
 type ProjectFieldErrors = Record<keyof ProjectSetupDraft, string>;
@@ -1607,7 +1940,8 @@ type GalleryReturnView = "chat" | "project";
 type MemoryReturnView = "chat" | "project" | "search";
 type PurchaseRequestsReturnView = "chat" | "project";
 type ProposalsReturnView = "chat" | "project";
-type ProjectTasksLaunch = { filter: ProjectTaskFilter; approvalId: string | null; dispatchPlanApprovalId: string | null; returnToPurchaseRequestId: string | null };
+type ProjectTasksReturnView = "chat" | "project";
+type ProjectTasksLaunch = { filter: ProjectTaskFilter; approvalId: string | null; dispatchPlanApprovalId: string | null; returnToPurchaseRequestId: string | null; returnView: ProjectTasksReturnView };
 type StoredProjectImage = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
 type StoredProjectFile = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
 type LocalRecordsReadResult<RecordType> = { records: RecordType[]; readError: boolean };
@@ -1619,10 +1953,18 @@ type ProjectPurchaseRequestsRecoveryResult =
 const defaultInvite = "CHD-4K9P";
 const defaultPhone = "09123456789";
 const defaultOtp = "123456";
-const installedToolStorageKey = "chida-prototype-installed-tool";
+const legacyInstalledToolStorageKey = "chida-prototype-installed-tool";
+const builtArtifactsStorageKey = "chida-prototype-built-artifacts:v1";
+const builtArtifactInvalidationIntentsStorageKey = `${builtArtifactsStorageKey}:dependency-invalidation-intents:v1`;
+const builtArtifactsWriteLockName = `${builtArtifactsStorageKey}:write`;
+const builtArtifactInvalidationIntentsWriteLockName = `${builtArtifactInvalidationIntentsStorageKey}:write`;
 const briefStorageKey = "chida-prototype-brief";
 const legacyProjectsStorageKey = "chida-prototype-builder-projects";
-const projectsStorageKey = "chida-prototype-builder-projects:v2";
+const priorProjectsStorageKey = "chida-prototype-builder-projects:v2";
+const projectsStorageKey = "chida-prototype-builder-projects:v3";
+const projectFoundationCutoverMarkerKey = `${projectsStorageKey}:cutover:v1`;
+const projectFoundationWriteLockName = `${projectsStorageKey}:write`;
+const projectFoundationIdentityFixtureKey = "chida-prototype-identity-policy-fixture:v1";
 const activeProjectStorageKey = "chida-prototype-active-project";
 const projectFilesStorageKey = "chida-prototype-project-files:v1";
 const projectSourcesStorageKey = "chida-prototype-project-sources:v1";
@@ -1686,6 +2028,7 @@ const legacyProjectStageAliases: Readonly<Record<string, ProjectStage>> = {
   "تکمیل و تحویل": "پایان کار",
 };
 const projectUsages = ["مسکونی", "تجاری", "اداری", "مختلط", "سایر"] as const;
+type ProjectUsage = (typeof projectUsages)[number];
 const projectFileCategories: readonly ProjectFileCategory[] = ["نقشه", "پیش‌فاکتور", "فاکتور", "قرارداد", "صورت‌جلسه", "صفحه‌گسترده", "عکس", "سایر"];
 const projectDocumentCategories: readonly ProjectFileCategory[] = projectFileCategories.filter((category) => category !== "عکس");
 const projectMemoryKinds: readonly ProjectMemoryKind[] = ["ترجیح", "واقعیت تأییدشده توسط سازنده", "محدودیت", "یادداشت سازنده", "مرجع"];
@@ -1756,14 +2099,13 @@ const emptyProjectProfileErrors: ProjectProfileFieldErrors = {
 const quickActions = [
   { id: "purchase-request", label: "درخواست قیمت", icon: FileText },
   { id: "compare-offers", label: "پیشنهادها", icon: Search },
-  { id: "tasks", label: "کار جدید", icon: CheckCircle2 },
+  { id: "tasks", label: "کارها", icon: CheckCircle2 },
   { id: "files", label: "افزودن فایل", icon: FileText },
   { id: "gallery", label: "افزودن عکس", icon: ImageIcon },
   { id: "memory", label: "ثبت حافظه", icon: BrainCircuit },
   { id: "search", label: "جست‌وجوی پروژه", icon: Search },
   { id: "build", label: "برایم بساز", icon: Hammer },
   { id: "meeting-notes", label: "شروع صورت‌جلسه", icon: ClipboardCheck },
-  { id: "project-plan", label: "برنامه پروژه", icon: Pin },
 ] as const;
 type QuickActionId = typeof quickActions[number]["id"];
 
@@ -3994,47 +4336,1129 @@ function normalizeStoredProjectStage(value: unknown) {
   return legacyProjectStageAliases[normalizedStage] ?? normalizedStage;
 }
 
-function parseStoredProjects(rawProjects: string | null): BuilderProject[] | null {
-  if (rawProjects === null) return null;
+function projectFoundationHash(value: unknown) {
+  return `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue(value)))}`;
+}
+
+function projectFoundationRawHash(value: string | null) {
+  return value === null ? null : `sha256-${memoryCoreSha256(value)}`;
+}
+
+function projectFoundationFingerprint<Value extends { fingerprint: string }>(value: Value) {
+  const { fingerprint: _fingerprint, ...payload } = value;
+  return projectFoundationHash(payload);
+}
+
+function projectFoundationFixture(): ProjectFoundationIdentityFixture {
+  const identity: ProjectFoundationIdentity = {
+    schemaVersion: 1,
+    objectType: "account-identity",
+    id: localBuilderAccountId,
+    ownerPrincipalType: "account",
+    ownerPrincipalId: localBuilderAccountId,
+    accountSide: "builder",
+    scopeType: "account_private",
+    scopeId: localBuilderAccountId,
+    custodianService: "Identity/Policy",
+    status: "active",
+    version: 1,
+  };
+  const membership: ProjectFoundationMembership = {
+    schemaVersion: 1,
+    objectType: "membership",
+    id: "local-builder-membership",
+    principalId: localBuilderAccountId,
+    scope: { type: "account", id: localBuilderAccountId },
+    status: "active",
+    version: 1,
+  };
+  const roleAssignment: ProjectFoundationRoleAssignment = {
+    schemaVersion: 1,
+    objectType: "role-assignment",
+    id: "local-builder-owner-role",
+    membershipId: membership.id,
+    role: "owner",
+    status: "active",
+    version: 1,
+  };
+  const aclSnapshotHash = projectFoundationHash({ identity, membership, roleAssignment, policyVersion: "builder-prototype-policy:v1" });
+  const authorizationContextTemplateWithoutFingerprint = {
+    schemaVersion: 1,
+    objectType: "authorization-context-template",
+    id: "local-builder-project-private-authorization-template",
+    actorPrincipalId: identity.id,
+    identityVersion: identity.version,
+    accountSide: identity.accountSide,
+    membershipId: membership.id,
+    membershipVersion: membership.version,
+    roleAssignmentId: roleAssignment.id,
+    roleAssignmentVersion: roleAssignment.version,
+    membershipRole: roleAssignment.role,
+    aclSnapshotHash,
+    policyVersion: "builder-prototype-policy:v1",
+    scopeBinding: { scopeType: "project_private", scopeIdSource: "projectId" },
+    status: "active",
+    version: 1,
+  } as const;
+  const authorizationContextTemplate = {
+    ...authorizationContextTemplateWithoutFingerprint,
+    fingerprint: projectFoundationHash(authorizationContextTemplateWithoutFingerprint),
+  } satisfies ProjectFoundationAuthorizationContextTemplate;
+  const withoutFingerprint = {
+    schemaVersion: 1,
+    fixtureVersion: 1,
+    policyVersion: "builder-prototype-policy:v1",
+    identity,
+    memberships: [membership],
+    roleAssignments: [roleAssignment],
+    authorizationContextTemplate,
+    aclSnapshotHash,
+  } as const;
+  return { ...withoutFingerprint, fixtureFingerprint: projectFoundationHash(withoutFingerprint) };
+}
+
+function projectFoundationFixtureRaw() {
+  return JSON.stringify(projectFoundationFixture());
+}
+
+function resolveProjectFoundationAuthorization(projectId: string): ProjectFoundationAuthorizationContext {
+  const fixture = projectFoundationFixture();
+  const template = fixture.authorizationContextTemplate;
+  const withoutFingerprint = {
+    schemaVersion: 1,
+    objectType: "authorization-context",
+    id: `authorization-context:${projectId}`,
+    templateId: template.id,
+    templateVersion: template.version,
+    templateFingerprint: template.fingerprint,
+    actorPrincipalId: template.actorPrincipalId,
+    identityVersion: template.identityVersion,
+    accountSide: template.accountSide,
+    membershipId: template.membershipId,
+    membershipVersion: template.membershipVersion,
+    roleAssignmentId: template.roleAssignmentId,
+    roleAssignmentVersion: template.roleAssignmentVersion,
+    membershipRole: template.membershipRole,
+    aclSnapshotHash: template.aclSnapshotHash,
+    policyVersion: template.policyVersion,
+    resolvedScope: { scopeType: "project_private", scopeId: projectId },
+    status: "active",
+    version: 1,
+  } as const;
+  return { ...withoutFingerprint, fingerprint: projectFoundationHash(withoutFingerprint) };
+}
+
+function projectFoundationAuthorizationHash(projectId: string) {
+  return resolveProjectFoundationAuthorization(projectId).fingerprint;
+}
+
+function exactProjectFoundationString(value: unknown, maximumLength = 240) {
+  return typeof value === "string" && value.length > 0 && value.length <= maximumLength && value.trim() === value;
+}
+
+function exactProjectFoundationDate(value: unknown) {
+  return typeof value === "string" && value.trim() === value && isValidProjectFileDate(value);
+}
+
+function exactProjectFoundationHash(value: unknown) {
+  return typeof value === "string" && /^sha256-[0-9a-f]{64}$/.test(value);
+}
+
+function parseLegacyProjectArray(rawProjects: string): BuilderProject[] | null {
   try {
     const parsed = JSON.parse(rawProjects);
     if (!Array.isArray(parsed)) return null;
-    const normalizedProjects = parsed.flatMap((project): BuilderProject[] => {
-      if (
-        typeof project?.id !== "string"
-        || typeof project?.name !== "string"
-        || typeof project?.location !== "string"
-        || typeof project?.stage !== "string"
-        || typeof project?.createdAt !== "string"
-      ) return [];
-      return [{
-        id: project.id,
-        name: project.name,
-        location: project.location,
-        stage: normalizeStoredProjectStage(project.stage),
-        usage: typeof project.usage === "string" && projectUsages.includes(project.usage as (typeof projectUsages)[number]) ? project.usage : "",
-        landArea: normalizeStoredProjectMetric(project.landArea, false),
-        builtArea: normalizeStoredProjectMetric(project.builtArea, false),
-        aboveGroundFloors: normalizeStoredProjectMetric(project.aboveGroundFloors, true),
-        basementFloors: normalizeStoredProjectMetric(project.basementFloors, true),
-        unitCount: normalizeStoredProjectMetric(project.unitCount, true),
-        createdAt: project.createdAt,
-      }];
-    });
-    return parsed.length > 0 && normalizedProjects.length === 0 ? null : normalizedProjects;
+    const requiredKeys = ["id", "name", "location", "stage", "createdAt"];
+    const allowedKeys = new Set([...requiredKeys, "usage", "landArea", "builtArea", "aboveGroundFloors", "basementFloors", "unitCount"]);
+    const seenIds = new Set<string>();
+    const records: BuilderProject[] = [];
+    for (const value of parsed) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+      const keys = Object.keys(value);
+      if (requiredKeys.some((key) => !Object.prototype.hasOwnProperty.call(value, key)) || keys.some((key) => !allowedKeys.has(key))) return null;
+      const id = typeof value.id === "string" ? value.id.trim() : "";
+      const name = typeof value.name === "string" ? value.name.trim() : "";
+      const location = typeof value.location === "string" ? value.location.trim() : "";
+      const rawStage = typeof value.stage === "string" ? value.stage.trim() : "";
+      const stage = rawStage ? isKnownProjectStage(rawStage) ? rawStage : legacyProjectStageAliases[rawStage] : "";
+      const usage = value.usage === undefined || value.usage === ""
+        ? ""
+        : typeof value.usage === "string" && projectUsages.includes(value.usage as ProjectUsage)
+          ? value.usage
+          : null;
+      const normalizeMetric = (metric: unknown, integerOnly: boolean) => {
+        if (metric === undefined || metric === null || metric === "") return "";
+        const rawMetric = typeof metric === "string" ? metric : typeof metric === "number" && Number.isFinite(metric) ? String(metric) : null;
+        return rawMetric === null ? null : normalizeProjectNumber(rawMetric, integerOnly);
+      };
+      const landArea = normalizeMetric(value.landArea, false);
+      const builtArea = normalizeMetric(value.builtArea, false);
+      const aboveGroundFloors = normalizeMetric(value.aboveGroundFloors, true);
+      const basementFloors = normalizeMetric(value.basementFloors, true);
+      const unitCount = normalizeMetric(value.unitCount, true);
+      if (!id || id !== value.id || seenIds.has(id) || !name || name.length > 100 || typeof value.location !== "string" || location.length > 120 || (rawStage && !stage) || usage === null || [landArea, builtArea, aboveGroundFloors, basementFloors, unitCount].some((metric) => metric === null) || !exactProjectFoundationDate(value.createdAt)) return null;
+      seenIds.add(id);
+      records.push({
+        id,
+        name,
+        location: normalizeProjectArea(location),
+        stage,
+        usage,
+        landArea: landArea as string,
+        builtArea: builtArea as string,
+        aboveGroundFloors: aboveGroundFloors as string,
+        basementFloors: basementFloors as string,
+        unitCount: unitCount as string,
+        createdAt: value.createdAt,
+      });
+    }
+    return records;
   } catch {
     return null;
   }
 }
 
-function readStoredProjects(): BuilderProject[] {
-  try {
-    const currentProjects = parseStoredProjects(window.localStorage.getItem(projectsStorageKey));
-    if (currentProjects !== null) return currentProjects;
-    return parseStoredProjects(window.localStorage.getItem(legacyProjectsStorageKey)) ?? [];
-  } catch {
-    return [];
+function projectFoundationSnapshotFromBuilderProject(project: BuilderProject): ProjectFoundationProfileSnapshot {
+  const integerOrNull = (value: string) => value === "" ? null : Number(value);
+  return {
+    name: project.name || null,
+    city: "تهران",
+    area: normalizeProjectArea(project.location) || null,
+    stage: isKnownProjectStage(project.stage) ? project.stage as ProjectStage : null,
+    usage: projectUsages.includes(project.usage as ProjectUsage) ? project.usage as ProjectUsage : null,
+    landAreaSquareMeters: project.landArea || null,
+    totalBuiltAreaSquareMeters: project.builtArea || null,
+    aboveGroundFloors: integerOrNull(project.aboveGroundFloors),
+    basementFloors: integerOrNull(project.basementFloors),
+    unitCount: integerOrNull(project.unitCount),
+  };
+}
+
+function projectFoundationBuilderProject(profile: ProjectFoundationProfileRecord, project: ProjectFoundationProjectRecord): BuilderProject {
+  const snapshot = profile.revisions.find((revision) => revision.id === profile.currentRevisionId)!.snapshot;
+  return {
+    id: project.id,
+    name: snapshot.name ?? "",
+    location: snapshot.area ?? "",
+    stage: snapshot.stage ?? "",
+    usage: snapshot.usage ?? "",
+    landArea: snapshot.landAreaSquareMeters ?? "",
+    builtArea: snapshot.totalBuiltAreaSquareMeters ?? "",
+    aboveGroundFloors: snapshot.aboveGroundFloors === null ? "" : String(snapshot.aboveGroundFloors),
+    basementFloors: snapshot.basementFloors === null ? "" : String(snapshot.basementFloors),
+    unitCount: snapshot.unitCount === null ? "" : String(snapshot.unitCount),
+    createdAt: project.createdAt,
+  };
+}
+
+function projectFoundationProjects(envelope: ProjectFoundationEnvelope | null) {
+  if (!envelope) return [];
+  return envelope.projects.flatMap((project) => {
+    if (project.lifecycleState !== "active") return [];
+    const profile = envelope.profiles.find((item) => item.projectId === project.id);
+    return profile ? [projectFoundationBuilderProject(profile, project)] : [];
+  });
+}
+
+function projectFoundationRevision<Snapshot>(id: string, version: number, createdAt: string, snapshot: Snapshot): ProjectFoundationRevision<Snapshot> {
+  const withoutFingerprint = { id, version, createdAt, snapshot };
+  return { ...withoutFingerprint, fingerprint: projectFoundationHash(withoutFingerprint) };
+}
+
+function projectFoundationHistoryEvent(projectId: string, id: string, eventType: ProjectFoundationHistoryEventType, version: number, revisionId: string, occurredAt: string, targetVersion: number | null): ProjectFoundationHistoryEvent {
+  const withoutFingerprint = {
+    id,
+    eventType,
+    version,
+    revisionId,
+    actorPrincipalId: localBuilderAccountId,
+    occurredAt,
+    authorizationContextHash: projectFoundationAuthorizationHash(projectId),
+    targetVersion,
+  };
+  return { ...withoutFingerprint, fingerprint: projectFoundationHash(withoutFingerprint) };
+}
+
+function finalizeProjectFoundationProject(record: Omit<ProjectFoundationProjectRecord, "fingerprint"> | ProjectFoundationProjectRecord): ProjectFoundationProjectRecord {
+  const { fingerprint: _fingerprint, ...payload } = record as ProjectFoundationProjectRecord;
+  return { ...payload, fingerprint: projectFoundationHash(payload) } as ProjectFoundationProjectRecord;
+}
+
+function finalizeProjectFoundationProfile(record: Omit<ProjectFoundationProfileRecord, "fingerprint"> | ProjectFoundationProfileRecord): ProjectFoundationProfileRecord {
+  const { fingerprint: _fingerprint, ...payload } = record as ProjectFoundationProfileRecord;
+  return { ...payload, fingerprint: projectFoundationHash(payload) } as ProjectFoundationProfileRecord;
+}
+
+function finalizeProjectFoundationMigrationReport(report: Omit<ProjectFoundationMigrationReport, "fingerprint">): ProjectFoundationMigrationReport {
+  return { ...report, fingerprint: projectFoundationHash(report) };
+}
+
+function finalizeProjectFoundationReceipt(receipt: Omit<ProjectFoundationIdempotencyReceipt, "fingerprint">): ProjectFoundationIdempotencyReceipt {
+  return { ...receipt, fingerprint: projectFoundationHash(receipt) };
+}
+
+function finalizeProjectFoundationEnvelope(envelope: Omit<ProjectFoundationEnvelope, "fingerprint"> | ProjectFoundationEnvelope): ProjectFoundationEnvelope {
+  const { fingerprint: _fingerprint, ...payload } = envelope as ProjectFoundationEnvelope;
+  return { ...payload, fingerprint: projectFoundationHash(payload) } as ProjectFoundationEnvelope;
+}
+
+function buildProjectFoundationRecords(project: BuilderProject, eventType: "created" | "migrated", timestamp: string) {
+  const profileId = `project-profile:${project.id}`;
+  const projectRevision = projectFoundationRevision(`project-revision:${project.id}:v1`, 1, timestamp, { lifecycleState: "active", profileId } satisfies ProjectFoundationProjectSnapshot);
+  const profileRevision = projectFoundationRevision(`project-profile-revision:${project.id}:v1`, 1, timestamp, projectFoundationSnapshotFromBuilderProject(project));
+  const projectEvent = projectFoundationHistoryEvent(project.id, `project-event:${project.id}:v1`, eventType, 1, projectRevision.id, timestamp, null);
+  const profileEvent = projectFoundationHistoryEvent(project.id, `project-profile-event:${project.id}:v1`, eventType, 1, profileRevision.id, timestamp, null);
+  const projectRecord = finalizeProjectFoundationProject({
+    schemaVersion: 1,
+    objectType: "project",
+    id: project.id,
+    ownerPrincipalType: "account",
+    ownerPrincipalId: localBuilderAccountId,
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: project.id,
+    custodianService: "Domain Service",
+    sensitivity: "private",
+    lifecycleState: "active",
+    version: 1,
+    currentRevisionId: projectRevision.id,
+    createdBy: localBuilderAccountId,
+    updatedBy: localBuilderAccountId,
+    createdAt: project.createdAt,
+    updatedAt: timestamp,
+    history: [projectEvent],
+    revisions: [projectRevision],
+    sourceRefs: [],
+  });
+  const profileRecord = finalizeProjectFoundationProfile({
+    schemaVersion: 1,
+    objectType: "project-profile",
+    id: profileId,
+    projectId: project.id,
+    ownerPrincipalType: "project",
+    ownerPrincipalId: project.id,
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: project.id,
+    custodianService: "Domain Service",
+    sensitivity: "private",
+    lifecycleState: "active",
+    version: 1,
+    currentRevisionId: profileRevision.id,
+    createdBy: localBuilderAccountId,
+    updatedBy: localBuilderAccountId,
+    createdAt: project.createdAt,
+    updatedAt: timestamp,
+    history: [profileEvent],
+    revisions: [profileRevision],
+    sourceRefs: [],
+  });
+  return { projectRecord, profileRecord };
+}
+
+function parseProjectFoundationProfileSnapshot(value: unknown): ProjectFoundationProfileSnapshot | null {
+  if (!hasExactObjectKeys(value, ["name", "city", "area", "stage", "usage", "landAreaSquareMeters", "totalBuiltAreaSquareMeters", "aboveGroundFloors", "basementFloors", "unitCount"])) return null;
+  const snapshot = value as Record<string, unknown>;
+  const nullableText = (item: unknown, maximumLength: number) => item === null || exactProjectFoundationString(item, maximumLength);
+  const nullableDecimal = (item: unknown) => item === null || typeof item === "string" && item !== "" && normalizeProjectNumber(item, false) === item;
+  const nullableInteger = (item: unknown) => item === null || Number.isSafeInteger(item) && Number(item) >= 0;
+  if (!nullableText(snapshot.name, 100) || snapshot.city !== "تهران" || !nullableText(snapshot.area, 120) || snapshot.stage !== null && !isKnownProjectStage(String(snapshot.stage)) || snapshot.usage !== null && !projectUsages.includes(snapshot.usage as ProjectUsage) || !nullableDecimal(snapshot.landAreaSquareMeters) || !nullableDecimal(snapshot.totalBuiltAreaSquareMeters) || !nullableInteger(snapshot.aboveGroundFloors) || !nullableInteger(snapshot.basementFloors) || !nullableInteger(snapshot.unitCount)) return null;
+  return snapshot as ProjectFoundationProfileSnapshot;
+}
+
+function parseProjectFoundationProjectSnapshot(value: unknown): ProjectFoundationProjectSnapshot | null {
+  if (!hasExactObjectKeys(value, ["lifecycleState", "profileId"])) return null;
+  const snapshot = value as Record<string, unknown>;
+  if (!(["active", "archived"] as const).includes(snapshot.lifecycleState as ProjectFoundationLifecycleState) || !exactProjectFoundationString(snapshot.profileId)) return null;
+  return snapshot as ProjectFoundationProjectSnapshot;
+}
+
+function parseProjectFoundationRevision<Snapshot>(value: unknown, parseSnapshot: (snapshot: unknown) => Snapshot | null): ProjectFoundationRevision<Snapshot> | null {
+  if (!hasExactObjectKeys(value, ["id", "version", "createdAt", "snapshot", "fingerprint"])) return null;
+  const revision = value as Record<string, unknown>;
+  const snapshot = parseSnapshot(revision.snapshot);
+  if (!exactProjectFoundationString(revision.id) || !Number.isSafeInteger(revision.version) || Number(revision.version) < 1 || !exactProjectFoundationDate(revision.createdAt) || !snapshot || !exactProjectFoundationHash(revision.fingerprint)) return null;
+  const normalized = { id: revision.id as string, version: revision.version as number, createdAt: revision.createdAt as string, snapshot, fingerprint: revision.fingerprint as string };
+  return normalized.fingerprint === projectFoundationFingerprint(normalized) ? normalized : null;
+}
+
+function parseProjectFoundationHistoryEvent(value: unknown, projectId: string): ProjectFoundationHistoryEvent | null {
+  if (!hasExactObjectKeys(value, ["id", "eventType", "version", "revisionId", "actorPrincipalId", "occurredAt", "authorizationContextHash", "targetVersion", "fingerprint"])) return null;
+  const event = value as Record<string, unknown>;
+  const allowedEvents: readonly ProjectFoundationHistoryEventType[] = ["created", "migrated", "updated", "archived", "restored", "rolled-back"];
+  if (!exactProjectFoundationString(event.id) || !allowedEvents.includes(event.eventType as ProjectFoundationHistoryEventType) || !Number.isSafeInteger(event.version) || Number(event.version) < 1 || !exactProjectFoundationString(event.revisionId) || event.actorPrincipalId !== localBuilderAccountId || !exactProjectFoundationDate(event.occurredAt) || event.authorizationContextHash !== projectFoundationAuthorizationHash(projectId) || event.targetVersion !== null && (!Number.isSafeInteger(event.targetVersion) || Number(event.targetVersion) < 1 || Number(event.targetVersion) >= Number(event.version)) || !exactProjectFoundationHash(event.fingerprint)) return null;
+  const normalized = event as ProjectFoundationHistoryEvent;
+  return normalized.fingerprint === projectFoundationFingerprint(normalized) ? normalized : null;
+}
+
+function projectFoundationRevisionHistoryIsValid<Snapshot>(projectId: string, version: number, currentRevisionId: string, revisionsValue: unknown, historyValue: unknown, parseSnapshot: (value: unknown) => Snapshot | null, allowedFirstEvents: readonly ProjectFoundationHistoryEventType[], allowedLaterEvents: readonly ProjectFoundationHistoryEventType[], revisionIdPrefix: string, eventIdPrefix: string) {
+  if (!Array.isArray(revisionsValue) || !Array.isArray(historyValue) || revisionsValue.length !== version || historyValue.length !== version || version < 1) return null;
+  const revisions: ProjectFoundationRevision<Snapshot>[] = [];
+  const history: ProjectFoundationHistoryEvent[] = [];
+  for (let index = 0; index < version; index += 1) {
+    const revision = parseProjectFoundationRevision(revisionsValue[index], parseSnapshot);
+    const event = parseProjectFoundationHistoryEvent(historyValue[index], projectId);
+    if (!revision || !event || revision.id !== `${revisionIdPrefix}:${projectId}:v${index + 1}` || event.id !== `${eventIdPrefix}:${projectId}:v${index + 1}` || revisions.some((item) => item.id === revision.id) || history.some((item) => item.id === event.id) || revision.version !== index + 1 || event.version !== index + 1 || event.revisionId !== revision.id || event.occurredAt !== revision.createdAt || (index === 0 ? !allowedFirstEvents.includes(event.eventType) : !allowedLaterEvents.includes(event.eventType)) || index > 0 && revisions[index - 1].createdAt >= revision.createdAt) return null;
+    if (index > 0 && JSON.stringify(stablePurchaseRequestValue(revisions[index - 1].snapshot)) === JSON.stringify(stablePurchaseRequestValue(revision.snapshot))) return null;
+    if (event.eventType === "rolled-back") {
+      const target = event.targetVersion ? revisions[event.targetVersion - 1] : null;
+      if (!target || JSON.stringify(stablePurchaseRequestValue(target.snapshot)) !== JSON.stringify(stablePurchaseRequestValue(revision.snapshot))) return null;
+    } else if (event.targetVersion !== null) return null;
+    revisions.push(revision);
+    history.push(event);
   }
+  if (revisions[revisions.length - 1].id !== currentRevisionId) return null;
+  return { revisions, history };
+}
+
+function parseProjectFoundationProjectRecord(value: unknown): ProjectFoundationProjectRecord | null {
+  const keys = ["schemaVersion", "objectType", "id", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "custodianService", "sensitivity", "lifecycleState", "version", "currentRevisionId", "createdBy", "updatedBy", "createdAt", "updatedAt", "history", "revisions", "sourceRefs", "fingerprint"];
+  if (!hasExactObjectKeys(value, keys)) return null;
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : "";
+  const version = Number(record.version);
+  const parsedHistory = projectFoundationRevisionHistoryIsValid(id, version, String(record.currentRevisionId), record.revisions, record.history, parseProjectFoundationProjectSnapshot, ["created", "migrated"], [], "project-revision", "project-event");
+  if (record.schemaVersion !== 1 || record.objectType !== "project" || !exactProjectFoundationString(id) || record.ownerPrincipalType !== "account" || record.ownerPrincipalId !== localBuilderAccountId || record.accountSide !== "builder" || record.scopeType !== "project_private" || record.scopeId !== id || record.custodianService !== "Domain Service" || record.sensitivity !== "private" || record.lifecycleState !== "active" || record.version !== 1 || !exactProjectFoundationString(record.currentRevisionId) || record.createdBy !== localBuilderAccountId || record.updatedBy !== localBuilderAccountId || !exactProjectFoundationDate(record.createdAt) || !exactProjectFoundationDate(record.updatedAt) || String(record.createdAt) > String(record.updatedAt) || !parsedHistory || String(record.createdAt) > parsedHistory.revisions[0].createdAt || !Array.isArray(record.sourceRefs) || record.sourceRefs.length !== 0 || !exactProjectFoundationHash(record.fingerprint)) return null;
+  const currentSnapshot = parsedHistory.revisions[parsedHistory.revisions.length - 1].snapshot;
+  if (currentSnapshot.lifecycleState !== record.lifecycleState || record.updatedAt !== parsedHistory.revisions[parsedHistory.revisions.length - 1].createdAt) return null;
+  const normalized = { ...record, history: parsedHistory.history, revisions: parsedHistory.revisions } as unknown as ProjectFoundationProjectRecord;
+  return normalized.fingerprint === projectFoundationFingerprint(normalized) ? normalized : null;
+}
+
+function parseProjectFoundationProfileRecord(value: unknown): ProjectFoundationProfileRecord | null {
+  const keys = ["schemaVersion", "objectType", "id", "projectId", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "custodianService", "sensitivity", "lifecycleState", "version", "currentRevisionId", "createdBy", "updatedBy", "createdAt", "updatedAt", "history", "revisions", "sourceRefs", "fingerprint"];
+  if (!hasExactObjectKeys(value, keys)) return null;
+  const record = value as Record<string, unknown>;
+  const projectId = typeof record.projectId === "string" ? record.projectId : "";
+  const version = Number(record.version);
+  const parsedHistory = projectFoundationRevisionHistoryIsValid(projectId, version, String(record.currentRevisionId), record.revisions, record.history, parseProjectFoundationProfileSnapshot, ["created", "migrated"], ["updated", "rolled-back"], "project-profile-revision", "project-profile-event");
+  if (record.schemaVersion !== 1 || record.objectType !== "project-profile" || !exactProjectFoundationString(record.id) || record.id !== `project-profile:${projectId}` || !exactProjectFoundationString(projectId) || record.ownerPrincipalType !== "project" || record.ownerPrincipalId !== projectId || record.accountSide !== "builder" || record.scopeType !== "project_private" || record.scopeId !== projectId || record.custodianService !== "Domain Service" || record.sensitivity !== "private" || record.lifecycleState !== "active" || !Number.isSafeInteger(record.version) || !exactProjectFoundationString(record.currentRevisionId) || record.createdBy !== localBuilderAccountId || record.updatedBy !== localBuilderAccountId || !exactProjectFoundationDate(record.createdAt) || !exactProjectFoundationDate(record.updatedAt) || String(record.createdAt) > String(record.updatedAt) || !parsedHistory || String(record.createdAt) > parsedHistory.revisions[0].createdAt || !Array.isArray(record.sourceRefs) || record.sourceRefs.length !== 0 || !exactProjectFoundationHash(record.fingerprint)) return null;
+  if (record.updatedAt !== parsedHistory.revisions[parsedHistory.revisions.length - 1].createdAt) return null;
+  const normalized = { ...record, history: parsedHistory.history, revisions: parsedHistory.revisions } as unknown as ProjectFoundationProfileRecord;
+  return normalized.fingerprint === projectFoundationFingerprint(normalized) ? normalized : null;
+}
+
+function parseProjectFoundationMigrationReport(value: unknown): ProjectFoundationMigrationReport | null {
+  if (!hasExactObjectKeys(value, ["schemaVersion", "id", "sourceGeneration", "sourceKey", "sourceRawHash", "activePointerRawHash", "migratedAt", "projectCount", "fingerprint"])) return null;
+  const report = value as Record<string, unknown>;
+  const expectedSourceKey = report.sourceGeneration === "v2-array" ? priorProjectsStorageKey : report.sourceGeneration === "legacy-array" ? legacyProjectsStorageKey : null;
+  if (report.schemaVersion !== 1 || !exactProjectFoundationString(report.id) || !["v2-array", "legacy-array", "none"].includes(String(report.sourceGeneration)) || report.sourceKey !== expectedSourceKey || (report.sourceGeneration === "none") !== (report.sourceRawHash === null) || report.sourceRawHash !== null && !exactProjectFoundationHash(report.sourceRawHash) || report.activePointerRawHash !== null && !exactProjectFoundationHash(report.activePointerRawHash) || !exactProjectFoundationDate(report.migratedAt) || !Number.isSafeInteger(report.projectCount) || Number(report.projectCount) < 0 || report.sourceGeneration === "none" && report.projectCount !== 0 || !exactProjectFoundationHash(report.fingerprint)) return null;
+  const normalized = report as ProjectFoundationMigrationReport;
+  return normalized.fingerprint === projectFoundationFingerprint(normalized) ? normalized : null;
+}
+
+function parseProjectFoundationReceipt(value: unknown): ProjectFoundationIdempotencyReceipt | null {
+  if (!hasExactObjectKeys(value, ["schemaVersion", "key", "action", "payloadHash", "projectId", "result", "resultingStoreVersion", "resultingObjectVersion", "recordedAt", "fingerprint"])) return null;
+  const receipt = value as Record<string, unknown>;
+  if (receipt.schemaVersion !== 1 || !exactProjectFoundationString(receipt.key, 200) || !["create-project", "update-profile", "rollback-profile", "set-active"].includes(String(receipt.action)) || !exactProjectFoundationHash(receipt.payloadHash) || !exactProjectFoundationString(receipt.projectId) || !["created", "updated", "rolled-back"].includes(String(receipt.result)) || !Number.isSafeInteger(receipt.resultingStoreVersion) || Number(receipt.resultingStoreVersion) < 1 || !Number.isSafeInteger(receipt.resultingObjectVersion) || Number(receipt.resultingObjectVersion) < 1 || !exactProjectFoundationDate(receipt.recordedAt) || !exactProjectFoundationHash(receipt.fingerprint)) return null;
+  const normalized = receipt as ProjectFoundationIdempotencyReceipt;
+  return normalized.fingerprint === projectFoundationFingerprint(normalized) ? normalized : null;
+}
+
+function parseProjectFoundationEnvelope(value: unknown): ProjectFoundationEnvelope | null {
+  if (!hasExactObjectKeys(value, ["schemaVersion", "fingerprintVersion", "storeVersion", "activeProjectId", "projects", "profiles", "idempotencyReceipts", "migrationReports", "updatedAt", "fingerprint"])) return null;
+  const envelopeValue = value as Record<string, unknown>;
+  if (envelopeValue.schemaVersion !== 3 || envelopeValue.fingerprintVersion !== "project-domain-v1" || !Number.isSafeInteger(envelopeValue.storeVersion) || Number(envelopeValue.storeVersion) < 1 || envelopeValue.activeProjectId !== null && !exactProjectFoundationString(envelopeValue.activeProjectId) || !Array.isArray(envelopeValue.projects) || !Array.isArray(envelopeValue.profiles) || !Array.isArray(envelopeValue.idempotencyReceipts) || !Array.isArray(envelopeValue.migrationReports) || envelopeValue.migrationReports.length !== 1 || !exactProjectFoundationDate(envelopeValue.updatedAt) || !exactProjectFoundationHash(envelopeValue.fingerprint)) return null;
+  const projects = envelopeValue.projects.map(parseProjectFoundationProjectRecord);
+  const profiles = envelopeValue.profiles.map(parseProjectFoundationProfileRecord);
+  const receipts = envelopeValue.idempotencyReceipts.map(parseProjectFoundationReceipt);
+  const migrationReport = parseProjectFoundationMigrationReport(envelopeValue.migrationReports[0]);
+  if (projects.some((record) => record === null) || profiles.some((record) => record === null) || receipts.some((record) => record === null) || !migrationReport) return null;
+  const typedProjects = projects as ProjectFoundationProjectRecord[];
+  const typedProfiles = profiles as ProjectFoundationProfileRecord[];
+  const typedReceipts = receipts as ProjectFoundationIdempotencyReceipt[];
+  const migratedProjectIds = typedProjects.filter((project) => project.history[0]?.eventType === "migrated").map((project) => project.id);
+  const createdProjectIds = typedProjects.filter((project) => project.history[0]?.eventType === "created").map((project) => project.id);
+  const createReceiptProjectIds = typedReceipts.filter((receipt) => receipt.action === "create-project").map((receipt) => receipt.projectId);
+  if (new Set(typedProjects.map((record) => record.id)).size !== typedProjects.length || new Set(typedProfiles.map((record) => record.id)).size !== typedProfiles.length || new Set(typedProfiles.map((record) => record.projectId)).size !== typedProfiles.length || new Set(typedReceipts.map((record) => record.key)).size !== typedReceipts.length || typedProjects.some((project) => {
+    const profile = typedProfiles.find((item) => item.projectId === project.id);
+    const currentSnapshot = project.revisions[project.version - 1]?.snapshot;
+    const projectGenesis = project.history[0];
+    const profileGenesis = profile?.history[0];
+    const profileGenesisSnapshot = profile?.revisions[0]?.snapshot;
+    return !profile
+      || currentSnapshot?.profileId !== profile.id
+      || project.revisions.some((revision) => revision.snapshot.profileId !== profile.id)
+      || profile.createdAt !== project.createdAt
+      || projectGenesis?.eventType !== profileGenesis?.eventType
+      || projectGenesis?.occurredAt !== profileGenesis?.occurredAt
+      || (projectGenesis?.eventType === "migrated" && (!profileGenesisSnapshot || profileGenesisSnapshot.name === null || profileGenesisSnapshot.area !== null && normalizeProjectArea(profileGenesisSnapshot.area) !== profileGenesisSnapshot.area))
+      || (projectGenesis?.eventType === "migrated" && projectGenesis.occurredAt !== migrationReport.migratedAt)
+      || (projectGenesis?.eventType === "created" && project.createdAt !== projectGenesis.occurredAt);
+  }) || typedProfiles.some((profile) => !typedProjects.some((project) => project.id === profile.projectId)) || typedReceipts.some((receipt) => receipt.resultingStoreVersion > Number(envelopeValue.storeVersion) || !typedProjects.some((project) => project.id === receipt.projectId)) || migrationReport.projectCount !== migratedProjectIds.length || new Set(createReceiptProjectIds).size !== createReceiptProjectIds.length || createdProjectIds.length !== createReceiptProjectIds.length || createdProjectIds.some((projectId) => !createReceiptProjectIds.includes(projectId)) || envelopeValue.activeProjectId !== null && !typedProjects.some((project) => project.id === envelopeValue.activeProjectId && project.lifecycleState === "active")) return null;
+  if (typedReceipts.length !== Number(envelopeValue.storeVersion) - 1 || typedReceipts.some((receipt, index) => {
+    const priorTimestamp = index === 0 ? migrationReport.migratedAt : typedReceipts[index - 1].recordedAt;
+    if (receipt.resultingStoreVersion !== index + 2 || receipt.recordedAt <= priorTimestamp) return true;
+    const project = typedProjects.find((item) => item.id === receipt.projectId);
+    const profile = typedProfiles.find((item) => item.projectId === receipt.projectId);
+    if (!project || !profile) return true;
+    if (receipt.action === "create-project") {
+      const snapshot = profile.revisions[0]?.snapshot;
+      const draft = { name: snapshot?.name ?? "", location: snapshot?.area ?? "", stage: snapshot?.stage ?? "" };
+      const canonicalSnapshot = projectFoundationProfileSnapshotFromDraft({ ...draft, ...emptyProjectProfile });
+      const command = { inputSchemaVersion: 1, action: "create-project", projectId: receipt.projectId, draft, expectedStoreVersion: receipt.resultingStoreVersion - 1, idempotencyKey: receipt.key } satisfies ProjectFoundationCommand;
+      return receipt.result !== "created" || receipt.resultingObjectVersion !== 1 || !projectFoundationCommandIsValid(command) || project.createdAt !== receipt.recordedAt || profile.createdAt !== receipt.recordedAt || project.history[0]?.eventType !== "created" || profile.history[0]?.eventType !== "created" || !snapshot || !canonicalSnapshot || JSON.stringify(stablePurchaseRequestValue(snapshot)) !== JSON.stringify(stablePurchaseRequestValue(canonicalSnapshot)) || receipt.payloadHash !== projectFoundationCommandPayloadHash(command);
+    }
+    if (receipt.action === "set-active") {
+      const command = { inputSchemaVersion: 1, action: "set-active", projectId: receipt.projectId, expectedStoreVersion: receipt.resultingStoreVersion - 1, idempotencyKey: receipt.key } satisfies ProjectFoundationCommand;
+      return receipt.result !== "updated" || receipt.resultingObjectVersion !== project.version || !projectFoundationCommandIsValid(command) || receipt.payloadHash !== projectFoundationCommandPayloadHash(command);
+    }
+    const event = profile.history[receipt.resultingObjectVersion - 1];
+    const revision = profile.revisions[receipt.resultingObjectVersion - 1];
+    const expectedEvent = receipt.action === "update-profile" ? "updated" : "rolled-back";
+    const expectedResult = receipt.action === "update-profile" ? "updated" : "rolled-back";
+    const draft = revision ? {
+      name: revision.snapshot.name ?? "",
+      location: revision.snapshot.area ?? "",
+      stage: revision.snapshot.stage ?? "",
+      usage: revision.snapshot.usage ?? "",
+      landArea: revision.snapshot.landAreaSquareMeters ?? "",
+      builtArea: revision.snapshot.totalBuiltAreaSquareMeters ?? "",
+      aboveGroundFloors: revision.snapshot.aboveGroundFloors === null ? "" : String(revision.snapshot.aboveGroundFloors),
+      basementFloors: revision.snapshot.basementFloors === null ? "" : String(revision.snapshot.basementFloors),
+      unitCount: revision.snapshot.unitCount === null ? "" : String(revision.snapshot.unitCount),
+    } : null;
+    const command = receipt.action === "update-profile" && draft
+      ? { inputSchemaVersion: 1, action: "update-profile", projectId: receipt.projectId, draft, expectedProfileVersion: receipt.resultingObjectVersion - 1, idempotencyKey: receipt.key } satisfies ProjectFoundationCommand
+      : receipt.action === "rollback-profile" && event?.targetVersion
+        ? { inputSchemaVersion: 1, action: "rollback-profile", projectId: receipt.projectId, targetVersion: event.targetVersion, expectedProfileVersion: receipt.resultingObjectVersion - 1, idempotencyKey: receipt.key } satisfies ProjectFoundationCommand
+        : null;
+    const canonicalUpdateSnapshot = receipt.action === "update-profile" && draft ? projectFoundationProfileSnapshotFromDraft(draft) : null;
+    return receipt.result !== expectedResult || receipt.resultingObjectVersion > profile.version || event?.eventType !== expectedEvent || event?.occurredAt !== receipt.recordedAt || !command || !projectFoundationCommandIsValid(command) || receipt.action === "update-profile" && (!revision || !canonicalUpdateSnapshot || JSON.stringify(stablePurchaseRequestValue(revision.snapshot)) !== JSON.stringify(stablePurchaseRequestValue(canonicalUpdateSnapshot))) || receipt.payloadHash !== projectFoundationCommandPayloadHash(command);
+  })) return null;
+  if (typedProfiles.some((profile) => profile.history.slice(1).some((event) => {
+    const action = event.eventType === "updated" ? "update-profile" : event.eventType === "rolled-back" ? "rollback-profile" : null;
+    return !action || typedReceipts.filter((receipt) => receipt.projectId === profile.projectId && receipt.action === action && receipt.resultingObjectVersion === event.version && receipt.recordedAt === event.occurredAt).length !== 1;
+  }))) return null;
+  const expectedUpdatedAt = typedReceipts.at(-1)?.recordedAt ?? migrationReport.migratedAt;
+  if (expectedUpdatedAt !== envelopeValue.updatedAt) return null;
+  const normalized = { ...envelopeValue, projects: typedProjects, profiles: typedProfiles, idempotencyReceipts: typedReceipts, migrationReports: [migrationReport] } as ProjectFoundationEnvelope;
+  return normalized.fingerprint === projectFoundationFingerprint(normalized) ? normalized : null;
+}
+
+function parseProjectFoundationEnvelopeRaw(raw: string | null) {
+  if (raw === null) return null;
+  try { return parseProjectFoundationEnvelope(JSON.parse(raw)); } catch { return null; }
+}
+
+function finalizeProjectFoundationPendingMarker(marker: Omit<ProjectFoundationPendingMarker, "fingerprint">): ProjectFoundationPendingMarker {
+  return { ...marker, fingerprint: projectFoundationHash(marker) };
+}
+
+function finalizeProjectFoundationVerifiedMarker(marker: Omit<ProjectFoundationVerifiedMarker, "fingerprint">): ProjectFoundationVerifiedMarker {
+  return { ...marker, fingerprint: projectFoundationHash(marker) };
+}
+
+function finalizeProjectFoundationCommittedMarker(marker: Omit<ProjectFoundationCommittedMarker, "fingerprint">): ProjectFoundationCommittedMarker {
+  return { ...marker, fingerprint: projectFoundationHash(marker) };
+}
+
+function parseProjectFoundationMarker(value: unknown): ProjectFoundationMarker | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const marker = value as Record<string, unknown>;
+  const baseKeys = ["schemaVersion", "state", "migrationId", "sourceGeneration", "sourceKey", "sourceRawHash", "activePointerRawHash", "activeProjectIdHint", "migrationAt"];
+  const expectedKeys = marker.state === "pending"
+    ? [...baseKeys, "fingerprint"]
+    : marker.state === "verified"
+      ? [...baseKeys, "initialStoreVersion", "initialCanonicalHash", "migrationReportHash", "verifiedAt", "fingerprint"]
+    : marker.state === "committed"
+      ? [...baseKeys, "initialStoreVersion", "initialCanonicalHash", "migrationReportHash", "committedAt", "fingerprint"]
+      : [];
+  if (!expectedKeys.length || !hasExactObjectKeys(value, expectedKeys)) return null;
+  const expectedSourceKey = marker.sourceGeneration === "v2-array" ? priorProjectsStorageKey : marker.sourceGeneration === "legacy-array" ? legacyProjectsStorageKey : null;
+  if (marker.schemaVersion !== 1 || !exactProjectFoundationString(marker.migrationId) || !["v2-array", "legacy-array", "none"].includes(String(marker.sourceGeneration)) || marker.sourceKey !== expectedSourceKey || (marker.sourceGeneration === "none") !== (marker.sourceRawHash === null) || marker.sourceRawHash !== null && !exactProjectFoundationHash(marker.sourceRawHash) || marker.activePointerRawHash !== null && !exactProjectFoundationHash(marker.activePointerRawHash) || marker.activeProjectIdHint !== null && !exactProjectFoundationString(marker.activeProjectIdHint) || marker.activeProjectIdHint !== null && (marker.activePointerRawHash === null || marker.sourceGeneration === "none") || !exactProjectFoundationDate(marker.migrationAt) || !exactProjectFoundationHash(marker.fingerprint)) return null;
+  if (marker.state === "verified" && (marker.initialStoreVersion !== 1 || !exactProjectFoundationHash(marker.initialCanonicalHash) || !exactProjectFoundationHash(marker.migrationReportHash) || !exactProjectFoundationDate(marker.verifiedAt) || marker.verifiedAt !== marker.migrationAt)) return null;
+  if (marker.state === "committed" && (marker.initialStoreVersion !== 1 || !exactProjectFoundationHash(marker.initialCanonicalHash) || !exactProjectFoundationHash(marker.migrationReportHash) || !exactProjectFoundationDate(marker.committedAt) || marker.committedAt !== marker.migrationAt)) return null;
+  const normalized = marker as unknown as ProjectFoundationMarker;
+  return normalized.fingerprint === projectFoundationFingerprint(normalized) ? normalized : null;
+}
+
+function parseProjectFoundationMarkerRaw(raw: string | null) {
+  if (raw === null) return null;
+  try { return parseProjectFoundationMarker(JSON.parse(raw)); } catch { return null; }
+}
+
+function buildProjectFoundationMigrationEnvelope(marker: ProjectFoundationMarker, sourceProjects: BuilderProject[]) {
+  const records = sourceProjects.map((project) => buildProjectFoundationRecords(project, "migrated", marker.migrationAt));
+  const migrationReport = finalizeProjectFoundationMigrationReport({
+    schemaVersion: 1,
+    id: marker.migrationId,
+    sourceGeneration: marker.sourceGeneration,
+    sourceKey: marker.sourceKey,
+    sourceRawHash: marker.sourceRawHash,
+    activePointerRawHash: marker.activePointerRawHash,
+    migratedAt: marker.migrationAt,
+    projectCount: sourceProjects.length,
+  });
+  const activeProjectId = marker.activeProjectIdHint && sourceProjects.some((project) => project.id === marker.activeProjectIdHint)
+    ? marker.activeProjectIdHint
+    : sourceProjects[0]?.id ?? null;
+  return finalizeProjectFoundationEnvelope({
+    schemaVersion: 3,
+    fingerprintVersion: "project-domain-v1",
+    storeVersion: 1,
+    activeProjectId,
+    projects: records.map((record) => record.projectRecord),
+    profiles: records.map((record) => record.profileRecord),
+    idempotencyReceipts: [],
+    migrationReports: [migrationReport],
+    updatedAt: marker.migrationAt,
+  });
+}
+
+function projectFoundationInitialCanonicalHash(envelope: ProjectFoundationEnvelope, marker: ProjectFoundationCommittedMarker) {
+  const migratedProjects = envelope.projects.filter((project) => project.history[0]?.eventType === "migrated").map((project) => {
+    const firstRevision = project.revisions[0];
+    const firstEvent = project.history[0];
+    return finalizeProjectFoundationProject({
+      ...project,
+      lifecycleState: firstRevision.snapshot.lifecycleState,
+      version: 1,
+      currentRevisionId: firstRevision.id,
+      updatedAt: firstRevision.createdAt,
+      history: [firstEvent],
+      revisions: [firstRevision],
+    });
+  });
+  const migratedProjectIds = new Set(migratedProjects.map((project) => project.id));
+  const migratedProfiles = envelope.profiles.filter((profile) => migratedProjectIds.has(profile.projectId)).map((profile) => {
+    const firstRevision = profile.revisions[0];
+    const firstEvent = profile.history[0];
+    return finalizeProjectFoundationProfile({
+      ...profile,
+      version: 1,
+      currentRevisionId: firstRevision.id,
+      updatedAt: firstRevision.createdAt,
+      history: [firstEvent],
+      revisions: [firstRevision],
+    });
+  });
+  const initialActiveProjectId = marker.activeProjectIdHint && migratedProjectIds.has(marker.activeProjectIdHint)
+    ? marker.activeProjectIdHint
+    : migratedProjects[0]?.id ?? null;
+  const initialEnvelope = finalizeProjectFoundationEnvelope({
+    schemaVersion: 3,
+    fingerprintVersion: "project-domain-v1",
+    storeVersion: marker.initialStoreVersion,
+    activeProjectId: initialActiveProjectId,
+    projects: migratedProjects,
+    profiles: migratedProfiles,
+    idempotencyReceipts: [],
+    migrationReports: [envelope.migrationReports[0]],
+    updatedAt: marker.migrationAt,
+  });
+  return projectFoundationRawHash(JSON.stringify(initialEnvelope));
+}
+
+function replayProjectFoundationActiveProject(envelope: ProjectFoundationEnvelope, marker: ProjectFoundationCommittedMarker) {
+  const migratedProjects = envelope.projects.filter((project) => project.history[0]?.eventType === "migrated");
+  const availableProjectIds = new Set(migratedProjects.map((project) => project.id));
+  const expectedProjectIds = migratedProjects.map((project) => project.id);
+  const expectedActiveProjectIdHint = migratedProjects.find((project) => projectFoundationRawHash(project.id) === marker.activePointerRawHash)?.id ?? null;
+  if (marker.activeProjectIdHint !== expectedActiveProjectIdHint) return { valid: false, activeProjectId: null };
+  let activeProjectId = marker.activeProjectIdHint && availableProjectIds.has(marker.activeProjectIdHint)
+    ? marker.activeProjectIdHint
+    : migratedProjects[0]?.id ?? null;
+  for (const receipt of envelope.idempotencyReceipts) {
+    if (receipt.action === "create-project") {
+      if (availableProjectIds.has(receipt.projectId)) return { valid: false, activeProjectId: null };
+      availableProjectIds.add(receipt.projectId);
+      expectedProjectIds.push(receipt.projectId);
+      activeProjectId = receipt.projectId;
+    } else {
+      if (!availableProjectIds.has(receipt.projectId)) return { valid: false, activeProjectId: null };
+      if (receipt.action === "set-active") {
+        if (activeProjectId === receipt.projectId) return { valid: false, activeProjectId: null };
+        activeProjectId = receipt.projectId;
+      }
+    }
+  }
+  return {
+    valid: availableProjectIds.size === envelope.projects.length
+      && envelope.projects.map((project) => project.id).every((projectId, index) => projectId === expectedProjectIds[index])
+      && envelope.profiles.map((profile) => profile.projectId).every((projectId, index) => projectId === expectedProjectIds[index]),
+    activeProjectId,
+  };
+}
+
+function projectFoundationCommittedBindingIsValid(raw: string, envelope: ProjectFoundationEnvelope, marker: ProjectFoundationCommittedMarker) {
+  const report = envelope.migrationReports[0];
+  const activeReplay = replayProjectFoundationActiveProject(envelope, marker);
+  return report.id === marker.migrationId
+    && report.sourceGeneration === marker.sourceGeneration
+    && report.sourceKey === marker.sourceKey
+    && report.sourceRawHash === marker.sourceRawHash
+    && report.activePointerRawHash === marker.activePointerRawHash
+    && report.migratedAt === marker.migrationAt
+    && projectFoundationHash(report) === marker.migrationReportHash
+    && marker.initialStoreVersion === 1
+    && envelope.storeVersion >= marker.initialStoreVersion
+    && projectFoundationInitialCanonicalHash(envelope, marker) === marker.initialCanonicalHash
+    && activeReplay.valid
+    && envelope.activeProjectId === activeReplay.activeProjectId
+    && (envelope.storeVersion !== marker.initialStoreVersion || projectFoundationRawHash(raw) === marker.initialCanonicalHash);
+}
+
+function readProjectFoundationState(): ProjectFoundationState {
+  try {
+    const identityRaw = window.localStorage.getItem(projectFoundationIdentityFixtureKey);
+    const canonicalRaw = window.localStorage.getItem(projectsStorageKey);
+    const markerRaw = window.localStorage.getItem(projectFoundationCutoverMarkerKey);
+    if (identityRaw !== null && identityRaw !== projectFoundationFixtureRaw()) return { status: "read-error", envelope: null, reason: "identity-mismatch" };
+    if (canonicalRaw === null && markerRaw === null) return { status: "loading", envelope: null, reason: "not-initialized" };
+    const marker = parseProjectFoundationMarkerRaw(markerRaw);
+    if (!marker) return { status: "read-error", envelope: null, reason: markerRaw === null ? "marker-missing" : "marker-invalid" };
+    if (marker.state !== "committed") return { status: "loading", envelope: null, reason: marker.state === "pending" ? "migration-pending" : "migration-verified" };
+    if (canonicalRaw === null) return { status: "read-error", envelope: null, reason: "canonical-missing" };
+    if (identityRaw === null) return { status: "loading", envelope: null, reason: "identity-not-seeded" };
+    const envelope = parseProjectFoundationEnvelopeRaw(canonicalRaw);
+    if (!envelope || !projectFoundationCommittedBindingIsValid(canonicalRaw, envelope, marker)) return { status: "read-error", envelope: null, reason: "canonical-invalid" };
+    return { status: "ready", envelope, reason: "" };
+  } catch {
+    return { status: "read-error", envelope: null, reason: "storage-read-failure" };
+  }
+}
+
+async function withProjectFoundationWriteLock<Result>(fallback: Result, operation: () => Result | Promise<Result>) {
+  try {
+    const lockManager = window.navigator.locks;
+    if (!lockManager?.request) return fallback;
+    return await lockManager.request(projectFoundationWriteLockName, { mode: "exclusive" }, operation);
+  } catch {
+    return fallback;
+  }
+}
+
+function readProjectFoundationMigrationSource(marker: ProjectFoundationMarker) {
+  try {
+    const activePointerRaw = window.localStorage.getItem(activeProjectStorageKey);
+    if (projectFoundationRawHash(activePointerRaw) !== marker.activePointerRawHash) return null;
+    let sourceProjects: BuilderProject[];
+    if (marker.sourceGeneration === "none") {
+      if (window.localStorage.getItem(priorProjectsStorageKey) !== null || window.localStorage.getItem(legacyProjectsStorageKey) !== null) return null;
+      sourceProjects = [];
+    } else {
+      if (marker.sourceGeneration === "legacy-array" && window.localStorage.getItem(priorProjectsStorageKey) !== null) return null;
+      const sourceRaw = window.localStorage.getItem(marker.sourceKey!);
+      if (sourceRaw === null || projectFoundationRawHash(sourceRaw) !== marker.sourceRawHash) return null;
+      const parsedSource = parseLegacyProjectArray(sourceRaw);
+      if (!parsedSource) return null;
+      sourceProjects = parsedSource;
+    }
+    const expectedActiveProjectIdHint = activePointerRaw && sourceProjects.some((project) => project.id === activePointerRaw) ? activePointerRaw : null;
+    return marker.activeProjectIdHint === expectedActiveProjectIdHint ? sourceProjects : null;
+  } catch {
+    return null;
+  }
+}
+
+function projectFoundationVerifiedBindingIsValid(raw: string, envelope: ProjectFoundationEnvelope, marker: ProjectFoundationVerifiedMarker) {
+  const sourceProjects = readProjectFoundationMigrationSource(marker);
+  if (sourceProjects === null) return false;
+  const expectedRaw = JSON.stringify(buildProjectFoundationMigrationEnvelope(marker, sourceProjects));
+  const report = envelope.migrationReports[0];
+  return raw === expectedRaw
+    && marker.initialStoreVersion === 1
+    && envelope.storeVersion === marker.initialStoreVersion
+    && marker.initialCanonicalHash === projectFoundationRawHash(raw)
+    && report.id === marker.migrationId
+    && report.sourceGeneration === marker.sourceGeneration
+    && report.sourceKey === marker.sourceKey
+    && report.sourceRawHash === marker.sourceRawHash
+    && report.activePointerRawHash === marker.activePointerRawHash
+    && report.migratedAt === marker.migrationAt
+    && projectFoundationHash(report) === marker.migrationReportHash;
+}
+
+function commitProjectFoundationVerifiedMarker(marker: ProjectFoundationVerifiedMarker, expectedVerifiedRaw: string): ProjectFoundationState {
+  try {
+    const canonicalRaw = window.localStorage.getItem(projectsStorageKey);
+    const identityRaw = window.localStorage.getItem(projectFoundationIdentityFixtureKey);
+    const markerRaw = window.localStorage.getItem(projectFoundationCutoverMarkerKey);
+    const envelope = parseProjectFoundationEnvelopeRaw(canonicalRaw);
+    if (!canonicalRaw || markerRaw !== expectedVerifiedRaw || identityRaw !== projectFoundationFixtureRaw() || !envelope || !projectFoundationVerifiedBindingIsValid(canonicalRaw, envelope, marker)) return { status: "read-error", envelope: null, reason: "verified-binding-invalid" };
+    const committedMarker = finalizeProjectFoundationCommittedMarker({
+      schemaVersion: 1,
+      state: "committed",
+      migrationId: marker.migrationId,
+      sourceGeneration: marker.sourceGeneration,
+      sourceKey: marker.sourceKey,
+      sourceRawHash: marker.sourceRawHash,
+      activePointerRawHash: marker.activePointerRawHash,
+      activeProjectIdHint: marker.activeProjectIdHint,
+      migrationAt: marker.migrationAt,
+      initialStoreVersion: marker.initialStoreVersion,
+      initialCanonicalHash: marker.initialCanonicalHash,
+      migrationReportHash: marker.migrationReportHash,
+      committedAt: marker.verifiedAt,
+    });
+    const committedRaw = JSON.stringify(committedMarker);
+    // The persisted and rechecked verified marker is the source-authority cutover;
+    // committed only publishes that exact candidate, so legacy writes after verify are ignored.
+    window.localStorage.setItem(projectFoundationCutoverMarkerKey, committedRaw);
+    const persistedMarkerRaw = window.localStorage.getItem(projectFoundationCutoverMarkerKey);
+    const persistedCanonicalRaw = window.localStorage.getItem(projectsStorageKey);
+    const persistedIdentityRaw = window.localStorage.getItem(projectFoundationIdentityFixtureKey);
+    const persistedEnvelope = parseProjectFoundationEnvelopeRaw(persistedCanonicalRaw);
+    return persistedMarkerRaw === committedRaw
+      && persistedCanonicalRaw === canonicalRaw
+      && persistedIdentityRaw === projectFoundationFixtureRaw()
+      && persistedEnvelope
+      && projectFoundationCommittedBindingIsValid(persistedCanonicalRaw, persistedEnvelope, committedMarker)
+      ? { status: "ready", envelope: persistedEnvelope, reason: "" }
+      : { status: "read-error", envelope: null, reason: "committed-binding-invalid" };
+  } catch {
+    return { status: "read-error", envelope: null, reason: "commit-marker-write-failure" };
+  }
+}
+
+function writeProjectFoundationMigrationCandidate(marker: ProjectFoundationPendingMarker, expectedPendingRaw: string): ProjectFoundationState {
+  try {
+    if (window.localStorage.getItem(projectFoundationCutoverMarkerKey) !== expectedPendingRaw
+      || window.localStorage.getItem(projectFoundationIdentityFixtureKey) !== projectFoundationFixtureRaw()) return { status: "read-error", envelope: null, reason: "migration-preimage-changed" };
+    const sourceProjects = readProjectFoundationMigrationSource(marker);
+    if (!sourceProjects) return { status: "read-error", envelope: null, reason: "migration-source-changed" };
+    const envelope = buildProjectFoundationMigrationEnvelope(marker, sourceProjects);
+    const canonicalRaw = JSON.stringify(envelope);
+    const parsedCandidate = parseProjectFoundationEnvelopeRaw(canonicalRaw);
+    if (!parsedCandidate) return { status: "read-error", envelope: null, reason: "candidate-invalid" };
+    const currentCanonicalRaw = window.localStorage.getItem(projectsStorageKey);
+    if (currentCanonicalRaw === null) {
+      window.localStorage.setItem(projectsStorageKey, canonicalRaw);
+      if (window.localStorage.getItem(projectsStorageKey) !== canonicalRaw) return { status: "read-error", envelope: null, reason: "canonical-readback-failure" };
+    } else if (currentCanonicalRaw !== canonicalRaw) return { status: "read-error", envelope: null, reason: "pending-candidate-mismatch" };
+    if (window.localStorage.getItem(projectFoundationCutoverMarkerKey) !== expectedPendingRaw
+      || window.localStorage.getItem(projectFoundationIdentityFixtureKey) !== projectFoundationFixtureRaw()
+      || !readProjectFoundationMigrationSource(marker)
+      || window.localStorage.getItem(projectsStorageKey) !== canonicalRaw) return { status: "read-error", envelope: null, reason: "migration-preimage-changed" };
+    const verifiedMarker = finalizeProjectFoundationVerifiedMarker({
+      schemaVersion: 1,
+      state: "verified",
+      migrationId: marker.migrationId,
+      sourceGeneration: marker.sourceGeneration,
+      sourceKey: marker.sourceKey,
+      sourceRawHash: marker.sourceRawHash,
+      activePointerRawHash: marker.activePointerRawHash,
+      activeProjectIdHint: marker.activeProjectIdHint,
+      migrationAt: marker.migrationAt,
+      initialStoreVersion: parsedCandidate.storeVersion,
+      initialCanonicalHash: projectFoundationRawHash(canonicalRaw)!,
+      migrationReportHash: projectFoundationHash(parsedCandidate.migrationReports[0]),
+      verifiedAt: marker.migrationAt,
+    });
+    const verifiedRaw = JSON.stringify(verifiedMarker);
+    window.localStorage.setItem(projectFoundationCutoverMarkerKey, verifiedRaw);
+    const persistedMarkerRaw = window.localStorage.getItem(projectFoundationCutoverMarkerKey);
+    const persistedCanonicalRaw = window.localStorage.getItem(projectsStorageKey);
+    const persistedIdentityRaw = window.localStorage.getItem(projectFoundationIdentityFixtureKey);
+    const persistedEnvelope = parseProjectFoundationEnvelopeRaw(persistedCanonicalRaw);
+    if (persistedMarkerRaw !== verifiedRaw
+      || persistedCanonicalRaw !== canonicalRaw
+      || persistedIdentityRaw !== projectFoundationFixtureRaw()
+      || !readProjectFoundationMigrationSource(marker)) {
+      if (persistedMarkerRaw === verifiedRaw) {
+        try {
+          window.localStorage.setItem(projectFoundationCutoverMarkerKey, expectedPendingRaw);
+          if (window.localStorage.getItem(projectFoundationCutoverMarkerKey) !== expectedPendingRaw) return { status: "read-error", envelope: null, reason: "marker-rollback-failure" };
+        } catch {
+          return { status: "read-error", envelope: null, reason: "marker-rollback-failure" };
+        }
+      }
+      return { status: "read-error", envelope: null, reason: "marker-readback-failure" };
+    }
+    return persistedEnvelope && projectFoundationVerifiedBindingIsValid(persistedCanonicalRaw, persistedEnvelope, verifiedMarker)
+      ? commitProjectFoundationVerifiedMarker(verifiedMarker, verifiedRaw)
+      : { status: "read-error", envelope: null, reason: "verified-binding-invalid" };
+  } catch {
+    return { status: "read-error", envelope: null, reason: "migration-write-failure" };
+  }
+}
+
+async function initializeProjectFoundation(): Promise<ProjectFoundationState> {
+  return withProjectFoundationWriteLock<ProjectFoundationState>({ status: "read-error", envelope: null, reason: "lock-unavailable" }, () => {
+    try {
+      const fixtureRaw = projectFoundationFixtureRaw();
+      const storedFixtureRaw = window.localStorage.getItem(projectFoundationIdentityFixtureKey);
+      if (storedFixtureRaw === null) {
+        window.localStorage.setItem(projectFoundationIdentityFixtureKey, fixtureRaw);
+        if (window.localStorage.getItem(projectFoundationIdentityFixtureKey) !== fixtureRaw) return { status: "read-error", envelope: null, reason: "identity-readback-failure" };
+      } else if (storedFixtureRaw !== fixtureRaw) return { status: "read-error", envelope: null, reason: "identity-mismatch" };
+
+      const markerRaw = window.localStorage.getItem(projectFoundationCutoverMarkerKey);
+      const canonicalRaw = window.localStorage.getItem(projectsStorageKey);
+      if (markerRaw !== null) {
+        const marker = parseProjectFoundationMarkerRaw(markerRaw);
+        if (!marker) return { status: "read-error", envelope: null, reason: "marker-invalid" };
+        if (marker.state === "committed") {
+          const envelope = parseProjectFoundationEnvelopeRaw(canonicalRaw);
+          return canonicalRaw !== null && envelope && projectFoundationCommittedBindingIsValid(canonicalRaw, envelope, marker)
+            ? { status: "ready", envelope, reason: "" }
+            : { status: "read-error", envelope: null, reason: "canonical-invalid" };
+        }
+        if (marker.state === "verified") return commitProjectFoundationVerifiedMarker(marker, markerRaw);
+        return writeProjectFoundationMigrationCandidate(marker, markerRaw);
+      }
+      if (canonicalRaw !== null) return { status: "read-error", envelope: null, reason: "marker-missing" };
+
+      const priorRaw = window.localStorage.getItem(priorProjectsStorageKey);
+      const legacyRaw = priorRaw === null ? window.localStorage.getItem(legacyProjectsStorageKey) : null;
+      const sourceGeneration: ProjectFoundationMigrationSource = priorRaw !== null ? "v2-array" : legacyRaw !== null ? "legacy-array" : "none";
+      const sourceKey = sourceGeneration === "v2-array" ? priorProjectsStorageKey : sourceGeneration === "legacy-array" ? legacyProjectsStorageKey : null;
+      const sourceRaw = sourceGeneration === "v2-array" ? priorRaw : sourceGeneration === "legacy-array" ? legacyRaw : null;
+      const sourceProjects = sourceRaw === null ? [] : parseLegacyProjectArray(sourceRaw);
+      if (!sourceProjects) return { status: "read-error", envelope: null, reason: sourceGeneration === "v2-array" ? "prior-v2-invalid" : "legacy-invalid" };
+      const activePointerRaw = window.localStorage.getItem(activeProjectStorageKey);
+      const activeProjectIdHint = activePointerRaw && sourceProjects.some((project) => project.id === activePointerRaw) ? activePointerRaw : null;
+      const pendingMarker = finalizeProjectFoundationPendingMarker({
+        schemaVersion: 1,
+        state: "pending",
+        migrationId: `project-migration:${window.crypto.randomUUID()}`,
+        sourceGeneration,
+        sourceKey,
+        sourceRawHash: projectFoundationRawHash(sourceRaw),
+        activePointerRawHash: projectFoundationRawHash(activePointerRaw),
+        activeProjectIdHint,
+        migrationAt: new Date().toISOString(),
+      });
+      if (!parseProjectFoundationEnvelope(buildProjectFoundationMigrationEnvelope(pendingMarker, sourceProjects))) return { status: "read-error", envelope: null, reason: "migration-source-unrepresentable" };
+      const pendingRaw = JSON.stringify(pendingMarker);
+      window.localStorage.setItem(projectFoundationCutoverMarkerKey, pendingRaw);
+      if (window.localStorage.getItem(projectFoundationCutoverMarkerKey) !== pendingRaw) return { status: "read-error", envelope: null, reason: "pending-marker-readback-failure" };
+      return writeProjectFoundationMigrationCandidate(pendingMarker, pendingRaw);
+    } catch {
+      return { status: "read-error", envelope: null, reason: "initialization-failure" };
+    }
+  });
+}
+
+function projectFoundationProfileSnapshotFromDraft(draft: ProjectProfileDraft) {
+  if (draft.usage !== "" && !projectUsages.includes(draft.usage as ProjectUsage) || Object.values(validateProjectProfileDraft(draft)).some(Boolean)) return null;
+  const normalized = normalizeProjectProfile(draft);
+  const integerOrNull = (value: string) => value === "" ? null : Number(value);
+  return {
+    name: normalized.name,
+    city: "تهران",
+    area: normalized.location,
+    stage: normalized.stage as ProjectStage,
+    usage: normalized.usage ? normalized.usage as ProjectUsage : null,
+    landAreaSquareMeters: normalized.landArea || null,
+    totalBuiltAreaSquareMeters: normalized.builtArea || null,
+    aboveGroundFloors: integerOrNull(normalized.aboveGroundFloors),
+    basementFloors: integerOrNull(normalized.basementFloors),
+    unitCount: integerOrNull(normalized.unitCount),
+  } satisfies ProjectFoundationProfileSnapshot;
+}
+
+function projectFoundationCommandPayload(command: ProjectFoundationCommand) {
+  if (command.action === "create-project") {
+    return {
+      inputSchemaVersion: command.inputSchemaVersion,
+      action: command.action,
+      projectId: command.projectId,
+      draft: { name: command.draft.name.trim(), location: normalizeProjectArea(command.draft.location), stage: command.draft.stage },
+      expectedStoreVersion: command.expectedStoreVersion,
+    };
+  }
+  if (command.action === "update-profile") {
+    const { idempotencyKey: _idempotencyKey, ...payload } = command;
+    return { ...payload, draft: normalizeProjectProfile(command.draft) };
+  }
+  const { idempotencyKey: _idempotencyKey, ...payload } = command;
+  return payload;
+}
+
+function projectFoundationProjectIdForIdempotencyKey(idempotencyKey: string) {
+  const digest = memoryCoreSha256(`project-create:${idempotencyKey}`);
+  return `project-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+}
+
+function projectFoundationCommandPayloadHash(command: ProjectFoundationCommand) {
+  return projectFoundationHash(projectFoundationCommandPayload(command));
+}
+
+function projectFoundationCommandIsValid(value: unknown): value is ProjectFoundationCommand {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const command = value as Record<string, unknown>;
+  if (command.inputSchemaVersion !== 1 || !exactProjectFoundationString(command.projectId) || !exactProjectFoundationString(command.idempotencyKey, 200)) return false;
+  if (command.action === "create-project") {
+    if (!hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "draft", "expectedStoreVersion", "idempotencyKey"]) || !Number.isSafeInteger(command.expectedStoreVersion) || Number(command.expectedStoreVersion) < 1 || !hasExactObjectKeys(command.draft, ["name", "location", "stage"])) return false;
+    const draft = command.draft as Record<string, unknown>;
+    if (![draft.name, draft.location, draft.stage].every((item) => typeof item === "string")) return false;
+    const normalizedDraft = { name: String(draft.name).trim(), location: normalizeProjectArea(String(draft.location)), stage: String(draft.stage) };
+    return command.projectId === projectFoundationProjectIdForIdempotencyKey(String(command.idempotencyKey)) && !Object.values(validateProjectDraft(normalizedDraft)).some(Boolean);
+  }
+  if (command.action === "set-active") {
+    return hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "expectedStoreVersion", "idempotencyKey"])
+      && Number.isSafeInteger(command.expectedStoreVersion)
+      && Number(command.expectedStoreVersion) >= 1;
+  }
+  if (command.action === "update-profile") {
+    if (!hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "draft", "expectedProfileVersion", "idempotencyKey"]) || !Number.isSafeInteger(command.expectedProfileVersion) || Number(command.expectedProfileVersion) < 1 || !hasExactObjectKeys(command.draft, ["name", "location", "stage", "usage", "landArea", "builtArea", "aboveGroundFloors", "basementFloors", "unitCount"])) return false;
+    const draft = command.draft as Record<string, unknown>;
+    if (!Object.values(draft).every((item) => typeof item === "string")) return false;
+    return projectFoundationProfileSnapshotFromDraft(draft as ProjectProfileDraft) !== null;
+  }
+  if (command.action === "rollback-profile") {
+    return hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "targetVersion", "expectedProfileVersion", "idempotencyKey"])
+      && Number.isSafeInteger(command.targetVersion)
+      && Number(command.targetVersion) >= 1
+      && Number.isSafeInteger(command.expectedProfileVersion)
+      && Number(command.expectedProfileVersion) > Number(command.targetVersion);
+  }
+  return false;
+}
+
+function readProjectFoundationForMutation() {
+  try {
+    if (window.localStorage.getItem(projectFoundationIdentityFixtureKey) !== projectFoundationFixtureRaw()) return null;
+    const markerRaw = window.localStorage.getItem(projectFoundationCutoverMarkerKey);
+    const canonicalRaw = window.localStorage.getItem(projectsStorageKey);
+    const marker = parseProjectFoundationMarkerRaw(markerRaw);
+    const envelope = parseProjectFoundationEnvelopeRaw(canonicalRaw);
+    if (!canonicalRaw || !marker || marker.state !== "committed" || !envelope || !projectFoundationCommittedBindingIsValid(canonicalRaw, envelope, marker)) return null;
+    return { markerRaw, marker, canonicalRaw, envelope };
+  } catch {
+    return null;
+  }
+}
+
+function restoreOwnedProjectFoundationCandidate(previousRaw: string, candidateRaw: string) {
+  try {
+    const currentRaw = window.localStorage.getItem(projectsStorageKey);
+    if (currentRaw === previousRaw) return true;
+    if (currentRaw !== candidateRaw) return false;
+    window.localStorage.setItem(projectsStorageKey, previousRaw);
+    return window.localStorage.getItem(projectsStorageKey) === previousRaw;
+  } catch {
+    return false;
+  }
+}
+
+function projectFoundationStateMatchesPreimage(previousRaw: string, expectedMarkerRaw: string) {
+  try {
+    const canonicalRaw = window.localStorage.getItem(projectsStorageKey);
+    const markerRaw = window.localStorage.getItem(projectFoundationCutoverMarkerKey);
+    const identityRaw = window.localStorage.getItem(projectFoundationIdentityFixtureKey);
+    const marker = parseProjectFoundationMarkerRaw(markerRaw);
+    const envelope = parseProjectFoundationEnvelopeRaw(canonicalRaw);
+    return canonicalRaw === previousRaw
+      && markerRaw === expectedMarkerRaw
+      && identityRaw === projectFoundationFixtureRaw()
+      && marker?.state === "committed"
+      && envelope !== null
+      && projectFoundationCommittedBindingIsValid(canonicalRaw, envelope, marker);
+  } catch {
+    return false;
+  }
+}
+
+function projectFoundationMutationFailure(previousRaw: string, candidateRaw: string, expectedMarkerRaw: string, reason: string): ProjectFoundationMutationResult {
+  return restoreOwnedProjectFoundationCandidate(previousRaw, candidateRaw)
+    && projectFoundationStateMatchesPreimage(previousRaw, expectedMarkerRaw)
+    ? { status: "write-failure", reason }
+    : { status: "read-failure", reason: "rollback-failure" };
+}
+
+function commitProjectFoundationEnvelope(previousRaw: string, expectedMarkerRaw: string, nextEnvelope: ProjectFoundationEnvelope): ProjectFoundationMutationResult {
+  const candidateRaw = JSON.stringify(nextEnvelope);
+  const parsedCandidate = parseProjectFoundationEnvelopeRaw(candidateRaw);
+  if (!parsedCandidate) return { status: "schema-invalid", reason: "candidate-invalid" };
+  try {
+    const currentRaw = window.localStorage.getItem(projectsStorageKey);
+    const markerRaw = window.localStorage.getItem(projectFoundationCutoverMarkerKey);
+    const identityRaw = window.localStorage.getItem(projectFoundationIdentityFixtureKey);
+    if (markerRaw !== expectedMarkerRaw || identityRaw !== projectFoundationFixtureRaw()) return { status: "read-failure", reason: "authority-preimage-changed" };
+    if (currentRaw !== previousRaw) {
+      const currentMarker = parseProjectFoundationMarkerRaw(markerRaw);
+      const currentEnvelope = parseProjectFoundationEnvelopeRaw(currentRaw);
+      return currentRaw && currentMarker?.state === "committed" && currentEnvelope && projectFoundationCommittedBindingIsValid(currentRaw, currentEnvelope, currentMarker)
+        ? { status: "version-conflict", reason: "canonical-preimage-changed" }
+        : { status: "read-failure", reason: "canonical-preimage-invalid" };
+    }
+    window.localStorage.setItem(projectsStorageKey, candidateRaw);
+    const readbackRaw = window.localStorage.getItem(projectsStorageKey);
+    const readbackMarkerRaw = window.localStorage.getItem(projectFoundationCutoverMarkerKey);
+    const marker = parseProjectFoundationMarkerRaw(readbackMarkerRaw);
+    const readbackEnvelope = parseProjectFoundationEnvelopeRaw(readbackRaw);
+    if (readbackRaw === candidateRaw
+      && readbackMarkerRaw === expectedMarkerRaw
+      && marker?.state === "committed"
+      && readbackEnvelope
+      && projectFoundationCommittedBindingIsValid(readbackRaw, readbackEnvelope, marker)
+      && window.localStorage.getItem(projectFoundationIdentityFixtureKey) === projectFoundationFixtureRaw()) return { status: "updated", envelope: readbackEnvelope };
+    return projectFoundationMutationFailure(previousRaw, candidateRaw, expectedMarkerRaw, "readback-failure");
+  } catch {
+    return projectFoundationMutationFailure(previousRaw, candidateRaw, expectedMarkerRaw, "persistence-failure");
+  }
+}
+
+async function executeProjectFoundationCommand(command: ProjectFoundationCommand): Promise<ProjectFoundationMutationResult> {
+  return withProjectFoundationWriteLock<ProjectFoundationMutationResult>({ status: "lock-unavailable", reason: "lock-unavailable" }, () => {
+    if (!projectFoundationCommandIsValid(command)) return { status: "schema-invalid", reason: "command-invalid" };
+    const current = readProjectFoundationForMutation();
+    if (!current) return { status: "read-failure", reason: "foundation-invalid" };
+    const payloadHash = projectFoundationCommandPayloadHash(command);
+    const existingReceipt = current.envelope.idempotencyReceipts.find((receipt) => receipt.key === command.idempotencyKey);
+    if (existingReceipt) {
+      if (existingReceipt.action !== command.action || existingReceipt.payloadHash !== payloadHash) return { status: "idempotency-payload-mismatch", reason: "idempotency-key-reused" };
+      return { status: existingReceipt.result, envelope: current.envelope };
+    }
+    const timestamp = new Date(Math.max(Date.now(), Date.parse(current.envelope.updatedAt) + 1)).toISOString();
+    const nextStoreVersion = current.envelope.storeVersion + 1;
+    let nextEnvelope: ProjectFoundationEnvelope;
+    let resultStatus: "created" | "updated" | "rolled-back";
+    let resultingObjectVersion = 1;
+
+    if (command.action === "create-project") {
+      const normalizedDraft = { name: command.draft.name.trim(), location: normalizeProjectArea(command.draft.location), stage: command.draft.stage };
+      if (Object.values(validateProjectDraft(normalizedDraft)).some(Boolean) || command.expectedStoreVersion !== current.envelope.storeVersion) return { status: command.expectedStoreVersion !== current.envelope.storeVersion ? "version-conflict" : "schema-invalid", reason: "create-precondition" };
+      if (current.envelope.projects.some((project) => project.id === command.projectId)) return { status: "version-conflict", reason: "project-id-exists" };
+      const viewProject = { ...emptyProjectProfile, ...normalizedDraft, id: command.projectId, createdAt: timestamp } satisfies BuilderProject;
+      const records = buildProjectFoundationRecords(viewProject, "created", timestamp);
+      const receipt = finalizeProjectFoundationReceipt({ schemaVersion: 1, key: command.idempotencyKey, action: command.action, payloadHash, projectId: command.projectId, result: "created", resultingStoreVersion: nextStoreVersion, resultingObjectVersion: 1, recordedAt: timestamp });
+      nextEnvelope = finalizeProjectFoundationEnvelope({ ...current.envelope, storeVersion: nextStoreVersion, activeProjectId: command.projectId, projects: [...current.envelope.projects, records.projectRecord], profiles: [...current.envelope.profiles, records.profileRecord], idempotencyReceipts: [...current.envelope.idempotencyReceipts, receipt], updatedAt: timestamp });
+      resultStatus = "created";
+    } else if (command.action === "set-active") {
+      const project = current.envelope.projects.find((record) => record.id === command.projectId);
+      if (!project) return { status: "not-found", reason: "project-not-found" };
+      if (project.lifecycleState !== "active") return { status: "unsupported-transition", reason: "project-not-active" };
+      if (command.expectedStoreVersion !== current.envelope.storeVersion) return { status: "version-conflict", reason: "store-version-stale" };
+      if (current.envelope.activeProjectId === command.projectId) return { status: "unchanged", envelope: current.envelope };
+      const receipt = finalizeProjectFoundationReceipt({ schemaVersion: 1, key: command.idempotencyKey, action: command.action, payloadHash, projectId: command.projectId, result: "updated", resultingStoreVersion: nextStoreVersion, resultingObjectVersion: project.version, recordedAt: timestamp });
+      nextEnvelope = finalizeProjectFoundationEnvelope({ ...current.envelope, storeVersion: nextStoreVersion, activeProjectId: command.projectId, idempotencyReceipts: [...current.envelope.idempotencyReceipts, receipt], updatedAt: timestamp });
+      resultStatus = "updated";
+      resultingObjectVersion = project.version;
+    } else {
+      const project = current.envelope.projects.find((record) => record.id === command.projectId);
+      const profile = current.envelope.profiles.find((record) => record.projectId === command.projectId);
+      if (!project || !profile) return { status: "not-found", reason: "project-not-found" };
+      if (project.lifecycleState !== "active" || profile.scopeId !== project.id || profile.ownerPrincipalId !== project.id) return { status: "scope-mismatch", reason: "scope-invalid" };
+      if (profile.version !== command.expectedProfileVersion) return { status: "version-conflict", reason: "profile-version-stale" };
+      let nextSnapshot: ProjectFoundationProfileSnapshot | null = null;
+      let targetVersion: number | null = null;
+      if (command.action === "update-profile") nextSnapshot = projectFoundationProfileSnapshotFromDraft(command.draft);
+      else {
+        if (!Number.isSafeInteger(command.targetVersion) || command.targetVersion < 1 || command.targetVersion >= profile.version) return { status: "unsupported-transition", reason: "rollback-target-invalid" };
+        targetVersion = command.targetVersion;
+        nextSnapshot = profile.revisions[command.targetVersion - 1]?.snapshot ?? null;
+      }
+      if (!nextSnapshot) return { status: "schema-invalid", reason: "profile-invalid" };
+      const currentSnapshot = profile.revisions[profile.version - 1].snapshot;
+      if (JSON.stringify(stablePurchaseRequestValue(currentSnapshot)) === JSON.stringify(stablePurchaseRequestValue(nextSnapshot))) return { status: "unchanged", envelope: current.envelope };
+      const nextVersion = profile.version + 1;
+      const nextRevision = projectFoundationRevision(`project-profile-revision:${project.id}:v${nextVersion}`, nextVersion, timestamp, structuredClone(nextSnapshot));
+      const eventType = command.action === "update-profile" ? "updated" : "rolled-back";
+      const nextEvent = projectFoundationHistoryEvent(project.id, `project-profile-event:${project.id}:v${nextVersion}`, eventType, nextVersion, nextRevision.id, timestamp, targetVersion);
+      const nextProfile = finalizeProjectFoundationProfile({ ...profile, version: nextVersion, currentRevisionId: nextRevision.id, updatedBy: localBuilderAccountId, updatedAt: timestamp, history: [...profile.history, nextEvent], revisions: [...profile.revisions, nextRevision] });
+      resultStatus = command.action === "update-profile" ? "updated" : "rolled-back";
+      resultingObjectVersion = nextVersion;
+      const receipt = finalizeProjectFoundationReceipt({ schemaVersion: 1, key: command.idempotencyKey, action: command.action, payloadHash, projectId: command.projectId, result: resultStatus, resultingStoreVersion: nextStoreVersion, resultingObjectVersion, recordedAt: timestamp });
+      nextEnvelope = finalizeProjectFoundationEnvelope({ ...current.envelope, storeVersion: nextStoreVersion, profiles: current.envelope.profiles.map((record) => record.id === profile.id ? nextProfile : record), idempotencyReceipts: [...current.envelope.idempotencyReceipts, receipt], updatedAt: timestamp });
+    }
+
+    const committed = commitProjectFoundationEnvelope(current.canonicalRaw, current.markerRaw!, nextEnvelope);
+    return committed.envelope ? { status: resultStatus, envelope: committed.envelope } : committed;
+  });
 }
 
 function parseStoredProjectFiles(rawFiles: string | null): LocalRecordsReadResult<ProjectFileRecord> {
@@ -7809,6 +9233,470 @@ function hasExactObjectKeys(value: unknown, expectedKeys: readonly string[]) {
   return JSON.stringify(keys) === JSON.stringify([...expectedKeys].sort());
 }
 
+function emptyBuiltArtifactEnvelope(): BuiltArtifactEnvelope {
+  return { envelopeVersion: 1, storeVersion: 0, records: [], tombstones: [] };
+}
+
+function builtArtifactManifestForProject(projectId: string): BuiltArtifactManifest {
+  return {
+    dataBindings: [
+      { id: "project-plan", access: "read", projectId },
+      { id: "project-tasks", access: "read", projectId },
+    ],
+    permissions: [
+      { id: "read-project-plan", effect: "read", scope: "active-project" },
+      { id: "read-project-tasks", effect: "read", scope: "active-project" },
+      { id: "open-project-tasks", effect: "navigate", scope: "active-project" },
+    ],
+    safeComponents: [
+      { id: "summary-card", version: 1 },
+      { id: "status-list", version: 1 },
+      { id: "filter-chip", version: 1 },
+    ],
+    allowedActions: [{ id: "open-project-tasks", externalEffect: "none" }],
+    activationLocation: { kind: "project-tools", projectId },
+    capabilityRef: { id: "built-artifact-renderer", relationshipOnly: true },
+    relatedSkillRef: { id: "project-followup-view", relationshipOnly: true },
+    boundaries: { codeExecution: false, networkAccess: false, externalInstall: false, externalEffect: "none" },
+  };
+}
+
+function normalizeBuiltArtifactText(value: string, maximumLength: number) {
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/g, " ");
+  return normalized.length <= maximumLength ? normalized : "";
+}
+
+function builtArtifactTextContainsExecutablePayload(value: string) {
+  return /(?:<\s*script\b|javascript\s*:|https?:\/\/|\b(?:eval|function|import|require)\s*\(|=>|```)/iu.test(value);
+}
+
+function builtArtifactDraftIsValid(name: string, description: string) {
+  return Boolean(name && description)
+    && name.length <= 80
+    && description.length <= 500
+    && !builtArtifactTextContainsExecutablePayload(name)
+    && !builtArtifactTextContainsExecutablePayload(description);
+}
+
+function builtArtifactRevisionFingerprint(artifactId: string, projectId: string, revision: Omit<BuiltArtifactRevision, "fingerprint">) {
+  return `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue({ artifactId, projectId, revision })))}`;
+}
+
+function builtArtifactTombstoneFingerprint(tombstone: Omit<BuiltArtifactTombstone, "fingerprint">) {
+  return `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue(tombstone)))}`;
+}
+
+function builtArtifactInvalidationIntentKey(intent: Pick<BuiltArtifactInvalidationIntent, "artifactId" | "observedVersion">) {
+  return `${intent.artifactId}:${intent.observedVersion}`;
+}
+
+function builtArtifactInvalidationIntentFingerprint(intent: Omit<BuiltArtifactInvalidationIntent, "fingerprint"> | BuiltArtifactInvalidationIntent) {
+  const { fingerprint: _fingerprint, ...payload } = intent as BuiltArtifactInvalidationIntent;
+  return `sha256-${memoryCoreSha256(JSON.stringify(stablePurchaseRequestValue(payload)))}`;
+}
+
+function emptyBuiltArtifactInvalidationIntentEnvelope(): BuiltArtifactInvalidationIntentEnvelope {
+  return { envelopeVersion: 1, intents: [] };
+}
+
+function parseBuiltArtifactInvalidationIntentRaw(raw: string | null): BuiltArtifactInvalidationIntentReadResult {
+  try {
+    if (raw === null) return { envelope: emptyBuiltArtifactInvalidationIntentEnvelope(), readError: false };
+    if (!raw.trim()) return { envelope: emptyBuiltArtifactInvalidationIntentEnvelope(), readError: true };
+    const parsed = JSON.parse(raw);
+    if (!hasExactObjectKeys(parsed, ["envelopeVersion", "intents"]) || parsed?.envelopeVersion !== 1 || !Array.isArray(parsed?.intents) || parsed.intents.length > 1000) {
+      return { envelope: emptyBuiltArtifactInvalidationIntentEnvelope(), readError: true };
+    }
+    const intents: BuiltArtifactInvalidationIntent[] = parsed.intents.flatMap((value: any): BuiltArtifactInvalidationIntent[] => {
+      if (!hasExactObjectKeys(value, ["schemaVersion", "artifactId", "projectId", "observedVersion", "observedRevisionId", "observedRevisionFingerprint", "unreadableBindings", "recordedAt", "fingerprint"]) || value?.schemaVersion !== 1) return [];
+      const artifactId = typeof value?.artifactId === "string" ? value.artifactId : "";
+      const projectId = typeof value?.projectId === "string" ? value.projectId : "";
+      const observedVersion = value?.observedVersion;
+      const observedRevisionId = typeof value?.observedRevisionId === "string" ? value.observedRevisionId : "";
+      const observedRevisionFingerprint = typeof value?.observedRevisionFingerprint === "string" ? value.observedRevisionFingerprint : "";
+      const unreadableBindings = Array.isArray(value?.unreadableBindings) ? value.unreadableBindings : [];
+      const recordedAt = typeof value?.recordedAt === "string" ? value.recordedAt : "";
+      const base = { schemaVersion: 1 as const, artifactId, projectId, observedVersion, observedRevisionId, observedRevisionFingerprint, unreadableBindings, recordedAt };
+      if (
+        !artifactId || artifactId.trim() !== artifactId || artifactId.length > 200
+        || !projectId || projectId.trim() !== projectId || projectId.length > 200
+        || !Number.isSafeInteger(observedVersion) || observedVersion < 1
+        || !observedRevisionId || observedRevisionId.trim() !== observedRevisionId || observedRevisionId.length > 200
+        || !/^sha256-[a-f0-9]{64}$/.test(observedRevisionFingerprint)
+        || unreadableBindings.length < 1 || unreadableBindings.length > 2
+        || unreadableBindings.some((binding: unknown) => binding !== "project-plan" && binding !== "project-tasks")
+        || new Set(unreadableBindings).size !== unreadableBindings.length
+        || JSON.stringify(unreadableBindings) !== JSON.stringify([...unreadableBindings].sort())
+        || !isValidProjectFileDate(recordedAt) || recordedAt !== value.recordedAt
+        || value?.fingerprint !== builtArtifactInvalidationIntentFingerprint(base)
+      ) return [];
+      return [{ ...base, unreadableBindings: unreadableBindings as BuiltArtifactInvalidationIntent["unreadableBindings"], fingerprint: value.fingerprint }];
+    });
+    const keys = intents.map(builtArtifactInvalidationIntentKey);
+    const sortedKeys = [...keys].sort();
+    if (
+      intents.length !== parsed.intents.length
+      || new Set(keys).size !== keys.length
+      || keys.some((key, index) => key !== sortedKeys[index])
+    ) return { envelope: emptyBuiltArtifactInvalidationIntentEnvelope(), readError: true };
+    return { envelope: { envelopeVersion: 1, intents }, readError: false };
+  } catch {
+    return { envelope: emptyBuiltArtifactInvalidationIntentEnvelope(), readError: true };
+  }
+}
+
+function readStoredBuiltArtifactInvalidationIntents(): BuiltArtifactInvalidationIntentReadResult {
+  const reads: BuiltArtifactInvalidationIntentReadResult[] = [];
+  let mirrorReadFailed = false;
+  try { reads.push(parseBuiltArtifactInvalidationIntentRaw(window.localStorage.getItem(builtArtifactInvalidationIntentsStorageKey))); } catch { mirrorReadFailed = true; }
+  try { reads.push(parseBuiltArtifactInvalidationIntentRaw(window.sessionStorage.getItem(builtArtifactInvalidationIntentsStorageKey))); } catch { mirrorReadFailed = true; }
+  if (mirrorReadFailed || reads.length !== 2 || reads.some((read) => read.readError)) return { envelope: emptyBuiltArtifactInvalidationIntentEnvelope(), readError: true };
+  const intentsByKey = new Map<string, BuiltArtifactInvalidationIntent>();
+  for (const read of reads) {
+    for (const intent of read.envelope.intents) {
+      const key = builtArtifactInvalidationIntentKey(intent);
+      const existing = intentsByKey.get(key);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(intent)) return { envelope: emptyBuiltArtifactInvalidationIntentEnvelope(), readError: true };
+      intentsByKey.set(key, intent);
+    }
+  }
+  const intents = [...intentsByKey.values()].sort((first, second) => builtArtifactInvalidationIntentKey(first).localeCompare(builtArtifactInvalidationIntentKey(second)));
+  return { envelope: { envelopeVersion: 1, intents }, readError: false };
+}
+
+type BuiltArtifactInvalidationIntentRawSnapshot = { localRaw?: string | null; sessionRaw?: string | null };
+
+function readBuiltArtifactInvalidationIntentRawSnapshot(): BuiltArtifactInvalidationIntentRawSnapshot {
+  const snapshot: BuiltArtifactInvalidationIntentRawSnapshot = {};
+  try { snapshot.localRaw = window.localStorage.getItem(builtArtifactInvalidationIntentsStorageKey); } catch { /* unavailable */ }
+  try { snapshot.sessionRaw = window.sessionStorage.getItem(builtArtifactInvalidationIntentsStorageKey); } catch { /* unavailable */ }
+  return snapshot;
+}
+
+function builtArtifactInvalidationIntentMatchesArtifact(intent: BuiltArtifactInvalidationIntent, artifact: BuiltArtifactRecord) {
+  const revision = builtArtifactCurrentRevision(artifact);
+  return artifact.status === "active"
+    && intent.artifactId === artifact.id
+    && intent.projectId === artifact.projectId
+    && intent.observedVersion === artifact.version
+    && intent.observedRevisionId === revision.id
+    && intent.observedRevisionFingerprint === revision.fingerprint;
+}
+
+function builtArtifactInvalidationHasPersistedBlock(intent: BuiltArtifactInvalidationIntent, artifact: BuiltArtifactRecord) {
+  const priorRevision = artifact.revisions[intent.observedVersion - 1];
+  const blockedRevision = artifact.revisions[intent.observedVersion];
+  const blockedEvent = artifact.history[intent.observedVersion];
+  return artifact.id === intent.artifactId
+    && artifact.projectId === intent.projectId
+    && artifact.status === "blocked"
+    && artifact.version === intent.observedVersion + 1
+    && priorRevision?.id === intent.observedRevisionId
+    && priorRevision?.fingerprint === intent.observedRevisionFingerprint
+    && blockedRevision?.status === "blocked"
+    && blockedEvent?.type === "blocked"
+    && blockedEvent?.actor === "سامانهٔ محلی"
+    && blockedEvent?.version === artifact.version
+    && builtArtifactRevisionDefinitionMatches(priorRevision, blockedRevision);
+}
+
+function writeBuiltArtifactInvalidationIntentEnvelope(
+  previous: BuiltArtifactInvalidationIntentRawSnapshot,
+  envelope: BuiltArtifactInvalidationIntentEnvelope,
+) {
+  const nextRaw = envelope.intents.length === 0 ? null : JSON.stringify(envelope);
+  const writeExact = (storage: Storage, value: string | null) => {
+    try {
+      if (value === null) storage.removeItem(builtArtifactInvalidationIntentsStorageKey);
+      else storage.setItem(builtArtifactInvalidationIntentsStorageKey, value);
+      return storage.getItem(builtArtifactInvalidationIntentsStorageKey) === value;
+    } catch {
+      return false;
+    }
+  };
+  if (Object.prototype.hasOwnProperty.call(previous, "localRaw")) writeExact(window.localStorage, nextRaw);
+  if (Object.prototype.hasOwnProperty.call(previous, "sessionRaw")) writeExact(window.sessionStorage, nextRaw);
+  const verified = readStoredBuiltArtifactInvalidationIntents();
+  const verifiedRaw = verified.envelope.intents.length === 0 ? null : JSON.stringify(verified.envelope);
+  if (!verified.readError && verifiedRaw === nextRaw) return true;
+  if (Object.prototype.hasOwnProperty.call(previous, "localRaw")) writeExact(window.localStorage, previous.localRaw ?? null);
+  if (Object.prototype.hasOwnProperty.call(previous, "sessionRaw")) writeExact(window.sessionStorage, previous.sessionRaw ?? null);
+  return false;
+}
+
+function createBuiltArtifactRevision(
+  artifactId: string,
+  projectId: string,
+  version: number,
+  timestamp: string,
+  name: string,
+  description: string,
+  status: BuiltArtifactLifecycleState,
+  blockedReason: string | null = null,
+): BuiltArtifactRevision {
+  const base = {
+    id: `built-artifact-revision-${window.crypto.randomUUID()}`,
+    version,
+    createdAt: timestamp,
+    name,
+    description,
+    catalogEntryId: "project-followup-view" as const,
+    catalogEntryVersion: 1 as const,
+    manifest: builtArtifactManifestForProject(projectId),
+    status,
+    blockedReason,
+  };
+  return { ...base, fingerprint: builtArtifactRevisionFingerprint(artifactId, projectId, base) };
+}
+
+function createBuiltArtifactRecord(projectId: string, name: string, description: string, timestamp: string, id = `built-artifact-${window.crypto.randomUUID()}`): BuiltArtifactRecord {
+  const revision = createBuiltArtifactRevision(id, projectId, 1, timestamp, name, description, "draft");
+  return {
+    schemaVersion: 1,
+    id,
+    type: "built_artifact",
+    projectId,
+    ownerPrincipalType: "project",
+    ownerPrincipalId: projectId,
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: projectId,
+    custodianService: "Artifact Domain Service",
+    status: "draft",
+    version: 1,
+    currentRevisionId: revision.id,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    revisions: [revision],
+    history: [{ id: `built-artifact-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1, rollbackFromVersion: null, approvalFingerprint: null }],
+  };
+}
+
+function builtArtifactCurrentRevision(record: BuiltArtifactRecord) {
+  return record.revisions[record.revisions.length - 1];
+}
+
+function builtArtifactRevisionDefinitionMatches(first: BuiltArtifactRevision, second: BuiltArtifactRevision) {
+  return first.name === second.name
+    && first.description === second.description
+    && first.catalogEntryId === second.catalogEntryId
+    && first.catalogEntryVersion === second.catalogEntryVersion
+    && JSON.stringify(stablePurchaseRequestValue(first.manifest)) === JSON.stringify(stablePurchaseRequestValue(second.manifest));
+}
+
+function appendBuiltArtifactRevision(
+  record: BuiltArtifactRecord,
+  input: {
+    name?: string;
+    description?: string;
+    status: BuiltArtifactLifecycleState;
+    blockedReason?: string | null;
+    eventType: BuiltArtifactEventType;
+    timestamp: string;
+    rollbackFromVersion?: number | null;
+    approvalFingerprint?: string | null;
+    actor?: BuiltArtifactHistoryEvent["actor"];
+  },
+): BuiltArtifactRecord {
+  const current = builtArtifactCurrentRevision(record);
+  const version = record.version + 1;
+  const revision = createBuiltArtifactRevision(
+    record.id,
+    record.projectId,
+    version,
+    input.timestamp,
+    input.name ?? current.name,
+    input.description ?? current.description,
+    input.status,
+    input.blockedReason ?? null,
+  );
+  return {
+    ...record,
+    status: input.status,
+    version,
+    currentRevisionId: revision.id,
+    updatedAt: input.timestamp,
+    revisions: [...record.revisions, revision],
+    history: [...record.history, {
+      id: `built-artifact-event-${window.crypto.randomUUID()}`,
+      type: input.eventType,
+      actor: input.actor ?? "شما",
+      at: input.timestamp,
+      version,
+      rollbackFromVersion: input.rollbackFromVersion ?? null,
+      approvalFingerprint: input.approvalFingerprint ?? null,
+    }],
+  };
+}
+
+function parseBuiltArtifactRecord(value: any): BuiltArtifactRecord | null {
+  const recordKeys = ["schemaVersion", "id", "type", "projectId", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "custodianService", "status", "version", "currentRevisionId", "createdAt", "updatedAt", "revisions", "history"];
+  if (!hasExactObjectKeys(value, recordKeys) || value?.schemaVersion !== 1 || value?.type !== "built_artifact") return null;
+  const id = typeof value?.id === "string" ? value.id : "";
+  const projectId = typeof value?.projectId === "string" ? value.projectId : "";
+  const status = value?.status as BuiltArtifactLifecycleState;
+  const version = value?.version;
+  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId : "";
+  const createdAt = typeof value?.createdAt === "string" ? value.createdAt : "";
+  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt : "";
+  if (
+    !id || id.trim() !== id || !projectId || projectId.trim() !== projectId
+    || value?.ownerPrincipalType !== "project" || value?.ownerPrincipalId !== projectId
+    || value?.accountSide !== "builder" || value?.scopeType !== "project_private" || value?.scopeId !== projectId
+    || value?.custodianService !== "Artifact Domain Service"
+    || !["draft", "preview_ready", "active", "disabled", "blocked"].includes(status)
+    || !Number.isInteger(version) || version < 1 || !currentRevisionId
+    || !isValidProjectFileDate(createdAt) || !isValidProjectFileDate(updatedAt)
+    || new Date(updatedAt).getTime() < new Date(createdAt).getTime()
+    || !Array.isArray(value?.revisions) || !Array.isArray(value?.history)
+    || value.revisions.length !== version || value.history.length !== version
+  ) return null;
+
+  const revisionIds = new Set<string>();
+  const revisions: BuiltArtifactRevision[] = value.revisions.flatMap((revision: any, index: number): BuiltArtifactRevision[] => {
+    if (!hasExactObjectKeys(revision, ["id", "version", "createdAt", "name", "description", "catalogEntryId", "catalogEntryVersion", "manifest", "status", "blockedReason", "fingerprint"])) return [];
+    const revisionId = typeof revision?.id === "string" ? revision.id : "";
+    const revisionCreatedAt = typeof revision?.createdAt === "string" ? revision.createdAt : "";
+    const name = typeof revision?.name === "string" ? revision.name : "";
+    const description = typeof revision?.description === "string" ? revision.description : "";
+    const revisionStatus = revision?.status as BuiltArtifactLifecycleState;
+    const blockedReason = revision?.blockedReason === null ? null : typeof revision?.blockedReason === "string" ? revision.blockedReason : "";
+    const manifest = builtArtifactManifestForProject(projectId);
+    const base = { id: revisionId, version: index + 1, createdAt: revisionCreatedAt, name, description, catalogEntryId: "project-followup-view" as const, catalogEntryVersion: 1 as const, manifest, status: revisionStatus, blockedReason };
+    if (
+      !revisionId || revisionId.trim() !== revisionId || revisionIds.has(revisionId)
+      || revision?.version !== index + 1 || !isValidProjectFileDate(revisionCreatedAt)
+      || !builtArtifactDraftIsValid(name, description)
+      || revision?.catalogEntryId !== "project-followup-view" || revision?.catalogEntryVersion !== 1
+      || JSON.stringify(stablePurchaseRequestValue(revision?.manifest)) !== JSON.stringify(stablePurchaseRequestValue(manifest))
+      || !["draft", "preview_ready", "active", "disabled", "blocked"].includes(revisionStatus)
+      || (revisionStatus === "blocked" ? !blockedReason || blockedReason.length > 240 : blockedReason !== null)
+      || revision?.fingerprint !== builtArtifactRevisionFingerprint(id, projectId, base)
+    ) return [];
+    revisionIds.add(revisionId);
+    return [{ ...base, fingerprint: revision.fingerprint }];
+  });
+  if (revisions.length !== version) return null;
+
+  const eventIds = new Set<string>();
+  const history: BuiltArtifactHistoryEvent[] = value.history.flatMap((event: any, index: number): BuiltArtifactHistoryEvent[] => {
+    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version", "rollbackFromVersion", "approvalFingerprint"])) return [];
+    const eventId = typeof event?.id === "string" ? event.id : "";
+    const eventType = event?.type as BuiltArtifactEventType;
+    const at = typeof event?.at === "string" ? event.at : "";
+    const rollbackFromVersion = event?.rollbackFromVersion;
+    const approvalFingerprint = event?.approvalFingerprint;
+    if (
+      !eventId || eventId.trim() !== eventId || eventIds.has(eventId)
+      || !["created", "previewed", "activated", "disabled", "blocked", "reactivated", "revision-created", "rolled-back"].includes(eventType)
+      || (eventType === "blocked" ? event?.actor !== "سامانهٔ محلی" : event?.actor !== "شما") || event?.version !== index + 1 || !isValidProjectFileDate(at)
+      || (eventType === "rolled-back" ? !Number.isInteger(rollbackFromVersion) || rollbackFromVersion < 1 || rollbackFromVersion > index : rollbackFromVersion !== null)
+      || (eventType === "activated" || eventType === "reactivated" ? typeof approvalFingerprint !== "string" || !approvalFingerprint : approvalFingerprint !== null)
+    ) return [];
+    eventIds.add(eventId);
+    return [{ id: eventId, type: eventType, actor: event.actor as BuiltArtifactHistoryEvent["actor"], at, version: index + 1, rollbackFromVersion, approvalFingerprint }];
+  });
+  if (
+    history.length !== version
+    || history[0]?.type !== "created"
+    || revisions[0]?.status !== "draft"
+    || history[0]?.at !== createdAt
+    || revisions[0]?.createdAt !== createdAt
+  ) return null;
+
+  let derivedStatus: BuiltArtifactLifecycleState = "draft";
+  for (let index = 1; index < version; index += 1) {
+    const event = history[index];
+    const revision = revisions[index];
+    const priorRevision = revisions[index - 1];
+    const transitionIsValid = event.type === "previewed" && derivedStatus === "draft" && revision.status === "preview_ready"
+      || event.type === "activated" && derivedStatus === "preview_ready" && revision.status === "active" && event.approvalFingerprint === priorRevision.fingerprint && builtArtifactRevisionDefinitionMatches(revision, priorRevision)
+      || event.type === "disabled" && derivedStatus === "active" && revision.status === "disabled" && builtArtifactRevisionDefinitionMatches(revision, priorRevision)
+      || event.type === "blocked" && derivedStatus === "active" && revision.status === "blocked" && builtArtifactRevisionDefinitionMatches(revision, priorRevision)
+      || event.type === "reactivated" && ["disabled", "blocked"].includes(derivedStatus) && revision.status === "active" && event.approvalFingerprint === priorRevision.fingerprint && builtArtifactRevisionDefinitionMatches(revision, priorRevision)
+      || event.type === "revision-created" && revision.status === "draft" && builtArtifactRevisionDefinitionMatches(revision, priorRevision)
+      || event.type === "rolled-back" && revision.status === "draft" && (() => {
+        const target = revisions[event.rollbackFromVersion! - 1];
+        return Boolean(target && target.name === revision.name && target.description === revision.description && target.catalogEntryId === revision.catalogEntryId);
+      })();
+    if (!transitionIsValid || new Date(event.at).getTime() < new Date(history[index - 1].at).getTime() || revision.createdAt !== event.at) return null;
+    derivedStatus = revision.status;
+  }
+  if (derivedStatus !== status || revisions[version - 1]?.id !== currentRevisionId || revisions[version - 1]?.createdAt !== updatedAt) return null;
+  return {
+    schemaVersion: 1,
+    id,
+    type: "built_artifact",
+    projectId,
+    ownerPrincipalType: "project",
+    ownerPrincipalId: projectId,
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: projectId,
+    custodianService: "Artifact Domain Service",
+    status,
+    version,
+    currentRevisionId,
+    createdAt,
+    updatedAt,
+    revisions,
+    history,
+  };
+}
+
+function readStoredBuiltArtifacts(): BuiltArtifactReadResult {
+  try {
+    const raw = window.localStorage.getItem(builtArtifactsStorageKey);
+    if (raw === null) return { envelope: emptyBuiltArtifactEnvelope(), readError: false };
+    if (!raw.trim()) return { envelope: emptyBuiltArtifactEnvelope(), readError: true };
+    const parsed = JSON.parse(raw);
+    if (!hasExactObjectKeys(parsed, ["envelopeVersion", "storeVersion", "records", "tombstones"]) || parsed?.envelopeVersion !== 1 || !Number.isInteger(parsed?.storeVersion) || parsed.storeVersion < 1 || !Array.isArray(parsed?.records) || !Array.isArray(parsed?.tombstones)) return { envelope: emptyBuiltArtifactEnvelope(), readError: true };
+    const records = parsed.records.map(parseBuiltArtifactRecord);
+    if (records.some((record: BuiltArtifactRecord | null) => !record)) return { envelope: emptyBuiltArtifactEnvelope(), readError: true };
+    const tombstones: BuiltArtifactTombstone[] = parsed.tombstones.flatMap((value: any): BuiltArtifactTombstone[] => {
+      if (!hasExactObjectKeys(value, ["id", "projectId", "lastVersion", "removedAt", "reason", "priorFingerprint", "fingerprint"])) return [];
+      const id = typeof value?.id === "string" ? value.id : "";
+      const projectId = typeof value?.projectId === "string" ? value.projectId : "";
+      const priorFingerprint = typeof value?.priorFingerprint === "string" ? value.priorFingerprint : "";
+      const base = { id, projectId, lastVersion: value?.lastVersion, removedAt: value?.removedAt, reason: "user_requested" as const, priorFingerprint };
+      if (!id || id.trim() !== id || !projectId || projectId.trim() !== projectId || !Number.isSafeInteger(value?.lastVersion) || value.lastVersion < 2 || !isValidProjectFileDate(value?.removedAt) || value?.reason !== "user_requested" || !/^sha256-[a-f0-9]{64}$/.test(priorFingerprint) || value?.fingerprint !== builtArtifactTombstoneFingerprint(base)) return [];
+      return [{ ...base, fingerprint: value.fingerprint }];
+    });
+    if (tombstones.length !== parsed.tombstones.length) return { envelope: emptyBuiltArtifactEnvelope(), readError: true };
+    const recordsTyped = records as BuiltArtifactRecord[];
+    const allIds = [...recordsTyped.map((record) => record.id), ...tombstones.map((tombstone) => tombstone.id)];
+    const exactStoreVersion = recordsTyped.reduce((sum, record) => sum + record.version, 0) + tombstones.reduce((sum, tombstone) => sum + tombstone.lastVersion, 0);
+    if (new Set(allIds).size !== allIds.length || !Number.isSafeInteger(parsed.storeVersion) || parsed.storeVersion !== exactStoreVersion) return { envelope: emptyBuiltArtifactEnvelope(), readError: true };
+    return { envelope: { envelopeVersion: 1, storeVersion: parsed.storeVersion, records: recordsTyped, tombstones }, readError: false };
+  } catch {
+    return { envelope: emptyBuiltArtifactEnvelope(), readError: true };
+  }
+}
+
+function builtArtifactDependenciesAreReadable() {
+  return !readStoredProjectBackbone().readError && !readStoredProjectTasks().readError;
+}
+
+async function withBuiltArtifactsWriteLock(operation: () => BuiltArtifactMutationResult | Promise<BuiltArtifactMutationResult>): Promise<BuiltArtifactMutationResult> {
+  try {
+    const lockManager = window.navigator.locks;
+    if (!lockManager?.request) return "lock-unavailable";
+    return await lockManager.request(builtArtifactsWriteLockName, { mode: "exclusive" }, operation);
+  } catch {
+    return "lock-unavailable";
+  }
+}
+
+async function withBuiltArtifactInvalidationIntentsWriteLock(operation: () => BuiltArtifactMutationResult | Promise<BuiltArtifactMutationResult>): Promise<BuiltArtifactMutationResult> {
+  try {
+    const lockManager = window.navigator.locks;
+    if (!lockManager?.request) return "lock-unavailable";
+    return await lockManager.request(builtArtifactInvalidationIntentsWriteLockName, { mode: "exclusive" }, operation);
+  } catch {
+    return "lock-unavailable";
+  }
+}
+
 function parseSupplierContact(value: any): SupplierContactRecord | null {
   const id = typeof value?.id === "string" ? value.id.trim() : "";
   const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
@@ -10448,11 +12336,12 @@ export default function Prototype() {
   const [phone, setPhone] = useState(defaultPhone);
   const [otp, setOtp] = useState(defaultOtp);
   const [error, setError] = useState("");
-  const [projects, setProjects] = useState<BuilderProject[]>(readStoredProjects);
-  const [activeProjectId, setActiveProjectId] = useState(() => readLocalStorageValue(activeProjectStorageKey) ?? "");
+  const [projectFoundation, setProjectFoundation] = useState<ProjectFoundationState>(readProjectFoundationState);
   const [modelMode, setModelMode] = useState<ModelMode>("خودکار");
+  const projects = useMemo(() => projectFoundationProjects(projectFoundation.envelope), [projectFoundation.envelope]);
+  const activeProjectId = projectFoundation.envelope?.activeProjectId ?? "";
   const activeProject = useMemo(
-    () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
+    () => projects.find((project) => project.id === activeProjectId) ?? null,
     [activeProjectId, projects],
   );
 
@@ -10477,118 +12366,117 @@ export default function Prototype() {
   }, [screen]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(projectsStorageKey, JSON.stringify(projects));
-    } catch {
-      // The prototype remains usable when browser storage is unavailable.
-    }
-  }, [projects]);
-
-  useEffect(() => {
-    if (!activeProject) return;
-    if (activeProject.id !== activeProjectId) setActiveProjectId(activeProject.id);
-    try {
-      window.localStorage.setItem(activeProjectStorageKey, activeProject.id);
-    } catch {
-      // Keep the active in-memory project when browser storage is unavailable.
-    }
-  }, [activeProject, activeProjectId]);
+    let disposed = false;
+    const refresh = async () => {
+      const snapshot = readProjectFoundationState();
+      const next = snapshot.status === "loading" ? await initializeProjectFoundation() : snapshot;
+      if (!disposed) setProjectFoundation(next);
+    };
+    void refresh();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null) {
+        setProjectFoundation({ status: "read-error", envelope: null, reason: "storage-cleared" });
+        return;
+      }
+      if (![projectsStorageKey, projectFoundationCutoverMarkerKey, projectFoundationIdentityFixtureKey].includes(event.key)) return;
+      void refresh();
+    };
+    const onFocus = () => { void refresh(); };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      disposed = true;
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   const goTo = (next: Screen) => {
     setError("");
     setScreen(next);
   };
 
-  const selectProject = (projectId: string) => {
+  const applyProjectFoundationMutation = (result: ProjectFoundationMutationResult) => {
+    if (result.envelope) setProjectFoundation({ status: "ready", envelope: result.envelope, reason: "" });
+    else if (["read-failure", "dependency-stale", "unauthorized", "scope-mismatch"].includes(result.status)) setProjectFoundation({ status: "read-error", envelope: null, reason: result.reason ?? result.status });
+    return result;
+  };
+
+  const retryProjectFoundation = async () => {
+    setProjectFoundation((current) => ({ status: "loading", envelope: current.envelope, reason: "retrying" }));
+    const next = await initializeProjectFoundation();
+    setProjectFoundation(next);
+    return next.status === "ready";
+  };
+
+  const selectProject = async (projectId: string, idempotencyKey: string) => {
     const nextProject = projects.find((project) => project.id === projectId);
-    setActiveProjectId(projectId);
-    if (nextProject && !isProjectReady(nextProject)) goTo("success");
+    const envelope = projectFoundation.envelope;
+    if (!envelope || projectFoundation.status !== "ready") return { status: "read-failure" } satisfies ProjectFoundationMutationResult;
+    const result = applyProjectFoundationMutation(await executeProjectFoundationCommand({ inputSchemaVersion: 1, action: "set-active", projectId, expectedStoreVersion: envelope.storeVersion, idempotencyKey }));
+    if (result.envelope && nextProject && !isProjectReady(nextProject)) goTo("success");
+    return result;
   };
 
-  const saveProject = (draft: ProjectSetupDraft, existingProjectId?: string) => {
-    const normalizedDraft = {
-      name: draft.name.trim(),
-      location: normalizeProjectArea(draft.location),
-      stage: draft.stage,
-    };
-    const projectId = existingProjectId ?? `project-${Date.now()}`;
-    setProjects((current) => {
-      if (existingProjectId) {
-        return current.map((project) => project.id === existingProjectId ? { ...project, ...normalizedDraft } : project);
-      }
-      return [...current, { ...emptyProjectProfile, ...normalizedDraft, id: projectId, createdAt: new Date().toISOString() }];
-    });
-    setActiveProjectId(projectId);
-    try {
-      window.localStorage.setItem(activeProjectStorageKey, projectId);
-    } catch {
-      // The selected project still remains active for the current session.
+  const saveProject = async (draft: ProjectSetupDraft, idempotencyKey: string, existingProjectId?: string): Promise<ProjectFoundationMutationResult> => {
+    const envelope = projectFoundation.envelope;
+    if (!envelope || projectFoundation.status !== "ready") return { status: "read-failure" } satisfies ProjectFoundationMutationResult;
+    let result: ProjectFoundationMutationResult;
+    if (existingProjectId) {
+      const project = projects.find((item) => item.id === existingProjectId);
+      const profile = envelope.profiles.find((item) => item.projectId === existingProjectId);
+      if (!project || !profile) return { status: "not-found" };
+      result = await executeProjectFoundationCommand({ inputSchemaVersion: 1, action: "update-profile", projectId: existingProjectId, draft: { ...projectProfileDraft(project), ...draft }, expectedProfileVersion: profile.version, idempotencyKey });
+    } else {
+      result = await executeProjectFoundationCommand({ inputSchemaVersion: 1, action: "create-project", projectId: projectFoundationProjectIdForIdempotencyKey(idempotencyKey), draft, expectedStoreVersion: envelope.storeVersion, idempotencyKey });
     }
-    goTo("home");
+    result = applyProjectFoundationMutation(result);
+    if (result.envelope) goTo("home");
+    return result;
   };
 
-  const createAdditionalProject = (draft: ProjectSetupDraft) => {
-    const normalizedDraft = {
-      name: draft.name.trim(),
-      location: normalizeProjectArea(draft.location),
-      stage: draft.stage,
-    };
-    const projectId = `project-${window.crypto.randomUUID()}`;
-    const nextProjects = [...projects, { ...emptyProjectProfile, ...normalizedDraft, id: projectId, createdAt: new Date().toISOString() }];
-    let previousProjects: string | null = null;
-    let previousActiveProject: string | null = null;
-
-    try {
-      previousProjects = window.localStorage.getItem(projectsStorageKey);
-      previousActiveProject = window.localStorage.getItem(activeProjectStorageKey);
-      // The project list is the source of truth and is committed last. If that
-      // write fails, at worst a dangling active pointer remains and self-heals
-      // from the unchanged list on the next read; no phantom project is stored.
-      window.localStorage.setItem(activeProjectStorageKey, projectId);
-      window.localStorage.setItem(projectsStorageKey, JSON.stringify(nextProjects));
-    } catch {
-      try {
-        if (previousProjects === null) window.localStorage.removeItem(projectsStorageKey);
-        else window.localStorage.setItem(projectsStorageKey, previousProjects);
-      } catch {
-        // Continue with the independent active-pointer rollback below.
-      }
-      try {
-        if (previousActiveProject === null) window.localStorage.removeItem(activeProjectStorageKey);
-        else window.localStorage.setItem(activeProjectStorageKey, previousActiveProject);
-      } catch {
-        // The unchanged project list remains authoritative and repairs a
-        // dangling pointer on reload; no in-memory project is activated.
-      }
-      return false;
-    }
-
-    setProjects(nextProjects);
-    setActiveProjectId(projectId);
-    setScreen("home");
-    return true;
+  const createAdditionalProject = async (draft: ProjectSetupDraft, idempotencyKey: string): Promise<ProjectFoundationMutationResult> => {
+    const envelope = projectFoundation.envelope;
+    if (!envelope || projectFoundation.status !== "ready") return { status: "read-failure" } satisfies ProjectFoundationMutationResult;
+    const result = applyProjectFoundationMutation(await executeProjectFoundationCommand({ inputSchemaVersion: 1, action: "create-project", projectId: projectFoundationProjectIdForIdempotencyKey(idempotencyKey), draft, expectedStoreVersion: envelope.storeVersion, idempotencyKey }));
+    if (result.envelope) setScreen("home");
+    return result;
   };
 
-  const updateProject = (projectId: string, draft: ProjectProfileDraft) => {
-    const normalizedDraft = normalizeProjectProfile(draft);
-    setProjects((current) => current.map((project) => project.id === projectId ? { ...project, ...normalizedDraft } : project));
+  const updateProject = async (projectId: string, draft: ProjectProfileDraft, expectedProfileVersion: number, idempotencyKey: string) => {
+    if (!projectFoundation.envelope || projectFoundation.status !== "ready") return { status: "read-failure" } satisfies ProjectFoundationMutationResult;
+    return applyProjectFoundationMutation(await executeProjectFoundationCommand({ inputSchemaVersion: 1, action: "update-profile", projectId, draft, expectedProfileVersion, idempotencyKey }));
   };
+
+  const rollbackProject = async (projectId: string, targetVersion: number, expectedProfileVersion: number, idempotencyKey: string) => {
+    if (!projectFoundation.envelope || projectFoundation.status !== "ready") return { status: "read-failure" } satisfies ProjectFoundationMutationResult;
+    return applyProjectFoundationMutation(await executeProjectFoundationCommand({ inputSchemaVersion: 1, action: "rollback-profile", projectId, targetVersion, expectedProfileVersion, idempotencyKey }));
+  };
+
+  if (screen === "home" && (projectFoundation.status !== "ready" || !activeProject)) {
+    return <ProjectFoundationStatusScreen status={projectFoundation.status} onRetry={retryProjectFoundation} />;
+  }
 
   if (screen === "home" && activeProject && isProjectReady(activeProject)) {
+    const activeProfile = projectFoundation.envelope?.profiles.find((profile) => profile.projectId === activeProject.id) ?? null;
     return (
       <BuilderHome
         activeProject={activeProject}
+        activeProjectProfile={activeProfile}
         projects={projects}
         modelMode={modelMode}
         onProjectChange={selectProject}
         onProjectCreate={createAdditionalProject}
         onProjectUpdate={updateProject}
+        onProjectRollback={rollbackProject}
         onModelChange={setModelMode}
         onOpenSheet={setSheet}
         sheet={sheet}
       />
     );
   }
+
+  const projectCompletionRequired = screen === "home" && projectFoundation.status === "ready" && Boolean(activeProject) && !isProjectReady(activeProject!);
 
   const steps: Record<Screen, number> = {
     role: 1,
@@ -10726,11 +12614,13 @@ export default function Prototype() {
             </AuthForm>
           ) : null}
 
-          {screen === "success" ? (
+          {screen === "success" || projectCompletionRequired ? (
             <SuccessScreen
               project={activeProject}
+              storageStatus={projectFoundation.status}
               onContinue={() => goTo("home")}
               onSave={saveProject}
+              onRetryStorage={retryProjectFoundation}
             />
           ) : null}
         </main>
@@ -10858,18 +12748,51 @@ function ProjectChoiceMenu({ id, testId, value, placeholder, options, ariaLabel,
   );
 }
 
-function SuccessScreen({ project, onContinue, onSave }: { project: BuilderProject | null; onContinue: () => void; onSave: (draft: ProjectSetupDraft, existingProjectId?: string) => void }) {
+function ProjectFoundationStatusScreen({ status, onRetry }: { status: ProjectFoundationState["status"]; onRetry: () => Promise<boolean> }) {
+  const [retrying, setRetrying] = useState(false);
+  return (
+    <div className="chida-app project-foundation-status-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-foundation-status-view">
+      <MobileScroll className="project-foundation-status-scroll">
+        <main className="project-foundation-status-card">
+          <span className="project-foundation-status-icon">{status === "loading" ? <LoaderCircle size={27} className="spin" /> : <ShieldAlert size={27} />}</span>
+          <span className="eyebrow">زیرساخت امن پروژه</span>
+          <h1>{status === "loading" ? "در حال آماده‌سازی پروژه‌ها" : "پروژه‌ها کامل خوانده نشدند"}</h1>
+          <p>{status === "loading" ? "نسخه و مالکیت داده‌های محلی در حال بررسی است." : "این وضعیت خالی نیست. برای جلوگیری از بازنویسی دادهٔ ناخوانده، پروژه‌ها و اقدام‌های وابسته قفل مانده‌اند."}</p>
+          {status === "read-error" ? <p className="project-foundation-read-error" role="alert" data-testid="project-foundation-read-error"><ShieldCheck size={18} /> هیچ داده‌ای پاک یا با نسل قدیمی جایگزین نشده است.</p> : null}
+          {status === "read-error" ? <button className="primary-button" type="button" disabled={retrying} data-testid="project-foundation-retry" onClick={async () => { setRetrying(true); await onRetry(); setRetrying(false); }}>{retrying ? "در حال بررسی دوباره…" : "بررسی دوباره"}</button> : null}
+        </main>
+      </MobileScroll>
+    </div>
+  );
+}
+
+function SuccessScreen({ project, storageStatus, onContinue, onSave, onRetryStorage }: { project: BuilderProject | null; storageStatus: ProjectFoundationState["status"]; onContinue: () => void; onSave: (draft: ProjectSetupDraft, idempotencyKey: string, existingProjectId?: string) => Promise<ProjectFoundationMutationResult>; onRetryStorage: () => Promise<boolean> }) {
   const keyboard = useKeyboard();
   const [name, setName] = useState(project?.name ?? "");
   const [location, setLocation] = useState(project ? normalizeProjectArea(project.location) : "");
   const [stage, setStage] = useState(project && isKnownProjectStage(project.stage) ? project.stage : "");
   const [fieldErrors, setFieldErrors] = useState<ProjectFieldErrors>({ name: "", location: "", stage: "" });
+  const [storageError, setStorageError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setName(project?.name ?? "");
+    setLocation(project ? normalizeProjectArea(project.location) : "");
+    setStage(project && isKnownProjectStage(project.stage) ? project.stage : "");
+    setFieldErrors({ name: "", location: "", stage: "" });
+    setStorageError("");
+    idempotencyKeyRef.current = null;
+  }, [project?.id]);
 
   const clearFieldError = (field: keyof ProjectSetupDraft) => {
     setFieldErrors((current) => current[field] ? { ...current, [field]: "" } : current);
+    setStorageError("");
+    idempotencyKeyRef.current = null;
   };
 
-  const submit = () => {
+  const submit = async () => {
     const normalizedArea = normalizeProjectArea(location);
     const nextErrors = validateProjectDraft({ name, location, stage });
     setFieldErrors(nextErrors);
@@ -10885,8 +12808,33 @@ function SuccessScreen({ project, onContinue, onSave }: { project: BuilderProjec
       return;
     }
     keyboard.hide();
-    onSave({ name, location: normalizedArea, stage }, project?.id);
+    const idempotencyKey = idempotencyKeyRef.current ?? `project-setup:${window.crypto.randomUUID()}`;
+    idempotencyKeyRef.current = idempotencyKey;
+    setSaving(true);
+    const result = await onSave({ name, location: normalizedArea, stage }, idempotencyKey, project?.id);
+    setSaving(false);
+    if (result.envelope) return;
+    setStorageError(result.status === "version-conflict"
+      ? "نسخهٔ پروژه در جای دیگری تغییر کرده است. بررسی دوباره را بزن و سپس پیش‌نویس را دوباره ثبت کن."
+      : result.status === "lock-unavailable"
+        ? "قفل امن مرورگر در دسترس نیست؛ چیزی ثبت نشد."
+        : result.status === "read-failure"
+          ? "دادهٔ پروژه خوانا نیست؛ برای جلوگیری از بازنویسی چیزی ثبت نشد."
+          : "پروژه ذخیره نشد؛ پیش‌نویس نگه داشته شده است و می‌توانی دوباره تلاش کنی.");
   };
+
+  if (storageStatus !== "ready") {
+    return (
+      <section className="auth-content success-screen project-foundation-inline-status" data-testid="success-screen">
+        <span className="success-icon">{storageStatus === "loading" ? <LoaderCircle size={28} className="spin" /> : <ShieldAlert size={28} />}</span>
+        <span className="eyebrow">زیرساخت امن پروژه</span>
+        <h1>{storageStatus === "loading" ? "در حال آماده‌سازی پروژه‌ها" : "پروژه‌ها کامل خوانده نشدند"}</h1>
+        <p>{storageStatus === "loading" ? "پس از بررسی نسخه و مالکیت دادهٔ محلی، ادامه می‌دهیم." : "این وضعیت خالی نیست؛ تا خواندن موفق، ساخت و ویرایش پروژه قفل است و دادهٔ قدیمی جایگزین نمی‌شود."}</p>
+        {storageStatus === "read-error" ? <p className="project-foundation-read-error" role="alert" data-testid="project-foundation-read-error">هیچ داده‌ای پاک یا بازنویسی نشده است.</p> : null}
+        {storageStatus === "read-error" ? <button className="primary-button" type="button" disabled={retrying} data-testid="project-foundation-retry" onClick={async () => { setRetrying(true); await onRetryStorage(); setRetrying(false); }}>{retrying ? "در حال بررسی دوباره…" : "بررسی دوباره"}</button> : null}
+      </section>
+    );
+  }
 
   if (project && isProjectReady(project)) {
     return (
@@ -10914,7 +12862,7 @@ function SuccessScreen({ project, onContinue, onSave }: { project: BuilderProjec
         <p>برای ساخت فضای پروژه، نام، محدودهٔ تهران و مرحلهٔ ساخت را وارد کن.</p>
       </div>
 
-      <form className="project-setup-form" data-testid="project-setup-form" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+      <form className="project-setup-form" data-testid="project-setup-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
         <label className="field-control" htmlFor="project-name">
           <span>نام پروژه</span>
           <KeyboardInput
@@ -10955,13 +12903,14 @@ function SuccessScreen({ project, onContinue, onSave }: { project: BuilderProjec
           {fieldErrors.stage ? <small className="field-error" id="project-stage-error" data-testid="project-stage-error">{fieldErrors.stage}</small> : null}
         </div>
 
-        <button className="primary-button" type="submit" data-testid="project-create-button">ساخت پروژه و ورود</button>
+        {storageError ? <p className="new-project-storage-error" role="alert" data-testid="project-setup-storage-error">{storageError}</p> : null}
+        <button className="primary-button" type="submit" disabled={saving} data-testid="project-create-button">{saving ? "در حال ذخیره…" : "ساخت پروژه و ورود"}</button>
       </form>
     </section>
   );
 }
 
-function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onProjectCreate, onProjectUpdate, onModelChange, onOpenSheet, sheet }: { activeProject: BuilderProject; projects: BuilderProject[]; modelMode: ModelMode; onProjectChange: (projectId: string) => void; onProjectCreate: (draft: ProjectSetupDraft) => boolean; onProjectUpdate: (projectId: string, draft: ProjectProfileDraft) => void; onModelChange: (mode: ModelMode) => void; onOpenSheet: (sheet: SheetName) => void; sheet: SheetName }) {
+function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode, onProjectChange, onProjectCreate, onProjectUpdate, onProjectRollback, onModelChange, onOpenSheet, sheet }: { activeProject: BuilderProject; activeProjectProfile: ProjectFoundationProfileRecord | null; projects: BuilderProject[]; modelMode: ModelMode; onProjectChange: (projectId: string, idempotencyKey: string) => Promise<ProjectFoundationMutationResult>; onProjectCreate: (draft: ProjectSetupDraft, idempotencyKey: string) => Promise<ProjectFoundationMutationResult>; onProjectUpdate: (projectId: string, draft: ProjectProfileDraft, expectedProfileVersion: number, idempotencyKey: string) => Promise<ProjectFoundationMutationResult>; onProjectRollback: (projectId: string, targetVersion: number, expectedProfileVersion: number, idempotencyKey: string) => Promise<ProjectFoundationMutationResult>; onModelChange: (mode: ModelMode) => void; onOpenSheet: (sheet: SheetName) => void; sheet: SheetName }) {
   const keyboard = useKeyboard();
   const { bottomInset } = useKeyboardInsets();
   const homeRef = useRef<HTMLDivElement>(null);
@@ -10980,7 +12929,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [proposalsReturnView, setProposalsReturnView] = useState<ProposalsReturnView>("chat");
   const [startPurchaseRequestEditor, setStartPurchaseRequestEditor] = useState(false);
   const [initialPurchaseRequestId, setInitialPurchaseRequestId] = useState<string | null>(null);
-  const [projectTasksLaunch, setProjectTasksLaunch] = useState<ProjectTasksLaunch>({ filter: "active", approvalId: null, dispatchPlanApprovalId: null, returnToPurchaseRequestId: null });
+  const [projectTasksLaunch, setProjectTasksLaunch] = useState<ProjectTasksLaunch>({ filter: "active", approvalId: null, dispatchPlanApprovalId: null, returnToPurchaseRequestId: null, returnView: "chat" });
   const [focusedFileId, setFocusedFileId] = useState<string | null>(null);
   const [focusedMemoryId, setFocusedMemoryId] = useState<string | null>(null);
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
@@ -10999,6 +12948,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [initialProjectTasks] = useState<LocalRecordsReadResult<ProjectTaskRecord>>(readStoredProjectTasks);
   const [initialProjectBackbone] = useState<ProjectBackboneReadResult>(readStoredProjectBackbone);
   const [initialProjectTaskMonitors] = useState<ProjectTaskMonitorReadResult>(() => validateProjectTaskMonitorAggregate(readStoredProjectTaskMonitors(), initialProjectBackbone));
+  const [initialBuiltArtifacts] = useState<BuiltArtifactReadResult>(readStoredBuiltArtifacts);
+  const [initialBuiltArtifactInvalidationIntents] = useState<BuiltArtifactInvalidationIntentReadResult>(readStoredBuiltArtifactInvalidationIntents);
+  const initialBuiltArtifactInvalidationIntentMismatch = !initialBuiltArtifacts.readError && !initialBuiltArtifactInvalidationIntents.readError && initialBuiltArtifactInvalidationIntents.envelope.intents.some((intent) => {
+    const artifact = initialBuiltArtifacts.envelope.records.find((record) => record.id === intent.artifactId && record.projectId === intent.projectId);
+    return !artifact || !builtArtifactInvalidationIntentMatchesArtifact(intent, artifact) && !builtArtifactInvalidationHasPersistedBlock(intent, artifact);
+  });
   const [initialProjectPurchaseRequests] = useState<LocalRecordsReadResult<ProjectPurchaseRequestRecord>>(readStoredProjectPurchaseRequests);
   const [initialProjectApprovals] = useState<LocalRecordsReadResult<ProjectApprovalRecord>>(() => readStoredProjectApprovals(initialProjectPurchaseRequests));
   const [initialProjectSupplierContacts] = useState<LocalRecordsReadResult<SupplierContactRecord>>(readStoredProjectSupplierContacts);
@@ -11019,6 +12974,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [projectTasks, setProjectTasks] = useState<ProjectTaskRecord[]>(initialProjectTasks.records);
   const [projectBackbone, setProjectBackbone] = useState<ProjectBackboneEnvelope>(initialProjectBackbone.envelope);
   const [projectTaskMonitorEnvelope, setProjectTaskMonitorEnvelope] = useState<ProjectTaskMonitorEnvelope>(initialProjectTaskMonitors.envelope);
+  const [builtArtifactEnvelope, setBuiltArtifactEnvelope] = useState<BuiltArtifactEnvelope>(initialBuiltArtifacts.envelope);
   const [projectPurchaseRequests, setProjectPurchaseRequests] = useState<ProjectPurchaseRequestRecord[]>(initialProjectPurchaseRequests.records);
   const [projectApprovals, setProjectApprovals] = useState<ProjectApprovalRecord[]>(initialProjectApprovals.records);
   const [projectSupplierContacts, setProjectSupplierContacts] = useState<SupplierContactRecord[]>(initialProjectSupplierContacts.records);
@@ -11042,9 +12998,20 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   });
   const [sourceRecoveryBlocked, setSourceRecoveryBlocked] = useState(false);
   const [projectMemoriesReadError, setProjectMemoriesReadError] = useState(initialProjectMemories.readError);
-  const [projectTasksReadError] = useState(initialProjectTasks.readError);
+  const [projectTasksReadError, setProjectTasksReadError] = useState(initialProjectTasks.readError);
   const [projectBackboneReadError, setProjectBackboneReadError] = useState(initialProjectBackbone.readError);
   const [projectTaskMonitorsReadError, setProjectTaskMonitorsReadError] = useState(initialProjectTaskMonitors.readError);
+  const [builtArtifactsReadError, setBuiltArtifactsReadError] = useState(initialBuiltArtifacts.readError);
+  const [builtArtifactInvalidationIntentsReadError, setBuiltArtifactInvalidationIntentsReadError] = useState(() => initialBuiltArtifactInvalidationIntents.readError || initialBuiltArtifactInvalidationIntentMismatch);
+  const [builtArtifactDependencyRefreshVersion, setBuiltArtifactDependencyRefreshVersion] = useState(0);
+  const [builtArtifactInvalidationError, setBuiltArtifactInvalidationError] = useState(initialBuiltArtifactInvalidationIntents.readError || initialBuiltArtifactInvalidationIntentMismatch);
+  const [builtArtifactInvalidationIncidents, setBuiltArtifactInvalidationIncidents] = useState<string[]>(() => {
+    if (initialBuiltArtifactInvalidationIntents.readError || initialBuiltArtifactInvalidationIntentMismatch) {
+      return initialBuiltArtifacts.envelope.records.filter((artifact) => artifact.status === "active").map((artifact) => `${artifact.id}:${artifact.version}`);
+    }
+    return initialBuiltArtifactInvalidationIntents.envelope.intents.map(builtArtifactInvalidationIntentKey);
+  });
+  const builtArtifactInvalidationInFlightRef = useRef(new Set<string>());
   const [projectPurchaseRequestsReadError, setProjectPurchaseRequestsReadError] = useState(initialProjectPurchaseRequests.readError);
   const [projectApprovalsReadError] = useState(initialProjectApprovals.readError);
   const [projectSupplierContactsReadError] = useState(initialProjectSupplierContacts.readError);
@@ -11059,7 +13026,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
   const [builderManualNegotiationResponsesReadError] = useState(initialBuilderManualNegotiationResponses.readError);
   const [builderManualNegotiationResponseReviewsReadError] = useState(initialBuilderManualNegotiationResponseReviews.readError);
   const [builderManualNegotiationConditionImpactsReadError] = useState(initialBuilderManualNegotiationConditionImpacts.readError);
-  const [installedTool, setInstalledTool] = useState(() => readLocalStorageValue(installedToolStorageKey) ?? "");
+  const [selectedBuiltArtifactId, setSelectedBuiltArtifactId] = useState<string | null>(null);
+  const [legacyBuiltArtifactDetected] = useState(() => readLocalStorageValue(legacyInstalledToolStorageKey) !== null);
   const [briefSchedule, setBriefSchedule] = useState<BriefSchedule | null>(() => {
     try {
       const stored = window.localStorage.getItem(briefStorageKey);
@@ -11324,6 +13292,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     () => projectTaskMonitorEnvelope.runs.filter((run) => run.projectId === activeProject.id),
     [activeProject.id, projectTaskMonitorEnvelope.runs],
   );
+  const activeProjectBuiltArtifacts = useMemo(
+    () => builtArtifactEnvelope.records.filter((artifact) => artifact.projectId === activeProject.id && artifact.scopeId === activeProject.id),
+    [activeProject.id, builtArtifactEnvelope.records],
+  );
+  const builtArtifactStorageLocked = builtArtifactsReadError || builtArtifactInvalidationIntentsReadError;
+  const builtArtifactDependenciesLocked = projectBackboneReadError || projectTasksReadError;
   const activeProjectPurchaseRequests = useMemo(
     () => projectPurchaseRequests.filter((request) => request.projectId === activeProject.id),
     [activeProject.id, projectPurchaseRequests],
@@ -11388,10 +13362,454 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       : `هفتگی · ${briefSchedule.weekday} · ${briefSchedule.time}`
     : "تنظیم نشده";
 
-  const installTool = (toolName: string) => {
-    setInstalledTool(toolName);
-    window.localStorage.setItem(installedToolStorageKey, toolName);
+  const setBuiltArtifactEnvelopeIfChanged = (nextEnvelope: BuiltArtifactEnvelope) => {
+    setBuiltArtifactEnvelope((currentEnvelope) => JSON.stringify(currentEnvelope) === JSON.stringify(nextEnvelope) ? currentEnvelope : nextEnvelope);
   };
+
+  const commitBuiltArtifactMutation = async (
+    transform: (current: BuiltArtifactEnvelope, invalidationIntents: BuiltArtifactInvalidationIntent[]) => { result: BuiltArtifactMutationResult; envelope?: BuiltArtifactEnvelope },
+  ): Promise<BuiltArtifactMutationResult> => withBuiltArtifactInvalidationIntentsWriteLock(() => withBuiltArtifactsWriteLock(async () => {
+    if (builtArtifactStorageLocked) return "read-failure";
+    const currentRead = readStoredBuiltArtifacts();
+    if (currentRead.readError) {
+      setBuiltArtifactsReadError(true);
+      return "read-failure";
+    }
+    setBuiltArtifactEnvelopeIfChanged(currentRead.envelope);
+    setBuiltArtifactsReadError(false);
+    const currentInvalidationIntents = readStoredBuiltArtifactInvalidationIntents();
+    if (currentInvalidationIntents.readError || currentInvalidationIntents.envelope.intents.some((intent) => {
+      const artifact = currentRead.envelope.records.find((record) => record.id === intent.artifactId && record.projectId === intent.projectId);
+      return !artifact || !builtArtifactInvalidationIntentMatchesArtifact(intent, artifact) && !builtArtifactInvalidationHasPersistedBlock(intent, artifact);
+    })) {
+      setBuiltArtifactInvalidationIntentsReadError(true);
+      return "read-failure";
+    }
+    setBuiltArtifactInvalidationIntentsReadError(false);
+    const mutation = transform(currentRead.envelope, currentInvalidationIntents.envelope.intents);
+    if (!mutation.envelope) return mutation.result;
+    const nextEnvelope = {
+      ...mutation.envelope,
+      envelopeVersion: 1 as const,
+      storeVersion: mutation.envelope.records.reduce((total, record) => total + record.version, 0)
+        + mutation.envelope.tombstones.reduce((total, tombstone) => total + tombstone.lastVersion, 0),
+    };
+    let previousRaw: string | null;
+    try {
+      previousRaw = window.localStorage.getItem(builtArtifactsStorageKey);
+    } catch {
+      setBuiltArtifactsReadError(true);
+      return "read-failure";
+    }
+    const nextRaw = JSON.stringify(nextEnvelope);
+    try {
+      window.localStorage.setItem(builtArtifactsStorageKey, nextRaw);
+      if (window.localStorage.getItem(builtArtifactsStorageKey) !== nextRaw) throw new Error("BuiltArtifact write verification failed");
+      const verified = readStoredBuiltArtifacts();
+      if (verified.readError || JSON.stringify(verified.envelope) !== nextRaw) throw new Error("BuiltArtifact reread verification failed");
+    } catch {
+      try {
+        const failedRaw = window.localStorage.getItem(builtArtifactsStorageKey);
+        if (failedRaw !== previousRaw) {
+          if (previousRaw === null) window.localStorage.removeItem(builtArtifactsStorageKey);
+          else window.localStorage.setItem(builtArtifactsStorageKey, previousRaw);
+          if (window.localStorage.getItem(builtArtifactsStorageKey) !== previousRaw) throw new Error("BuiltArtifact rollback verification failed");
+        }
+      } catch {
+        setBuiltArtifactsReadError(true);
+      }
+      return "write-failure";
+    }
+    setBuiltArtifactEnvelopeIfChanged(nextEnvelope);
+    return mutation.result;
+  }));
+
+  const retryBuiltArtifactsRead = () => {
+    const next = readStoredBuiltArtifacts();
+    const nextIntents = readStoredBuiltArtifactInvalidationIntents();
+    const intentMismatch = !next.readError && !nextIntents.readError && nextIntents.envelope.intents.some((intent) => {
+      const artifact = next.envelope.records.find((record) => record.id === intent.artifactId && record.projectId === intent.projectId);
+      return !artifact || !builtArtifactInvalidationIntentMatchesArtifact(intent, artifact) && !builtArtifactInvalidationHasPersistedBlock(intent, artifact);
+    });
+    const intentsReadError = nextIntents.readError || intentMismatch;
+    setBuiltArtifactEnvelopeIfChanged(next.envelope);
+    setBuiltArtifactsReadError(next.readError);
+    setBuiltArtifactInvalidationIntentsReadError(intentsReadError);
+    setBuiltArtifactInvalidationError(intentsReadError);
+    setBuiltArtifactInvalidationIncidents(intentsReadError
+      ? next.envelope.records.filter((artifact) => artifact.status === "active").map((artifact) => `${artifact.id}:${artifact.version}`)
+      : nextIntents.envelope.intents.map(builtArtifactInvalidationIntentKey));
+    if (!next.readError && selectedBuiltArtifactId && !next.envelope.records.some((artifact) => artifact.id === selectedBuiltArtifactId && artifact.projectId === activeProject.id)) setSelectedBuiltArtifactId(null);
+  };
+
+  const createBuiltArtifactPreview = async (rawName: string, rawDescription: string) => {
+    const name = normalizeBuiltArtifactText(rawName, 80);
+    const description = normalizeBuiltArtifactText(rawDescription, 500);
+    if (!builtArtifactDraftIsValid(name, description)) return "invalid" as const;
+    const artifactId = `built-artifact-${window.crypto.randomUUID()}`;
+    const result = await commitBuiltArtifactMutation((current) => {
+      if (!builtArtifactDependenciesAreReadable()) return { result: "dependency-stale" };
+      if (current.tombstones.some((tombstone) => tombstone.id === artifactId)) return { result: "invalid" };
+      const timestamp = new Date().toISOString();
+      const draft = createBuiltArtifactRecord(activeProject.id, name, description, timestamp, artifactId);
+      const preview = appendBuiltArtifactRevision(draft, { status: "preview_ready", eventType: "previewed", timestamp });
+      return { result: "created", envelope: { ...current, records: [...current.records, preview] } };
+    });
+    if (result === "created") setSelectedBuiltArtifactId(artifactId);
+    return result;
+  };
+
+  const recordBuiltArtifactInvalidationObservation = async (
+    artifactId: string,
+    expectedVersion: number,
+    observedUnreadableBindings: BuiltArtifactInvalidationIntent["unreadableBindings"],
+  ): Promise<BuiltArtifactMutationResult> => withBuiltArtifactInvalidationIntentsWriteLock(async () => {
+    const unreadableBindings = [...new Set(observedUnreadableBindings)].sort() as BuiltArtifactInvalidationIntent["unreadableBindings"];
+    if (unreadableBindings.length === 0) return "unsupported-transition";
+    const currentRead = readStoredBuiltArtifacts();
+    if (currentRead.readError) {
+      setBuiltArtifactsReadError(true);
+      return "read-failure";
+    }
+    setBuiltArtifactEnvelopeIfChanged(currentRead.envelope);
+    const artifact = currentRead.envelope.records.find((record) => record.id === artifactId);
+    if (!artifact) return "invalid";
+    if (artifact.projectId !== activeProject.id || artifact.scopeId !== activeProject.id) return "scope-mismatch";
+    if (artifact.status !== "active" || artifact.version !== expectedVersion) return artifact.version !== expectedVersion ? "version-conflict" : "unsupported-transition";
+
+    const intentsRead = readStoredBuiltArtifactInvalidationIntents();
+    if (intentsRead.readError || intentsRead.envelope.intents.some((intent) => {
+      const target = currentRead.envelope.records.find((record) => record.id === intent.artifactId && record.projectId === intent.projectId);
+      return !target || !builtArtifactInvalidationIntentMatchesArtifact(intent, target) && !builtArtifactInvalidationHasPersistedBlock(intent, target);
+    })) {
+      setBuiltArtifactInvalidationIntentsReadError(true);
+      return "read-failure";
+    }
+    const currentRevision = builtArtifactCurrentRevision(artifact);
+    const existingIntent = intentsRead.envelope.intents.find((intent) => intent.artifactId === artifact.id);
+    if (existingIntent) {
+      if (!builtArtifactInvalidationIntentMatchesArtifact(existingIntent, artifact)) {
+        setBuiltArtifactInvalidationIntentsReadError(true);
+        return "read-failure";
+      }
+      return "unchanged";
+    }
+    const recordedAt = new Date(Math.max(Date.now(), new Date(artifact.updatedAt).getTime())).toISOString();
+    const intentBase = {
+      schemaVersion: 1 as const,
+      artifactId: artifact.id,
+      projectId: artifact.projectId,
+      observedVersion: artifact.version,
+      observedRevisionId: currentRevision.id,
+      observedRevisionFingerprint: currentRevision.fingerprint,
+      unreadableBindings,
+      recordedAt,
+    };
+    const intent = { ...intentBase, fingerprint: builtArtifactInvalidationIntentFingerprint(intentBase) };
+    const previousIntentRaw = readBuiltArtifactInvalidationIntentRawSnapshot();
+    if (!writeBuiltArtifactInvalidationIntentEnvelope(previousIntentRaw, {
+      envelopeVersion: 1,
+      intents: [...intentsRead.envelope.intents, intent].sort((first, second) => builtArtifactInvalidationIntentKey(first).localeCompare(builtArtifactInvalidationIntentKey(second))),
+    })) {
+      setBuiltArtifactInvalidationError(true);
+      return "write-failure";
+    }
+    const incidentKey = builtArtifactInvalidationIntentKey(intent);
+    setBuiltArtifactInvalidationIncidents((current) => current.includes(incidentKey) ? current : [...current, incidentKey].sort());
+    setBuiltArtifactInvalidationIntentsReadError(false);
+    return "updated";
+  });
+
+  const persistBuiltArtifactDependencyInvalidation = async (
+    artifactId: string,
+    expectedVersion: number,
+    observedUnreadableBindings: BuiltArtifactInvalidationIntent["unreadableBindings"] = [],
+  ): Promise<BuiltArtifactMutationResult> => withBuiltArtifactInvalidationIntentsWriteLock(() => withBuiltArtifactsWriteLock(async () => {
+    if (builtArtifactsReadError) return "read-failure";
+    const currentRead = readStoredBuiltArtifacts();
+    if (currentRead.readError) {
+      setBuiltArtifactsReadError(true);
+      return "read-failure";
+    }
+    setBuiltArtifactEnvelopeIfChanged(currentRead.envelope);
+    setBuiltArtifactsReadError(false);
+    const artifact = currentRead.envelope.records.find((record) => record.id === artifactId);
+    if (!artifact) return "invalid";
+    if (artifact.projectId !== activeProject.id || artifact.scopeId !== activeProject.id) return "scope-mismatch";
+
+    const intentsRead = readStoredBuiltArtifactInvalidationIntents();
+    if (intentsRead.readError || intentsRead.envelope.intents.some((intent) => {
+      const target = currentRead.envelope.records.find((record) => record.id === intent.artifactId && record.projectId === intent.projectId);
+      return !target || !builtArtifactInvalidationIntentMatchesArtifact(intent, target) && !builtArtifactInvalidationHasPersistedBlock(intent, target);
+    })) {
+      setBuiltArtifactInvalidationIntentsReadError(true);
+      return "read-failure";
+    }
+    setBuiltArtifactInvalidationIntentsReadError(false);
+
+    const existingIntent = intentsRead.envelope.intents.find((intent) => intent.artifactId === artifact.id);
+    if (artifact.status !== "active" || artifact.version !== expectedVersion) {
+      if (existingIntent && builtArtifactInvalidationHasPersistedBlock(existingIntent, artifact)) {
+        const previousIntentRaw = readBuiltArtifactInvalidationIntentRawSnapshot();
+        const nextIntentEnvelope = { envelopeVersion: 1 as const, intents: intentsRead.envelope.intents.filter((intent) => intent !== existingIntent) };
+        if (!writeBuiltArtifactInvalidationIntentEnvelope(previousIntentRaw, nextIntentEnvelope)) {
+          setBuiltArtifactInvalidationError(true);
+          return "unchanged";
+        }
+        setBuiltArtifactInvalidationIncidents((current) => current.filter((key) => key !== builtArtifactInvalidationIntentKey(existingIntent)));
+        setBuiltArtifactInvalidationError(false);
+        return "unchanged";
+      }
+      return artifact.version !== expectedVersion ? "version-conflict" : "unsupported-transition";
+    }
+
+    const currentRevision = builtArtifactCurrentRevision(artifact);
+    let intent = existingIntent;
+    if (intent && !builtArtifactInvalidationIntentMatchesArtifact(intent, artifact)) {
+      setBuiltArtifactInvalidationIntentsReadError(true);
+      return "read-failure";
+    }
+    if (!intent) {
+      const unreadableBindings = [...new Set(observedUnreadableBindings)].sort() as BuiltArtifactInvalidationIntent["unreadableBindings"];
+      if (unreadableBindings.length === 0) {
+        if (readStoredProjectBackbone().readError) unreadableBindings.push("project-plan");
+        if (readStoredProjectTasks().readError) unreadableBindings.push("project-tasks");
+      }
+      unreadableBindings.sort();
+      if (unreadableBindings.length === 0) return "unsupported-transition";
+      const recordedAt = new Date(Math.max(Date.now(), new Date(artifact.updatedAt).getTime())).toISOString();
+      const intentBase = {
+        schemaVersion: 1 as const,
+        artifactId: artifact.id,
+        projectId: artifact.projectId,
+        observedVersion: artifact.version,
+        observedRevisionId: currentRevision.id,
+        observedRevisionFingerprint: currentRevision.fingerprint,
+        unreadableBindings,
+        recordedAt,
+      };
+      intent = { ...intentBase, fingerprint: builtArtifactInvalidationIntentFingerprint(intentBase) };
+      const previousIntentRaw = readBuiltArtifactInvalidationIntentRawSnapshot();
+      const nextIntentEnvelope = {
+        envelopeVersion: 1 as const,
+        intents: [...intentsRead.envelope.intents, intent].sort((first, second) => builtArtifactInvalidationIntentKey(first).localeCompare(builtArtifactInvalidationIntentKey(second))),
+      };
+      if (!writeBuiltArtifactInvalidationIntentEnvelope(previousIntentRaw, nextIntentEnvelope)) {
+        setBuiltArtifactInvalidationError(true);
+      } else {
+        setBuiltArtifactInvalidationIncidents((current) => current.includes(builtArtifactInvalidationIntentKey(intent!)) ? current : [...current, builtArtifactInvalidationIntentKey(intent!)].sort());
+      }
+    }
+
+    const timestamp = new Date(Math.max(Date.now(), new Date(artifact.updatedAt).getTime(), new Date(intent.recordedAt).getTime())).toISOString();
+    const blockedArtifact = appendBuiltArtifactRevision(artifact, {
+      status: "blocked",
+      blockedReason: "خواندن برنامه یا کارهای پروژه کامل نشد؛ استفاده از ساخته تا بازیابی وابستگی متوقف شد.",
+      eventType: "blocked",
+      actor: "سامانهٔ محلی",
+      timestamp,
+    });
+    const nextEnvelope = {
+      ...currentRead.envelope,
+      records: currentRead.envelope.records.map((record) => record.id === artifact.id ? blockedArtifact : record),
+      storeVersion: currentRead.envelope.records.reduce((total, record) => total + (record.id === artifact.id ? blockedArtifact.version : record.version), 0)
+        + currentRead.envelope.tombstones.reduce((total, tombstone) => total + tombstone.lastVersion, 0),
+    };
+    let previousRaw: string | null;
+    try {
+      previousRaw = window.localStorage.getItem(builtArtifactsStorageKey);
+    } catch {
+      setBuiltArtifactsReadError(true);
+      return "read-failure";
+    }
+    const nextRaw = JSON.stringify(nextEnvelope);
+    try {
+      window.localStorage.setItem(builtArtifactsStorageKey, nextRaw);
+      if (window.localStorage.getItem(builtArtifactsStorageKey) !== nextRaw) throw new Error("BuiltArtifact invalidation write verification failed");
+      const verified = readStoredBuiltArtifacts();
+      const verifiedArtifact = verified.envelope.records.find((record) => record.id === artifact.id);
+      if (verified.readError || JSON.stringify(verified.envelope) !== nextRaw || !verifiedArtifact || !builtArtifactInvalidationHasPersistedBlock(intent, verifiedArtifact)) throw new Error("BuiltArtifact invalidation reread verification failed");
+    } catch {
+      try {
+        const failedRaw = window.localStorage.getItem(builtArtifactsStorageKey);
+        if (failedRaw !== previousRaw) {
+          if (previousRaw === null) window.localStorage.removeItem(builtArtifactsStorageKey);
+          else window.localStorage.setItem(builtArtifactsStorageKey, previousRaw);
+          if (window.localStorage.getItem(builtArtifactsStorageKey) !== previousRaw) throw new Error("BuiltArtifact invalidation rollback verification failed");
+        }
+      } catch {
+        setBuiltArtifactsReadError(true);
+      }
+      setBuiltArtifactInvalidationError(true);
+      return "write-failure";
+    }
+
+    setBuiltArtifactEnvelopeIfChanged(nextEnvelope);
+    const latestIntentRead = readStoredBuiltArtifactInvalidationIntents();
+    let cleanupSucceeded = false;
+    if (!latestIntentRead.readError) {
+      const storedIntent = latestIntentRead.envelope.intents.find((candidate) => builtArtifactInvalidationIntentKey(candidate) === builtArtifactInvalidationIntentKey(intent!));
+      const persistedArtifact = nextEnvelope.records.find((record) => record.id === artifact.id);
+      if (storedIntent && persistedArtifact && builtArtifactInvalidationHasPersistedBlock(storedIntent, persistedArtifact)) {
+        const previousIntentRaw = readBuiltArtifactInvalidationIntentRawSnapshot();
+        cleanupSucceeded = writeBuiltArtifactInvalidationIntentEnvelope(previousIntentRaw, {
+          envelopeVersion: 1,
+          intents: latestIntentRead.envelope.intents.filter((candidate) => candidate !== storedIntent),
+        });
+      } else if (!storedIntent) cleanupSucceeded = true;
+    }
+    if (cleanupSucceeded) {
+      const incidentKey = builtArtifactInvalidationIntentKey(intent);
+      setBuiltArtifactInvalidationIncidents((current) => current.filter((key) => key !== incidentKey));
+      setBuiltArtifactInvalidationError(false);
+    } else {
+      setBuiltArtifactInvalidationError(true);
+    }
+    return "updated";
+  }));
+
+  const mutateBuiltArtifact = async (
+    artifactId: string,
+    expectedVersion: number,
+    command: "activate" | "disable" | "reactivate" | "create-revision" | "preview" | "rollback" | "remove",
+    input: { name?: string; description?: string; approvalFingerprint?: string; rollbackFromVersion?: number } = {},
+  ) => {
+    const result = await commitBuiltArtifactMutation((current, invalidationIntents) => {
+      const artifact = current.records.find((record) => record.id === artifactId);
+      if (!artifact) return { result: current.tombstones.some((tombstone) => tombstone.id === artifactId) ? "unsupported-transition" : "invalid" };
+      if (artifact.projectId !== activeProject.id || artifact.scopeId !== activeProject.id) return { result: "scope-mismatch" };
+      if (artifact.version !== expectedVersion) return { result: "version-conflict" };
+      if (invalidationIntents.some((intent) => intent.artifactId === artifact.id)) return { result: "dependency-stale" };
+      if (["activate", "reactivate", "preview"].includes(command) && !builtArtifactDependenciesAreReadable()) return { result: "dependency-stale" };
+      const currentRevision = builtArtifactCurrentRevision(artifact);
+      const timestamp = new Date(Math.max(Date.now(), new Date(artifact.updatedAt).getTime())).toISOString();
+      let updated: BuiltArtifactRecord;
+      if (command === "activate") {
+        if (artifact.status !== "preview_ready") return { result: "unsupported-transition" };
+        if (input.approvalFingerprint !== currentRevision.fingerprint) return { result: "approval-stale" };
+        updated = appendBuiltArtifactRevision(artifact, { status: "active", eventType: "activated", timestamp, approvalFingerprint: currentRevision.fingerprint });
+      } else if (command === "disable") {
+        if (artifact.status !== "active") return { result: "unsupported-transition" };
+        updated = appendBuiltArtifactRevision(artifact, { status: "disabled", eventType: "disabled", timestamp });
+      } else if (command === "reactivate") {
+        if (!["disabled", "blocked"].includes(artifact.status)) return { result: "unsupported-transition" };
+        if (input.approvalFingerprint !== currentRevision.fingerprint) return { result: "approval-stale" };
+        updated = appendBuiltArtifactRevision(artifact, { status: "active", eventType: "reactivated", timestamp, approvalFingerprint: currentRevision.fingerprint });
+      } else if (command === "create-revision") {
+        if (artifact.status === "draft") return { result: "unchanged" };
+        updated = appendBuiltArtifactRevision(artifact, { status: "draft", eventType: "revision-created", timestamp });
+      } else if (command === "preview") {
+        if (artifact.status !== "draft") return { result: "unsupported-transition" };
+        const name = normalizeBuiltArtifactText(input.name ?? "", 80);
+        const description = normalizeBuiltArtifactText(input.description ?? "", 500);
+        if (!builtArtifactDraftIsValid(name, description)) return { result: "invalid" };
+        updated = appendBuiltArtifactRevision(artifact, { name, description, status: "preview_ready", eventType: "previewed", timestamp });
+      } else if (command === "rollback") {
+        if (!Number.isInteger(input.rollbackFromVersion) || input.rollbackFromVersion! < 1 || input.rollbackFromVersion! >= artifact.version) return { result: "invalid" };
+        const target = artifact.revisions[input.rollbackFromVersion! - 1];
+        if (!target) return { result: "invalid" };
+        updated = appendBuiltArtifactRevision(artifact, { name: target.name, description: target.description, status: "draft", eventType: "rolled-back", timestamp, rollbackFromVersion: target.version });
+      } else if (command === "remove") {
+        const tombstoneBase = { id: artifact.id, projectId: artifact.projectId, lastVersion: artifact.version + 1, removedAt: timestamp, reason: "user_requested" as const, priorFingerprint: currentRevision.fingerprint };
+        const tombstone = { ...tombstoneBase, fingerprint: builtArtifactTombstoneFingerprint(tombstoneBase) };
+        return { result: "removed", envelope: { ...current, records: current.records.filter((record) => record.id !== artifact.id), tombstones: [...current.tombstones, tombstone] } };
+      } else {
+        return { result: "unsupported-transition" };
+      }
+      return { result: "updated", envelope: { ...current, records: current.records.map((record) => record.id === artifact.id ? updated : record) } };
+    });
+    if (result === "removed") setSelectedBuiltArtifactId(null);
+    return result;
+  };
+
+  const activeProjectBuiltArtifactStateKey = activeProjectBuiltArtifacts.map((artifact) => `${artifact.id}:${artifact.status}:${artifact.version}:${artifact.currentRevisionId}`).join("|");
+  const activeBuiltArtifactInvalidationKey = activeProjectBuiltArtifacts.filter((artifact) => artifact.status === "active").map((artifact) => `${artifact.id}:${artifact.version}`).join("|");
+  const refreshBuiltArtifactDependencies = () => {
+    const backboneRead = readStoredProjectBackbone();
+    const tasksRead = readStoredProjectTasks();
+    setProjectBackboneReadError(backboneRead.readError);
+    setProjectTasksReadError(tasksRead.readError);
+    if (!backboneRead.readError) setProjectBackbone(backboneRead.envelope);
+    if (!tasksRead.readError) setProjectTasks(tasksRead.records);
+    setBuiltArtifactDependencyRefreshVersion((version) => version + 1);
+  };
+
+  useEffect(() => {
+    const handleDependencyStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === projectBackboneStorageKey || event.key === projectTasksStorageKey) refreshBuiltArtifactDependencies();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") refreshBuiltArtifactDependencies();
+    };
+    window.addEventListener("focus", refreshBuiltArtifactDependencies);
+    window.addEventListener("storage", handleDependencyStorage);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("focus", refreshBuiltArtifactDependencies);
+      window.removeEventListener("storage", handleDependencyStorage);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
+    const activeKeys = activeProjectBuiltArtifacts.filter((artifact) => artifact.status === "active").map((artifact) => `${artifact.id}:${artifact.version}`);
+    setBuiltArtifactInvalidationIncidents((current) => {
+      const next = [...current];
+      if (builtArtifactInvalidationIntentsReadError) {
+        builtArtifactEnvelope.records.filter((artifact) => artifact.status === "active").forEach((artifact) => {
+          const key = `${artifact.id}:${artifact.version}`;
+          if (!next.includes(key)) next.push(key);
+        });
+      } else if (builtArtifactDependenciesLocked) {
+        activeKeys.forEach((key) => { if (!next.includes(key)) next.push(key); });
+      }
+      next.sort();
+      return next.length === current.length && next.every((key, index) => key === current[index]) ? current : next;
+    });
+  }, [activeBuiltArtifactInvalidationKey, activeProject.id, builtArtifactDependenciesLocked, builtArtifactEnvelope.records, builtArtifactInvalidationIntentsReadError]);
+
+  const builtArtifactInvalidationIncidentKey = builtArtifactInvalidationIncidents.join("|");
+  useEffect(() => {
+    const pendingArtifacts = activeProjectBuiltArtifacts.filter((artifact) => {
+      const incidentKey = `${artifact.id}:${artifact.version}`;
+      return builtArtifactInvalidationIncidents.includes(incidentKey) && !builtArtifactInvalidationInFlightRef.current.has(incidentKey);
+    });
+    if (builtArtifactStorageLocked || pendingArtifacts.length === 0) return;
+    const observedUnreadableBindings = [
+      ...(projectBackboneReadError ? ["project-plan" as const] : []),
+      ...(projectTasksReadError ? ["project-tasks" as const] : []),
+    ];
+    const operationKeys = pendingArtifacts.map((artifact) => `${artifact.id}:${artifact.version}`);
+    operationKeys.forEach((key) => builtArtifactInvalidationInFlightRef.current.add(key));
+    const persistBlockedState = async () => {
+      try {
+        for (const artifact of pendingArtifacts) {
+          await recordBuiltArtifactInvalidationObservation(artifact.id, artifact.version, observedUnreadableBindings);
+          const result = await persistBuiltArtifactDependencyInvalidation(artifact.id, artifact.version, observedUnreadableBindings);
+          if (result !== "updated" && result !== "unchanged") setBuiltArtifactInvalidationError(true);
+        }
+      } finally {
+        operationKeys.forEach((key) => builtArtifactInvalidationInFlightRef.current.delete(key));
+      }
+    };
+    void persistBlockedState();
+  }, [activeBuiltArtifactInvalidationKey, activeProject.id, builtArtifactDependencyRefreshVersion, builtArtifactInvalidationIncidentKey, builtArtifactStorageLocked, projectBackboneReadError, projectTasksReadError]);
+
+  useEffect(() => {
+    if (builtArtifactStorageLocked) return;
+    const intentRead = readStoredBuiltArtifactInvalidationIntents();
+    if (intentRead.readError) {
+      setBuiltArtifactInvalidationIntentsReadError(true);
+      setBuiltArtifactInvalidationError(true);
+      return;
+    }
+    const completedIntent = intentRead.envelope.intents.find((intent) => {
+      const artifact = activeProjectBuiltArtifacts.find((record) => record.id === intent.artifactId);
+      return artifact ? builtArtifactInvalidationHasPersistedBlock(intent, artifact) : false;
+    });
+    if (!completedIntent) return;
+    void persistBuiltArtifactDependencyInvalidation(completedIntent.artifactId, completedIntent.observedVersion);
+  }, [activeProject.id, activeProjectBuiltArtifactStateKey, builtArtifactDependencyRefreshVersion, builtArtifactInvalidationIncidentKey, builtArtifactStorageLocked]);
 
   const saveBrief = (schedule: BriefSchedule) => {
     try {
@@ -11488,12 +13906,15 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     setComposerSending(false);
   };
 
-  const openProjectSpace = (projectId: string) => {
+  const openProjectSpace = async (projectId: string, idempotencyKey: string) => {
     const nextProject = projects.find((project) => project.id === projectId);
     keyboard.hide();
-    onOpenSheet(null);
-    onProjectChange(projectId);
-    if (nextProject && isProjectReady(nextProject)) setView("project");
+    const result = await onProjectChange(projectId, idempotencyKey);
+    if (result.envelope) {
+      onOpenSheet(null);
+      if (nextProject && isProjectReady(nextProject)) setView("project");
+    }
+    return result;
   };
 
   const openProjectFiles = (returnView: FilesReturnView, focusedId: string | null = null) => {
@@ -11539,11 +13960,15 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     setView("source-demo");
   };
 
-  const openProjectTasks = () => {
+  const openProjectTasks = (returnView: ProjectTasksReturnView = "chat") => {
     keyboard.hide();
     onOpenSheet(null);
     setDrawerOpen(false);
-    setProjectTasksLaunch({ filter: "active", approvalId: null, dispatchPlanApprovalId: null, returnToPurchaseRequestId: null });
+    if (returnView === "project") {
+      const projectScroll = document.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
+      if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
+    }
+    setProjectTasksLaunch({ filter: "active", approvalId: null, dispatchPlanApprovalId: null, returnToPurchaseRequestId: null, returnView });
     setView("tasks");
   };
 
@@ -11564,7 +13989,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     keyboard.hide();
     onOpenSheet(null);
     setDrawerOpen(false);
-    setProjectTasksLaunch({ filter: "approval", approvalId, dispatchPlanApprovalId: null, returnToPurchaseRequestId });
+    setProjectTasksLaunch({ filter: "approval", approvalId, dispatchPlanApprovalId: null, returnToPurchaseRequestId, returnView: "chat" });
     setView("tasks");
   };
 
@@ -11572,7 +13997,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     keyboard.hide();
     onOpenSheet(null);
     setDrawerOpen(false);
-    setProjectTasksLaunch({ filter: "approval", approvalId: null, dispatchPlanApprovalId, returnToPurchaseRequestId });
+    setProjectTasksLaunch({ filter: "approval", approvalId: null, dispatchPlanApprovalId, returnToPurchaseRequestId, returnView: "chat" });
     setView("tasks");
   };
 
@@ -11606,12 +14031,11 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       case "purchase-request": openProjectPurchaseRequests("chat", true); break;
       case "compare-offers": openProjectProposals("chat"); break;
       case "tasks": openProjectTasks(); break;
-      case "project-plan": openProjectBackbone("chat"); break;
       case "files": openProjectFiles("chat"); break;
       case "gallery": openProjectGallery("chat"); break;
       case "memory": openProjectMemory("chat"); break;
       case "search": openProjectSearch(); break;
-      case "build": keyboard.hide(); onOpenSheet("build"); break;
+      case "build": keyboard.hide(); setSelectedBuiltArtifactId(null); onOpenSheet("build"); break;
       default: setDraft(label);
     }
   };
@@ -14259,6 +16683,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
     return (
       <ProjectWorkspace
         project={activeProject}
+        profileRecord={activeProjectProfile}
         backbone={activeProjectBackbone}
         fileCount={activeProjectDocuments.length}
         imageCount={activeProjectImages.length}
@@ -14280,10 +16705,11 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
           if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
           openProjectMemory("project");
         }}
-        onOpenBackbone={() => openProjectBackbone("project")}
+        onOpenTasks={() => openProjectTasks("project")}
         onOpenPurchaseRequests={() => openProjectPurchaseRequests("project")}
         onOpenProposals={() => openProjectProposals("project")}
-        onUpdate={(draft) => onProjectUpdate(activeProject.id, draft)}
+        onUpdate={(draft, expectedProfileVersion, idempotencyKey) => onProjectUpdate(activeProject.id, draft, expectedProfileVersion, idempotencyKey)}
+        onRollback={(targetVersion, expectedProfileVersion, idempotencyKey) => onProjectRollback(activeProject.id, targetVersion, expectedProfileVersion, idempotencyKey)}
       />
     );
   }
@@ -14347,7 +16773,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         query={projectSearchQuery}
         readError={projectFilesReadError || projectMemoriesReadError}
         onQueryChange={setProjectSearchQuery}
-        onBack={() => { keyboard.hide(); setView("chat"); }}
+        onBack={() => { keyboard.hide(); setView(projectTasksLaunch.returnView); }}
         onOpenMemory={(memoryId) => openProjectMemory("search", memoryId)}
         onOpenFile={(fileId) => openProjectFiles("search", fileId)}
       />
@@ -14376,7 +16802,8 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         monitorsStorageLocked={projectTaskMonitorsReadError}
         approvalsStorageLocked={projectApprovalsReadError || projectPurchaseRequestsReadError}
         dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError}
-        onBack={() => { keyboard.hide(); setView("chat"); }}
+        backLabel={projectTasksLaunch.returnView === "project" ? "بازگشت به فضای پروژه" : "بازگشت به گفت‌وگو"}
+        onBack={() => { keyboard.hide(); setView(projectTasksLaunch.returnView); }}
         onOpenBackbone={() => openProjectBackbone("tasks")}
         onReturnToPurchaseRequest={returnToProjectPurchaseRequest}
         onCreate={createProjectTask}
@@ -14570,12 +16997,12 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
             </div>
           </div>
           <div className="project-context" data-testid="project-context">
-            <button className="active-project" type="button" onClick={() => openProjectSpace(activeProject.id)} data-testid="open-project-space" aria-label={`باز کردن فضای پروژهٔ ${activeProject.name}`}>
+            <button className="active-project" type="button" onClick={() => { keyboard.hide(); onOpenSheet(null); setView("project"); }} data-testid="open-project-space" aria-label={`باز کردن فضای پروژهٔ ${activeProject.name}`}>
               <strong>{activeProject.name}</strong>
             </button>
             <button className="tool-cluster" type="button" onClick={() => onOpenSheet("tools")} aria-label="نمایش ابزارهای فعال" data-testid="capability-cluster">
               <span className="tool-cluster-label">ابزارها</span>
-              <span className="tool-icons" aria-hidden="true"><span><Search size={13} /></span><span><FileText size={13} /></span><span><Wrench size={13} /></span>{installedTool ? <span><Hammer size={13} /></span> : null}</span>
+              <span className="tool-icons" aria-hidden="true"><span><Search size={13} /></span><span><FileText size={13} /></span><span><Wrench size={13} /></span>{activeProjectBuiltArtifacts.some((artifact) => builtArtifactEffectiveStatus(artifact, builtArtifactDependenciesLocked, builtArtifactInvalidationIncidents) === "active") ? <span><Hammer size={13} /></span> : null}</span>
               <ChevronDown size={13} aria-hidden="true" />
             </button>
           </div>
@@ -14590,7 +17017,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
               <div className="drawer-top"><div className="brand-lockup"><span className="brand-mark"><HardHat size={19} /></span><strong>چیدا</strong></div><button className="icon-button" type="button" onClick={() => setDrawerOpen(false)} aria-label="بستن منو"><X size={20} /></button></div>
               <nav className="drawer-nav" aria-label="منوی چیدا">
                 <button type="button"><MessageSquare size={19} /><span>گفتگوی تازه</span><Plus size={17} /></button>
-                <button type="button" onClick={openProjectTasks} data-testid="drawer-tasks-entry"><CheckCircle2 size={19} /><span>کارها</span><span className="nav-count" data-testid="drawer-task-count" aria-label={projectTasksReadError || projectBackboneReadError ? "بازیابی کارها کامل نشد" : `${activeProjectTaskCount.toLocaleString("fa-IR")} کار در حال انجام`}>{projectTasksReadError || projectBackboneReadError ? "!" : activeProjectTaskCount.toLocaleString("fa-IR")}</span></button>
+                <button type="button" onClick={() => openProjectTasks()} data-testid="drawer-tasks-entry"><CheckCircle2 size={19} /><span>کارها</span><span className="nav-count" data-testid="drawer-task-count" aria-label={projectTasksReadError || projectBackboneReadError ? "بازیابی کارها کامل نشد" : `${activeProjectTaskCount.toLocaleString("fa-IR")} کار در حال انجام`}>{projectTasksReadError || projectBackboneReadError ? "!" : activeProjectTaskCount.toLocaleString("fa-IR")}</span></button>
                 <button type="button" onClick={() => { setDrawerOpen(false); onOpenSheet("projects"); }} data-testid="drawer-projects-entry"><Folder size={19} /><span>پروژه‌ها</span><span className="nav-count" data-testid="drawer-project-count">{projects.length.toLocaleString("fa-IR")}</span></button>
                 <button type="button"><Pin size={19} /><span>پین‌شده‌ها</span><span className="nav-count">۳</span></button>
                 <button type="button" data-testid="drawer-brief-entry" onClick={() => { setDrawerOpen(false); onOpenSheet("brief"); }}>
@@ -14615,8 +17042,39 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
       <ModelsSheet sheet={sheet} mode={modelMode} onClose={() => onOpenSheet(null)} onSelect={onModelChange} />
       <AttachSheet sheet={sheet} disabled={sourceStorageLocked || projectFilesReadError} onClose={() => onOpenSheet(null)} onChoose={chooseComposerAttachment} />
       <ProjectSourceDetailSheet source={selectedSource} file={selectedSourceFile} project={activeProject} assetReadLocked={projectSourcesReadError || sourceRecoveryBlocked} onClose={closeSourceDetail} />
-      <ToolsSheet sheet={sheet} installedTool={installedTool} onBuild={() => onOpenSheet("build")} onSearch={openProjectSearch} onSourceDemo={openSourceAnswerDemo} onFiles={() => openProjectFiles("chat")} onClose={() => onOpenSheet(null)} />
-      <BuildSheet sheet={sheet} activeProject={activeProject.name} onClose={() => onOpenSheet(null)} onInstalled={installTool} />
+      <ToolsSheet
+        sheet={sheet}
+        artifacts={activeProjectBuiltArtifacts}
+        storageLocked={builtArtifactStorageLocked}
+        dependenciesLocked={builtArtifactDependenciesLocked}
+        invalidationError={builtArtifactInvalidationError}
+        invalidationIncidents={builtArtifactInvalidationIncidents}
+        onBuild={() => { setSelectedBuiltArtifactId(null); onOpenSheet("build"); }}
+        onArtifact={(artifactId) => { setSelectedBuiltArtifactId(artifactId); onOpenSheet("build"); }}
+        onRetryRead={retryBuiltArtifactsRead}
+        onRetryDependencies={refreshBuiltArtifactDependencies}
+        onSearch={openProjectSearch}
+        onSourceDemo={openSourceAnswerDemo}
+        onFiles={() => openProjectFiles("chat")}
+        onClose={() => onOpenSheet(null)}
+      />
+      <BuildSheet
+        sheet={sheet}
+        activeProject={activeProject}
+        artifacts={activeProjectBuiltArtifacts}
+        selectedArtifactId={selectedBuiltArtifactId}
+        storageLocked={builtArtifactStorageLocked}
+        dependenciesLocked={builtArtifactDependenciesLocked}
+        invalidationError={builtArtifactInvalidationError}
+        invalidationIncidents={builtArtifactInvalidationIncidents}
+        legacyRecordDetected={legacyBuiltArtifactDetected}
+        onSelectArtifact={setSelectedBuiltArtifactId}
+        onRetryRead={retryBuiltArtifactsRead}
+        onRetryDependencies={refreshBuiltArtifactDependencies}
+        onCreatePreview={createBuiltArtifactPreview}
+        onMutate={mutateBuiltArtifact}
+        onClose={() => onOpenSheet(null)}
+      />
       <BriefSheet sheet={sheet} schedule={briefSchedule} onClose={() => onOpenSheet(null)} onSave={saveBrief} />
       <ProjectsSheet sheet={sheet} projects={projects} activeProjectId={activeProject.id} onClose={() => onOpenSheet(null)} onSelect={openProjectSpace} onCreate={openNewProject} />
       <ProjectCreateSheet sheet={sheet} onClose={() => onOpenSheet(null)} onSave={onProjectCreate} />
@@ -14624,7 +17082,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
         sheet={sheet}
         projectName={activeProject.name}
         projectCount={projects.length}
-        localRecordCount={projectFilesReadError || projectSourcesReadError || sourceRecoveryPending || sourceRecoveryBlocked || projectMemoriesReadError || projectTasksReadError || projectBackboneReadError || projectTaskMonitorsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError || builderManualNegotiationConditionImpactsReadError
+        localRecordCount={projectFilesReadError || projectSourcesReadError || sourceRecoveryPending || sourceRecoveryBlocked || projectMemoriesReadError || projectTasksReadError || projectBackboneReadError || projectTaskMonitorsReadError || builtArtifactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError || builderManualNegotiationConditionImpactsReadError
           ? null
           : activeProjectFiles.length
             + activeProjectSources.length
@@ -14633,6 +17091,7 @@ function BuilderHome({ activeProject, projects, modelMode, onProjectChange, onPr
             + (activeProjectBackbone ? 3 : 0)
             + activeProjectTaskMonitors.length
             + activeProjectTaskMonitorRuns.length
+            + activeProjectBuiltArtifacts.length
             + activeProjectPurchaseRequests.length
             + activeProjectApprovals.length
             + activeProjectSupplierContacts.length
@@ -14721,7 +17180,7 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
       setFormError("");
       setInvalidFieldId(null);
       setPageError("");
-      setLiveMessage(result === "created" ? "برنامهٔ پروژه با سه رکورد متصل ثبت شد." : result === "updated" ? "نسخهٔ تازهٔ تغییرهای معنادار ثبت شد." : "تغییر تازه‌ای برای ثبت وجود نداشت؛ نسخه و بایت‌ها ثابت ماندند.");
+      setLiveMessage(result === "created" ? "برنامهٔ فعلی و کار متصل آن ثبت شد." : result === "updated" ? "نسخهٔ تازهٔ تغییرهای معنادار ثبت شد." : "تغییر تازه‌ای برای ثبت وجود نداشت؛ نسخه و بایت‌ها ثابت ماندند.");
       return;
     }
     if (result === "version-conflict") {
@@ -14787,7 +17246,7 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
     <div className="chida-app project-backbone-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-backbone-view">
       <header className="project-workspace-header">
         <button className="icon-button" type="button" onClick={onBack} disabled={mutationPending} aria-label={backLabel} data-testid="project-backbone-back"><ArrowRight size={21} /></button>
-        <span className="project-workspace-title"><small>برنامهٔ پروژه</small><strong>{project.name}</strong></span>
+        <span className="project-workspace-title"><small>جزئیات کار</small><strong>{project.name}</strong></span>
         <span className="project-workspace-header-spacer" aria-hidden="true" />
       </header>
 
@@ -14795,7 +17254,7 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
         <main className="project-backbone-content">
           <section className="project-backbone-intro">
             <span><Pin size={23} /></span>
-            <div><small>پایهٔ سیستم عامل پروژه</small><h1>برنامه و تصمیم‌ها</h1><p>یک نقطه‌عطف، دلیل تصمیم و کار بعدی را در یک زنجیرهٔ روشن نگه دار.</p></div>
+            <div><small>داخل مرکز کارها</small><h1>برنامهٔ فعلی</h1><p>هدف، دلیل و قدم بعدی را برای همین پروژه یکجا نگه دار.</p></div>
           </section>
 
           <p className="project-backbone-boundary"><ShieldCheck size={17} /><span><strong>خصوصی و محلی در همین پروژه</strong>این بخش به مدل، شبکه، تأمین‌کننده یا اقدام بیرونی متصل نیست.</span></p>
@@ -14807,9 +17266,9 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
           {!graph || !milestone || !decision || !task ? (
             <section className="project-backbone-empty">
               <span><LayoutGrid size={24} /></span>
-              <h2>هنوز برنامه‌ای ثبت نشده</h2>
-              <p>اولین برنامه، نقطه‌عطف و دلیل تصمیم را مستقیم به یک کار قابل‌پیگیری وصل می‌کند.</p>
-              <button className="primary-button" type="button" onClick={openEditor} disabled={storageLocked || mutationPending} data-testid="project-backbone-start"><Plus size={17} /> ثبت اولین برنامه</button>
+              <h2>هنوز برنامهٔ فعلی ثبت نشده</h2>
+              <p>هدف پروژه، دلیل انتخاب مسیر و قدم بعدی را به یک کار قابل‌پیگیری وصل کن.</p>
+              <button className="primary-button" type="button" onClick={openEditor} disabled={storageLocked || mutationPending} data-testid="project-backbone-start"><Plus size={17} /> تنظیم برنامهٔ فعلی</button>
             </section>
           ) : (
             <>
@@ -14830,7 +17289,7 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
                 </article>
               </section>
 
-              <div className="project-backbone-actions"><button className="primary-button" type="button" onClick={openEditor} disabled={storageLocked || mutationPending} data-testid="project-backbone-edit"><PencilLine size={16} /> ویرایش برنامه</button></div>
+              <div className="project-backbone-actions"><button className="primary-button" type="button" onClick={openEditor} disabled={storageLocked || mutationPending} data-testid="project-backbone-edit"><PencilLine size={16} /> ویرایش برنامهٔ فعلی</button></div>
 
               <details className="project-backbone-history" data-testid="project-backbone-history">
                 <summary><span>نسخه‌ها و بازگشت امن</span><ChevronDown size={17} /></summary>
@@ -14843,7 +17302,7 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
         </main>
       </MobileScroll>
 
-      <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open && mutationPending) return; setEditorOpen(open); if (!open) { keyboard.hide(); setFormError(""); setInvalidFieldId(null); } }} title={graph ? "ویرایش برنامهٔ پروژه" : "ثبت اولین برنامه"} description="هر سه بخش فقط پس از ذخیرهٔ نهایی و به‌صورت اتمیک ثبت می‌شوند.">
+      <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open && mutationPending) return; setEditorOpen(open); if (!open) { keyboard.hide(); setFormError(""); setInvalidFieldId(null); } }} title={graph ? "ویرایش برنامهٔ فعلی" : "تنظیم برنامهٔ فعلی"} description="هدف، دلیل و قدم بعدی با یک ذخیره ثبت می‌شوند.">
         <div className="project-backbone-editor-sheet">
           <form className="project-backbone-editor" dir="rtl" onSubmit={save} aria-busy={mutationPending} data-testid="project-backbone-editor">
             <section className="project-backbone-editor-section">
@@ -14870,12 +17329,16 @@ function ProjectBackboneView({ project, graph, storageLocked, startWithEditor, b
   );
 }
 
-function ProjectWorkspace({ project, backbone, fileCount, imageCount, memoryCount, purchaseRequestCount, proposalCount, filesReadError, memoriesReadError, backboneReadError, purchaseRequestsReadError, proposalsReadError, initialScrollTop, onBack, onContinue, onOpenFiles, onOpenGallery, onOpenMemory, onOpenBackbone, onOpenPurchaseRequests, onOpenProposals, onUpdate }: { project: BuilderProject; backbone: ProjectBackboneGraph | null; fileCount: number; imageCount: number; memoryCount: number; purchaseRequestCount: number; proposalCount: number; filesReadError: boolean; memoriesReadError: boolean; backboneReadError: boolean; purchaseRequestsReadError: boolean; proposalsReadError: boolean; initialScrollTop: number; onBack: () => void; onContinue: () => void; onOpenFiles: () => void; onOpenGallery: () => void; onOpenMemory: () => void; onOpenBackbone: () => void; onOpenPurchaseRequests: () => void; onOpenProposals: () => void; onUpdate: (draft: ProjectProfileDraft) => void }) {
+function ProjectWorkspace({ project, profileRecord, backbone, fileCount, imageCount, memoryCount, purchaseRequestCount, proposalCount, filesReadError, memoriesReadError, backboneReadError, purchaseRequestsReadError, proposalsReadError, initialScrollTop, onBack, onContinue, onOpenFiles, onOpenGallery, onOpenMemory, onOpenTasks, onOpenPurchaseRequests, onOpenProposals, onUpdate, onRollback }: { project: BuilderProject; profileRecord: ProjectFoundationProfileRecord | null; backbone: ProjectBackboneGraph | null; fileCount: number; imageCount: number; memoryCount: number; purchaseRequestCount: number; proposalCount: number; filesReadError: boolean; memoriesReadError: boolean; backboneReadError: boolean; purchaseRequestsReadError: boolean; proposalsReadError: boolean; initialScrollTop: number; onBack: () => void; onContinue: () => void; onOpenFiles: () => void; onOpenGallery: () => void; onOpenMemory: () => void; onOpenTasks: () => void; onOpenPurchaseRequests: () => void; onOpenProposals: () => void; onUpdate: (draft: ProjectProfileDraft, expectedProfileVersion: number, idempotencyKey: string) => Promise<ProjectFoundationMutationResult>; onRollback: (targetVersion: number, expectedProfileVersion: number, idempotencyKey: string) => Promise<ProjectFoundationMutationResult> }) {
   const keyboard = useKeyboard();
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editDraft, setEditDraft] = useState<ProjectProfileDraft>(() => projectProfileDraft(project));
   const [fieldErrors, setFieldErrors] = useState<ProjectProfileFieldErrors>(emptyProjectProfileErrors);
+  const [expectedProfileVersion, setExpectedProfileVersion] = useState(profileRecord?.version ?? 0);
+  const [storageError, setStorageError] = useState("");
+  const [mutationPending, setMutationPending] = useState(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   useLayoutEffect(() => {
     const projectScroll = workspaceRef.current?.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
@@ -14888,15 +17351,20 @@ function ProjectWorkspace({ project, backbone, fileCount, imageCount, memoryCoun
   const openEditor = () => {
     setEditDraft(projectProfileDraft(project));
     setFieldErrors(emptyProjectProfileErrors);
+    setExpectedProfileVersion(profileRecord?.version ?? 0);
+    setStorageError("");
+    idempotencyKeyRef.current = null;
     setEditOpen(true);
   };
 
   const changeField = (field: keyof ProjectProfileDraft, value: string) => {
     setEditDraft((current) => ({ ...current, [field]: value }));
     setFieldErrors((current) => current[field] ? { ...current, [field]: "" } : current);
+    setStorageError("");
+    idempotencyKeyRef.current = null;
   };
 
-  const saveDetails = () => {
+  const saveDetails = async () => {
     const nextErrors = validateProjectProfileDraft(editDraft);
     setFieldErrors(nextErrors);
     const orderedFields: (keyof ProjectProfileDraft)[] = ["name", "location", "stage", "landArea", "builtArea", "aboveGroundFloors", "basementFloors", "unitCount"];
@@ -14907,8 +17375,37 @@ function ProjectWorkspace({ project, backbone, fileCount, imageCount, memoryCoun
       return;
     }
     keyboard.hide();
-    onUpdate(editDraft);
-    setEditOpen(false);
+    if (!expectedProfileVersion) {
+      setStorageError("شناسنامهٔ نسخه‌دار پروژه در دسترس نیست؛ چیزی ثبت نشد.");
+      return;
+    }
+    const idempotencyKey = idempotencyKeyRef.current ?? `project-profile-update:${window.crypto.randomUUID()}`;
+    idempotencyKeyRef.current = idempotencyKey;
+    setMutationPending(true);
+    const result = await onUpdate(editDraft, expectedProfileVersion, idempotencyKey);
+    setMutationPending(false);
+    if (result.envelope) {
+      setEditOpen(false);
+      return;
+    }
+    setStorageError(result.status === "version-conflict"
+      ? "این شناسنامه در جای دیگری تغییر کرده است. ویرایش فعلی ذخیره نشد؛ صفحه را تازه کن و دوباره بررسی کن."
+      : result.status === "lock-unavailable"
+        ? "قفل امن مرورگر در دسترس نیست؛ چیزی ثبت نشد."
+        : "شناسنامه ذخیره نشد؛ پیش‌نویس و نسخهٔ قبلی دست‌نخورده‌اند.");
+  };
+
+  const rollbackDetails = async (targetVersion: number) => {
+    if (!expectedProfileVersion) return;
+    const idempotencyKey = `project-profile-rollback:${window.crypto.randomUUID()}`;
+    setMutationPending(true);
+    const result = await onRollback(targetVersion, expectedProfileVersion, idempotencyKey);
+    setMutationPending(false);
+    if (result.envelope) {
+      setEditOpen(false);
+      return;
+    }
+    setStorageError(result.status === "version-conflict" ? "نسخهٔ شناسنامه تغییر کرده است؛ بازگردانی انجام نشد." : "بازگردانی انجام نشد و نسخهٔ فعلی دست‌نخورده ماند.");
   };
 
   return (
@@ -14966,11 +17463,11 @@ function ProjectWorkspace({ project, backbone, fileCount, imageCount, memoryCoun
             <ArrowRight size={18} aria-hidden="true" />
           </button>
 
-          <button className="project-files-entry project-backbone-entry" type="button" onClick={onOpenBackbone} data-testid="project-backbone-entry" aria-label={`باز کردن برنامه و تصمیم‌های پروژهٔ ${project.name}`}>
-            <span className="project-files-entry-icon"><Pin size={22} strokeWidth={1.65} /></span>
+          <button className="project-files-entry project-backbone-entry" type="button" onClick={onOpenTasks} data-testid="project-work-center-entry" aria-label={`باز کردن کارهای پروژهٔ ${project.name}`}>
+            <span className="project-files-entry-icon"><CheckCircle2 size={22} strokeWidth={1.65} /></span>
             <span className="project-files-entry-copy">
-              <strong>برنامه و تصمیم‌ها</strong>
-              <small>{backboneReadError ? "بازیابی محلی کامل نشد" : backbone ? "نقطه‌عطف، تصمیم و کار متصل ثبت شده" : "اولین برنامهٔ پروژه را ثبت کن"}</small>
+              <strong>کارها</strong>
+              <small>{backboneReadError ? "بازیابی محلی کامل نشد" : backbone ? "برنامه، تصمیم‌ها و پیگیری‌های پروژه" : "برنامه و کارهای پروژه را یکجا ببین"}</small>
             </span>
             <ArrowRight size={18} aria-hidden="true" />
           </button>
@@ -15010,9 +17507,13 @@ function ProjectWorkspace({ project, backbone, fileCount, imageCount, memoryCoun
         open={editOpen}
         draft={editDraft}
         errors={fieldErrors}
+        profileRecord={profileRecord}
+        storageError={storageError}
+        mutationPending={mutationPending}
         onChange={changeField}
-        onClose={() => setEditOpen(false)}
+        onClose={() => { if (!mutationPending) setEditOpen(false); }}
         onSave={saveDetails}
+        onRollback={rollbackDetails}
       />
     </div>
   );
@@ -16693,11 +19194,6 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
           {editingId ? <small>نوع درخواست بعد از ثبت ثابت می‌ماند.</small> : null}
         </fieldset>
         <PurchaseRequestModeSwitch mode={editorMode} onChange={setEditorMode} testIdPrefix="purchase-request-mode" label="سطح جزئیات فرم درخواست" />
-        <label className="field-control purchase-request-extra-note" htmlFor="purchase-request-raw">
-          <span>توضیح بیشتر <small>(اختیاری)</small></span>
-          <KeyboardTextarea id="purchase-request-raw" data-testid="purchase-request-raw-input" value={requestDraft.rawNeed} maxLength={800} rows={2} placeholder="اگر نکتهٔ دیگری داری بنویس" onChange={(event) => changeDraft("rawNeed", event.target.value)} />
-        </label>
-        {fieldErrors.rawNeed ? <p className="field-error purchase-request-main-error" id="purchase-request-raw-error" data-testid="purchase-request-raw-error">{fieldErrors.rawNeed}</p> : null}
 
         {requestDraft.requestKind === "product" ? (
           <>
@@ -16756,6 +19252,11 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
           </>
         )}
 
+        <label className="field-control purchase-request-extra-note" htmlFor="purchase-request-raw" data-testid="purchase-request-extra-note">
+          <span>توضیح بیشتر <small>(اختیاری)</small></span>
+          <KeyboardTextarea id="purchase-request-raw" data-testid="purchase-request-raw-input" value={requestDraft.rawNeed} maxLength={800} rows={2} placeholder="اگر نکتهٔ دیگری داری بنویس" onChange={(event) => changeDraft("rawNeed", event.target.value)} />
+        </label>
+        {fieldErrors.rawNeed ? <p className="field-error purchase-request-main-error" id="purchase-request-raw-error" data-testid="purchase-request-raw-error">{fieldErrors.rawNeed}</p> : null}
         {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-storage-error">{storageError}</p> : null}
         <button className="primary-button" type="submit" data-testid="purchase-request-save">{editingId ? "ذخیرهٔ تغییرات" : "ادامه"}</button>
       </form>
@@ -17285,6 +19786,7 @@ type ProjectTasksViewProps = {
   monitorsStorageLocked: boolean;
   approvalsStorageLocked: boolean;
   dispatchPlanApprovalsStorageLocked: boolean;
+  backLabel: string;
   onBack: () => void;
   onOpenBackbone: () => void;
   onReturnToPurchaseRequest: (requestId: string) => void;
@@ -17299,7 +19801,7 @@ type ProjectTasksViewProps = {
   onDispatchPlanApprovalDecision: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean;
 };
 
-function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, backboneStorageLocked, monitorsStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onOpenBackbone, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onCreateMonitor, onRunMonitors, onToggleMonitor, onRetryMonitor, onApprovalDecision, onDispatchPlanApprovalDecision }: ProjectTasksViewProps) {
+function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, backboneStorageLocked, monitorsStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, backLabel, onBack, onOpenBackbone, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onCreateMonitor, onRunMonitors, onToggleMonitor, onRetryMonitor, onApprovalDecision, onDispatchPlanApprovalDecision }: ProjectTasksViewProps) {
   const keyboard = useKeyboard();
   const taskAddButtonRef = useRef<HTMLButtonElement>(null);
   const taskEditButtonRef = useRef<HTMLButtonElement>(null);
@@ -17893,8 +20395,8 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
   return (
     <div className="chida-app project-tasks-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-tasks-view">
       <header className="project-workspace-header">
-        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label="بازگشت به گفت‌وگو" data-testid="project-tasks-back"><ArrowRight size={21} /></button>
-        <span className="project-workspace-title"><small>مرکز کارها</small><strong>{project.name}</strong></span>
+        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label={backLabel} data-testid="project-tasks-back"><ArrowRight size={21} /></button>
+        <span className="project-workspace-title"><small>کارها</small><strong>{project.name}</strong></span>
         <span className="project-workspace-header-spacer" aria-hidden="true" />
       </header>
 
@@ -17902,10 +20404,18 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
         <main className="project-tasks-content">
           <section className="project-tasks-heading">
             <span className="project-tasks-mark"><CheckCircle2 size={24} strokeWidth={1.65} /></span>
-            <div><span className="eyebrow">مرکز کارها</span><h1>کارهای {project.name}</h1><p>کارهای جاری و تصمیم‌های منتظر شما</p></div>
+            <div><span className="eyebrow">همه در یکجا</span><h1>کارهای {project.name}</h1><p>برنامهٔ فعلی، کارها و تأییدهای پروژه</p></div>
           </section>
 
           <button ref={taskAddButtonRef} className="primary-button project-task-add" type="button" onClick={openEditor} disabled={tasksStorageLocked} data-testid="project-task-add"><Plus size={18} /> کار جدید</button>
+
+          {!backbone && filter === "active" ? (
+            <button className="project-task-card project-work-plan-entry" type="button" onClick={onOpenBackbone} data-testid="project-work-plan-entry" aria-label={backboneStorageLocked ? "بررسی بازیابی برنامهٔ فعلی پروژه" : "تنظیم برنامهٔ فعلی پروژه"}>
+              <span className="project-task-card-icon"><Pin size={20} strokeWidth={1.65} /></span>
+              <span className="project-task-card-copy"><span><small>برنامهٔ فعلی</small><small>{backboneStorageLocked ? "نیازمند بازیابی" : "هنوز تنظیم نشده"}</small></span><strong>{backboneStorageLocked ? "بازیابی برنامه کامل نشد" : "هدف و قدم بعدی پروژه"}</strong><em>{backboneStorageLocked ? "جزئیات را ببین؛ ثبت و ویرایش فعلاً قفل است" : "برنامه را همین‌جا به کارها وصل کن"}</em></span>
+              <ArrowRight size={17} aria-hidden="true" />
+            </button>
+          ) : null}
 
           {tasksStorageLocked && (filter === "active" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-task-read-error"><ShieldCheck size={17} /><span><strong>کارهای محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، ثبت و تغییر وضعیت تا بارگذاری موفق بعدی غیرفعال است.</span></p>
@@ -17942,7 +20452,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
               <span><CheckCircle2 size={25} strokeWidth={1.65} /></span>
               <h2>{projectTaskEmptyCopy[filter].title}</h2>
               <p>{projectTaskEmptyCopy[filter].description}</p>
-              {filter === "monitor" && !monitorsStorageLocked && !backboneStorageLocked ? backboneTask?.dueAt ? <button className="primary-button project-task-monitor-create" type="button" onClick={() => { void createMonitor(); }} disabled={monitorMutationPending} data-testid="project-task-monitor-create"><Bell size={17} /> {monitorMutationPending ? "در حال ثبت..." : "ساخت پایش موعد"}</button> : <button className="project-task-monitor-open-backbone" type="button" onClick={onOpenBackbone} data-testid="project-task-monitor-set-deadline"><Pin size={16} /> ثبت موعد در برنامهٔ پروژه</button> : null}
+              {filter === "monitor" && !monitorsStorageLocked && !backboneStorageLocked ? backboneTask?.dueAt ? <button className="primary-button project-task-monitor-create" type="button" onClick={() => { void createMonitor(); }} disabled={monitorMutationPending} data-testid="project-task-monitor-create"><Bell size={17} /> {monitorMutationPending ? "در حال ثبت..." : "ساخت پایش موعد"}</button> : <button className="project-task-monitor-open-backbone" type="button" onClick={onOpenBackbone} data-testid="project-task-monitor-set-deadline"><Pin size={16} /> ثبت موعد در برنامهٔ فعلی</button> : null}
             </section>
           ) : (
             <section className="project-task-list" aria-label={projectTaskFilters.find((item) => item.id === filter)?.label}>
@@ -17975,7 +20485,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
               {backboneTaskIsVisible && backbone && backboneTask ? (
                 <button className="project-task-card project-backbone-task-card" type="button" onClick={onOpenBackbone} data-testid="project-backbone-task-card">
                   <span className="project-task-card-icon"><Pin size={20} strokeWidth={1.65} /></span>
-                  <span className="project-task-card-copy"><span><small>{projectTaskStatusLabel(backboneTask.status)}</small><small>متصل به برنامهٔ پروژه</small></span><strong>{backboneTask.title}</strong><em>{backboneTask.nextStep}</em><small className="project-task-card-date">نقطه‌عطف و دلیل تصمیم در جزئیات برنامه ثبت شده‌اند.</small></span>
+                  <span className="project-task-card-copy"><span><small>{projectTaskStatusLabel(backboneTask.status)}</small><small>برنامهٔ فعلی</small></span><strong>{backboneTask.title}</strong><em>{backboneTask.nextStep}</em><small className="project-task-card-date">هدف، دلیل و قدم بعدی را یکجا ببین.</small></span>
                   <ArrowRight size={17} aria-hidden="true" />
                 </button>
               ) : null}
@@ -18607,10 +21117,10 @@ function ProjectMemoryView({ project, memories, candidates, storageLocked, initi
   );
 }
 
-function ProjectDetailsSheet({ open, draft, errors, onChange, onClose, onSave }: { open: boolean; draft: ProjectProfileDraft; errors: ProjectProfileFieldErrors; onChange: (field: keyof ProjectProfileDraft, value: string) => void; onClose: () => void; onSave: () => void }) {
+function ProjectDetailsSheet({ open, draft, errors, profileRecord, storageError, mutationPending, onChange, onClose, onSave, onRollback }: { open: boolean; draft: ProjectProfileDraft; errors: ProjectProfileFieldErrors; profileRecord: ProjectFoundationProfileRecord | null; storageError: string; mutationPending: boolean; onChange: (field: keyof ProjectProfileDraft, value: string) => void; onClose: () => void; onSave: () => Promise<void>; onRollback: (targetVersion: number) => Promise<void> }) {
   return (
     <BottomSheet open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()} title="ویرایش شناسنامهٔ پروژه" description="اطلاعات پایه و مشخصات فیزیکی پروژه را به‌روز کن." snap={0.94}>
-      <form className="project-details-form" dir="rtl" data-testid="project-details-sheet" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
+      <form className="project-details-form" dir="rtl" data-testid="project-details-sheet" onSubmit={(event) => { event.preventDefault(); void onSave(); }}>
         <div className="project-form-section-title"><strong>اطلاعات پایه</strong><small>نام، زمینه و وضعیت فعلی پروژه</small></div>
         <label className="field-control" htmlFor="project-edit-name">
           <span>نام پروژه</span>
@@ -18669,7 +21179,14 @@ function ProjectDetailsSheet({ open, draft, errors, onChange, onClose, onSave }:
           </label>
         </div>
 
-        <button className="primary-button" type="submit" data-testid="project-edit-save">ذخیرهٔ تغییرات</button>
+        {profileRecord && profileRecord.version > 1 ? (
+          <details className="project-profile-history" data-testid="project-profile-history">
+            <summary>نسخه‌های پیشین شناسنامه</summary>
+            <ol>{profileRecord.revisions.slice(0, -1).reverse().map((revision) => <li key={revision.id}><span>نسخهٔ {revision.version.toLocaleString("fa-IR")} · {formatProjectFileDate(revision.createdAt)}</span><button type="button" disabled={mutationPending} onClick={() => { void onRollback(revision.version); }} data-testid="project-profile-rollback">بازگردانی به‌عنوان نسخهٔ تازه</button></li>)}</ol>
+          </details>
+        ) : null}
+        {storageError ? <p className="new-project-storage-error" role="alert" data-testid="project-edit-storage-error">{storageError}</p> : null}
+        <button className="primary-button" type="submit" disabled={mutationPending} data-testid="project-edit-save">{mutationPending ? "در حال ذخیره…" : "ذخیرهٔ تغییرات"}</button>
       </form>
     </BottomSheet>
   );
@@ -19275,12 +21792,35 @@ function ProjectSourceDetailSheet({ source, file, project, assetReadLocked, onCl
   );
 }
 
-function ToolsSheet({ sheet, installedTool, onBuild, onSearch, onSourceDemo, onFiles, onClose }: { sheet: SheetName; installedTool: string; onBuild: () => void; onSearch: () => void; onSourceDemo: () => void; onFiles: () => void; onClose: () => void }) {
+function builtArtifactStatusLabel(status: BuiltArtifactLifecycleState) {
+  if (status === "draft") return "پیش‌نویس";
+  if (status === "preview_ready") return "آمادهٔ تأیید";
+  if (status === "active") return "فعال";
+  if (status === "disabled") return "غیرفعال";
+  return "متوقف‌شده";
+}
+
+function builtArtifactHasInvalidationIncident(artifact: BuiltArtifactRecord, invalidationIncidents: string[]) {
+  return invalidationIncidents.some((incidentKey) => incidentKey.startsWith(`${artifact.id}:`));
+}
+
+function builtArtifactEffectiveStatus(artifact: BuiltArtifactRecord, dependenciesLocked: boolean, invalidationIncidents: string[]): BuiltArtifactLifecycleState {
+  return artifact.status === "active" && (dependenciesLocked || builtArtifactHasInvalidationIncident(artifact, invalidationIncidents)) ? "blocked" : artifact.status;
+}
+
+function ToolsSheet({ sheet, artifacts, storageLocked, dependenciesLocked, invalidationError, invalidationIncidents, onBuild, onArtifact, onRetryRead, onRetryDependencies, onSearch, onSourceDemo, onFiles, onClose }: { sheet: SheetName; artifacts: BuiltArtifactRecord[]; storageLocked: boolean; dependenciesLocked: boolean; invalidationError: boolean; invalidationIncidents: string[]; onBuild: () => void; onArtifact: (artifactId: string) => void; onRetryRead: () => void; onRetryDependencies: () => void; onSearch: () => void; onSourceDemo: () => void; onFiles: () => void; onClose: () => void }) {
+  const hasActiveInvalidationIncident = artifacts.some((artifact) => artifact.status === "active" && builtArtifactHasInvalidationIncident(artifact, invalidationIncidents));
   return (
-    <BottomSheet open={sheet === "tools"} onOpenChange={(open) => !open && onClose()} title="ابزارهای پروژه" description="ابزارهای فعال و عامل Build برای ساخت یک ابزار تازه." snap={0.64}>
+    <BottomSheet open={sheet === "tools"} onOpenChange={(open) => !open && onClose()} title="ابزارهای پروژه" description="ساخته‌های محلی و ابزارهای همین پروژه." snap={0.72}>
       <div className="sheet-list" dir="rtl" data-testid="tools-sheet">
-        <SheetRow icon={<Hammer size={20} />} title="Build" description="عامل ساخت ابزار و نصب پلاگین و اسکیل در پروژه" testId="build-tool-entry" onClick={onBuild} />
-        {installedTool ? <SheetRow icon={<PackageCheck size={20} />} title={installedTool} description="پلاگین خصوصی نصب‌شده در پروژه" testId="installed-tool-row" onClick={onClose} /> : null}
+        <SheetRow icon={<Hammer size={20} />} title="برایم بساز" description="ساخت یک نمای پروژه از کاتالوگ امن" testId="build-tool-entry" disabled={storageLocked || dependenciesLocked || hasActiveInvalidationIncident} onClick={onBuild} />
+        {storageLocked ? <section className="built-artifact-inline-error" role="alert" data-testid="built-artifact-tools-read-error"><div data-testid="built-artifact-read-error"><p data-testid="built-artifact-error">مخزن ساخته‌های پروژه کامل خوانده نشد؛ این وضعیت empty نیست و ساخت و تغییر قفل است.</p><button type="button" onClick={onRetryRead} data-testid="built-artifact-retry-read">تلاش دوباره برای خواندن</button></div></section> : null}
+        {!storageLocked && (dependenciesLocked || hasActiveInvalidationIncident) ? <section className="built-artifact-inline-error" role="alert" data-testid="built-artifact-dependency-error"><p>{dependenciesLocked ? "برنامه یا کارهای پروژه کامل خوانده نشد؛ ساخت تازه قفل و استفاده از ساختهٔ فعال فوراً متوقف است." : "وقفهٔ وابستگی قبلی ثبت شد؛ ساخته تا ثبت ماندگار توقف و فعال‌سازی دوباره، متوقف می‌ماند."}</p>{invalidationError ? <><p>ثبت ماندگار وضعیت توقف انجام نشد؛ دادهٔ قبلی حفظ شد.</p><button type="button" onClick={onRetryDependencies} data-testid="built-artifact-retry-invalidation">تلاش دوباره برای ثبت توقف</button></> : null}</section> : null}
+        {artifacts.map((artifact) => {
+          const revision = builtArtifactCurrentRevision(artifact);
+          const effectiveStatus = builtArtifactEffectiveStatus(artifact, dependenciesLocked, invalidationIncidents);
+          return <button className="sheet-row" type="button" key={artifact.id} onClick={() => onArtifact(artifact.id)} data-testid="built-artifact-tool-row" data-state={effectiveStatus}><span className="sheet-row-icon">{effectiveStatus === "active" ? <PackageCheck size={20} /> : <Hammer size={20} />}</span><span className="sheet-row-copy"><strong>{revision.name}</strong><small>{builtArtifactStatusLabel(effectiveStatus)} · ساختهٔ محلی همین پروژه</small></span><ChevronDown size={18} /></button>;
+        })}
         <SheetRow icon={<Search size={20} />} title="جست‌وجوی محلی پروژه" description="حافظه و شناسنامهٔ فایل‌های همین پروژه" testId="source-search-tool" onClick={onSearch} />
         <SheetRow icon={<Sparkles size={20} />} title="پاسخ منبع‌دار · نمونه" description="دادهٔ ساختگی؛ بدون وب، فایل یا هوش مصنوعی" testId="source-answer-demo-tool" onClick={onSourceDemo} />
         <SheetRow icon={<FileText size={20} />} title="اسناد پروژه" description="فایل‌های ثبت‌شده در پروژهٔ فعال" testId="project-documents-tool" onClick={onFiles} />
@@ -19290,69 +21830,200 @@ function ToolsSheet({ sheet, installedTool, onBuild, onSearch, onSourceDemo, onF
   );
 }
 
-function BuildSheet({ sheet, activeProject, onClose, onInstalled }: { sheet: SheetName; activeProject: string; onClose: () => void; onInstalled: (toolName: string) => void }) {
+function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, storageLocked, dependenciesLocked, invalidationError, invalidationIncidents, legacyRecordDetected, onSelectArtifact, onRetryRead, onRetryDependencies, onCreatePreview, onMutate, onClose }: {
+  sheet: SheetName;
+  activeProject: BuilderProject;
+  artifacts: BuiltArtifactRecord[];
+  selectedArtifactId: string | null;
+  storageLocked: boolean;
+  dependenciesLocked: boolean;
+  invalidationError: boolean;
+  invalidationIncidents: string[];
+  legacyRecordDetected: boolean;
+  onSelectArtifact: (artifactId: string | null) => void;
+  onRetryRead: () => void;
+  onRetryDependencies: () => void;
+  onCreatePreview: (name: string, description: string) => Promise<BuiltArtifactMutationResult>;
+  onMutate: (artifactId: string, expectedVersion: number, command: "activate" | "disable" | "reactivate" | "create-revision" | "preview" | "rollback" | "remove", input?: { name?: string; description?: string; approvalFingerprint?: string; rollbackFromVersion?: number }) => Promise<BuiltArtifactMutationResult>;
+  onClose: () => void;
+}) {
   const keyboard = useKeyboard();
   const [step, setStep] = useState<BuildStep>("define");
-  const [name, setName] = useState("رهگیر جریان نقدی");
-  const [description, setDescription] = useState("هزینه‌های ۳۰ روز آینده را جمع‌بندی و انحراف بودجه را هشدار بده");
+  const [name, setName] = useState("نمای پیگیری پروژه");
+  const [description, setDescription] = useState("برنامهٔ پروژه و کارهای ثبت‌شده را در یک نمای محلی و خواندنی کنار هم نشان بده");
+  const [approved, setApproved] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId) ?? null;
+  const currentRevision = selectedArtifact ? builtArtifactCurrentRevision(selectedArtifact) : null;
+  const effectiveStatus = selectedArtifact ? builtArtifactEffectiveStatus(selectedArtifact, dependenciesLocked, invalidationIncidents) : null;
+  const selectedInvalidationIncident = Boolean(selectedArtifact && builtArtifactHasInvalidationIncident(selectedArtifact, invalidationIncidents));
 
-  const startBuild = () => {
-    if (!name.trim() || !description.trim()) return;
-    keyboard.hide();
-    setStep("preview");
+  useEffect(() => {
+    if (sheet !== "build") return;
+    setApproved(false);
+    setPending(false);
+    setError("");
+    if (!selectedArtifact) {
+      setStep("define");
+      setName("نمای پیگیری پروژه");
+      setDescription("برنامهٔ پروژه و کارهای ثبت‌شده را در یک نمای محلی و خواندنی کنار هم نشان بده");
+      return;
+    }
+    setName(currentRevision?.name ?? "");
+    setDescription(currentRevision?.description ?? "");
+    setStep(selectedArtifact.status === "preview_ready" ? "preview" : selectedArtifact.status === "draft" ? "define" : "detail");
+  }, [activeProject.id, selectedArtifact?.id, selectedArtifact?.status, sheet]);
+
+  useEffect(() => {
+    if (sheet !== "build" || !selectedArtifact || !currentRevision) return;
+    setName(currentRevision.name);
+    setDescription(currentRevision.description);
+    setApproved(false);
+  }, [currentRevision?.id, selectedArtifact?.id, sheet]);
+
+  const mutationError = (result: BuiltArtifactMutationResult) => {
+    if (result === "invalid") return "نام و توضیح باید روشن و بدون کد، اسکریپت یا نشانی اجرایی باشند.";
+    if (result === "read-failure") return "مخزن ساخته‌ها کامل خوانده نشد؛ هیچ تغییری ثبت نشد.";
+    if (result === "write-failure") return "ذخیره‌سازی مرورگر انجام نشد؛ نسخهٔ قبلی حفظ شد.";
+    if (result === "version-conflict") return "این ساخته در جای دیگری تغییر کرده است؛ نسخهٔ تازه بارگذاری شد. دوباره بررسی کن.";
+    if (result === "approval-stale") return "پیش‌نمایش تغییر کرده است؛ نسخهٔ تازه بارگذاری شد. دوباره بررسی و تأیید کن.";
+    if (result === "dependency-stale") return "برنامه یا کارهای پروژه کامل خوانده نشد؛ این تغییر تا بازیابی وابستگی قفل است.";
+    if (result === "scope-mismatch") return "این ساخته متعلق به پروژهٔ جاری نیست.";
+    if (result === "lock-unavailable") return "قفل امن مرورگر در دسترس نیست؛ تغییری ثبت نشد.";
+    return "این تغییر از وضعیت فعلی پشتیبانی نمی‌شود.";
   };
 
-  const install = () => {
-    const normalizedName = name.trim();
-    onInstalled(normalizedName);
-    setStep("installed");
+  const runMutation = async (operation: () => Promise<BuiltArtifactMutationResult>, onSuccess?: () => void) => {
+    if (pending || storageLocked) return;
+    setPending(true);
+    setError("");
+    const result = await operation();
+    setPending(false);
+    if (["created", "updated", "removed", "unchanged"].includes(result)) {
+      onSuccess?.();
+      return;
+    }
+    setApproved(false);
+    setError(mutationError(result));
+  };
+
+  const startBuild = () => {
+    const normalizedName = normalizeBuiltArtifactText(name, 80);
+    const normalizedDescription = normalizeBuiltArtifactText(description, 500);
+    if (!builtArtifactDraftIsValid(normalizedName, normalizedDescription)) {
+      setError(mutationError("invalid"));
+      return;
+    }
+    keyboard.hide();
+    if (selectedArtifact) {
+      void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "preview", { name: normalizedName, description: normalizedDescription }));
+    } else {
+      void runMutation(() => onCreatePreview(normalizedName, normalizedDescription));
+    }
+  };
+
+  const activate = () => {
+    if (!selectedArtifact || !currentRevision || !approved || dependenciesLocked) return;
+    void runMutation(
+      () => onMutate(selectedArtifact.id, selectedArtifact.version, "activate", { approvalFingerprint: currentRevision.fingerprint }),
+      () => { setApproved(false); setStep("detail"); },
+    );
   };
 
   return (
-    <BottomSheet open={sheet === "build"} onOpenChange={(open) => !open && onClose()} title="Build · ساخت ابزار" description="چیدا نیازت را به یک پلاگین خصوصی با اسکیل مرتبط تبدیل می‌کند." snap={0.88}>
+    <BottomSheet open={sheet === "build"} onOpenChange={(open) => !open && onClose()} title="برایم بساز" description="ساخت و مدیریت یک نمای امن در همین پروژه." snap={0.92}>
       <div className="build-flow" dir="rtl" data-testid="build-flow" data-step={step}>
-        {step === "define" ? (
+        {storageLocked ? (
+          <section className="build-step built-artifact-read-error" role="alert" data-testid="built-artifact-read-error">
+            <ShieldCheck size={28} />
+            <h3>خواندن ساخته‌های محلی کامل نشد</h3>
+            <p data-testid="built-artifact-error">این وضعیت با خالی‌بودن فرق دارد. برای جلوگیری از بازنویسی، ساخت و تغییر قفل شده است.</p>
+            <button className="primary-button" type="button" onClick={onRetryRead} data-testid="built-artifact-retry-read">تلاش دوباره برای خواندن</button>
+          </section>
+        ) : step === "define" ? (
           <section className="build-step" data-testid="build-define-step">
-            <div className="build-agent-intro"><span><Bot size={21} /></span><div><strong>عامل Build</strong><small>ابزار را از کاتالوگ امن رابط می‌سازد؛ نه با اجرای کد آزاد.</small></div></div>
-            <label className="build-field"><span>نام ابزار</span><KeyboardInput value={name} onChange={(event) => setName(event.target.value)} data-testid="build-name-input" /></label>
-            <label className="build-field"><span>این ابزار چه کاری انجام دهد؟</span><KeyboardTextarea value={description} onChange={(event) => setDescription(event.target.value)} data-testid="build-description-input" rows={4} /></label>
-            <div className="build-scope"><Folder size={17} /><span><small>محل نصب</small><strong>{activeProject}</strong></span></div>
-            <button className="primary-button" type="button" data-testid="build-start-button" disabled={!name.trim() || !description.trim()} onClick={startBuild}>ساخت پیش‌نمایش</button>
+            {dependenciesLocked ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-dependency-error">برنامه یا کارهای پروژه کامل خوانده نشد؛ ساخت پیش‌نمایش و فعال‌سازی تا بازیابی وابستگی قفل است.</p> : null}
+            {selectedArtifact ? <span className="built-artifact-state-chip" data-testid="built-artifact-status" data-state={selectedArtifact.status}>{builtArtifactStatusLabel(selectedArtifact.status)}</span> : null}
+            <div className="build-agent-intro"><span><Bot size={21} /></span><div><strong>قالب امن «نمای پیگیری پروژه»</strong><small>از اجزای بسته و نسخه‌دار ساخته می‌شود؛ متن تو کد یا منطق اجرایی تولید نمی‌کند.</small></div></div>
+            {legacyRecordDetected ? <p className="built-artifact-legacy-note" data-testid="built-artifact-legacy-note">یک رکورد قدیمی و سراسری Build پیدا شد، اما چون پروژهٔ مالک آن قابل‌اثبات نیست به این پروژه نسبت داده نشد.</p> : null}
+            <label className="build-field"><span>نام ساخته</span><KeyboardInput value={name} maxLength={80} onChange={(event) => { setName(event.target.value); setError(""); }} data-testid="build-name-input" /></label>
+            <label className="build-field"><span>هدف این نما</span><KeyboardTextarea value={description} maxLength={500} onChange={(event) => { setDescription(event.target.value); setError(""); }} data-testid="build-description-input" rows={4} /></label>
+            <div className="build-scope"><Folder size={17} /><span><small>محل فعال‌سازی</small><strong>{activeProject.name}</strong></span></div>
+            <button className="primary-button" type="button" data-testid={selectedArtifact ? "built-artifact-save-revision" : "build-start-button"} disabled={pending || dependenciesLocked || !name.trim() || !description.trim()} onClick={startBuild}>{pending ? "در حال ثبت…" : "ساخت پیش‌نمایش"}</button>
+            {selectedArtifact ? <div className="built-artifact-actions"><button className="secondary-button" type="button" data-testid="built-artifact-history" onClick={() => setStep("history")}>نسخه‌ها و بازگشت</button><button className="danger-button" type="button" data-testid="built-artifact-remove" onClick={() => setStep("remove")}>حذف از پروژه</button></div> : null}
+            {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
           </section>
         ) : null}
 
-        {step === "preview" ? (
-          <section className="build-step build-preview">
+        {!storageLocked && step === "preview" && selectedArtifact && currentRevision ? (
+          <section className="build-step build-preview" data-testid="built-artifact-preview">
+            {dependenciesLocked ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-dependency-error">برنامه یا کارهای پروژه کامل خوانده نشد؛ این پیش‌نمایش تا بازیابی وابستگی فعال نمی‌شود.</p> : null}
+            <span className="built-artifact-state-chip" data-testid="built-artifact-status" data-state={selectedArtifact.status}>{builtArtifactStatusLabel(selectedArtifact.status)}</span>
             <div className="build-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={100} data-testid="build-progress"><span style={{ width: "100%" }} /></div>
             <div className="build-stages" aria-label="مراحل ساخت">
-              <div data-testid="build-stage-spec" data-state="complete"><CheckCircle2 size={17} /><span><strong>تعریف ابزار</strong><small>هدف و داده‌ها مشخص شد</small></span></div>
-              <div data-testid="build-stage-plugin" data-state="complete"><Puzzle size={17} /><span><strong>بستهٔ پلاگین</strong><small>نمای رهگیر و هشدار ساخته شد</small></span></div>
-              <div data-testid="build-stage-skill" data-state="complete"><BrainCircuit size={17} /><span><strong>اسکیل مرتبط</strong><small>پایش جریان نقدی آماده شد</small></span></div>
+              <div data-testid="build-stage-spec" data-state="complete"><CheckCircle2 size={17} /><span><strong>تعریف declarative</strong><small>هدف و پروژه bind شدند</small></span></div>
+              <div data-testid="build-stage-plugin" data-state="complete"><Puzzle size={17} /><span><strong>رندرکنندهٔ مرتبط</strong><small>فقط رابطه؛ پلاگین تولید نشده</small></span></div>
+              <div data-testid="build-stage-skill" data-state="complete"><BrainCircuit size={17} /><span><strong>مهارت مرتبط</strong><small>فقط metadata همین ساخته</small></span></div>
             </div>
             <article className="build-preview-card">
-              <div className="build-preview-title"><span><Hammer size={20} /></span><div><small>پیش‌نمایش پلاگین خصوصی</small><h3>{name}</h3></div></div>
-              <p>{description}</p>
-              <div className="build-chips"><span>جدول پروژه</span><span>هشدار انحراف</span><span>خلاصهٔ روزانه</span></div>
+              <div className="build-preview-title"><span><Hammer size={20} /></span><div><small>پیش‌نمایش ساختهٔ خصوصی پروژه</small><h3>{currentRevision.name}</h3></div></div>
+              <p>{currentRevision.description}</p>
+              <div className="build-chips"><span>کارت خلاصه</span><span>فهرست وضعیت</span><span>فیلتر امن</span></div>
               <dl className="build-permissions">
-                <div><dt>دادهٔ مجاز</dt><dd>بودجه و هزینه‌های پروژه</dd></div>
-                <div><dt>اقدام مجاز</dt><dd>ثبت نمای ساخته‌شده در {activeProject}</dd></div>
-                <div><dt>روش ساخت</dt><dd>اجزای تأییدشده؛ بدون اجرای کد آزاد</dd></div>
+                <div><dt>دادهٔ مجاز</dt><dd>فقط برنامه و کارهای ثبت‌شدهٔ {activeProject.name}؛ خواندنی</dd></div>
+                <div><dt>اقدام مجاز</dt><dd>بازکردن مرکز کارهای همین پروژه؛ بدون اثر بیرونی</dd></div>
+                <div><dt>اجزای امن</dt><dd>کارت خلاصه، فهرست وضعیت و فیلتر از کاتالوگ نسخهٔ ۱</dd></div>
+                <div><dt>محل فعال‌سازی</dt><dd>بخش ابزارهای {activeProject.name} در همین مرورگر</dd></div>
+                <div><dt>مرز اجرا</dt><dd>بدون اجرای کد آزاد، شبکه، نصب خارجی یا اقدام تجاری</dd></div>
               </dl>
             </article>
-            <button className="primary-button" type="button" data-testid="build-install-button" onClick={install}>نصب پلاگین و اسکیل</button>
-            <p className="prototype-disclaimer">نصب واقعی انجام نمی‌شود.</p>
+            <label className="built-artifact-approval"><input type="checkbox" checked={approved} onChange={(event) => { setApproved(event.target.checked); setError(""); }} data-testid="built-artifact-approval" /><span>همین پیش‌نمایش، داده‌ها، مجوزها و محل فعال‌سازی را بررسی کردم.</span></label>
+            <button className="primary-button" type="button" data-testid="built-artifact-activate" disabled={!approved || pending || dependenciesLocked} onClick={activate}>{pending ? "در حال ثبت…" : "فعال‌سازی محلی در این پروژه"}</button>
+            <div className="built-artifact-actions"><button className="secondary-button" type="button" data-testid="built-artifact-edit-preview" disabled={pending} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "create-revision"), () => setStep("define"))}>ویرایش پیش‌نمایش</button><button className="secondary-button" type="button" data-testid="built-artifact-history" onClick={() => setStep("history")}>نسخه‌ها و بازگشت</button><button className="danger-button" type="button" data-testid="built-artifact-remove" onClick={() => setStep("remove")}>حذف از پروژه</button></div>
+            <p className="prototype-disclaimer">نصب پلاگین یا اسکیل واقعی نیست؛ فقط همین BuiltArtifact محلی در پروژه فعال می‌شود و هیچ بستهٔ خارجی یا مهارت اجرایی به دستگاه افزوده نمی‌شود.</p>
+            {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
           </section>
         ) : null}
 
-        {step === "installed" ? (
-          <section className="build-step build-success" data-testid="build-success">
-            <span className="build-success-icon"><PackageCheck size={30} /></span>
-            <div><span className="eyebrow">نصب آزمایشی کامل شد</span><h3>{name}</h3><p>ابزار به {activeProject} اضافه شد و از بخش ابزارها در دسترس است.</p></div>
-            <div className="install-statuses">
-              <span data-testid="plugin-install-status" data-state="installed"><Puzzle size={17} /> پلاگین نصب شد <Check size={16} /></span>
-              <span data-testid="skill-install-status" data-state="installed"><BrainCircuit size={17} /> اسکیل فعال شد <Check size={16} /></span>
+        {!storageLocked && step === "detail" && selectedArtifact && currentRevision ? (
+          <section className="build-step built-artifact-detail" data-testid="built-artifact-detail">
+            {dependenciesLocked || selectedInvalidationIncident ? <section className="built-artifact-inline-error" role="alert" data-testid="built-artifact-dependency-error"><p>{dependenciesLocked ? "برنامه یا کارهای پروژه کامل خوانده نشد؛ استفاده از این ساخته فوراً متوقف است." : "وقفهٔ وابستگی قبلی ثبت شده است؛ ساخته تا ثبت ماندگار توقف و فعال‌سازی دوباره، متوقف می‌ماند."}</p>{invalidationError ? <><p>ثبت ماندگار وضعیت توقف انجام نشد؛ دادهٔ قبلی حفظ شد.</p><button type="button" onClick={onRetryDependencies} data-testid="built-artifact-retry-invalidation">تلاش دوباره برای ثبت توقف</button></> : null}</section> : null}
+            <article className="built-artifact-card" data-testid="built-artifact-card" data-state={effectiveStatus ?? selectedArtifact.status}>
+              <div className="build-preview-title"><span>{effectiveStatus === "active" ? <PackageCheck size={21} /> : <Hammer size={21} />}</span><div><small data-testid="built-artifact-status" data-state={effectiveStatus ?? selectedArtifact.status}>{builtArtifactStatusLabel(effectiveStatus ?? selectedArtifact.status)}</small><h3>{currentRevision.name}</h3></div></div>
+              <p>{currentRevision.description}</p>
+              {effectiveStatus === "blocked" ? <p className="built-artifact-inline-error" role="alert">{selectedArtifact.status === "blocked" ? currentRevision.blockedReason : "وابستگی محلی قابل‌تأیید نیست؛ استفاده تا بازیابی متوقف است."}</p> : null}
+              <dl className="build-permissions"><div><dt>پروژه</dt><dd>{activeProject.name}</dd></div><div><dt>نسخه</dt><dd>{selectedArtifact.version.toLocaleString("fa-IR")}</dd></div><div><dt>اثر</dt><dd>فقط نمایش محلی؛ شبکه و اثر بیرونی ندارد</dd></div></dl>
+            </article>
+            <div className="built-artifact-actions">
+              {selectedArtifact.status === "active" ? <button className="secondary-button" type="button" data-testid="built-artifact-disable" disabled={pending || selectedInvalidationIncident} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "disable"))}>غیرفعال‌کردن</button> : null}
+              {["disabled", "blocked"].includes(selectedArtifact.status) ? <button className="primary-button" type="button" data-testid="built-artifact-reactivate" disabled={pending || dependenciesLocked || selectedInvalidationIncident} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "reactivate", { approvalFingerprint: currentRevision.fingerprint }))}>اعتبارسنجی و فعال‌سازی دوباره</button> : null}
+              <button className="secondary-button" type="button" data-testid="built-artifact-create-revision" disabled={pending || selectedInvalidationIncident} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "create-revision"), () => setStep("define"))}>ساخت نسخهٔ تازه</button>
+              <button className="secondary-button" type="button" data-testid="built-artifact-history" onClick={() => setStep("history")}>نسخه‌ها و بازگشت</button>
+              <button className="danger-button" type="button" data-testid="built-artifact-remove" disabled={selectedInvalidationIncident} onClick={() => setStep("remove")}>حذف از پروژه</button>
             </div>
-            <button className="primary-button" type="button" data-testid="build-done-button" onClick={onClose}>دیدن ابزارهای پروژه</button>
+            {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
+            <button className="secondary-button" type="button" onClick={onClose}>بستن</button>
+          </section>
+        ) : null}
+
+        {!storageLocked && step === "history" && selectedArtifact ? (
+          <section className="build-step built-artifact-history-list" data-testid="built-artifact-history-list">
+            <div className="build-preview-title"><span><RotateCcw size={20} /></span><div><small>تاریخچهٔ تغییرناپذیر</small><h3>نسخه‌های {builtArtifactCurrentRevision(selectedArtifact).name}</h3></div></div>
+            {selectedArtifact.revisions.map((revision) => <article key={revision.id}><div><strong>نسخهٔ {revision.version.toLocaleString("fa-IR")}</strong><small>{builtArtifactStatusLabel(revision.status)} · {formatProjectFileDate(revision.createdAt)}</small></div><p>{revision.name}</p>{revision.version < selectedArtifact.version ? <button className="secondary-button" type="button" data-testid="built-artifact-rollback" data-version={revision.version} disabled={pending} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "rollback", { rollbackFromVersion: revision.version }), () => setStep("define"))}>بازگشت به‌صورت پیش‌نویس تازه</button> : null}</article>)}
+            {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
+            <button className="secondary-button" type="button" onClick={() => setStep(selectedArtifact.status === "preview_ready" ? "preview" : selectedArtifact.status === "draft" ? "define" : "detail")}>بازگشت</button>
+          </section>
+        ) : null}
+
+        {!storageLocked && step === "remove" && selectedArtifact && currentRevision ? (
+          <section className="build-step built-artifact-remove-confirm" data-testid="built-artifact-remove-confirmation">
+            <Archive size={28} />
+            <h3>حذف «{currentRevision.name}» از این پروژه؟</h3>
+            <p>رکورد ساخته حذف می‌شود، اما tombstone حداقلی برای جلوگیری از بازگشت خاموش و حفظ lineage باقی می‌ماند.</p>
+            <button className="danger-button" type="button" data-testid="built-artifact-confirm-remove" disabled={pending} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "remove"), onClose)}>{pending ? "در حال ثبت…" : "تأیید حذف"}</button>
+            <button className="secondary-button" type="button" onClick={() => setStep(selectedArtifact.status === "preview_ready" ? "preview" : selectedArtifact.status === "draft" ? "define" : "detail")}>انصراف</button>
+            {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
           </section>
         ) : null}
       </div>
@@ -19418,7 +22089,18 @@ function activeBriefLabel(frequency: BriefFrequency) {
   return frequency === "daily" ? "روزانه" : "هفتگی";
 }
 
-function ProjectsSheet({ sheet, projects, activeProjectId, onClose, onSelect, onCreate }: { sheet: SheetName; projects: BuilderProject[]; activeProjectId: string; onClose: () => void; onSelect: (projectId: string) => void; onCreate: () => void }) {
+function ProjectsSheet({ sheet, projects, activeProjectId, onClose, onSelect, onCreate }: { sheet: SheetName; projects: BuilderProject[]; activeProjectId: string; onClose: () => void; onSelect: (projectId: string, idempotencyKey: string) => Promise<ProjectFoundationMutationResult>; onCreate: () => void }) {
+  const [selectionError, setSelectionError] = useState("");
+  const [selectionPending, setSelectionPending] = useState(false);
+  useEffect(() => { if (sheet === "projects") setSelectionError(""); }, [sheet]);
+  const select = async (projectId: string) => {
+    setSelectionPending(true);
+    setSelectionError("");
+    const result = await onSelect(projectId, `project-select:${window.crypto.randomUUID()}`);
+    setSelectionPending(false);
+    if (result.envelope) onClose();
+    else setSelectionError(result.status === "version-conflict" ? "فهرست پروژه‌ها در جای دیگری تغییر کرده است؛ دوباره تلاش کن." : "پروژه فعال نشد و انتخاب قبلی دست‌نخورده ماند.");
+  };
   return (
     <BottomSheet open={sheet === "projects"} onOpenChange={(open) => !open && onClose()} title="پروژه‌های من" description="زمینهٔ فعال تعیین می‌کند گفتگو و ابزارها به کدام پروژه متصل باشند." snap={0.46}>
       <div className="sheet-list" dir="rtl" data-testid="projects-sheet">
@@ -19429,22 +22111,25 @@ function ProjectsSheet({ sheet, projects, activeProjectId, onClose, onSelect, on
             title={project.name}
             description={projectMeta(project)}
             selected={activeProjectId === project.id}
-            onClick={() => { onSelect(project.id); onClose(); }}
+            onClick={() => { if (!selectionPending) void select(project.id); }}
           />
         ))}
+        {selectionError ? <p className="new-project-storage-error" role="alert" data-testid="project-select-error">{selectionError}</p> : null}
         <button className="projects-sheet-add" type="button" onClick={onCreate} data-testid="projects-sheet-add"><Plus size={19} /><span><strong>افزودن پروژهٔ جدید</strong><small>نام، محدودهٔ تهران و مرحلهٔ ساخت</small></span></button>
       </div>
     </BottomSheet>
   );
 }
 
-function ProjectCreateSheet({ sheet, onClose, onSave }: { sheet: SheetName; onClose: () => void; onSave: (draft: ProjectSetupDraft) => boolean }) {
+function ProjectCreateSheet({ sheet, onClose, onSave }: { sheet: SheetName; onClose: () => void; onSave: (draft: ProjectSetupDraft, idempotencyKey: string) => Promise<ProjectFoundationMutationResult> }) {
   const keyboard = useKeyboard();
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [stage, setStage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<ProjectFieldErrors>({ name: "", location: "", stage: "" });
   const [storageError, setStorageError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (sheet !== "new-project") return;
@@ -19453,14 +22138,17 @@ function ProjectCreateSheet({ sheet, onClose, onSave }: { sheet: SheetName; onCl
     setStage("");
     setFieldErrors({ name: "", location: "", stage: "" });
     setStorageError("");
+    setSaving(false);
+    idempotencyKeyRef.current = null;
   }, [sheet]);
 
   const clearFieldError = (field: keyof ProjectSetupDraft) => {
     setFieldErrors((current) => current[field] ? { ...current, [field]: "" } : current);
     setStorageError("");
+    idempotencyKeyRef.current = null;
   };
 
-  const submit = () => {
+  const submit = async () => {
     const nextErrors = validateProjectDraft({ name, location, stage });
     setFieldErrors(nextErrors);
     const firstInvalidId = nextErrors.name
@@ -19476,16 +22164,18 @@ function ProjectCreateSheet({ sheet, onClose, onSave }: { sheet: SheetName; onCl
     }
 
     keyboard.hide();
-    if (!onSave({ name: name.trim(), location: normalizeProjectArea(location), stage })) {
-      setStorageError("پروژه ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن؛ پروژهٔ فعلی تغییر نکرده است.");
-      return;
-    }
-    onClose();
+    const idempotencyKey = idempotencyKeyRef.current ?? `project-create:${window.crypto.randomUUID()}`;
+    idempotencyKeyRef.current = idempotencyKey;
+    setSaving(true);
+    const result = await onSave({ name: name.trim(), location: normalizeProjectArea(location), stage }, idempotencyKey);
+    setSaving(false);
+    if (result.envelope) onClose();
+    else setStorageError(result.status === "version-conflict" ? "فهرست پروژه‌ها در جای دیگری تغییر کرده است؛ پروژهٔ فعلی دست‌نخورده ماند." : result.status === "lock-unavailable" ? "قفل امن مرورگر در دسترس نیست؛ چیزی ثبت نشد." : "پروژه ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن؛ پروژهٔ فعلی تغییر نکرده است.");
   };
 
   return (
     <BottomSheet open={sheet === "new-project"} onOpenChange={(open) => !open && onClose()} title="پروژهٔ جدید" description="فقط سه دادهٔ ضروری؛ جزئیات دیگر را بعداً در فضای پروژه کامل می‌کنی." snap={0.82}>
-      <form className="new-project-sheet" dir="rtl" data-testid="new-project-sheet" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+      <form className="new-project-sheet" dir="rtl" data-testid="new-project-sheet" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
         <label className="field-control" htmlFor="new-project-name">
           <span>نام پروژه</span>
           <KeyboardInput id="new-project-name" data-testid="new-project-name-input" value={name} maxLength={100} placeholder="مثلاً پروژه آفتاب" onChange={(event) => { setName(event.target.value); clearFieldError("name"); }} aria-invalid={Boolean(fieldErrors.name)} aria-describedby={fieldErrors.name ? "new-project-name-error" : undefined} />
@@ -19507,7 +22197,7 @@ function ProjectCreateSheet({ sheet, onClose, onSave }: { sheet: SheetName; onCl
         </div>
 
         {storageError ? <p className="new-project-storage-error" role="alert" data-testid="new-project-storage-error">{storageError}</p> : null}
-        <button className="primary-button" type="submit" data-testid="new-project-save">ساخت و ورود به پروژه</button>
+        <button className="primary-button" type="submit" disabled={saving} data-testid="new-project-save">{saving ? "در حال ذخیره…" : "ساخت و ورود به پروژه"}</button>
       </form>
     </BottomSheet>
   );

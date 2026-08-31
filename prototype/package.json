@@ -6,9 +6,12 @@
   "scripts": {
     "check:runtime": "node scripts/check-mobile-runtime.mjs",
     "update:runtime-lock": "node scripts/update-mobile-runtime-lock.mjs",
-    "test:runtime": "playwright test",
+    "test:runtime": "playwright test tests/mobile-runtime.spec.ts",
     "test:app": "playwright test tests/chida-flow.spec.ts",
+    "test:all": "playwright test",
     "test:sites": "node --test tests/sites-worker.test.mjs",
+    "gate:release": "node scripts/verify-release.mjs",
+    "gate:publish": "node scripts/release-gate.mjs check",
     "predev": "npm run check:runtime",
     "dev": "vite",
     "prebuild": "npm run check:runtime",
