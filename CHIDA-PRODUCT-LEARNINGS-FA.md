@@ -1583,10 +1583,10 @@
 - ChatGPT Sites نسخهٔ ۲۹ با source commit release، ۱۹ فایل و archive hash `sha256:a540f36f4447d3a200ad04295f967602366e3ea4025c4faf5bace206c8c89e0d` ذخیره شد؛ version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_43b1a0eaf8888191af729ef9a417fdb7` و deployment خصوصی `appgdep_6a94f2d1bebc8191a46ffa27d1d1b76c` در وضعیت `succeeded` است. دسترسی `custom`/owner-only با یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
 - commit مستندی حاوی همین receipt prototype tree را تغییر نمی‌دهد و دوباره روی هر سه مقصد همسان می‌شود. شناسه‌های خود receipt نهایی به‌دلیل self-reference در پیام تحویل و handoff تسک تازه ثبت می‌شوند؛ این بند وضعیت تاریخی پایان MC-1 است و وضعیت جاری Source/Composer در SI-1 زیر ثبت می‌شود.
 
-## SI-1 — Source/Composer Intake محلی سازنده
+## SI-1 — Source/Composer Intake منتشرشدهٔ سازنده
 
-- **تاریخ مجوز و اجرای محلی:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
-- **وضعیت:** ماهیار پس از مشخص‌شدن تسک بعدی با پیام «شروع کن لطفا» فقط اجرای SI-1 را مجاز کرد. پیاده‌سازی در checkout اصلی انجام شد و ماهیار پس از مشاهده با پیام «خوبه بریم تسک بعدی» تجربهٔ SI-1 را تأیید و اجرای Task/Monitor Core را مجاز کرد. پس از تکمیل و آزمون TM-1، با پیام «منتشر کن لطفا» انتشار snapshot ترکیبی SI-1/TM-1 را صریحاً مجاز کرد؛ این بند پیش از release ثبت می‌شود و موفقیت انتشار فقط با receipt terminal بعدی ادعا خواهد شد.
+- **تاریخ مجوز، اجرا و انتشار:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
+- **وضعیت:** ماهیار پس از مشخص‌شدن تسک بعدی با پیام «شروع کن لطفا» فقط اجرای SI-1 را مجاز کرد. پیاده‌سازی در checkout اصلی انجام شد و ماهیار پس از مشاهده با پیام «خوبه بریم تسک بعدی» تجربهٔ SI-1 را تأیید و اجرای Task/Monitor Core را مجاز کرد. پس از تکمیل و آزمون TM-1، با پیام «منتشر کن لطفا» انتشار snapshot ترکیبی SI-1/TM-1 را صریحاً مجاز کرد؛ انتشار هر سه مقصد با receipt terminal انتهای TM-1 بسته شد.
 - **دامنه:** ثبت محلی و پروژه‌محور متن دقیق Composer همراه با حداکثر یک عکس یا سند پشتیبانی‌شده در همان draft، پیش‌نمایش/حذف پیش از ثبت و بازکردن دوبارهٔ Source؛ بدون OCR، vision، extraction، مدل، retrieval، index جست‌وجو، backend، sync، cloud upload، share، ارسال بیرونی یا thread کامل ماندگار.
 
 ### تجربهٔ مشاهده‌شده
@@ -1617,7 +1617,7 @@
 - مسیرهای دوربین، عکس و سند Composer به input واقعی وصل شده‌اند؛ preview/remove، attachment-only، رسید صادقانه، بازکردن متن دقیق یا اصل عکس/سند، reload و project isolation پیاده شده‌اند. focus پس از بستن جزئیات به trigger برمی‌گردد و ساخت دیرهنگام object URL پس از close مسدود است.
 - regressionهای متمرکز SI-1 متن+سند، عکس تنها، MIME ناسازگار، rollback دو store، recovery intent، intent جعلی، Blob گم‌شده یا دست‌کاری‌شده، MIME امن، Source/file ناخوانا، نبود lock، رقابت دو تب و قفل مشترک کتابخانهٔ فایل را پوشش می‌دهند و ۲۳/۲۳ پاس شدند. پس از اصلاح چهار انتظار/race دقیق، مجموعهٔ کامل app برابر ۲۳۳/۲۳۳، runtime برابر ۲۴۱/۲۴۱ و Sites برابر ۴/۴ پاس شد؛ `check:runtime` هر ۲۸ فایل محافظت‌شده، build، TypeScript مستقل و `git diff --check` نیز پاس‌اند. تنها هشدار شناخته‌شدهٔ build، chunk جاوااسکریپت بزرگ‌تر از 500kB است.
 - QA مرورگر داخلی در viewport واقعی `390 × 844`، preview/remove و ثبت متن دقیق همراه PDF، ثبت attachment-only عکس، reopen/reload هر دو دارایی، اصل Blob، project isolation، رسید محلی و provenance خاموش‌بودن model/retrieval/share را تأیید کرد. بازگشت focus پس از Escape برای متن/فایل/عکس درست بود؛ دکمهٔ بستن `354 × 50`، دکمه‌های Source حداقل ۴۴px و کنترل‌های اصلی Composer حداقل ۴۸px بودند؛ عرض inner/html/body برابر ۳۹۰، بیرون‌زدگی خارج از carousel صفر و console warning/error صفر بود.
-- سه بازبینی مستقل پیاده‌سازی، مرز دامنه و پوشش تست پس از اصلاح‌ها finding باز P0/P1 گزارش نکردند. gate پیاده‌سازی محلی SI-1 PASS است و تجربهٔ آن توسط ماهیار تأیید شد. Builder Architecture Gate کامل همچنان FAIL است و این PASS فقط به همین برش مربوط می‌شود؛ Task/Monitor Core اکنون با پیام جداگانه مجاز شده است.
+- سه بازبینی مستقل پیاده‌سازی، مرز دامنه و پوشش تست پس از اصلاح‌ها finding باز P0/P1 گزارش نکردند. gate پیاده‌سازی SI-1 PASS است و تجربهٔ آن توسط ماهیار تأیید شد. Builder Architecture Gate کامل همچنان FAIL است و این PASS فقط به همین برش مربوط می‌شود؛ Task/Monitor Core بعداً با پیام جداگانه ساخته و همراه همین snapshot منتشر شد.
 
 ### محدودیت و بدهی باقی‌مانده
 
@@ -1633,10 +1633,10 @@
 - مرز نسخهٔ بدون extraction صریح شود: حفظ اصل و provenance مجاز است، اما OCR/vision/embedding/model use/retrieval/share تا اتصال و رضایت جدا همگی false می‌مانند.
 - acceptance آیندهٔ Source/File باید retention/quota، export/delete، migration، untrusted-content handling، hash مستقل FileRecord و چندپیوستی‌شدن را جدا از تجربهٔ سادهٔ Composer پوشش دهد.
 
-## TM-1 — Task/Monitor Core محلی سازنده
+## TM-1 — Task/Monitor Core منتشرشدهٔ سازنده
 
-- **تاریخ مجوز، اجرا و مجوز انتشار:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
-- **وضعیت و ترتیب واقعی:** ماهیار با پیام «خوبه بریم تسک بعدی» فقط اجرای Task/Monitor Core را پس از SI-1 مجاز کرد و سپس با پیام «منتشر کن لطفا» انتشار دامنهٔ جاری SI-1/TM-1 را خواست. release-verification پس از پیام انتشار یک رگرسیون presentation، دو P2 قرارداد TM-1 و چند race صرفاً test-only را آشکار کرد؛ همه بدون گسترش دامنه بسته شدند و suiteهای کامل و QA موبایل پاس شدند. پیام کاربر مجوز commit/push/deploy همین دامنه و اصلاحات لازم release است، نه تأیید UX تفصیلی یا بایت‌به‌بایت post-fix و نه مجوز Build Lifecycle، مدل، backend، شبکه یا مسیر تأمین‌کننده.
+- **تاریخ مجوز، اجرا و انتشار:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
+- **وضعیت و ترتیب واقعی:** ماهیار با پیام «خوبه بریم تسک بعدی» فقط اجرای Task/Monitor Core را پس از SI-1 مجاز کرد و سپس با پیام «منتشر کن لطفا» انتشار دامنهٔ جاری SI-1/TM-1 را خواست. release-verification پس از پیام انتشار یک رگرسیون presentation، دو P2 قرارداد TM-1 و چند race صرفاً test-only را آشکار کرد؛ همه بدون گسترش دامنه بسته شدند و suiteهای کامل و QA موبایل پاس شدند. snapshot روی GitHub، Cloudflare Pages و ChatGPT Sites به وضعیت terminal موفق رسید. پیام کاربر مجوز commit/push/deploy همین دامنه و اصلاحات لازم release بود، نه تأیید UX تفصیلی یا بایت‌به‌بایت post-fix و نه مجوز Build Lifecycle، مدل، backend، شبکه یا مسیر تأمین‌کننده.
 - **دامنه:** یک موعد اختیاری برای Task متصل «برنامهٔ پروژه» و دقیقاً یک Monitor موعد پروژه‌محور با Runهای append-only؛ بدون service worker، اجرای تب بسته یا پنهان، Notification API، backend، مدل، وب، پایش قیمت/مقررات، شبکه یا اثر بیرونی.
 
 ### تجربهٔ مشاهده‌شده
@@ -1658,7 +1658,7 @@
 
 ### تصمیم و وضعیت آن
 
-- **[تصمیم این برش؛ محلی و مجاز برای انتشار]** فقط Task متصل Project Backbone می‌تواند یک Monitor موعد داشته باشد. وظیفهٔ دستی قدیمی، Approval، DispatchDraft یا رکورد دیگر producer این Monitor نیست.
+- **[تصمیم این برش؛ منتشرشده]** فقط Task متصل Project Backbone می‌تواند یک Monitor موعد داشته باشد. وظیفهٔ دستی قدیمی، Approval، DispatchDraft یا رکورد دیگر producer این Monitor نیست.
 - مقدار `datetime-local` به‌عنوان زمان `Asia/Tehran` تفسیر و در snapshot Task به ISO UTC canonical تبدیل می‌شود. Monitor و Run به id/version/revision/fingerprint دقیق همان Task bind هستند و تغییر revision یا حذف موعد، failure قابل‌retry می‌سازد.
 - envelope مستقل Monitor/Run exact و نسخه‌دار است؛ history و Runs append-only، attemptها پیوسته، schedule به Run bind، no-op نامعتبر، result با موعد Task سازگار و cadence پس از رسیدن موعد دقیقاً ۲۴ ساعت است.
 - mutationهای Monitor→Backbone ترتیب قفل ثابت Monitor سپس Backbone، expected preimage، reread پیش و پس از commit و rollback فقط bytes متعلق به candidate خود را دارند. نبود Web Locks، store ناخوانا، preimage تازهٔ رقیب یا postimage ناسازگار fail-close می‌شود.
@@ -1685,6 +1685,9 @@
 - ماتریس failure رسمی stale dependency، removed deadline، deleted Task، unreadable store، lock unavailable، concurrent writer و retryability را از empty/success تفکیک کند.
 - lifecycle آینده شامل recurrence، چند Monitor، cancellation/pause/rollback، Task tombstone، retention Run و permission برای اثر بیرونی باید به برش‌های مستقل و تأیید انسانی جدا تقسیم شود.
 
-### وضعیت انتشار پیش از receipt
+### رسید انتشار SI-1/TM-1
 
-- مجوز انتشار snapshot ترکیبی SI-1/TM-1 دریافت شده است. تا پیش از ثبت commit و رسید terminal هر سه مقصد، این بخش فقط `release authorized` را ثبت می‌کند و موفقیت GitHub، Cloudflare Pages یا ChatGPT Sites را ادعا نمی‌کند.
+- commit قابلیت `525f1bb1577b495416a4e5944341862f0ae5cfbf` با prototype tree `ea1af0b50b2e131ffc139a6f092cf5aa81c82875` روی GitHub `main` منتشر شد. gate release شامل focused TM-1 برابر ۲۰/۲۰، app برابر ۲۵۳/۲۵۳، runtime برابر ۲۶۱/۲۶۱، Sites برابر ۴/۴، `check:runtime` برای ۲۸ فایل، build/TypeScript، `npx tsc --noEmit`، `git diff --check`، QA واقعی `390 × 844` و بازبینی مستقل بدون finding باز P0/P1/P2 پاس شد.
+- Cloudflare Pages deployment `d54faf50-c7e7-43d1-974f-2925c9bdfe9a` از source دقیق همین commit روی شاخهٔ `main` به وضعیت `success` رسید. canonical `https://chida-prototype.pages.dev` و immutable `https://d54faf50.chida-prototype.pages.dev` با build محلی یکسان‌اند: HTML `f2b2d951c0f887a39988262e866ba95dab4a3223d84c3e9a148570e70342c748`، JavaScript `49bf9d38241b5988e88378408bb58f3f1bbd8287919c3ba9592f23b75884fca2` و CSS `8817d8eb8799652bd56c0f62935e7ed34e578d9d40ded4c16fbc83ffb2d72f33`.
+- ChatGPT Sites نسخهٔ ۳۱ با source commit دقیق قابلیت، ۱۹ فایل و archive hash `sha256:1168adc4638bf0373060eaa2cc6175c4eca5f6dfa1b84f8df97ec5c1b8914b86` ذخیره شد؛ version ID `appgprj_6a90313e390c81918572fc1b45269dac~appgver_82b99fac3d2481919a8c51f8c5898ce1` و deployment خصوصی `appgdep_6a95754e5e3481918c0a6679b0ab6016` در وضعیت `succeeded` روی `https://chida-prototype.mahyarkl.chatgpt.site` قرار گرفت. دسترسی `custom`/owner-only با دقیقاً یک مالک، بدون گروه و بدون مهمان بیرونی حفظ شد.
+- commit مستندی حاوی این receipt فقط اسناد را تغییر می‌دهد و prototype tree را ثابت نگه می‌دارد؛ SHA و deployment/version نهایی آن به‌دلیل حلقهٔ self-reference در پیام تحویل ثبت می‌شوند.
