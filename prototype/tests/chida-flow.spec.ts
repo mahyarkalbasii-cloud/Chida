@@ -588,17 +588,17 @@ const manualNegotiationResponseReviewStorageKey = "chida-prototype-builder-manua
 const manualNegotiationConditionImpactStorageKey = "chida-prototype-builder-manual-negotiation-condition-impacts:v1";
 
 async function commercialSourceStoreBytes(page: Page) {
-  return page.evaluate(() => ({
+  return page.evaluate((approvalKey) => ({
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
-    contacts: window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1"),
+    approvals: window.localStorage.getItem(approvalKey),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
+    contacts: window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2"),
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
     productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
     serviceComparisons: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"),
     serviceDecisions: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"),
-  }));
+  }), bgF4ApprovalCanonicalStorageKey);
 }
 
 function serviceNegotiationDraftStart(page: Page, criterionId: ServiceComparisonCriterionId, proposalId: string) {
@@ -8203,11 +8203,23 @@ const purchaseRequestRecoverySourceKey = "chida-prototype-project-purchase-reque
 const purchaseRequestRecoveryBackupPrefix = `${purchaseRequestRecoverySourceKey}:recovery-backup:`;
 const purchaseRequestRecoveryIntentKey = `${purchaseRequestRecoverySourceKey}:recovery-intent:v1`;
 const purchaseRequestWriteLockName = `${purchaseRequestRecoverySourceKey}:write`;
+const bgF4ApprovalLegacyStorageKey = "chida-prototype-project-approvals:v1";
+const bgF4ApprovalCanonicalStorageKey = "chida-prototype-project-approvals:v2";
+const bgF4ApprovalCutoverMarkerStorageKey = `${bgF4ApprovalCanonicalStorageKey}:cutover:v1`;
+const bgF4ApprovalConfirmationIntentStorageKey = `${bgF4ApprovalCanonicalStorageKey}:request-confirmation-intent:v1`;
 const purchaseRequestRecoveryDependentKeys = [
-  "chida-prototype-project-approvals:v1",
+  bgF4ApprovalCanonicalStorageKey,
+  bgF4ApprovalCutoverMarkerStorageKey,
   "chida-prototype-project-supplier-contacts:v1",
+  "chida-prototype-project-supplier-contacts:v2",
+  "chida-prototype-project-supplier-contacts:v2:cutover:v1",
   "chida-prototype-project-dispatch-drafts:v1",
+  "chida-prototype-project-dispatch-drafts:v2",
+  "chida-prototype-project-dispatch-drafts:v2:cutover:v1",
+  "chida-prototype-project-dispatch-drafts:v2:plan-queue-intent:v1",
   "chida-prototype-project-dispatch-plan-approvals:v1",
+  "chida-prototype-project-dispatch-plan-approvals:v2",
+  "chida-prototype-project-dispatch-plan-approvals:v2:cutover:v1",
   "chida-prototype-builder-recorded-proposals:v1",
 ] as const;
 
@@ -8220,6 +8232,18 @@ async function readPurchaseRequestRecoveryBackups(page: Page) {
     }
     return backups.sort((first, second) => first.key.localeCompare(second.key));
   }, purchaseRequestRecoveryBackupPrefix);
+}
+
+async function createBgF4CompoundConfirmationDraft(page: Page) {
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.getByTestId("purchase-request-raw-input").fill("پنج تن میلگرد آجدار برای ادامهٔ اسکلت لازم است");
+  await page.getByTestId("purchase-request-item-input").fill("میلگرد آجدار");
+  await page.getByTestId("purchase-request-quantity-input").fill("۵");
+  await chooseProjectOption(page, "purchase-request-unit-select", "تن");
+  await page.getByTestId("purchase-request-delivery-area-input").fill("سعادت‌آباد");
+  await page.getByTestId("purchase-request-save").click();
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("در حال تکمیل");
 }
 
 async function readExactLocalStorageSnapshot(page: Page, keys: readonly string[]) {
@@ -8274,6 +8298,7 @@ test("BG-F3 rejects a queued combined confirmation after an earlier request edit
   await chooseProjectOption(page, "purchase-request-unit-select", "تن");
   await page.getByTestId("purchase-request-save").click();
   await expect(page.getByTestId("purchase-request-editor-sheet")).toBeHidden();
+  const approvalFoundationBefore = await expectBgF4ApprovalFoundationCommitted(page);
 
   const editorPage = await context.newPage();
   try {
@@ -8310,7 +8335,10 @@ test("BG-F3 rejects a queued combined confirmation after an earlier request edit
     await expect(editorPage.getByTestId("purchase-request-editor-sheet")).toBeHidden();
     await expect(page.getByTestId("purchase-request-detail-storage-error")).toContainText("جای دیگری تغییر کرده بود");
     await expect(page.getByTestId("project-dispatch-planner-view")).toHaveCount(0);
-    expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1"))).toBeNull();
+    const approvalFoundationAfter = await readBgF4ApprovalFoundation(page);
+    expect(approvalFoundationAfter.canonicalRaw).toBe(approvalFoundationBefore.canonicalRaw);
+    expect(approvalFoundationAfter.markerRaw).toBe(approvalFoundationBefore.markerRaw);
+    expect(approvalFoundationAfter.envelope.records).toEqual([]);
     const stored = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey) ?? "[]");
     expect(stored[0]).toMatchObject({ status: "draft", version: 2, item: { name: "نسخهٔ ویرایش‌شدهٔ برنده" } });
     expect(stored[0].history.map((event: any) => event.type)).toEqual(["created", "updated"]);
@@ -8320,7 +8348,7 @@ test("BG-F3 rejects a queued combined confirmation after an earlier request edit
   }
 });
 
-test("BG-F3 rolls both stores back when the combined approval write fails and safely retries", async ({ page }) => {
+test("BG-F3 recovers an exact compound confirmation after one transient approval write failure", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   await page.getByTestId("quick-action-purchase-request").click();
@@ -8330,30 +8358,31 @@ test("BG-F3 rolls both stores back when the combined approval write fails and sa
   await page.getByTestId("purchase-request-save").click();
   await expect(page.getByTestId("purchase-request-editor-sheet")).toBeHidden();
   const requestBytesBefore = await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey);
+  await expectBgF4ApprovalFoundationCommitted(page);
 
-  await page.evaluate(() => {
+  await page.evaluate((approvalKey) => {
     const nativeSetItem = Storage.prototype.setItem;
     Object.defineProperty(window, "__bgF3CombinedNativeSetItem", { value: nativeSetItem, configurable: true });
+    Object.defineProperty(window, "__bgF3CombinedApprovalWriteFailed", { value: false, writable: true, configurable: true });
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-approvals:v1") throw new DOMException("Combined approval write failed", "QuotaExceededError");
+      const probeWindow = window as Window & { __bgF3CombinedApprovalWriteFailed?: boolean };
+      if (this === window.localStorage && key === approvalKey && !probeWindow.__bgF3CombinedApprovalWriteFailed) {
+        probeWindow.__bgF3CombinedApprovalWriteFailed = true;
+        throw new DOMException("Combined approval write failed once", "QuotaExceededError");
+      }
       return nativeSetItem.call(this, key, value);
     };
-  });
+  }, bgF4ApprovalCanonicalStorageKey);
   await page.getByTestId("purchase-request-ready").click();
-  await expect(page.getByTestId("purchase-request-detail-storage-error")).toContainText("تأیید اطلاعات ذخیره نشد");
-  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("در حال تکمیل");
-  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(requestBytesBefore);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1"))).toBeNull();
-  await expect(page.getByTestId("project-dispatch-planner-view")).toHaveCount(0);
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
 
   await page.evaluate(() => {
     Storage.prototype.setItem = (window as Window & { __bgF3CombinedNativeSetItem: typeof Storage.prototype.setItem }).__bgF3CombinedNativeSetItem;
     delete (window as Window & { __bgF3CombinedNativeSetItem?: typeof Storage.prototype.setItem }).__bgF3CombinedNativeSetItem;
+    delete (window as Window & { __bgF3CombinedApprovalWriteFailed?: boolean }).__bgF3CombinedApprovalWriteFailed;
   });
-  await page.getByTestId("purchase-request-ready").click();
-  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
   const requestBytesAfter = await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey);
-  const approvalsAfter = JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1")) ?? "[]");
+  const approvalsAfter = (await readBgF4ApprovalFoundation(page)).envelope.records;
   expect(requestBytesAfter).not.toBe(requestBytesBefore);
   expect(JSON.parse(requestBytesAfter ?? "[]")[0]).toMatchObject({ status: "ready-for-review", version: 2 });
   expect(approvalsAfter).toHaveLength(1);
@@ -8374,7 +8403,8 @@ test("BG-F3 fails closed when a confirmed request loses its exact approval depen
   const requestBytes = await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey);
   const receiptApprovalId = JSON.parse(requestBytes ?? "[]")[0].mutationReceipts.find((receipt: any) => receipt.action === "confirm-for-recipients").relatedApprovalId;
   expect(receiptApprovalId).toMatch(/^approval-/);
-  await page.evaluate(() => window.localStorage.removeItem("chida-prototype-project-approvals:v1"));
+  const approvalFoundationBefore = await expectBgF4ApprovalFoundationCommitted(page);
+  await page.evaluate((key) => window.localStorage.removeItem(key), bgF4ApprovalCanonicalStorageKey);
 
   await reenterBuilderHomeAfterReload(page);
   await page.getByTestId("quick-action-purchase-request").click();
@@ -8382,7 +8412,8 @@ test("BG-F3 fails closed when a confirmed request loses its exact approval depen
   await page.getByTestId("purchase-request-card").click();
   await expect(page.getByTestId("purchase-request-approval-status")).toContainText("وضعیت تأیید کامل خوانده نشد");
   await expect(page.getByTestId("purchase-request-request-approval")).toBeDisabled();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1"))).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCanonicalStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCutoverMarkerStorageKey)).toBe(approvalFoundationBefore.markerRaw);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(requestBytes);
 });
 
@@ -8395,7 +8426,8 @@ test("BG-F3 explains why a draft cannot continue while approval storage is unrea
   await chooseProjectOption(page, "purchase-request-unit-select", "تن");
   await page.getByTestId("purchase-request-save").click();
   await expect(page.getByTestId("purchase-request-editor-sheet")).toBeHidden();
-  await page.evaluate(() => window.localStorage.setItem("chida-prototype-project-approvals:v1", "{unreadable-approval-store"));
+  const approvalFoundationBefore = await expectBgF4ApprovalFoundationCommitted(page);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF4ApprovalCanonicalStorageKey, raw: "{unreadable-approval-store" });
 
   await reenterBuilderHomeAfterReload(page);
   await page.getByTestId("quick-action-purchase-request").click();
@@ -8406,6 +8438,8 @@ test("BG-F3 explains why a draft cannot continue while approval storage is unrea
   await expect(page.getByTestId("purchase-request-ready")).toBeDisabled();
   await expect(page.getByTestId("purchase-request-ready")).toHaveAttribute("aria-describedby", "purchase-request-approval-status");
   await expect(page.getByTestId("purchase-request-edit")).toBeEnabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCanonicalStorageKey)).toBe("{unreadable-approval-store");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCutoverMarkerStorageKey)).toBe(approvalFoundationBefore.markerRaw);
 });
 
 test("BG-F3 does not create a stale approval after return-to-draft wins the request lock", async ({ page, context }) => {
@@ -8420,6 +8454,7 @@ test("BG-F3 does not create a stale approval after return-to-draft wins the requ
   await page.getByTestId("purchase-request-more-actions").locator("summary").click();
   await page.getByTestId("purchase-request-mark-ready-legacy").click();
   await expect(page.getByTestId("purchase-request-request-approval")).toBeVisible();
+  const approvalFoundationBefore = await expectBgF4ApprovalFoundationCommitted(page);
 
   const returnPage = await context.newPage();
   try {
@@ -8455,7 +8490,10 @@ test("BG-F3 does not create a stale approval after return-to-draft wins the requ
     await expect(returnPage.getByTestId("project-purchase-request-detail-view")).toContainText("در حال تکمیل");
     await expect(page.getByTestId("purchase-request-detail-storage-error")).toContainText("در جای دیگری تغییر کرده بود");
     await expect(page.getByTestId("project-approval-detail-view")).toHaveCount(0);
-    expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1"))).toBeNull();
+    const approvalFoundationAfter = await readBgF4ApprovalFoundation(page);
+    expect(approvalFoundationAfter.canonicalRaw).toBe(approvalFoundationBefore.canonicalRaw);
+    expect(approvalFoundationAfter.markerRaw).toBe(approvalFoundationBefore.markerRaw);
+    expect(approvalFoundationAfter.envelope.records).toEqual([]);
     const stored = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey) ?? "[]");
     expect(stored[0]).toMatchObject({ status: "draft", version: 3 });
     expect(stored[0].history.map((event: any) => event.type)).toEqual(["created", "marked-ready-for-review", "returned-to-draft"]);
@@ -8508,9 +8546,11 @@ test("BG-F3 deduplicates two queued approval creations for the same request vers
 
     await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
     await expect(secondPage.getByTestId("project-approval-detail-view")).toBeVisible();
-    const approvals = JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1")) ?? "[]");
+    const approvalFoundation = await readBgF4ApprovalFoundation(page);
+    const approvals = approvalFoundation.envelope.records;
     const requests = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey) ?? "[]");
     expect(approvals).toHaveLength(1);
+    expect(approvalFoundation.envelope.idempotencyReceipts.filter((receipt: any) => receipt.action === "create-content-approval")).toHaveLength(1);
     expect(requests).toHaveLength(1);
     expect(approvals[0].target).toMatchObject({ id: requests[0].id, version: requests[0].version, revisionId: requests[0].reviewRevisions[0].id });
     expect(approvals[0].dedupeKey).toBe(`${requests[0].projectId}:${requests[0].id}:${requests[0].version}:review-purchase-request-version`);
@@ -8569,7 +8609,7 @@ test("BG-F3 preserves an approval decision when a combined confirmation commits 
 
     await expect(page.getByTestId("project-approval-status")).toContainText("درخواست تأیید شد");
     await expect(combinedPage.getByTestId("project-dispatch-planner-view")).toBeVisible();
-    const approvals = JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1")) ?? "[]");
+    const approvals = (await readBgF4ApprovalFoundation(page)).envelope.records;
     const requests = JSON.parse(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey) ?? "[]");
     expect(approvals).toHaveLength(2);
     expect(approvals.every((approval: any) => approval.status === "approved")).toBe(true);
@@ -8596,7 +8636,7 @@ test("BG-F3 locks approval state when a failed decision rollback cannot be verif
   await page.getByTestId("purchase-request-request-approval").click();
   await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
 
-  await page.evaluate(() => {
+  await page.evaluate((approvalKey) => {
     const nativeGetItem = Storage.prototype.getItem;
     const nativeSetItem = Storage.prototype.setItem;
     const faultWindow = window as Window & {
@@ -8609,14 +8649,14 @@ test("BG-F3 locks approval state when a failed decision rollback cannot be verif
     faultWindow.__bgF3DecisionCandidateWritten = false;
     Storage.prototype.setItem = function setItem(key: string, value: string) {
       const result = nativeSetItem.call(this, key, value);
-      if (this === window.localStorage && key === "chida-prototype-project-approvals:v1") faultWindow.__bgF3DecisionCandidateWritten = true;
+      if (this === window.localStorage && key === approvalKey) faultWindow.__bgF3DecisionCandidateWritten = true;
       return result;
     };
     Storage.prototype.getItem = function getItem(key: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-approvals:v1" && faultWindow.__bgF3DecisionCandidateWritten) return "{unverifiable-approval-readback";
+      if (this === window.localStorage && key === approvalKey && faultWindow.__bgF3DecisionCandidateWritten) return "{unverifiable-approval-readback";
       return nativeGetItem.call(this, key);
     };
-  });
+  }, bgF4ApprovalCanonicalStorageKey);
 
   try {
     await page.getByTestId("project-approval-approve").click();
@@ -8638,7 +8678,7 @@ test("BG-F3 locks approval state when a failed decision rollback cannot be verif
 
   await expect(page.getByTestId("project-approval-approve")).toBeDisabled();
   await expect(page.getByTestId("project-approval-needs-changes")).toBeDisabled();
-  const actualApprovals = JSON.parse(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1")) ?? "[]");
+  const actualApprovals = (await readBgF4ApprovalFoundation(page)).envelope.records;
   expect(actualApprovals).toHaveLength(1);
   expect(actualApprovals[0].status).toBe("approved");
 });
@@ -9518,14 +9558,14 @@ test("purchase request recovery confirms, backs up exact bytes uniquely, preserv
   const unreadableRaw = "\n { \"legacy\": \"نیاز خرید قدیمی\", \"unknown\": [\"الف\", ۲] } \n";
   const oldBackupKey = `${purchaseRequestRecoveryBackupPrefix}existing-backup`;
   const oldBackupValue = "نسخهٔ پشتیبان قدیمی — دست‌نخورده";
-  const dependentSeed: Record<(typeof purchaseRequestRecoveryDependentKeys)[number], string> = {
-    "chida-prototype-project-approvals:v1": "\n[]\n",
+  const dependentSeed: Record<string, string> = {
     "chida-prototype-project-supplier-contacts:v1": " [] ",
     "chida-prototype-project-dispatch-drafts:v1": "\t[]",
     "chida-prototype-project-dispatch-plan-approvals:v1": "\r\n[]\n",
     "chida-prototype-builder-recorded-proposals:v1": "\n []",
   };
-  await page.goto("/");
+  await enterBuilderHome(page);
+  await expectBgF4ApprovalFoundationCommitted(page);
   await page.evaluate(({ sourceKey, raw, existingBackupKey, existingBackupValue, dependencies }) => {
     window.localStorage.setItem(sourceKey, raw);
     window.localStorage.setItem(existingBackupKey, existingBackupValue);
@@ -9539,7 +9579,7 @@ test("purchase request recovery confirms, backs up exact bytes uniquely, preserv
   });
   const dependentBytesBefore = await readExactLocalStorageSnapshot(page, purchaseRequestRecoveryDependentKeys);
 
-  await enterBuilderHome(page);
+  await reenterBuilderHomeAfterReload(page);
   await page.getByRole("button", { name: "درخواست قیمت" }).click();
   await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
   await expect(page.getByTestId("purchase-request-add")).toBeDisabled();
@@ -9791,7 +9831,7 @@ test("builder approves an exact purchase request version internally without auth
   await expect(page.getByTestId("project-approval-approve")).toHaveAccessibleDescription(/اطلاعات را بررسی کن/);
   expect(await approvalDetail.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
 
-  let storedApprovals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]"));
+  let storedApprovals = (await readBgF4ApprovalFoundation(page)).envelope.records;
   expect(storedApprovals).toHaveLength(1);
   expect(storedApprovals[0]).toMatchObject({
     projectId: expect.any(String),
@@ -9837,7 +9877,7 @@ test("builder approves an exact purchase request version internally without auth
   await expect(approvalDetail).toContainText("درخواست تأیید شد");
   await expect(page.getByTestId("project-approval-detail-heading")).toBeFocused();
   await expect(page.getByTestId("project-approval-approve")).toHaveCount(0);
-  storedApprovals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]"));
+  storedApprovals = (await readBgF4ApprovalFoundation(page)).envelope.records;
   expect(storedApprovals[0]).toMatchObject({ status: "approved", decidedBy: "شما", decidedAt: expect.any(String), version: 2 });
   expect(storedApprovals[0].history.map((event: { type: string }) => event.type)).toEqual(["created", "approved"]);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"))).toBe(requestStoreBefore);
@@ -9873,7 +9913,7 @@ test("a requested change preserves the reviewed snapshot and requires a fresh ap
   await page.getByTestId("purchase-request-request-approval").click();
   await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
 
-  const firstApproval = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]")[0]);
+  const firstApproval = (await readBgF4ApprovalFoundation(page)).envelope.records[0];
   const firstSnapshot = JSON.stringify(firstApproval.snapshot);
   await page.getByTestId("project-approval-detail-back").click();
   await page.getByTestId("project-tasks-back").click();
@@ -9883,7 +9923,7 @@ test("a requested change preserves the reviewed snapshot and requires a fresh ap
   await expect(page.getByTestId("purchase-request-return-draft")).toBeDisabled();
   await expect(page.getByTestId("purchase-request-request-approval")).toContainText("مشاهده در کارها");
   await page.getByTestId("purchase-request-request-approval").click();
-  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]"))).toHaveLength(1);
+  expect((await readBgF4ApprovalFoundation(page)).envelope.records).toHaveLength(1);
 
   await page.getByTestId("project-approval-needs-changes").click();
   await expect(page.getByTestId("project-approval-status")).toContainText("نیاز به اصلاح ثبت شد");
@@ -9914,7 +9954,7 @@ test("a requested change preserves the reviewed snapshot and requires a fresh ap
   await page.getByTestId("purchase-request-request-approval").click();
   await expect(page.getByTestId("project-approval-detail-view")).toContainText("منتظر تصمیم شما");
 
-  const approvals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]"));
+  const approvals = (await readBgF4ApprovalFoundation(page)).envelope.records;
   expect(approvals).toHaveLength(2);
   expect(approvals.map((approval: { target: { version: number } }) => approval.target.version)).toEqual([2, 5]);
   expect(approvals[0].status).toBe("changes-requested");
@@ -9925,18 +9965,22 @@ test("a requested change preserves the reviewed snapshot and requires a fresh ap
 test("approval creation and decision writes fail closed without advancing local state", async ({ page }) => {
   await createReadyPurchaseRequestForApproval(page);
   const requestStoreBefore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"));
-  await page.evaluate(() => {
+  const approvalFoundationBefore = await expectBgF4ApprovalFoundationCommitted(page);
+  await page.evaluate((approvalKey) => {
     const nativeSetItem = Storage.prototype.setItem;
     Object.defineProperty(window, "__approvalNativeSetItem", { value: nativeSetItem, configurable: true });
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-approvals:v1") throw new DOMException("Approval create failed", "QuotaExceededError");
+      if (this === window.localStorage && key === approvalKey) throw new DOMException("Approval create failed", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
-  });
+  }, bgF4ApprovalCanonicalStorageKey);
   await page.getByTestId("purchase-request-request-approval").click();
   await expect(page.getByTestId("purchase-request-detail-storage-error")).toContainText("ثبت در صف تأیید انجام نشد");
   await expect(page.getByTestId("project-approval-detail-view")).toHaveCount(0);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1"))).toBeNull();
+  const failedCreateFoundation = await readBgF4ApprovalFoundation(page);
+  expect(failedCreateFoundation.canonicalRaw).toBe(approvalFoundationBefore.canonicalRaw);
+  expect(failedCreateFoundation.markerRaw).toBe(approvalFoundationBefore.markerRaw);
+  expect(failedCreateFoundation.envelope.records).toEqual([]);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"))).toBe(requestStoreBefore);
 
   await page.evaluate(() => {
@@ -9944,39 +9988,39 @@ test("approval creation and decision writes fail closed without advancing local 
   });
   await page.getByTestId("purchase-request-request-approval").click();
   await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
-  const pendingStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1"));
-  await page.evaluate(() => {
+  const pendingStore = (await readBgF4ApprovalFoundation(page)).canonicalRaw;
+  await page.evaluate((approvalKey) => {
     const nativeSetItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-approvals:v1") throw new DOMException("Approval decision failed", "QuotaExceededError");
+      if (this === window.localStorage && key === approvalKey) throw new DOMException("Approval decision failed", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
-  });
+  }, bgF4ApprovalCanonicalStorageKey);
   await page.getByTestId("project-approval-approve").click();
   await expect(page.getByTestId("project-approval-storage-error")).toContainText("تصمیم ذخیره نشد");
   await expect(page.getByTestId("project-approval-status")).toContainText("منتظر تصمیم شما");
   await expect(page.getByTestId("project-approval-approve")).toBeVisible();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1"))).toBe(pendingStore);
+  expect((await readBgF4ApprovalFoundation(page)).canonicalRaw).toBe(pendingStore);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"))).toBe(requestStoreBefore);
 });
 
 test("approval read failure stays separate from healthy tasks and locks only dependent request actions", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.addInitScript(() => {
+  await page.addInitScript((approvalKey) => {
     const nativeGetItem = Storage.prototype.getItem;
     const nativeSetItem = Storage.prototype.setItem;
     Object.defineProperty(window, "__approvalWriteAttempts", { value: 0, writable: true, configurable: true });
     Storage.prototype.getItem = function getItem(key: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-approvals:v1") throw new DOMException("Approval storage read failed", "SecurityError");
+      if (this === window.localStorage && key === approvalKey) throw new DOMException("Approval storage read failed", "SecurityError");
       return nativeGetItem.call(this, key);
     };
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-approvals:v1") {
+      if (this === window.localStorage && key === approvalKey) {
         (window as Window & { __approvalWriteAttempts: number }).__approvalWriteAttempts += 1;
       }
       return nativeSetItem.call(this, key, value);
     };
-  });
+  }, bgF4ApprovalCanonicalStorageKey);
   await enterBuilderHome(page);
   await page.getByTestId("menu-button").click();
   await page.getByTestId("drawer-tasks-entry").click();
@@ -10013,13 +10057,13 @@ test("a completed task remains visible when only approval history is unreadable"
   await page.getByTestId("project-task-card").click();
   await page.getByTestId("project-task-status-toggle").click();
   await expect(page.getByTestId("project-task-status-toggle")).toContainText("بازگشایی کار");
-  await page.addInitScript(() => {
+  await page.addInitScript((approvalKey) => {
     const nativeGetItem = Storage.prototype.getItem;
     Storage.prototype.getItem = function getItem(key: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-approvals:v1") throw new DOMException("Approval storage read failed", "SecurityError");
+      if (this === window.localStorage && key === approvalKey) throw new DOMException("Approval storage read failed", "SecurityError");
       return nativeGetItem.call(this, key);
     };
-  });
+  }, bgF4ApprovalCanonicalStorageKey);
   await page.reload();
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
@@ -10059,11 +10103,12 @@ test("approval parser rejects a snapshot that no longer matches its exact pendin
   await createReadyPurchaseRequestForApproval(page);
   await page.getByTestId("purchase-request-request-approval").click();
   await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
-  await page.evaluate(() => {
-    const approvals = JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]");
-    approvals[0].snapshot.item.quantity = "7";
-    window.localStorage.setItem("chida-prototype-project-approvals:v1", JSON.stringify(approvals));
-  });
+  const foundation = await readBgF4ApprovalFoundation(page);
+  foundation.envelope.records[0].snapshot.item.quantity = "7";
+  foundation.envelope.records[0].snapshot.items[0].quantity = "7";
+  rehashProjectFoundationValue(foundation.envelope.records[0]);
+  rehashProjectFoundationValue(foundation.envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF4ApprovalCanonicalStorageKey, raw: JSON.stringify(foundation.envelope) });
   await page.reload();
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
@@ -10079,14 +10124,13 @@ test("approval parser rejects a duplicate project request version tuple", async 
   await createReadyPurchaseRequestForApproval(page);
   await page.getByTestId("purchase-request-request-approval").click();
   await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
-  await page.evaluate(() => {
-    const approvals = JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]");
-    const duplicate = structuredClone(approvals[0]);
-    duplicate.id = "approval-duplicate-tuple";
-    duplicate.history[0].id = "approval-event-duplicate-tuple";
-    approvals.push(duplicate);
-    window.localStorage.setItem("chida-prototype-project-approvals:v1", JSON.stringify(approvals));
-  });
+  const foundation = await readBgF4ApprovalFoundation(page);
+  const duplicate = structuredClone(foundation.envelope.records[0]);
+  duplicate.id = "approval-duplicate-tuple";
+  rehashProjectFoundationValue(duplicate);
+  foundation.envelope.records.push(duplicate);
+  rehashProjectFoundationValue(foundation.envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF4ApprovalCanonicalStorageKey, raw: JSON.stringify(foundation.envelope) });
   await page.reload();
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
@@ -10102,14 +10146,15 @@ test("approval parser requires the exact target version to have reached ready-fo
   await createReadyPurchaseRequestForApproval(page);
   await page.getByTestId("purchase-request-request-approval").click();
   await page.getByTestId("project-approval-approve").click();
-  await page.evaluate(() => {
-    const requests = JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]");
-    const approvals = JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]");
-    approvals[0].target.version = 1;
-    approvals[0].target.updatedAt = requests[0].createdAt;
-    approvals[0].dedupeKey = `${approvals[0].projectId}:${approvals[0].target.id}:1:review-purchase-request-version`;
-    window.localStorage.setItem("chida-prototype-project-approvals:v1", JSON.stringify(approvals));
-  });
+  await expect.poll(async () => (await readBgF4ApprovalFoundation(page)).envelope?.idempotencyReceipts?.filter((candidate: any) => candidate.action === "decide-content-approval").length ?? 0).toBe(1);
+  const foundation = await readBgF4ApprovalFoundation(page);
+  const request = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]")[0]);
+  foundation.envelope.records[0].target.version = 1;
+  foundation.envelope.records[0].target.updatedAt = request.createdAt;
+  foundation.envelope.records[0].dedupeKey = `${foundation.envelope.records[0].projectId}:${foundation.envelope.records[0].target.id}:1:review-purchase-request-version`;
+  rehashProjectFoundationValue(foundation.envelope.records[0]);
+  rehashProjectFoundationValue(foundation.envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF4ApprovalCanonicalStorageKey, raw: JSON.stringify(foundation.envelope) });
   await page.reload();
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
@@ -10124,11 +10169,16 @@ test("approval parser requires every audit history to start with a created event
   await createReadyPurchaseRequestForApproval(page);
   await page.getByTestId("purchase-request-request-approval").click();
   await page.getByTestId("project-approval-approve").click();
-  await page.evaluate(() => {
-    const approvals = JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]");
-    approvals[0].history[0].type = "approved";
-    window.localStorage.setItem("chida-prototype-project-approvals:v1", JSON.stringify(approvals));
-  });
+  await expect.poll(async () => {
+    const current = await readBgF4ApprovalFoundation(page);
+    return current.envelope?.idempotencyReceipts?.filter((candidate: any) => candidate.action === "decide-content-approval").length ?? 0;
+  }).toBe(1);
+  const foundation = await readBgF4ApprovalFoundation(page);
+  foundation.envelope.records[0].history[0].type = "approved";
+  rehashProjectFoundationValue(foundation.envelope.records[0].history[0]);
+  rehashProjectFoundationValue(foundation.envelope.records[0]);
+  rehashProjectFoundationValue(foundation.envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF4ApprovalCanonicalStorageKey, raw: JSON.stringify(foundation.envelope) });
   await page.reload();
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
@@ -10354,18 +10404,18 @@ test("T6-B2 rejects a tampered historical approval revision after a fresh approv
   await page.getByTestId("purchase-request-request-approval").click();
   await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
 
-  const approvalsBeforeTamper = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]"));
+  const approvalsBeforeTamper = (await readBgF4ApprovalFoundation(page)).envelope.records;
   expect(approvalsBeforeTamper).toHaveLength(2);
-  expect(approvalsBeforeTamper[0]).toMatchObject({ schemaVersion: 2, status: "changes-requested", snapshot: { items: [{ quantity: "5" }] } });
-  expect(approvalsBeforeTamper[1]).toMatchObject({ schemaVersion: 2, status: "pending", snapshot: { items: [{ quantity: "6" }] } });
+  expect(approvalsBeforeTamper[0]).toMatchObject({ schemaVersion: 3, status: "changes-requested", snapshot: { items: [{ quantity: "5" }] } });
+  expect(approvalsBeforeTamper[1]).toMatchObject({ schemaVersion: 3, status: "pending", snapshot: { items: [{ quantity: "6" }] } });
   expect(approvalsBeforeTamper[0].target.revisionId).not.toBe(approvalsBeforeTamper[1].target.revisionId);
 
-  await page.evaluate(() => {
-    const approvals = JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]");
-    approvals[0].snapshot.items[0].quantity = "999";
-    approvals[0].snapshot.item.quantity = "999";
-    window.localStorage.setItem("chida-prototype-project-approvals:v1", JSON.stringify(approvals));
-  });
+  const foundation = await readBgF4ApprovalFoundation(page);
+  foundation.envelope.records[0].snapshot.items[0].quantity = "999";
+  foundation.envelope.records[0].snapshot.item.quantity = "999";
+  rehashProjectFoundationValue(foundation.envelope.records[0]);
+  rehashProjectFoundationValue(foundation.envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF4ApprovalCanonicalStorageKey, raw: JSON.stringify(foundation.envelope) });
   await page.reload();
   await reachBuilderWelcome(page);
   await page.getByTestId("enter-home").click();
@@ -10414,7 +10464,7 @@ test("T6-B2 versions removal of a saved item and rejects coordinated duplicate i
     { version: 5, itemCount: 1 },
   ]);
 
-  await page.evaluate(() => {
+  const tamperedRequest = await page.evaluate(() => {
     const stableValue = (value: unknown): unknown => {
       if (Array.isArray(value)) return value.map(stableValue);
       if (value && typeof value === "object") {
@@ -10434,11 +10484,16 @@ test("T6-B2 versions removal of a saved item and rejects coordinated duplicate i
     const historicalRevision = requests[0].reviewRevisions.find((revision: { requestVersion: number }) => revision.requestVersion === 2);
     historicalRevision.snapshot.items[1].id = historicalRevision.snapshot.items[0].id;
     historicalRevision.fingerprint = `fnv1a-${stableHash(JSON.stringify(stableValue({ snapshot: historicalRevision.snapshot, shareableFields: historicalRevision.shareableFields })))}`;
-    const approvals = JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]");
-    approvals[0].snapshot = structuredClone(historicalRevision.snapshot);
     window.localStorage.setItem("chida-prototype-project-purchase-requests:v1", JSON.stringify(requests));
-    window.localStorage.setItem("chida-prototype-project-approvals:v1", JSON.stringify(approvals));
+    return requests[0];
   });
+  const tamperedHistoricalRevision = tamperedRequest.reviewRevisions.find((revision: { requestVersion: number }) => revision.requestVersion === 2);
+  const foundation = await readBgF4ApprovalFoundation(page);
+  foundation.envelope.records[0].snapshot = structuredClone(tamperedHistoricalRevision.snapshot);
+  foundation.envelope.records[0].target.revisionFingerprint = tamperedHistoricalRevision.fingerprint;
+  rehashProjectFoundationValue(foundation.envelope.records[0]);
+  rehashProjectFoundationValue(foundation.envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF4ApprovalCanonicalStorageKey, raw: JSON.stringify(foundation.envelope) });
 
   await page.reload();
   await reachBuilderWelcome(page);
@@ -10521,10 +10576,245 @@ test("T6-B2 keeps request item and clarification versions stable on a no-op save
   );
 });
 
-test("T6-B2 keeps exact current and historical v1 approvals readable across deterministic reload migration", async ({ page }) => {
+test("T6-B2 migrates an exact historical v1 approval before first load and ignores later v1 writes", async ({ page }) => {
+  const fixture = await seedBgF4LegacyApprovalBeforeFirstAppLoad(page, "approved");
+  await openBgF4Tasks(page, "completed");
+  await expect(page.getByTestId("project-approval-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-approval-card")).toHaveCount(1);
+  await expect(page.getByTestId("project-approval-card")).toContainText("میلگرد آجدار");
+
+  const committed = await expectBgF4ApprovalFoundationCommitted(page);
+  expect(committed.envelope.records).toEqual([expect.objectContaining({
+    id: fixture.approvalId,
+    projectId: fixture.projectId,
+    status: "approved",
+    target: expect.objectContaining({ id: fixture.requestId, version: 2 }),
+  })]);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey)).toBe(fixture.approvalRaw);
+
+  const lateLegacyRaw = "{late-malformed-v1-must-not-regain-authority";
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF4ApprovalLegacyStorageKey, raw: lateLegacyRaw });
+  await page.reload();
+  await openBgF4Tasks(page, "completed");
+  await expect(page.getByTestId("project-approval-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-approval-card")).toHaveCount(1);
+  await expect(page.getByTestId("project-approval-card")).toContainText("میلگرد آجدار");
+
+  const reloaded = await expectBgF4ApprovalFoundationCommitted(page);
+  expect(reloaded.canonicalRaw).toBe(committed.canonicalRaw);
+  expect(reloaded.markerRaw).toBe(committed.markerRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey)).toBe(lateLegacyRaw);
+});
+
+// BG-F4 — Request Content Approval Foundation black-box contract
+
+const bgF4ApprovalWriteLockName = purchaseRequestWriteLockName;
+
+type BgF4LegacyApprovalStatus = "pending" | "approved";
+
+async function readBgF4ApprovalFoundation(page: Page) {
+  return page.evaluate(({ canonicalKey, markerKey }) => {
+    const canonicalRaw = window.localStorage.getItem(canonicalKey);
+    const markerRaw = window.localStorage.getItem(markerKey);
+    const parse = (raw: string | null) => {
+      if (raw === null) return null;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    };
+    return { canonicalRaw, markerRaw, envelope: parse(canonicalRaw), marker: parse(markerRaw) };
+  }, { canonicalKey: bgF4ApprovalCanonicalStorageKey, markerKey: bgF4ApprovalCutoverMarkerStorageKey });
+}
+
+async function expectBgF4ApprovalFoundationCommitted(page: Page) {
+  await expect.poll(async () => {
+    const foundation = await readBgF4ApprovalFoundation(page);
+    return {
+      hasCanonical: foundation.canonicalRaw !== null,
+      markerState: foundation.marker?.state ?? null,
+    };
+  }).toEqual({ hasCanonical: true, markerState: "committed" });
+  return readBgF4ApprovalFoundation(page);
+}
+
+test("BG-F4 migrates an actual BG-F3 compound confirmation with equal event timestamps", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createBgF4CompoundConfirmationDraft(page);
+  await page.getByTestId("purchase-request-ready").click();
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+
+  const source = await page.evaluate(({ requestKey, canonicalKey, legacyKey, markerKey }) => {
+    const requestRaw = window.localStorage.getItem(requestKey)!;
+    const envelope = JSON.parse(window.localStorage.getItem(canonicalKey)!);
+    const record = envelope.records[0];
+    const legacy = {
+      schemaVersion: 2,
+      id: record.id,
+      projectId: record.projectId,
+      purpose: record.purpose,
+      target: { type: record.target.type, id: record.target.id, version: record.target.version, updatedAt: record.target.updatedAt, revisionId: record.target.revisionId },
+      dedupeKey: record.dedupeKey,
+      snapshot: record.snapshot,
+      privacySnapshot: record.privacySnapshot,
+      externalEffect: record.externalEffect,
+      destination: record.destination,
+      sendAuthorized: record.sendAuthorized,
+      status: record.status,
+      visibility: record.visibility,
+      localStatus: record.localStatus,
+      requestedBy: record.requestedBy,
+      decidedBy: record.decidedBy,
+      requestedAt: record.requestedAt,
+      updatedAt: record.updatedAt,
+      decidedAt: record.decidedAt,
+      version: record.version,
+      history: record.history.map((event: any, index: number) => ({ id: `bg-f3-compound-event-${index + 1}`, type: event.type, actor: "شما", at: event.at, version: event.version })),
+    };
+    const legacyRaw = JSON.stringify([legacy]);
+    window.localStorage.setItem(legacyKey, legacyRaw);
+    window.localStorage.removeItem(canonicalKey);
+    window.localStorage.removeItem(markerKey);
+    return { requestRaw, legacyRaw, approvalId: record.id, eventAt: record.requestedAt };
+  }, { requestKey: purchaseRequestRecoverySourceKey, canonicalKey: bgF4ApprovalCanonicalStorageKey, legacyKey: bgF4ApprovalLegacyStorageKey, markerKey: bgF4ApprovalCutoverMarkerStorageKey });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  const committed = await expectBgF4ApprovalFoundationCommitted(page);
+  expect(committed.envelope.records).toHaveLength(1);
+  expect(committed.envelope.idempotencyReceipts).toHaveLength(0);
+  expect(committed.envelope.records[0].id).toBe(source.approvalId);
+  expect(committed.envelope.records[0].legacyEvidence.receiptCoverage).toBe("request-confirmation");
+  expect(committed.envelope.records[0].history.map((event: any) => event.at)).toEqual([source.eventAt, source.eventAt]);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(source.requestRaw);
+
+  const committedBytes = { canonicalRaw: committed.canonicalRaw, markerRaw: committed.markerRaw };
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expectBgF4ApprovalFoundationCommitted(page);
+  const reloaded = await readBgF4ApprovalFoundation(page);
+  expect({ canonicalRaw: reloaded.canonicalRaw, markerRaw: reloaded.markerRaw }).toEqual(committedBytes);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey)).toBe(source.legacyRaw);
+});
+
+test("BG-F4 rolls back one exact BG-F3 orphan confirmation with explicit migration evidence", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createBgF4CompoundConfirmationDraft(page);
+  await page.getByTestId("purchase-request-ready").click();
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  const source = await page.evaluate(({ requestKey, canonicalKey, markerKey, legacyKey }) => {
+    const requestRaw = window.localStorage.getItem(requestKey)!;
+    const request = JSON.parse(requestRaw)[0];
+    const confirmationReceipt = request.mutationReceipts.find((receipt: any) => receipt.action === "confirm-for-recipients");
+    window.localStorage.removeItem(canonicalKey);
+    window.localStorage.removeItem(markerKey);
+    window.localStorage.removeItem(legacyKey);
+    return { requestRaw, requestId: request.id, approvalId: confirmationReceipt.relatedApprovalId, sourceVersion: request.version };
+  }, { requestKey: purchaseRequestRecoverySourceKey, canonicalKey: bgF4ApprovalCanonicalStorageKey, markerKey: bgF4ApprovalCutoverMarkerStorageKey, legacyKey: bgF4ApprovalLegacyStorageKey });
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  const committed = await expectBgF4ApprovalFoundationCommitted(page);
+  expect(committed.envelope.records).toHaveLength(0);
+  expect(committed.envelope.idempotencyReceipts).toHaveLength(0);
+  expect(committed.envelope.migrationReports[0].orphanConfirmationRollbacks).toHaveLength(1);
+  const evidence = committed.envelope.migrationReports[0].orphanConfirmationRollbacks[0];
+  expect(evidence.kind).toBe("bg-f3-orphan-confirmation-rollback-v1");
+  expect(evidence.requestId).toBe(source.requestId);
+  expect(evidence.approvalId).toBe(source.approvalId);
+  expect(evidence.sourceRequestVersion).toBe(source.sourceVersion);
+  const candidateRaw = await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey);
+  expect(candidateRaw).not.toBe(source.requestRaw);
+  const candidate = JSON.parse(candidateRaw!)[0];
+  expect(candidate.status).toBe("draft");
+  expect(candidate.version).toBe(source.sourceVersion - 1);
+  expect(candidate.readyAt).toBeNull();
+  expect(candidate.mutationReceipts.some((receipt: any) => receipt.action === "confirm-for-recipients")).toBe(false);
+  expect(candidate.reviewRevisions.some((revision: any) => revision.requestVersion === source.sourceVersion)).toBe(false);
+
+  const committedBytes = { requestRaw: candidateRaw, canonicalRaw: committed.canonicalRaw, markerRaw: committed.markerRaw };
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expectBgF4ApprovalFoundationCommitted(page);
+  expect(await page.evaluate(({ requestKey, canonicalKey, markerKey }) => ({
+    requestRaw: window.localStorage.getItem(requestKey),
+    canonicalRaw: window.localStorage.getItem(canonicalKey),
+    markerRaw: window.localStorage.getItem(markerKey),
+  }), { requestKey: purchaseRequestRecoverySourceKey, canonicalKey: bgF4ApprovalCanonicalStorageKey, markerKey: bgF4ApprovalCutoverMarkerStorageKey })).toEqual(committedBytes);
+
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId("purchase-request-card").click();
+  await page.getByTestId("purchase-request-ready").click();
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  const reconfirmed = await readBgF4ApprovalFoundation(page);
+  expect(reconfirmed.envelope.records).toHaveLength(1);
+  expect(reconfirmed.envelope.idempotencyReceipts.filter((receipt: any) => receipt.action === "confirm-for-recipients")).toHaveLength(1);
+  expect(reconfirmed.envelope.migrationReports[0].orphanConfirmationRollbacks).toHaveLength(1);
+});
+
+test("BG-F4 refuses to roll back a non-tail BG-F3 confirmation receipt", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createBgF4CompoundConfirmationDraft(page);
+  await page.getByTestId("purchase-request-ready").click();
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await page.getByTestId("dispatch-planner-back").click();
+  await page.getByTestId("purchase-request-return-draft").click();
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toContainText("در حال تکمیل");
+
+  const requestRaw = await page.evaluate(({ requestKey, canonicalKey, markerKey, legacyKey }) => {
+    const raw = window.localStorage.getItem(requestKey)!;
+    const request = JSON.parse(raw)[0];
+    const receiptActions = request.mutationReceipts.map((receipt: any) => receipt.action);
+    if (!receiptActions.includes("confirm-for-recipients") || receiptActions.at(-1) !== "return-to-draft") throw new Error("Expected a non-tail confirmation receipt");
+    window.localStorage.removeItem(canonicalKey);
+    window.localStorage.removeItem(markerKey);
+    window.localStorage.removeItem(legacyKey);
+    return raw;
+  }, { requestKey: purchaseRequestRecoverySourceKey, canonicalKey: bgF4ApprovalCanonicalStorageKey, markerKey: bgF4ApprovalCutoverMarkerStorageKey, legacyKey: bgF4ApprovalLegacyStorageKey });
+
+  await page.reload();
+  await openBgF4Tasks(page, "completed");
+  await expect(page.getByTestId("project-approval-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCanonicalStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCutoverMarkerStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(requestRaw);
+});
+
+async function openBgF4Tasks(page: Page, filter: "approval" | "completed") {
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await page.getByTestId(`project-task-filter-${filter}`).click();
+}
+
+async function seedBgF4LegacyApprovalBeforeFirstAppLoad(
+  page: Page,
+  status: BgF4LegacyApprovalStatus,
+  options: { includeApproval?: boolean; sourceSchemaVersion?: number } = {},
+) {
+  const includeApproval = options.includeApproval ?? true;
+  const suffix = status === "pending" ? "pending" : "decided";
+  const projectId = `bg-f4-legacy-${suffix}-project`;
+  const requestId = `bg-f4-legacy-${suffix}-request`;
+  const itemId = `bg-f4-legacy-${suffix}-item`;
+  const approvalId = `bg-f4-legacy-${suffix}-approval`;
+  const createdAt = "2026-08-28T09:00:00.000Z";
+  const readyAt = "2026-08-28T09:01:00.000Z";
+  const requestedAt = "2026-08-28T09:02:00.000Z";
+  const decidedAt = "2026-08-28T09:03:00.000Z";
+  const returnedAt = "2026-08-28T09:04:00.000Z";
+
   await seedLegacyProjectsBeforeFirstAppLoad(page, [{
-    id: "legacy-t6b2-project",
-    name: "پروژه مهاجرت",
+    id: projectId,
+    name: `پروژه مهاجرت ${suffix}`,
     location: "سعادت‌آباد",
     stage: "اسکلت بندی",
     usage: "",
@@ -10534,122 +10824,3330 @@ test("T6-B2 keeps exact current and historical v1 approvals readable across dete
     basementFloors: "",
     unitCount: "",
     createdAt: "2026-08-28T08:00:00.000Z",
-  }], "legacy-t6b2-project");
-  await page.goto("/");
-  await page.evaluate(() => {
-    const projectId = "legacy-t6b2-project";
-    const requestId = "legacy-t6b2-request";
-    const createdAt = "2026-08-28T09:00:00.000Z";
-    const readyAt = "2026-08-28T09:01:00.000Z";
-    const requestedAt = "2026-08-28T09:02:00.000Z";
-    window.localStorage.setItem("chida-prototype-project-purchase-requests:v1", JSON.stringify([{
-      id: requestId,
-      projectId,
-      requestKind: "product",
-      rawNeed: { text: "پنج تن میلگرد برای ادامهٔ اسکلت لازم است", source: "ثبت مستقیم شما", capturedAt: createdAt },
-      item: { id: "legacy-t6b2-item", name: "میلگرد آجدار", quantity: "5", unit: "تن", brandOrGrade: "A3", specification: "شاخه ۱۲ متری", alternatives: "approval-required", source: "ثبت مستقیم شما", confidence: null },
+  }], projectId);
+
+  const request = {
+    id: requestId,
+    projectId,
+    requestKind: "product",
+    rawNeed: { text: "پنج تن میلگرد برای ادامهٔ اسکلت لازم است", source: "ثبت مستقیم شما", capturedAt: createdAt },
+    item: { id: itemId, name: "میلگرد آجدار", quantity: "5", unit: "تن", brandOrGrade: "A3", specification: "شاخه ۱۲ متری", alternatives: "approval-required", source: "ثبت مستقیم شما", confidence: null },
+    delivery: { city: "تهران", area: "سعادت‌آباد", exactAddressShared: false, neededBy: "تا ۱۲ شهریور" },
+    unresolvedTerms: { transport: "unknown", tax: "unknown", paymentTerms: "unknown" },
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    sharingStatus: "ارسال نشده",
+    status: status === "pending" ? "ready-for-review" : "draft",
+    version: status === "pending" ? 2 : 3,
+    createdAt,
+    updatedAt: status === "pending" ? readyAt : returnedAt,
+    readyAt: status === "pending" ? readyAt : null,
+    history: [
+      { id: `bg-f4-${suffix}-request-created`, type: "created", actor: "شما", at: createdAt, version: 1 },
+      { id: `bg-f4-${suffix}-request-ready`, type: "marked-ready-for-review", actor: "شما", at: readyAt, version: 2 },
+      ...(status === "approved" ? [{ id: `bg-f4-${suffix}-request-returned`, type: "returned-to-draft", actor: "شما", at: returnedAt, version: 3 }] : []),
+    ],
+  };
+  const approval = {
+    id: approvalId,
+    projectId,
+    purpose: "review-purchase-request-version",
+    target: { type: "purchase-request", id: requestId, version: 2, updatedAt: readyAt },
+    dedupeKey: `${projectId}:${requestId}:2:review-purchase-request-version`,
+    snapshot: {
+      rawNeed: "پنج تن میلگرد برای ادامهٔ اسکلت لازم است",
+      item: { id: itemId, name: "میلگرد آجدار", quantity: "5", unit: "تن", brandOrGrade: "A3", specification: "شاخه ۱۲ متری", alternatives: "approval-required", source: "ثبت مستقیم شما", confidence: null },
       delivery: { city: "تهران", area: "سعادت‌آباد", exactAddressShared: false, neededBy: "تا ۱۲ شهریور" },
       unresolvedTerms: { transport: "unknown", tax: "unknown", paymentTerms: "unknown" },
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
       sharingStatus: "ارسال نشده",
-      status: "ready-for-review",
-      version: 2,
-      createdAt,
-      updatedAt: readyAt,
-      readyAt,
-      history: [
-        { id: "legacy-t6b2-request-created", type: "created", actor: "شما", at: createdAt, version: 1 },
-        { id: "legacy-t6b2-request-ready", type: "marked-ready-for-review", actor: "شما", at: readyAt, version: 2 },
-      ],
-    }]));
-    window.localStorage.setItem("chida-prototype-project-approvals:v1", JSON.stringify([{
-      id: "legacy-t6b2-approval",
+    },
+    privacySnapshot: {
+      shareableFields: ["item.name", "item.quantity", "item.unit", "item.brandOrGrade", "item.specification", "delivery.neededBy", "delivery.area"],
+      projectNameShared: false,
+      exactAddressShared: false,
+      budgetShared: false,
+      filesShared: false,
+      memoryShared: false,
+    },
+    externalEffect: "none",
+    destination: null,
+    sendAuthorized: false,
+    status,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    requestedBy: "شما",
+    decidedBy: status === "approved" ? "شما" : null,
+    requestedAt,
+    updatedAt: status === "approved" ? decidedAt : requestedAt,
+    decidedAt: status === "approved" ? decidedAt : null,
+    version: status === "approved" ? 2 : 1,
+    history: [
+      { id: `bg-f4-${suffix}-approval-created`, type: "created", actor: "شما", at: requestedAt, version: 1 },
+      ...(status === "approved" ? [{ id: `bg-f4-${suffix}-approval-approved`, type: "approved", actor: "شما", at: decidedAt, version: 2 }] : []),
+    ],
+  };
+  const requestRaw = JSON.stringify([request]);
+  const approvalRaw = JSON.stringify([options.sourceSchemaVersion === undefined ? approval : { ...approval, schemaVersion: options.sourceSchemaVersion }]);
+
+  await page.addInitScript(({ requestKey, approvalKey, seededRequestRaw, seededApprovalRaw, shouldSeedApproval, seedId }) => {
+    const seedMarker = `chida-e2e-bg-f4-legacy-seeded:${seedId}`;
+    if (window.sessionStorage.getItem(seedMarker) === "done") return;
+    window.sessionStorage.setItem(seedMarker, "done");
+    window.localStorage.setItem(requestKey, seededRequestRaw);
+    if (shouldSeedApproval) window.localStorage.setItem(approvalKey, seededApprovalRaw);
+  }, {
+    requestKey: purchaseRequestRecoverySourceKey,
+    approvalKey: bgF4ApprovalLegacyStorageKey,
+    seededRequestRaw: requestRaw,
+    seededApprovalRaw: approvalRaw,
+    shouldSeedApproval: includeApproval,
+    seedId: suffix,
+  });
+
+  return { projectId, requestId, approvalId, requestRaw, approvalRaw };
+}
+
+for (const legacyCase of [
+  { status: "pending", label: "pending" },
+  { status: "approved", label: "decided historical" },
+] as const) {
+  test(`BG-F4 migrates one exact legacy ${legacyCase.label} Approval once and stays byte-stable`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const fixture = await seedBgF4LegacyApprovalBeforeFirstAppLoad(page, legacyCase.status);
+    await openBgF4Tasks(page, legacyCase.status === "pending" ? "approval" : "completed");
+
+    const first = await expectBgF4ApprovalFoundationCommitted(page);
+    expect(first.envelope).toMatchObject({
+      schemaVersion: 2,
+      storeVersion: 1,
+      records: [{
+        id: fixture.approvalId,
+        projectId: fixture.projectId,
+        status: legacyCase.status,
+        target: { id: fixture.requestId, version: 2 },
+      }],
+      idempotencyReceipts: [],
+    });
+    expect(first.marker).toMatchObject({
+      state: "committed",
+      sourceKey: bgF4ApprovalLegacyStorageKey,
+      sourceGeneration: "v1-array",
+    });
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey)).toBe(fixture.approvalRaw);
+
+    await page.reload();
+    await openBgF4Tasks(page, legacyCase.status === "pending" ? "approval" : "completed");
+    const reloaded = await expectBgF4ApprovalFoundationCommitted(page);
+    expect(reloaded.canonicalRaw).toBe(first.canonicalRaw);
+    expect(reloaded.markerRaw).toBe(first.markerRaw);
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey)).toBe(fixture.approvalRaw);
+  });
+}
+
+test("BG-F4 rejects an unknown legacy Approval schema generation without writing canonical bytes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const seeded = await seedBgF4LegacyApprovalBeforeFirstAppLoad(page, "pending", { sourceSchemaVersion: 3 });
+
+  await openBgF4Tasks(page, "approval");
+  await expect(page.getByTestId("project-approval-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCanonicalStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCutoverMarkerStorageKey)).toBeNull();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey)).toBe(seeded.approvalRaw);
+});
+
+test("BG-F4 never falls back from malformed canonical Approval bytes to valid legacy records", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const fixture = await seedBgF4LegacyApprovalBeforeFirstAppLoad(page, "pending");
+  const malformedCanonicalRaw = "{bg-f4-malformed-canonical";
+  await page.addInitScript(({ canonicalKey, malformedRaw }) => {
+    window.localStorage.setItem(canonicalKey, malformedRaw);
+  }, { canonicalKey: bgF4ApprovalCanonicalStorageKey, malformedRaw: malformedCanonicalRaw });
+
+  await openBgF4Tasks(page, "approval");
+  await expect(page.getByTestId("project-approval-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-approval-card")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCanonicalStorageKey)).toBe(malformedCanonicalRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey)).toBe(fixture.approvalRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCutoverMarkerStorageKey)).toBeNull();
+});
+
+test("BG-F4 keeps a valid empty committed Approval envelope authoritative over later legacy writes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const fixture = await seedBgF4LegacyApprovalBeforeFirstAppLoad(page, "pending", { includeApproval: false });
+  await openBgF4Tasks(page, "approval");
+  const committedEmpty = await expectBgF4ApprovalFoundationCommitted(page);
+  expect(committedEmpty.envelope).toMatchObject({ schemaVersion: 2, storeVersion: 1, records: [], idempotencyReceipts: [] });
+
+  await page.evaluate(({ legacyKey, legacyRaw }) => window.localStorage.setItem(legacyKey, legacyRaw), {
+    legacyKey: bgF4ApprovalLegacyStorageKey,
+    legacyRaw: fixture.approvalRaw,
+  });
+  await page.reload();
+  await openBgF4Tasks(page, "approval");
+
+  await expect(page.getByTestId("project-approval-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("project-approval-card")).toHaveCount(0);
+  const reloaded = await expectBgF4ApprovalFoundationCommitted(page);
+  expect(reloaded.canonicalRaw).toBe(committedEmpty.canonicalRaw);
+  expect(reloaded.markerRaw).toBe(committedEmpty.markerRaw);
+  expect(reloaded.envelope.records).toEqual([]);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey)).toBe(fixture.approvalRaw);
+});
+
+test("BG-F4 serializes two queued Approval creates into one canonical record and one receipt", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createReadyPurchaseRequestForApproval(page);
+  await expectBgF4ApprovalFoundationCommitted(page);
+  const secondPage = await context.newPage();
+  try {
+    await secondPage.setViewportSize({ width: 390, height: 844 });
+    await enterBuilderHome(secondPage);
+    await secondPage.getByTestId("quick-action-purchase-request").click();
+    await secondPage.keyboard.press("Escape");
+    await secondPage.getByTestId("purchase-request-card").click();
+
+    await page.evaluate((name) => {
+      const lockWindow = window as Window & { __bgF4CreateLockHeld?: boolean; __releaseBgF4CreateLock?: () => void };
+      void navigator.locks.request(name, { mode: "exclusive" }, async () => {
+        lockWindow.__bgF4CreateLockHeld = true;
+        await new Promise<void>((resolve) => { lockWindow.__releaseBgF4CreateLock = resolve; });
+      });
+    }, bgF4ApprovalWriteLockName);
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __bgF4CreateLockHeld?: boolean }).__bgF4CreateLockHeld))).toBe(true);
+
+    await page.getByTestId("purchase-request-request-approval").click();
+    await secondPage.getByTestId("purchase-request-request-approval").click();
+    await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, bgF4ApprovalWriteLockName)).toBe(2);
+    await page.evaluate(() => {
+      const lockWindow = window as Window & { __releaseBgF4CreateLock?: () => void };
+      const release = lockWindow.__releaseBgF4CreateLock;
+      delete lockWindow.__releaseBgF4CreateLock;
+      release?.();
+    });
+
+    await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
+    await expect(secondPage.getByTestId("project-approval-detail-view")).toBeVisible();
+    await expect.poll(async () => (await readBgF4ApprovalFoundation(page)).envelope?.records?.length ?? 0).toBe(1);
+    const foundation = await readBgF4ApprovalFoundation(page);
+    const createReceipts = foundation.envelope.idempotencyReceipts.filter((receipt: any) => receipt.action === "create-content-approval");
+    expect(createReceipts).toHaveLength(1);
+    expect(createReceipts[0].approvalId).toBe(foundation.envelope.records[0].id);
+    expect(foundation.envelope.records[0].status).toBe("pending");
+  } finally {
+    await page.evaluate(() => (window as Window & { __releaseBgF4CreateLock?: () => void }).__releaseBgF4CreateLock?.()).catch(() => undefined);
+    await secondPage.close();
+  }
+});
+
+test("BG-F4 accepts exactly one winner when stale tabs choose opposite Approval decisions", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createReadyPurchaseRequestForApproval(page);
+  await expectBgF4ApprovalFoundationCommitted(page);
+  await page.getByTestId("purchase-request-request-approval").click();
+  await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
+
+  const secondPage = await context.newPage();
+  try {
+    await secondPage.setViewportSize({ width: 390, height: 844 });
+    await enterBuilderHome(secondPage);
+    await secondPage.getByTestId("menu-button").click();
+    await secondPage.getByTestId("drawer-tasks-entry").click();
+    await secondPage.getByTestId("project-task-filter-approval").click();
+    await secondPage.getByTestId("project-approval-card").click();
+
+    await page.evaluate((name) => {
+      const lockWindow = window as Window & { __bgF4DecisionLockHeld?: boolean; __releaseBgF4DecisionLock?: () => void };
+      void navigator.locks.request(name, { mode: "exclusive" }, async () => {
+        lockWindow.__bgF4DecisionLockHeld = true;
+        await new Promise<void>((resolve) => { lockWindow.__releaseBgF4DecisionLock = resolve; });
+      });
+    }, bgF4ApprovalWriteLockName);
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __bgF4DecisionLockHeld?: boolean }).__bgF4DecisionLockHeld))).toBe(true);
+
+    await page.getByTestId("project-approval-approve").click();
+    await secondPage.getByTestId("project-approval-needs-changes").click();
+    await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, bgF4ApprovalWriteLockName)).toBe(2);
+    await page.evaluate(() => {
+      const lockWindow = window as Window & { __releaseBgF4DecisionLock?: () => void };
+      const release = lockWindow.__releaseBgF4DecisionLock;
+      delete lockWindow.__releaseBgF4DecisionLock;
+      release?.();
+    });
+
+    await expect(page.getByTestId("project-approval-status")).toContainText("درخواست تأیید شد");
+    await expect(secondPage.getByTestId("project-approval-storage-error")).toBeVisible();
+    await expect.poll(async () => (await readBgF4ApprovalFoundation(page)).envelope?.records?.[0]?.version ?? 0).toBe(2);
+    const foundation = await readBgF4ApprovalFoundation(page);
+    expect(foundation.envelope.records).toHaveLength(1);
+    expect(foundation.envelope.records[0]).toMatchObject({ status: "approved", version: 2 });
+    expect(foundation.envelope.records[0].history.map((event: any) => event.type)).toEqual(["created", "approved"]);
+    expect(foundation.envelope.idempotencyReceipts.filter((receipt: any) => receipt.action === "decide-content-approval")).toHaveLength(1);
+  } finally {
+    await page.evaluate(() => (window as Window & { __releaseBgF4DecisionLock?: () => void }).__releaseBgF4DecisionLock?.()).catch(() => undefined);
+    await secondPage.close();
+  }
+});
+
+test("BG-F4 fail-closes a coherently rehashed broken Request confirmation and Approval receipt backlink", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await expectBgF4ApprovalFoundationCommitted(page);
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.getByTestId("purchase-request-raw-input").fill("پنج تن میلگرد آجدار برای ادامهٔ اسکلت لازم است");
+  await page.getByTestId("purchase-request-item-input").fill("میلگرد آجدار");
+  await page.getByTestId("purchase-request-quantity-input").fill("۵");
+  await chooseProjectOption(page, "purchase-request-unit-select", "تن");
+  await page.getByTestId("purchase-request-mode-advanced").click();
+  await page.getByTestId("purchase-request-brand-input").fill("A3");
+  await page.getByTestId("purchase-request-specification-input").fill("شاخه ۱۲ متری با پلاک تولید");
+  await page.getByTestId("purchase-request-delivery-area-input").fill("سعادت‌آباد");
+  await page.getByTestId("purchase-request-needed-by-input").fill("تا ۱۲ شهریور");
+  await page.getByTestId("purchase-request-save").click();
+  await page.getByTestId("purchase-request-ready").click();
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await page.getByTestId("dispatch-technical-details").locator("summary").click();
+  await expect.poll(async () => (await readBgF4ApprovalFoundation(page)).envelope?.records?.length ?? 0).toBe(1);
+
+  const requestRawBefore = await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey);
+  const requests = JSON.parse(requestRawBefore ?? "[]");
+  const confirmationReceipt = requests[0].mutationReceipts.find((receipt: any) => receipt.action === "confirm-for-recipients");
+  const foundation = await readBgF4ApprovalFoundation(page);
+  const approval = foundation.envelope.records[0];
+  const approvalReceipt = foundation.envelope.idempotencyReceipts.find((receipt: any) => receipt.action === "confirm-for-recipients");
+  expect(confirmationReceipt.relatedApprovalId).toBe(approval.id);
+  expect(approvalReceipt.approvalId).toBe(approval.id);
+  expect(approvalReceipt.requestMutationReceiptKey).toBe(confirmationReceipt.key);
+
+  approvalReceipt.requestMutationReceiptKey = `${confirmationReceipt.key}:tampered`;
+  rehashProjectFoundationValue(approvalReceipt);
+  rehashProjectFoundationValue(foundation.envelope);
+  const tamperedCanonicalRaw = JSON.stringify(foundation.envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF4ApprovalCanonicalStorageKey, raw: tamperedCanonicalRaw });
+
+  await page.reload();
+  await openBgF4Tasks(page, "completed");
+  await expect(page.getByTestId("project-approval-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-approval-card")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCanonicalStorageKey)).toBe(tamperedCanonicalRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(requestRawBefore);
+});
+
+test("BG-F4 keeps Approval retryable and writes nothing when Web Locks are unavailable", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createReadyPurchaseRequestForApproval(page);
+  const before = await expectBgF4ApprovalFoundationCommitted(page);
+  const legacyRawBefore = await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey);
+
+  await page.evaluate(({ canonicalKey, legacyKey, markerKey }) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    const testWindow = window as Window & { __bgF4ApprovalWriteAttempts?: number };
+    testWindow.__bgF4ApprovalWriteAttempts = 0;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && (key === canonicalKey || key === legacyKey || key === markerKey)) testWindow.__bgF4ApprovalWriteAttempts = (testWindow.__bgF4ApprovalWriteAttempts ?? 0) + 1;
+      return nativeSetItem.call(this, key, value);
+    };
+    Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined });
+  }, { canonicalKey: bgF4ApprovalCanonicalStorageKey, legacyKey: bgF4ApprovalLegacyStorageKey, markerKey: bgF4ApprovalCutoverMarkerStorageKey });
+
+  await page.getByTestId("purchase-request-request-approval").click();
+  await expect(page.getByTestId("purchase-request-detail-storage-error")).toBeVisible();
+  await expect(page.getByTestId("project-approval-detail-view")).toHaveCount(0);
+  await expect(page.getByTestId("purchase-request-request-approval")).toBeEnabled();
+  expect(await page.evaluate(() => (window as Window & { __bgF4ApprovalWriteAttempts?: number }).__bgF4ApprovalWriteAttempts)).toBe(0);
+  const after = await readBgF4ApprovalFoundation(page);
+  expect(after.canonicalRaw).toBe(before.canonicalRaw);
+  expect(after.markerRaw).toBe(before.markerRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalLegacyStorageKey)).toBe(legacyRawBefore);
+});
+
+test("BG-F4 resumes an exact compound confirmation after interruption between Request and Approval writes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createBgF4CompoundConfirmationDraft(page);
+  const before = await page.evaluate(({ requestKey, approvalKey }) => ({
+    requestRaw: window.localStorage.getItem(requestKey),
+    approvalRaw: window.localStorage.getItem(approvalKey),
+  }), { requestKey: purchaseRequestRecoverySourceKey, approvalKey: bgF4ApprovalCanonicalStorageKey });
+
+  await page.evaluate((approvalKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === approvalKey) throw new DOMException("BG-F4 simulated Approval interruption", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  }, bgF4ApprovalCanonicalStorageKey);
+
+  await page.getByTestId("purchase-request-ready").click();
+  await expect(page.getByTestId("purchase-request-detail-storage-error")).toBeVisible();
+  const interrupted = await page.evaluate(({ requestKey, approvalKey, intentKey }) => ({
+    requestRaw: window.localStorage.getItem(requestKey),
+    approvalRaw: window.localStorage.getItem(approvalKey),
+    intentRaw: window.localStorage.getItem(intentKey),
+  }), { requestKey: purchaseRequestRecoverySourceKey, approvalKey: bgF4ApprovalCanonicalStorageKey, intentKey: bgF4ApprovalConfirmationIntentStorageKey });
+  expect(interrupted.intentRaw).not.toBeNull();
+  expect(interrupted.requestRaw).not.toBe(before.requestRaw);
+  expect(interrupted.approvalRaw).toBe(before.approvalRaw);
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalConfirmationIntentStorageKey)).toBeNull();
+  const recovered = await page.evaluate(({ requestKey, approvalKey }) => ({
+    requests: JSON.parse(window.localStorage.getItem(requestKey) ?? "[]"),
+    approvals: JSON.parse(window.localStorage.getItem(approvalKey) ?? "{}"),
+  }), { requestKey: purchaseRequestRecoverySourceKey, approvalKey: bgF4ApprovalCanonicalStorageKey });
+  const requestReceipts = recovered.requests[0].mutationReceipts.filter((receipt: any) => receipt.action === "confirm-for-recipients");
+  const approvalReceipts = recovered.approvals.idempotencyReceipts.filter((receipt: any) => receipt.action === "confirm-for-recipients");
+  expect(requestReceipts).toHaveLength(1);
+  expect(approvalReceipts).toHaveLength(1);
+  expect(recovered.approvals.records).toHaveLength(1);
+  expect(requestReceipts[0].relatedApprovalId).toBe(recovered.approvals.records[0].id);
+  expect(approvalReceipts[0].approvalId).toBe(recovered.approvals.records[0].id);
+});
+
+test("BG-F4 preserves an intent blocker for an impossible previous-Request plus next-Approval phase", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createBgF4CompoundConfirmationDraft(page);
+  await page.evaluate((approvalKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__bgF4IntentNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === approvalKey) throw new DOMException("BG-F4 persistent Approval interruption", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  }, bgF4ApprovalCanonicalStorageKey);
+  await page.getByTestId("purchase-request-ready").click();
+  await expect(page.getByTestId("purchase-request-detail-storage-error")).toBeVisible();
+
+  const impossible = await page.evaluate(({ requestKey, approvalKey, markerKey, intentKey }) => {
+    const intentRaw = window.localStorage.getItem(intentKey)!;
+    const intent = JSON.parse(intentRaw);
+    const nativeSetItem = (window as Window & { __bgF4IntentNativeSetItem: typeof Storage.prototype.setItem }).__bgF4IntentNativeSetItem;
+    nativeSetItem.call(window.localStorage, requestKey, intent.previousRequestsRaw);
+    nativeSetItem.call(window.localStorage, approvalKey, intent.nextApprovalsRaw);
+    return { intentRaw, requestRaw: intent.previousRequestsRaw, approvalRaw: intent.nextApprovalsRaw, markerRaw: window.localStorage.getItem(markerKey) };
+  }, { requestKey: purchaseRequestRecoverySourceKey, approvalKey: bgF4ApprovalCanonicalStorageKey, markerKey: bgF4ApprovalCutoverMarkerStorageKey, intentKey: bgF4ApprovalConfirmationIntentStorageKey });
+
+  await page.reload();
+  await openBgF4Tasks(page, "completed");
+  await expect(page.getByTestId("project-approval-read-error")).toBeVisible();
+  expect(await page.evaluate(({ requestKey, approvalKey, markerKey, intentKey }) => ({
+    requestRaw: window.localStorage.getItem(requestKey),
+    approvalRaw: window.localStorage.getItem(approvalKey),
+    markerRaw: window.localStorage.getItem(markerKey),
+    intentRaw: window.localStorage.getItem(intentKey),
+  }), { requestKey: purchaseRequestRecoverySourceKey, approvalKey: bgF4ApprovalCanonicalStorageKey, markerKey: bgF4ApprovalCutoverMarkerStorageKey, intentKey: bgF4ApprovalConfirmationIntentStorageKey })).toEqual(impossible);
+});
+
+test("BG-F4 fail-closes a coherently rehashed intent with a broken Request cross-link", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createBgF4CompoundConfirmationDraft(page);
+  await page.evaluate((approvalKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__bgF4IntentNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === approvalKey) throw new DOMException("BG-F4 persistent Approval interruption", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  }, bgF4ApprovalCanonicalStorageKey);
+  await page.getByTestId("purchase-request-ready").click();
+  await expect(page.getByTestId("purchase-request-detail-storage-error")).toBeVisible();
+
+  const snapshot = await page.evaluate(({ requestKey, approvalKey, markerKey, intentKey }) => ({
+    requestRaw: window.localStorage.getItem(requestKey),
+    approvalRaw: window.localStorage.getItem(approvalKey),
+    markerRaw: window.localStorage.getItem(markerKey),
+    intentRaw: window.localStorage.getItem(intentKey),
+  }), { requestKey: purchaseRequestRecoverySourceKey, approvalKey: bgF4ApprovalCanonicalStorageKey, markerKey: bgF4ApprovalCutoverMarkerStorageKey, intentKey: bgF4ApprovalConfirmationIntentStorageKey });
+  const tamperedIntent = JSON.parse(snapshot.intentRaw!);
+  tamperedIntent.requestId = `${tamperedIntent.requestId}:wrong`;
+  rehashProjectFoundationValue(tamperedIntent);
+  const tamperedIntentRaw = JSON.stringify(tamperedIntent);
+  await page.evaluate(({ key, raw }) => Storage.prototype.setItem.call(window.localStorage, key, raw), { key: bgF4ApprovalConfirmationIntentStorageKey, raw: tamperedIntentRaw });
+
+  await page.reload();
+  await openBgF4Tasks(page, "completed");
+  await expect(page.getByTestId("project-approval-read-error")).toBeVisible();
+  expect(await page.evaluate(({ requestKey, approvalKey, markerKey, intentKey }) => ({
+    requestRaw: window.localStorage.getItem(requestKey),
+    approvalRaw: window.localStorage.getItem(approvalKey),
+    markerRaw: window.localStorage.getItem(markerKey),
+    intentRaw: window.localStorage.getItem(intentKey),
+  }), { requestKey: purchaseRequestRecoverySourceKey, approvalKey: bgF4ApprovalCanonicalStorageKey, markerKey: bgF4ApprovalCutoverMarkerStorageKey, intentKey: bgF4ApprovalConfirmationIntentStorageKey })).toEqual({
+    requestRaw: snapshot.requestRaw,
+    approvalRaw: snapshot.approvalRaw,
+    markerRaw: snapshot.markerRaw,
+    intentRaw: tamperedIntentRaw,
+  });
+});
+
+test("BG-F4 recovers one transient compound interruption in the same tab", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createBgF4CompoundConfirmationDraft(page);
+
+  await page.evaluate((approvalKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    let interrupted = false;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === approvalKey && !interrupted) {
+        interrupted = true;
+        throw new DOMException("BG-F4 simulated same-tab interruption", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  }, bgF4ApprovalCanonicalStorageKey);
+
+  await page.getByTestId("purchase-request-ready").click();
+  await expect(page.getByTestId("project-dispatch-planner-view")).toBeVisible();
+  await expect(page.getByTestId("purchase-request-detail-storage-error")).toHaveCount(0);
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalConfirmationIntentStorageKey)).toBeNull();
+
+  const recovered = await page.evaluate(({ requestKey, approvalKey }) => ({
+    requests: JSON.parse(window.localStorage.getItem(requestKey) ?? "[]"),
+    approvals: JSON.parse(window.localStorage.getItem(approvalKey) ?? "{}"),
+  }), { requestKey: purchaseRequestRecoverySourceKey, approvalKey: bgF4ApprovalCanonicalStorageKey });
+  expect(recovered.requests[0].mutationReceipts.filter((receipt: any) => receipt.action === "confirm-for-recipients")).toHaveLength(1);
+  expect(recovered.approvals.idempotencyReceipts.filter((receipt: any) => receipt.action === "confirm-for-recipients")).toHaveLength(1);
+  expect(recovered.approvals.records).toHaveLength(1);
+});
+
+test("BG-F4 clears a durable committed intent after reload without duplicating compound receipts", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createBgF4CompoundConfirmationDraft(page);
+  await page.evaluate((intentKey) => {
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function removeItem(key: string) {
+      if (this === window.localStorage && key === intentKey) throw new DOMException("BG-F4 simulated intent cleanup interruption", "QuotaExceededError");
+      return nativeRemoveItem.call(this, key);
+    };
+  }, bgF4ApprovalConfirmationIntentStorageKey);
+
+  await page.getByTestId("purchase-request-ready").click();
+  await expect(page.getByTestId("purchase-request-detail-storage-error")).toBeVisible();
+  const committedBytes = await page.evaluate(({ requestKey, approvalKey, intentKey }) => ({
+    requestRaw: window.localStorage.getItem(requestKey),
+    approvalRaw: window.localStorage.getItem(approvalKey),
+    intentRaw: window.localStorage.getItem(intentKey),
+  }), { requestKey: purchaseRequestRecoverySourceKey, approvalKey: bgF4ApprovalCanonicalStorageKey, intentKey: bgF4ApprovalConfirmationIntentStorageKey });
+  expect(committedBytes.intentRaw).not.toBeNull();
+
+  await page.reload();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalConfirmationIntentStorageKey)).toBeNull();
+  const recoveredBytes = await page.evaluate(({ requestKey, approvalKey }) => ({
+    requestRaw: window.localStorage.getItem(requestKey),
+    approvalRaw: window.localStorage.getItem(approvalKey),
+  }), { requestKey: purchaseRequestRecoverySourceKey, approvalKey: bgF4ApprovalCanonicalStorageKey });
+  expect(recoveredBytes).toEqual({ requestRaw: committedBytes.requestRaw, approvalRaw: committedBytes.approvalRaw });
+  const recovered = { requests: JSON.parse(recoveredBytes.requestRaw ?? "[]"), approvals: JSON.parse(recoveredBytes.approvalRaw ?? "{}") };
+  expect(recovered.requests[0].mutationReceipts.filter((receipt: any) => receipt.action === "confirm-for-recipients")).toHaveLength(1);
+  expect(recovered.approvals.idempotencyReceipts.filter((receipt: any) => receipt.action === "confirm-for-recipients")).toHaveLength(1);
+});
+
+test("BG-F4 binds a decision receipt to the exact Approval event and revision outcome", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createReadyPurchaseRequestForApproval(page);
+  await page.getByTestId("purchase-request-request-approval").click();
+  await page.getByTestId("project-approval-approve").click();
+  await expect.poll(async () => {
+    const current = await readBgF4ApprovalFoundation(page);
+    return current.envelope?.idempotencyReceipts?.filter((candidate: any) => candidate.action === "decide-content-approval").length ?? 0;
+  }).toBe(1);
+  const foundation = await readBgF4ApprovalFoundation(page);
+  const record = foundation.envelope.records[0];
+  const receipt = foundation.envelope.idempotencyReceipts.find((candidate: any) => candidate.action === "decide-content-approval");
+  const event = record.history.find((candidate: any) => candidate.id === receipt.eventIds[0]);
+  const forgedPayload = {
+    inputSchemaVersion: 1,
+    action: "decide-content-approval",
+    projectId: receipt.projectId,
+    requestId: receipt.requestId,
+    approvalId: receipt.approvalId,
+    decision: "changes-requested",
+  };
+  const forgedPayloadHash = `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue(forgedPayload))).digest("hex")}`;
+  receipt.decision = "changes-requested";
+  receipt.payloadHash = forgedPayloadHash;
+  event.commandPayloadHash = forgedPayloadHash;
+  rehashProjectFoundationValue(event);
+  rehashProjectFoundationValue(record);
+  rehashProjectFoundationValue(receipt);
+  rehashProjectFoundationValue(foundation.envelope);
+  const forgedRaw = JSON.stringify(foundation.envelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF4ApprovalCanonicalStorageKey, raw: forgedRaw });
+
+  await page.reload();
+  await openBgF4Tasks(page, "completed");
+  await expect(page.getByTestId("project-approval-read-error")).toBeVisible();
+  await expect(page.getByTestId("project-approval-card")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCanonicalStorageKey)).toBe(forgedRaw);
+});
+
+// BG-F5 — Supplier Contact & Dispatch Foundation black-box contract
+
+const bgF5SupplierContactsLegacyStorageKey = "chida-prototype-project-supplier-contacts:v1";
+const bgF5SupplierContactsCanonicalStorageKey = "chida-prototype-project-supplier-contacts:v2";
+const bgF5SupplierContactsCutoverMarkerStorageKey = `${bgF5SupplierContactsCanonicalStorageKey}:cutover:v1`;
+const bgF5DispatchDraftsLegacyStorageKey = "chida-prototype-project-dispatch-drafts:v1";
+const bgF5DispatchDraftsCanonicalStorageKey = "chida-prototype-project-dispatch-drafts:v2";
+const bgF5DispatchDraftsCutoverMarkerStorageKey = `${bgF5DispatchDraftsCanonicalStorageKey}:cutover:v1`;
+const bgF5DispatchPlanApprovalsLegacyStorageKey = "chida-prototype-project-dispatch-plan-approvals:v1";
+const bgF5DispatchPlanApprovalsCanonicalStorageKey = "chida-prototype-project-dispatch-plan-approvals:v2";
+const bgF5DispatchPlanApprovalsCutoverMarkerStorageKey = `${bgF5DispatchPlanApprovalsCanonicalStorageKey}:cutover:v1`;
+const bgF5DispatchPlanQueueIntentStorageKey = `${bgF5DispatchDraftsCanonicalStorageKey}:plan-queue-intent:v1`;
+const bgF5DispatchPreconditionIntentStorageKey = `${bgF4ApprovalCanonicalStorageKey}:dispatch-precondition-intent:v1`;
+const bgF5SharedWriteLockName = purchaseRequestWriteLockName;
+const bgF5Sha256Pattern = /^sha256-[a-f0-9]{64}$/;
+
+const bgF5FoundationStorageKeys = {
+  contacts: {
+    legacy: bgF5SupplierContactsLegacyStorageKey,
+    canonical: bgF5SupplierContactsCanonicalStorageKey,
+    marker: bgF5SupplierContactsCutoverMarkerStorageKey,
+  },
+  drafts: {
+    legacy: bgF5DispatchDraftsLegacyStorageKey,
+    canonical: bgF5DispatchDraftsCanonicalStorageKey,
+    marker: bgF5DispatchDraftsCutoverMarkerStorageKey,
+  },
+  plans: {
+    legacy: bgF5DispatchPlanApprovalsLegacyStorageKey,
+    canonical: bgF5DispatchPlanApprovalsCanonicalStorageKey,
+    marker: bgF5DispatchPlanApprovalsCutoverMarkerStorageKey,
+  },
+} as const;
+
+type BgF5FoundationKind = keyof typeof bgF5FoundationStorageKeys;
+
+async function readBgF5FoundationSet(page: Page) {
+  return page.evaluate((keys) => {
+    const parse = (raw: string | null) => {
+      if (raw === null) return null;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    };
+    return Object.fromEntries(Object.entries(keys).map(([kind, storageKeys]) => {
+      const canonicalRaw = window.localStorage.getItem(storageKeys.canonical);
+      const markerRaw = window.localStorage.getItem(storageKeys.marker);
+      const legacyRaw = window.localStorage.getItem(storageKeys.legacy);
+      return [kind, { canonicalRaw, markerRaw, legacyRaw, envelope: parse(canonicalRaw), marker: parse(markerRaw) }];
+    }));
+  }, bgF5FoundationStorageKeys) as Promise<Record<BgF5FoundationKind, {
+    canonicalRaw: string | null;
+    markerRaw: string | null;
+    legacyRaw: string | null;
+    envelope: any;
+    marker: any;
+  }>>;
+}
+
+async function expectBgF5FoundationsCommitted(page: Page) {
+  await expect.poll(async () => {
+    const foundations = await readBgF5FoundationSet(page);
+    return (Object.keys(bgF5FoundationStorageKeys) as BgF5FoundationKind[]).map((kind) => ({
+      kind,
+      hasCanonical: foundations[kind].canonicalRaw !== null,
+      markerState: foundations[kind].marker?.state ?? null,
+    }));
+  }).toEqual([
+    { kind: "contacts", hasCanonical: true, markerState: "committed" },
+    { kind: "drafts", hasCanonical: true, markerState: "committed" },
+    { kind: "plans", hasCanonical: true, markerState: "committed" },
+  ]);
+  return readBgF5FoundationSet(page);
+}
+
+function expectBgF5CanonicalRecord(record: any, projectId: string) {
+  expect(record).toMatchObject({
+    projectId,
+    ownerPrincipalType: "account",
+    ownerPrincipalId: "local-builder-account",
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: projectId,
+    sensitivity: "private",
+    version: expect.any(Number),
+    currentRevisionId: expect.any(String),
+    revisions: expect.any(Array),
+    history: expect.any(Array),
+    fingerprint: expect.stringMatching(bgF5Sha256Pattern),
+  });
+  expect(record.revisions.length).toBeGreaterThan(0);
+  expect(record.history.length).toBeGreaterThan(0);
+  expect(record.revisions.some((revision: any) => revision.id === record.currentRevisionId && revision.version === record.version)).toBe(true);
+  for (const revision of record.revisions) expect(revision.fingerprint).toMatch(bgF5Sha256Pattern);
+  for (const event of record.history) expect(event.fingerprint).toMatch(bgF5Sha256Pattern);
+}
+
+function expectBgF5CanonicalEnvelope(envelope: any, projectId: string) {
+  expect(envelope).toMatchObject({
+    schemaVersion: 2,
+    storeVersion: expect.any(Number),
+    records: expect.any(Array),
+    idempotencyReceipts: expect.any(Array),
+    migrationReports: expect.any(Array),
+    fingerprint: expect.stringMatching(bgF5Sha256Pattern),
+  });
+  expect(envelope.records).toHaveLength(1);
+  expect(envelope.idempotencyReceipts.length).toBeGreaterThan(0);
+  expectBgF5CanonicalRecord(envelope.records[0], projectId);
+  for (const receipt of envelope.idempotencyReceipts) {
+    expect(receipt).toMatchObject({ projectId, fingerprint: expect.stringMatching(bgF5Sha256Pattern) });
+  }
+}
+
+function bgF5LegacyFingerprint(value: unknown) {
+  return `fnv1a-${stableTestHash(JSON.stringify(stableTestValue(value)))}`;
+}
+
+async function buildBgF5SyntheticDependencySet(page: Page) {
+  return page.evaluate(async ({ contactKey, markerKey }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = JSON.parse(window.localStorage.getItem(contactKey) ?? "null");
+    const marker = JSON.parse(window.localStorage.getItem(markerKey) ?? "null");
+    const projectIds = [...new Set<string>(contacts.records.map((record: any) => record.projectId))].sort();
+    const authorizationHashes = Object.fromEntries(projectIds.map((projectId) => {
+      const record = contacts.records.find((candidate: any) => candidate.projectId === projectId);
+      return [projectId, record.history[0].authorizationContextHash];
+    }));
+    const authority = {
+      identityBindingHash: marker.identityBindingHash,
+      snapshotHash: contacts.migrationReports[0].dependencySnapshotHash,
+      projectIds,
+      authorizationHashes,
+    };
+    const projectId = projectIds[0];
+    const recordedAt = contacts.migrationReports[0].migratedAt;
+    const requestId = "bg-f5-upstream-request";
+    const requestVersion = 1;
+    const revisionId = "bg-f5-upstream-request-revision";
+    const revisionFingerprint = procurementDispatch.procurementDispatchHash({ fixture: revisionId });
+    const approvalId = "bg-f5-upstream-content-approval";
+    const approvalRevisionId = "bg-f5-upstream-content-approval-revision";
+    const approvalFingerprint = procurementDispatch.procurementDispatchHash({ fixture: approvalRevisionId });
+    const dependencies = procurementDispatch.createProcurementDispatchDependencies(authority, [{
       projectId,
-      purpose: "review-purchase-request-version",
-      target: { type: "purchase-request", id: requestId, version: 2, updatedAt: readyAt },
-      dedupeKey: `${projectId}:${requestId}:2:review-purchase-request-version`,
-      snapshot: {
-        rawNeed: "پنج تن میلگرد برای ادامهٔ اسکلت لازم است",
-        item: { id: "legacy-t6b2-item", name: "میلگرد آجدار", quantity: "5", unit: "تن", brandOrGrade: "A3", specification: "شاخه ۱۲ متری", alternatives: "approval-required", source: "ثبت مستقیم شما", confidence: null },
-        delivery: { city: "تهران", area: "سعادت‌آباد", exactAddressShared: false, neededBy: "تا ۱۲ شهریور" },
-        unresolvedTerms: { transport: "unknown", tax: "unknown", paymentTerms: "unknown" },
-        sharingStatus: "ارسال نشده",
+      requestId,
+      requestVersion,
+      revisionId,
+      revisionFingerprint,
+      revisionCreatedAt: recordedAt,
+      requestKind: "product",
+      isCurrentReadyForReview: true,
+      payload: {
+        requestKind: "product",
+        items: [{ name: "میلگرد آجدار", quantity: "۵", unit: "تن", brandOrGrade: null, specification: null, alternatives: "unknown" }],
+        service: null,
+        delivery: { area: "تهران", neededBy: null },
+        unresolvedTerms: { transport: "نیازمند روشن سازی", tax: "نیازمند روشن سازی", paymentTerms: "نیازمند روشن سازی" },
       },
       privacySnapshot: {
-        shareableFields: ["item.name", "item.quantity", "item.unit", "item.brandOrGrade", "item.specification", "delivery.neededBy", "delivery.area"],
+        shareableFields: [],
+        excludedFields: [],
         projectNameShared: false,
-        exactAddressShared: false,
+        exactAddressFieldIncluded: false,
         budgetShared: false,
         filesShared: false,
         memoryShared: false,
+        rawNeedShared: false,
+        clarificationAnswersShared: false,
+        locationReviewRequired: true,
       },
-      externalEffect: "none",
-      destination: null,
-      sendAuthorized: false,
-      status: "pending",
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
-      requestedBy: "شما",
-      decidedBy: null,
-      requestedAt,
-      updatedAt: requestedAt,
-      decidedAt: null,
-      version: 1,
-      history: [{ id: "legacy-t6b2-approval-created", type: "created", actor: "شما", at: requestedAt, version: 1 }],
-    }]));
+    }], [{
+      projectId,
+      approvalId,
+      approvalVersion: 1,
+      approvalRevisionId,
+      approvalFingerprint,
+      requestId,
+      requestVersion,
+      requestRevisionId: revisionId,
+      requestRevisionFingerprint: revisionFingerprint,
+      status: "approved",
+      isCurrent: true,
+      updatedAt: recordedAt,
+    }], []);
+    return { authority, dependencies };
+  }, { contactKey: bgF5SupplierContactsCanonicalStorageKey, markerKey: bgF5SupplierContactsCutoverMarkerStorageKey });
+}
+
+async function createBgF5DependencySet(page: Page, authority: any, requestRevisions: any[], contentApprovals: any[]) {
+  return page.evaluate(async ({ currentAuthority, requests, approvals }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    return procurementDispatch.createProcurementDispatchDependencies(currentAuthority, requests, approvals, []);
+  }, { currentAuthority: authority, requests: requestRevisions, approvals: contentApprovals });
+}
+
+async function upsertBgF5SyntheticDraft(page: Page, authority: any, dependencies: any, idempotencyKey: string) {
+  const outcome = await page.evaluate(async ({ currentAuthority, currentDependencies, commandKey }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contactState = procurementDispatch.readSupplierContactState(currentAuthority as any);
+    const draftState = procurementDispatch.readDispatchDraftState(currentDependencies as any, contactState);
+    if (contactState.status !== "ready" || !contactState.envelope || draftState.status !== "ready" || !draftState.envelope) return { status: "foundation-not-ready", contactState, draftState };
+    const request = currentDependencies.requestRevisions[0];
+    const approval = currentDependencies.contentApprovals[0];
+    const existing = draftState.envelope.records.find((record: any) => record.projectId === request.projectId && record.target.requestId === request.requestId) ?? null;
+    const recipients = contactState.envelope.records
+      .filter((contact: any) => contact.projectId === request.projectId && contact.status === "active")
+      .map((contact: any) => {
+        const revision = contact.revisions.find((candidate: any) => candidate.id === contact.currentRevisionId && candidate.version === contact.version)!;
+        return {
+          supplierContactId: contact.id,
+          expectedContactVersion: revision.version,
+          expectedContactRevisionId: revision.id,
+          expectedContactRevisionFingerprint: revision.fingerprint,
+        };
+      })
+      .sort((first: any, second: any) => first.supplierContactId.localeCompare(second.supplierContactId, "en-US"));
+    const dispatchDraftId = existing?.id ?? procurementDispatch.dispatchDraftIdForTarget(request.projectId, request.requestId, request.requestVersion, request.revisionId);
+    const base = {
+      inputSchemaVersion: 1,
+      action: "upsert-dispatch-draft",
+      projectId: request.projectId,
+      dispatchDraftId,
+      requestId: request.requestId,
+      expectedRequestVersion: request.requestVersion,
+      expectedRequestRevisionId: request.revisionId,
+      expectedRequestRevisionFingerprint: request.revisionFingerprint,
+      approvalId: approval.approvalId,
+      expectedApprovalVersion: approval.approvalVersion,
+      expectedApprovalRevisionId: approval.approvalRevisionId,
+      expectedApprovalFingerprint: approval.approvalFingerprint,
+      recipients,
+      expectedContactStoreVersion: contactState.envelope.storeVersion,
+      expectedDraftStoreVersion: draftState.envelope.storeVersion,
+      expectedDraftVersion: existing?.version ?? null,
+    } as const;
+    const previousCheckpoints = currentDependencies.preconditionCheckpoints ?? [];
+    const requestReceiptPosition = Math.max(0, ...previousCheckpoints.map((checkpoint: any) => checkpoint.requestHead.receiptPosition)) + 1;
+    const approvalExpectedStoreVersion = Math.max(1, ...previousCheckpoints.map((checkpoint: any) => checkpoint.approvalHead.resultingStoreVersion));
+    const target = { requestId: base.requestId, requestVersion: base.expectedRequestVersion, revisionId: base.expectedRequestRevisionId, revisionFingerprint: base.expectedRequestRevisionFingerprint, approvalId: base.approvalId, approvalVersion: base.expectedApprovalVersion, approvalRevisionId: base.expectedApprovalRevisionId, approvalFingerprint: base.expectedApprovalFingerprint };
+    const recordedAt = new Date(Math.max(Date.parse(request.revisionCreatedAt), Date.parse(approval.updatedAt), ...previousCheckpoints.map((checkpoint: any) => Date.parse(checkpoint.recordedAt))) + 1).toISOString();
+    const checkpoint = procurementDispatch.finalizeProcurementDispatchPreconditionCheckpoint({
+      schemaVersion: 1,
+      checkpointKey: procurementDispatch.procurementDispatchPreconditionCheckpointKey("dispatch-draft", commandKey),
+      operation: "dispatch-draft",
+      commandPayloadHash: procurementDispatch.procurementDispatchHash(base),
+      projectId: base.projectId,
+      target,
+      requestHead: { receiptPosition: requestReceiptPosition, requestVersion: target.requestVersion, revisionId: target.revisionId, revisionFingerprint: target.revisionFingerprint },
+      approvalHead: { expectedStoreVersion: approvalExpectedStoreVersion, resultingStoreVersion: approvalExpectedStoreVersion + 1, approvalVersion: target.approvalVersion, revisionId: target.approvalRevisionId, revisionFingerprint: target.approvalFingerprint },
+      authorizationContextHash: currentDependencies.authority.authorizationHashes[base.projectId],
+      recordedAt,
+    });
+    const stripFingerprint = ({ fingerprint: _fingerprint, ...value }: any) => value;
+    const effectiveDependencies = procurementDispatch.createProcurementDispatchDependencies(currentDependencies.authority, currentDependencies.requestRevisions.map(stripFingerprint), currentDependencies.contentApprovals.map(stripFingerprint), [...previousCheckpoints, checkpoint]);
+    const precondition = { checkpointKey: checkpoint.checkpointKey, checkpointFingerprint: checkpoint.fingerprint, requestReceiptPosition: checkpoint.requestHead.receiptPosition, approvalStoreVersion: checkpoint.approvalHead.resultingStoreVersion };
+    const result = await procurementDispatch.executeDispatchDraftCommand({ ...base, precondition, idempotencyKey: commandKey }, () => effectiveDependencies as any);
+    const afterContacts = procurementDispatch.readSupplierContactState(currentAuthority as any);
+    const afterDrafts = procurementDispatch.readDispatchDraftState(effectiveDependencies as any, afterContacts);
+    return { status: result.status, result, contacts: afterContacts, drafts: afterDrafts, dependencies: effectiveDependencies };
+  }, { currentAuthority: authority, currentDependencies: dependencies, commandKey: idempotencyKey });
+  if ((outcome as any).dependencies) Object.assign(dependencies, (outcome as any).dependencies);
+  return outcome;
+}
+
+async function createBgF5SyntheticPlan(page: Page, authority: any, dependencies: any, idempotencyKey: string) {
+  const outcome = await page.evaluate(async ({ currentAuthority, currentDependencies, commandKey }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(currentAuthority as any);
+    const drafts = procurementDispatch.readDispatchDraftState(currentDependencies as any, contacts);
+    const plans = procurementDispatch.readDispatchPlanApprovalState(currentDependencies as any, contacts, drafts);
+    if (contacts.status !== "ready" || !contacts.envelope || drafts.status !== "ready" || !drafts.envelope || plans.status !== "ready" || !plans.envelope) return { status: "foundation-not-ready", contacts, drafts, plans };
+    const draft = drafts.envelope.records[0];
+    const revision = draft?.revisions.find((candidate: any) => candidate.id === draft.currentRevisionId && candidate.version === draft.version);
+    if (!draft || !revision) return { status: "draft-not-ready", contacts, drafts, plans };
+    const base = {
+      inputSchemaVersion: 1,
+      action: "create-dispatch-plan",
+      projectId: draft.projectId,
+      planApprovalId: procurementDispatch.dispatchPlanApprovalIdForIdempotencyKey(commandKey),
+      dispatchDraftId: draft.id,
+      expectedContactStoreVersion: contacts.envelope.storeVersion,
+      expectedDraftStoreVersion: drafts.envelope.storeVersion,
+      expectedDraftVersion: draft.version,
+      expectedDispatchRevisionId: revision.id,
+      expectedDispatchRevisionFingerprint: revision.fingerprint,
+      expectedPlanStoreVersion: plans.envelope.storeVersion,
+      acknowledgement: { destinationsReviewed: true, payloadReviewed: true, privacyAndLocationReviewed: true },
+    } as const;
+    const previousCheckpoints = currentDependencies.preconditionCheckpoints ?? [];
+    const request = currentDependencies.requestRevisions.find((candidate: any) => candidate.projectId === draft.projectId && candidate.requestId === draft.target.requestId && candidate.requestVersion === draft.target.requestVersion && candidate.revisionId === draft.target.revisionId && candidate.revisionFingerprint === draft.target.revisionFingerprint);
+    const approval = currentDependencies.contentApprovals.find((candidate: any) => candidate.projectId === draft.projectId && candidate.approvalId === draft.target.approvalId && candidate.approvalVersion === draft.target.approvalVersion && candidate.approvalRevisionId === draft.target.approvalRevisionId && candidate.approvalFingerprint === draft.target.approvalFingerprint);
+    if (!request || !approval) return { status: "dependency-target-not-ready", contacts, drafts, plans };
+    const requestReceiptPosition = Math.max(0, ...previousCheckpoints.map((checkpoint: any) => checkpoint.requestHead.receiptPosition)) + 1;
+    const approvalExpectedStoreVersion = Math.max(1, ...previousCheckpoints.map((checkpoint: any) => checkpoint.approvalHead.resultingStoreVersion));
+    const target = structuredClone(draft.target);
+    const recordedAt = new Date(Math.max(Date.parse(request.revisionCreatedAt), Date.parse(approval.updatedAt), ...previousCheckpoints.map((checkpoint: any) => Date.parse(checkpoint.recordedAt))) + 1).toISOString();
+    const checkpoint = procurementDispatch.finalizeProcurementDispatchPreconditionCheckpoint({
+      schemaVersion: 1,
+      checkpointKey: procurementDispatch.procurementDispatchPreconditionCheckpointKey("dispatch-plan", commandKey),
+      operation: "dispatch-plan",
+      commandPayloadHash: procurementDispatch.procurementDispatchHash(base),
+      projectId: base.projectId,
+      target,
+      requestHead: { receiptPosition: requestReceiptPosition, requestVersion: target.requestVersion, revisionId: target.revisionId, revisionFingerprint: target.revisionFingerprint },
+      approvalHead: { expectedStoreVersion: approvalExpectedStoreVersion, resultingStoreVersion: approvalExpectedStoreVersion + 1, approvalVersion: target.approvalVersion, revisionId: target.approvalRevisionId, revisionFingerprint: target.approvalFingerprint },
+      authorizationContextHash: currentDependencies.authority.authorizationHashes[base.projectId],
+      recordedAt,
+    });
+    const stripFingerprint = ({ fingerprint: _fingerprint, ...value }: any) => value;
+    const effectiveDependencies = procurementDispatch.createProcurementDispatchDependencies(currentDependencies.authority, currentDependencies.requestRevisions.map(stripFingerprint), currentDependencies.contentApprovals.map(stripFingerprint), [...previousCheckpoints, checkpoint]);
+    const precondition = { checkpointKey: checkpoint.checkpointKey, checkpointFingerprint: checkpoint.fingerprint, requestReceiptPosition: checkpoint.requestHead.receiptPosition, approvalStoreVersion: checkpoint.approvalHead.resultingStoreVersion };
+    const result = await procurementDispatch.executeDispatchPlanApprovalCommand({ ...base, precondition, idempotencyKey: commandKey }, () => effectiveDependencies as any);
+    const afterContacts = procurementDispatch.readSupplierContactState(currentAuthority as any);
+    const afterDrafts = procurementDispatch.readDispatchDraftState(effectiveDependencies as any, afterContacts);
+    const afterPlans = procurementDispatch.readDispatchPlanApprovalState(effectiveDependencies as any, afterContacts, afterDrafts);
+    return { status: result.status, result, contacts: afterContacts, drafts: afterDrafts, plans: afterPlans, dependencies: effectiveDependencies };
+  }, { currentAuthority: authority, currentDependencies: dependencies, commandKey: idempotencyKey });
+  if ((outcome as any).dependencies) Object.assign(dependencies, (outcome as any).dependencies);
+  return outcome;
+}
+
+async function withdrawBgF5SyntheticPlan(page: Page, authority: any, dependencies: any, idempotencyKey: string) {
+  const outcome = await page.evaluate(async ({ currentAuthority, currentDependencies, commandKey }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(currentAuthority as any);
+    const drafts = procurementDispatch.readDispatchDraftState(currentDependencies as any, contacts);
+    const plans = procurementDispatch.readDispatchPlanApprovalState(currentDependencies as any, contacts, drafts);
+    if (contacts.status !== "ready" || !contacts.envelope || drafts.status !== "ready" || !drafts.envelope || plans.status !== "ready" || !plans.envelope) return { status: "foundation-not-ready", contacts, drafts, plans };
+    const plan = plans.envelope.records[0];
+    if (!plan) return { status: "plan-not-ready", contacts, drafts, plans };
+    const base = {
+      inputSchemaVersion: 1,
+      action: "withdraw-dispatch-plan",
+      projectId: plan.projectId,
+      planApprovalId: plan.id,
+      expectedContactStoreVersion: contacts.envelope.storeVersion,
+      expectedDraftStoreVersion: drafts.envelope.storeVersion,
+      expectedPlanStoreVersion: plans.envelope.storeVersion,
+      expectedPlanVersion: plan.version,
+    } as const;
+    const previousCheckpoints = currentDependencies.preconditionCheckpoints ?? [];
+    const request = currentDependencies.requestRevisions.find((candidate: any) => candidate.projectId === plan.projectId && candidate.requestId === plan.target.requestId && candidate.requestVersion === plan.target.requestVersion && candidate.revisionId === plan.target.requestRevisionId && candidate.revisionFingerprint === plan.target.requestRevisionFingerprint);
+    const approval = currentDependencies.contentApprovals.find((candidate: any) => candidate.projectId === plan.projectId && candidate.approvalId === plan.target.contentApprovalId && candidate.approvalVersion === plan.target.contentApprovalVersion && candidate.approvalRevisionId === plan.target.contentApprovalRevisionId && candidate.approvalFingerprint === plan.target.contentApprovalFingerprint);
+    if (!request || !approval) return { status: "dependency-target-not-ready", contacts, drafts, plans };
+    const requestReceiptPosition = Math.max(0, ...previousCheckpoints.map((checkpoint: any) => checkpoint.requestHead.receiptPosition)) + 1;
+    const approvalExpectedStoreVersion = Math.max(1, ...previousCheckpoints.map((checkpoint: any) => checkpoint.approvalHead.resultingStoreVersion));
+    const target = { requestId: plan.target.requestId, requestVersion: plan.target.requestVersion, revisionId: plan.target.requestRevisionId, revisionFingerprint: plan.target.requestRevisionFingerprint, approvalId: plan.target.contentApprovalId, approvalVersion: plan.target.contentApprovalVersion, approvalRevisionId: plan.target.contentApprovalRevisionId, approvalFingerprint: plan.target.contentApprovalFingerprint };
+    const recordedAt = new Date(Math.max(Date.parse(request.revisionCreatedAt), Date.parse(approval.updatedAt), ...previousCheckpoints.map((checkpoint: any) => Date.parse(checkpoint.recordedAt))) + 1).toISOString();
+    const checkpoint = procurementDispatch.finalizeProcurementDispatchPreconditionCheckpoint({
+      schemaVersion: 1,
+      checkpointKey: procurementDispatch.procurementDispatchPreconditionCheckpointKey("dispatch-plan", commandKey),
+      operation: "dispatch-plan",
+      commandPayloadHash: procurementDispatch.procurementDispatchHash(base),
+      projectId: base.projectId,
+      target,
+      requestHead: { receiptPosition: requestReceiptPosition, requestVersion: target.requestVersion, revisionId: target.revisionId, revisionFingerprint: target.revisionFingerprint },
+      approvalHead: { expectedStoreVersion: approvalExpectedStoreVersion, resultingStoreVersion: approvalExpectedStoreVersion + 1, approvalVersion: target.approvalVersion, revisionId: target.approvalRevisionId, revisionFingerprint: target.approvalFingerprint },
+      authorizationContextHash: currentDependencies.authority.authorizationHashes[base.projectId],
+      recordedAt,
+    });
+    const stripFingerprint = ({ fingerprint: _fingerprint, ...value }: any) => value;
+    const effectiveDependencies = procurementDispatch.createProcurementDispatchDependencies(currentDependencies.authority, currentDependencies.requestRevisions.map(stripFingerprint), currentDependencies.contentApprovals.map(stripFingerprint), [...previousCheckpoints, checkpoint]);
+    const precondition = { checkpointKey: checkpoint.checkpointKey, checkpointFingerprint: checkpoint.fingerprint, requestReceiptPosition: checkpoint.requestHead.receiptPosition, approvalStoreVersion: checkpoint.approvalHead.resultingStoreVersion };
+    const result = await procurementDispatch.executeDispatchPlanApprovalCommand({ ...base, precondition, idempotencyKey: commandKey }, () => effectiveDependencies as any);
+    const afterContacts = procurementDispatch.readSupplierContactState(currentAuthority as any);
+    const afterDrafts = procurementDispatch.readDispatchDraftState(effectiveDependencies as any, afterContacts);
+    const afterPlans = procurementDispatch.readDispatchPlanApprovalState(effectiveDependencies as any, afterContacts, afterDrafts);
+    return { status: result.status, result, contacts: afterContacts, drafts: afterDrafts, plans: afterPlans, dependencies: effectiveDependencies };
+  }, { currentAuthority: authority, currentDependencies: dependencies, commandKey: idempotencyKey });
+  if ((outcome as any).dependencies) Object.assign(dependencies, (outcome as any).dependencies);
+  return outcome;
+}
+
+async function executeBgF5SyntheticQueue(page: Page, authority: any, dependencies: any, input: {
+  draftIdempotencyKey: string;
+  planIdempotencyKey: string;
+  queueIdempotencyKey: string;
+  recipientIds?: string[];
+}) {
+  const outcome = await page.evaluate(async ({ currentAuthority, currentDependencies, options }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(currentAuthority as any);
+    const drafts = procurementDispatch.readDispatchDraftState(currentDependencies as any, contacts);
+    const plans = procurementDispatch.readDispatchPlanApprovalState(currentDependencies as any, contacts, drafts);
+    if (contacts.status !== "ready" || !contacts.envelope || drafts.status !== "ready" || !drafts.envelope || plans.status !== "ready" || !plans.envelope) {
+      return { status: "foundation-not-ready", contacts, drafts, plans };
+    }
+    const request = currentDependencies.requestRevisions[0];
+    const approval = currentDependencies.contentApprovals.find((candidate: any) => candidate.projectId === request.projectId && candidate.requestId === request.requestId && candidate.requestVersion === request.requestVersion && candidate.requestRevisionId === request.revisionId && candidate.requestRevisionFingerprint === request.revisionFingerprint);
+    if (!approval) return { status: "approval-not-ready", contacts, drafts, plans };
+    const requestedIds = options.recipientIds ?? contacts.envelope.records
+      .filter((contact: any) => contact.projectId === request.projectId && contact.status === "active")
+      .map((contact: any) => contact.id)
+      .sort((first: string, second: string) => first < second ? -1 : first > second ? 1 : 0);
+    const recipients = requestedIds.map((contactId: string) => {
+      const contact = contacts.envelope!.records.find((candidate: any) => candidate.id === contactId && candidate.projectId === request.projectId);
+      const revision = contact?.revisions.find((candidate: any) => candidate.id === contact.currentRevisionId && candidate.version === contact.version);
+      if (!contact || !revision) throw new Error(`Contact ${contactId} is unavailable`);
+      return {
+        supplierContactId: contact.id,
+        expectedContactVersion: contact.version,
+        expectedContactRevisionId: revision.id,
+        expectedContactRevisionFingerprint: revision.fingerprint,
+      };
+    });
+    const existing = drafts.envelope.records.find((record: any) => record.projectId === request.projectId && record.target.requestId === request.requestId) ?? null;
+    const dispatchDraftId = existing?.id ?? procurementDispatch.dispatchDraftIdForTarget(request.projectId, request.requestId, request.requestVersion, request.revisionId);
+    const draftBase = {
+        inputSchemaVersion: 1 as const,
+        action: "upsert-dispatch-draft" as const,
+        projectId: request.projectId,
+        dispatchDraftId,
+        requestId: request.requestId,
+        expectedRequestVersion: request.requestVersion,
+        expectedRequestRevisionId: request.revisionId,
+        expectedRequestRevisionFingerprint: request.revisionFingerprint,
+        approvalId: approval.approvalId,
+        expectedApprovalVersion: approval.approvalVersion,
+        expectedApprovalRevisionId: approval.approvalRevisionId,
+        expectedApprovalFingerprint: approval.approvalFingerprint,
+        recipients,
+        expectedContactStoreVersion: contacts.envelope.storeVersion,
+        expectedDraftStoreVersion: drafts.envelope.storeVersion,
+        expectedDraftVersion: existing?.version ?? null,
+      };
+    const planBase = {
+        inputSchemaVersion: 1 as const,
+        action: "create-dispatch-plan" as const,
+        projectId: request.projectId,
+        planApprovalId: procurementDispatch.dispatchPlanApprovalIdForIdempotencyKey(options.planIdempotencyKey),
+        expectedContactStoreVersion: contacts.envelope.storeVersion,
+        expectedPlanStoreVersion: plans.envelope.storeVersion,
+        acknowledgement: { destinationsReviewed: true as const, payloadReviewed: true as const, privacyAndLocationReviewed: true as const },
+      };
+    const previousCheckpoints = currentDependencies.preconditionCheckpoints ?? [];
+    const requestReceiptPosition = Math.max(0, ...previousCheckpoints.map((checkpoint: any) => checkpoint.requestHead.receiptPosition)) + 1;
+    const approvalExpectedStoreVersion = Math.max(1, ...previousCheckpoints.map((checkpoint: any) => checkpoint.approvalHead.resultingStoreVersion));
+    const target = { requestId: draftBase.requestId, requestVersion: draftBase.expectedRequestVersion, revisionId: draftBase.expectedRequestRevisionId, revisionFingerprint: draftBase.expectedRequestRevisionFingerprint, approvalId: draftBase.approvalId, approvalVersion: draftBase.expectedApprovalVersion, approvalRevisionId: draftBase.expectedApprovalRevisionId, approvalFingerprint: draftBase.expectedApprovalFingerprint };
+    const recordedAt = new Date(Math.max(Date.parse(request.revisionCreatedAt), Date.parse(approval.updatedAt), ...previousCheckpoints.map((checkpoint: any) => Date.parse(checkpoint.recordedAt))) + 1).toISOString();
+    const checkpoint = procurementDispatch.finalizeProcurementDispatchPreconditionCheckpoint({
+      schemaVersion: 1,
+      checkpointKey: procurementDispatch.procurementDispatchPreconditionCheckpointKey("dispatch-queue", options.queueIdempotencyKey),
+      operation: "dispatch-queue",
+      commandPayloadHash: procurementDispatch.procurementDispatchHash({ inputSchemaVersion: 1, action: "queue-dispatch-plan", draft: draftBase, plan: planBase }),
+      projectId: draftBase.projectId,
+      target,
+      requestHead: { receiptPosition: requestReceiptPosition, requestVersion: target.requestVersion, revisionId: target.revisionId, revisionFingerprint: target.revisionFingerprint },
+      approvalHead: { expectedStoreVersion: approvalExpectedStoreVersion, resultingStoreVersion: approvalExpectedStoreVersion + 1, approvalVersion: target.approvalVersion, revisionId: target.approvalRevisionId, revisionFingerprint: target.approvalFingerprint },
+      authorizationContextHash: currentDependencies.authority.authorizationHashes[draftBase.projectId],
+      recordedAt,
+    });
+    const stripFingerprint = ({ fingerprint: _fingerprint, ...value }: any) => value;
+    const effectiveDependencies = procurementDispatch.createProcurementDispatchDependencies(currentDependencies.authority, currentDependencies.requestRevisions.map(stripFingerprint), currentDependencies.contentApprovals.map(stripFingerprint), [...previousCheckpoints, checkpoint]);
+    const precondition = { checkpointKey: checkpoint.checkpointKey, checkpointFingerprint: checkpoint.fingerprint, requestReceiptPosition: checkpoint.requestHead.receiptPosition, approvalStoreVersion: checkpoint.approvalHead.resultingStoreVersion };
+    const command = {
+      inputSchemaVersion: 1 as const,
+      action: "queue-dispatch-plan" as const,
+      draft: { ...draftBase, precondition, idempotencyKey: options.draftIdempotencyKey },
+      plan: { ...planBase, precondition, idempotencyKey: options.planIdempotencyKey },
+      queueIdempotencyKey: options.queueIdempotencyKey,
+    };
+    const result = await procurementDispatch.executeProcurementDispatchQueue(command, () => effectiveDependencies as any);
+    return { status: result.status, result, command, dependencies: effectiveDependencies };
+  }, { currentAuthority: authority, currentDependencies: dependencies, options: input });
+  if ((outcome as any).dependencies) Object.assign(dependencies, (outcome as any).dependencies);
+  return outcome;
+}
+
+function buildBgF5LegacyDraftFixture(input: {
+  id: string;
+  projectId: string;
+  contactId: string;
+  destination: Record<string, unknown>;
+  target: { requestId: string; requestVersion: number; revisionId: string; approvalId: string };
+  payload: Record<string, unknown>;
+  privacySnapshot: Record<string, unknown>;
+  createdAt: string;
+}) {
+  const invite = {
+    schemaVersion: 1,
+    id: `legacy-invite:${input.id}:${input.contactId}`,
+    projectId: input.projectId,
+    supplierContactId: input.contactId,
+    destination: input.destination,
+    target: input.target,
+    source: "ثبت مستقیم سازنده",
+    continuation: "ادامهٔ احتمالی در فاز تأمین‌کننده",
+    externalEffect: "none",
+    sendAuthorized: false,
+    version: 1,
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+  };
+  const recipientIds = [input.contactId];
+  const revision = {
+    id: `legacy-dispatch-revision:${input.id}:v1`,
+    version: 1,
+    createdAt: input.createdAt,
+    recipientIds,
+    inviteDrafts: [invite],
+    payload: input.payload,
+    privacySnapshot: input.privacySnapshot,
+    fingerprint: "",
+  };
+  revision.fingerprint = bgF5LegacyFingerprint({ target: input.target, recipientIds, inviteDrafts: revision.inviteDrafts, payload: revision.payload, privacySnapshot: revision.privacySnapshot });
+  return {
+    schemaVersion: 1,
+    id: input.id,
+    projectId: input.projectId,
+    target: input.target,
+    dedupeKey: `${input.projectId}:${input.target.requestId}:${input.target.requestVersion}:${input.target.revisionId}:dispatch-draft`,
+    status: "draft",
+    currentRevisionId: revision.id,
+    externalEffect: "none",
+    sendAuthorized: false,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    version: 1,
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    history: [{ id: `legacy-dispatch-event:${input.id}:v1`, type: "created", actor: "شما", at: input.createdAt, version: 1 }],
+    revisions: [revision],
+  };
+}
+
+test("BG-F5 requires committed valid upstream markers before downstream initialization", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد مرز upstream", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  const contactMarkerRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF5SupplierContactsCutoverMarkerStorageKey);
+
+  const result = await page.evaluate(async ({ keys, dependencies, originalContactMarkerRaw }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const clearFoundation = (storageKeys: { legacy: string; canonical: string; marker: string }) => {
+      window.localStorage.removeItem(storageKeys.legacy);
+      window.localStorage.removeItem(storageKeys.canonical);
+      window.localStorage.removeItem(storageKeys.marker);
+    };
+
+    clearFoundation(keys.drafts);
+    clearFoundation(keys.plans);
+    window.localStorage.removeItem(keys.contacts.marker);
+    const draftWithoutContactMarker = await procurementDispatch.initializeDispatchDrafts(() => dependencies as any);
+    const draftWritesWithoutContactMarker = {
+      canonical: window.localStorage.getItem(keys.drafts.canonical),
+      marker: window.localStorage.getItem(keys.drafts.marker),
+    };
+
+    window.localStorage.setItem(keys.contacts.marker, originalContactMarkerRaw!);
+    clearFoundation(keys.drafts);
+    const initializedDraft = await procurementDispatch.initializeDispatchDrafts(() => dependencies as any);
+    const committedDraftMarker = JSON.parse(window.localStorage.getItem(keys.drafts.marker) ?? "null");
+    const { fingerprint: _fingerprint, initialStoreVersion: _initialStoreVersion, initialCanonicalHash: _initialCanonicalHash, migrationReportHash: _migrationReportHash, committedAt: _committedAt, ...pendingBase } = committedDraftMarker;
+    const pendingDraftMarker = { ...pendingBase, state: "pending" };
+    pendingDraftMarker.fingerprint = procurementDispatch.procurementDispatchHash(pendingDraftMarker);
+    window.localStorage.setItem(keys.drafts.marker, JSON.stringify(pendingDraftMarker));
+    clearFoundation(keys.plans);
+    const planWithPendingDraftMarker = await procurementDispatch.initializeDispatchPlanApprovals(() => dependencies as any);
+
+    return {
+      draftWithoutContactMarker,
+      draftWritesWithoutContactMarker,
+      initializedDraft,
+      planWithPendingDraftMarker,
+      planCanonical: window.localStorage.getItem(keys.plans.canonical),
+      planMarker: window.localStorage.getItem(keys.plans.marker),
+    };
+  }, { keys: bgF5FoundationStorageKeys, dependencies: dependencySet.dependencies, originalContactMarkerRaw: contactMarkerRaw });
+
+  expect(result.draftWithoutContactMarker).toMatchObject({ status: "read-error", reason: "contact-store-invalid" });
+  expect(result.draftWritesWithoutContactMarker).toEqual({ canonical: null, marker: null });
+  expect(result.initializedDraft).toMatchObject({ status: "ready" });
+  expect(result.planWithPendingDraftMarker).toMatchObject({ status: "read-error", reason: "draft-store-invalid" });
+  expect(result.planCanonical).toBeNull();
+  expect(result.planMarker).toBeNull();
+});
+
+test("BG-F5 blocks standalone Draft and Plan readers and initializers while a queue intent exists", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد queue accessor", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+
+  const result = await page.evaluate(async ({ keys, queueKey, authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    for (const kind of [keys.drafts, keys.plans]) {
+      window.localStorage.removeItem(kind.legacy);
+      window.localStorage.removeItem(kind.canonical);
+      window.localStorage.removeItem(kind.marker);
+    }
+    const draftBeforeQueue = await procurementDispatch.initializeDispatchDrafts(() => dependencies as any);
+    const planBeforeQueue = await procurementDispatch.initializeDispatchPlanApprovals(() => dependencies as any);
+    const beforeRaw = {
+      draft: window.localStorage.getItem(keys.drafts.canonical),
+      plan: window.localStorage.getItem(keys.plans.canonical),
+    };
+    window.localStorage.setItem(queueKey, "{}");
+    const contact = procurementDispatch.readSupplierContactState(authority as any);
+    const draftRead = procurementDispatch.readDispatchDraftState(dependencies as any);
+    const planRead = procurementDispatch.readDispatchPlanApprovalState(dependencies as any);
+    const draftInitialize = await procurementDispatch.initializeDispatchDrafts(() => dependencies as any);
+    const planInitialize = await procurementDispatch.initializeDispatchPlanApprovals(() => dependencies as any);
+    return {
+      draftBeforeQueue,
+      planBeforeQueue,
+      beforeRaw,
+      afterRaw: {
+        draft: window.localStorage.getItem(keys.drafts.canonical),
+        plan: window.localStorage.getItem(keys.plans.canonical),
+      },
+      contact,
+      draftRead,
+      planRead,
+      draftInitialize,
+      planInitialize,
+    };
+  }, { keys: bgF5FoundationStorageKeys, queueKey: bgF5DispatchPlanQueueIntentStorageKey, authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+
+  expect(result.draftBeforeQueue).toMatchObject({ status: "ready" });
+  expect(result.planBeforeQueue).toMatchObject({ status: "ready" });
+  expect(result.contact).toMatchObject({ status: "ready" });
+  for (const state of [result.draftRead, result.planRead, result.draftInitialize, result.planInitialize]) {
+    expect(state).toMatchObject({ status: "read-error", reason: "queue-blocked" });
+  }
+  expect(result.afterRaw).toEqual(result.beforeRaw);
+});
+
+test("BG-F5 migrates a legacy Draft pinned to one historical approved Approval revision", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد approval تاریخی", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const foundations = await readBgF5FoundationSet(page);
+  const base = await buildBgF5SyntheticDependencySet(page);
+  const request = base.dependencies.requestRevisions[0];
+  const approval = base.dependencies.contentApprovals[0];
+  const requestWithoutFingerprint = { ...request };
+  delete requestWithoutFingerprint.fingerprint;
+  const historicalApproval = { ...approval, isCurrent: false };
+  delete historicalApproval.fingerprint;
+  const historicalAt = new Date(Math.max(Date.parse(foundations.contacts.envelope.updatedAt), Date.parse(approval.updatedAt)) + 1).toISOString();
+  const currentApproval = {
+    ...historicalApproval,
+    approvalVersion: 2,
+    approvalRevisionId: `${historicalApproval.approvalRevisionId}:v2`,
+    approvalFingerprint: `sha256-${"2".repeat(64)}`,
+    status: "changes-requested",
+    isCurrent: true,
+    updatedAt: historicalAt,
+  };
+  const dependencies = await createBgF5DependencySet(page, base.authority, [requestWithoutFingerprint], [historicalApproval, currentApproval]);
+  const contact = foundations.contacts.envelope.records[0];
+  const draftAt = new Date(Date.parse(historicalAt) + 1).toISOString();
+  const target = { requestId: request.requestId, requestVersion: request.requestVersion, revisionId: request.revisionId, approvalId: approval.approvalId };
+  const legacyDraft = buildBgF5LegacyDraftFixture({
+    id: "legacy-dispatch-historical-approval",
+    projectId: contact.projectId,
+    contactId: contact.id,
+    destination: {
+      displayName: contact.displayName,
+      category: contact.category,
+      tehranCoverage: contact.tehranCoverage,
+      responseCapability: contact.responseCapability,
+      networkStatus: "خارج از شبکه چیدا",
+    },
+    target,
+    payload: request.payload,
+    privacySnapshot: request.privacySnapshot,
+    createdAt: draftAt,
   });
 
-  const expectLegacyApprovalReadable = async () => {
-    await reachBuilderWelcome(page);
-    await page.getByTestId("enter-home").click();
-    await page.getByTestId("menu-button").click();
-    await page.getByTestId("drawer-tasks-entry").click();
-    await page.getByTestId("project-task-filter-approval").click();
-    await expect(page.getByTestId("project-approval-read-error")).toHaveCount(0);
-    await expect(page.getByTestId("project-approval-card")).toHaveCount(1);
-    await expect(page.getByTestId("project-approval-card")).toContainText("میلگرد آجدار");
+  const result = await page.evaluate(async ({ keys, dependencies: currentDependencies, legacyRaw }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    window.localStorage.removeItem(keys.canonical);
+    window.localStorage.removeItem(keys.marker);
+    window.localStorage.setItem(keys.legacy, legacyRaw);
+    const initialized = await procurementDispatch.initializeDispatchDrafts(() => currentDependencies as any);
+    return {
+      initialized,
+      canonical: JSON.parse(window.localStorage.getItem(keys.canonical) ?? "null"),
+      marker: JSON.parse(window.localStorage.getItem(keys.marker) ?? "null"),
+      legacyRaw: window.localStorage.getItem(keys.legacy),
+    };
+  }, { keys: bgF5FoundationStorageKeys.drafts, dependencies, legacyRaw: JSON.stringify([legacyDraft]) });
+
+  expect(result.initialized).toMatchObject({ status: "ready" });
+  expect(result.marker).toMatchObject({ state: "committed" });
+  expect(result.canonical.records[0]).toMatchObject({
+    id: legacyDraft.id,
+    target: {
+      approvalId: historicalApproval.approvalId,
+      approvalVersion: historicalApproval.approvalVersion,
+      approvalRevisionId: historicalApproval.approvalRevisionId,
+      approvalFingerprint: historicalApproval.approvalFingerprint,
+    },
+    legacyEvidence: { sourceGeneration: "v1-array", sourceVersion: 1 },
+  });
+  expect(result.legacyRaw).toBe(JSON.stringify([legacyDraft]));
+});
+
+test("BG-F5 updates a migrated legacy Draft id and creates its Plan through the one-click queue", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد legacy نخست", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const foundations = await readBgF5FoundationSet(page);
+  const base = await buildBgF5SyntheticDependencySet(page);
+  const contact = foundations.contacts.envelope.records[0];
+  const request = base.dependencies.requestRevisions[0];
+  const approval = base.dependencies.contentApprovals[0];
+  const legacyAt = new Date(Math.max(Date.parse(contact.updatedAt), Date.parse(request.revisionCreatedAt), Date.parse(approval.updatedAt)) + 1).toISOString();
+  const legacyDraft = buildBgF5LegacyDraftFixture({
+    id: "7d279de6-8b83-4bb6-bd71-1af74064a9a1",
+    projectId: contact.projectId,
+    contactId: contact.id,
+    destination: {
+      displayName: contact.displayName,
+      category: contact.category,
+      tehranCoverage: contact.tehranCoverage,
+      responseCapability: contact.responseCapability,
+      networkStatus: "خارج از شبکه چیدا",
+    },
+    target: { requestId: request.requestId, requestVersion: request.requestVersion, revisionId: request.revisionId, approvalId: approval.approvalId },
+    payload: request.payload,
+    privacySnapshot: request.privacySnapshot,
+    createdAt: legacyAt,
+  });
+
+  const result = await page.evaluate(async ({ keys, queueKey, authority, dependencies, legacyRaw }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    window.localStorage.removeItem(keys.drafts.canonical);
+    window.localStorage.removeItem(keys.drafts.marker);
+    window.localStorage.setItem(keys.drafts.legacy, legacyRaw);
+    window.localStorage.removeItem(keys.plans.legacy);
+    window.localStorage.removeItem(keys.plans.canonical);
+    window.localStorage.removeItem(keys.plans.marker);
+    window.localStorage.removeItem(queueKey);
+    const migrated = await procurementDispatch.initializeDispatchDrafts(() => dependencies as any);
+    const plans = await procurementDispatch.initializeDispatchPlanApprovals(() => dependencies as any);
+    const beforeContactState = procurementDispatch.readSupplierContactState(authority as any);
+    if (migrated.status !== "ready" || !migrated.envelope || plans.status !== "ready" || !plans.envelope || beforeContactState.status !== "ready" || !beforeContactState.envelope) return { migrated, plans, reason: "foundation-not-ready" };
+    const secondKey = "bg-f5-migrated-draft-second-contact";
+    const secondContactId = procurementDispatch.supplierContactIdForIdempotencyKey(secondKey);
+    const secondContact = await procurementDispatch.executeSupplierContactCommand({
+      inputSchemaVersion: 1,
+      action: "create-contact",
+      projectId: migrated.envelope.records[0].projectId,
+      contactId: secondContactId,
+      draft: { displayName: "فولاد legacy دوم", category: "میلگرد", tehranCoverage: "تهران", responseCapability: "product" },
+      expectedStoreVersion: beforeContactState.envelope.storeVersion,
+      idempotencyKey: secondKey,
+    }, () => authority as any);
+    const contactState = procurementDispatch.readSupplierContactState(authority as any);
+    const draftState = procurementDispatch.readDispatchDraftState(dependencies as any, contactState);
+    const planState = procurementDispatch.readDispatchPlanApprovalState(dependencies as any, contactState, draftState);
+    if (secondContact.status !== "created" || contactState.status !== "ready" || !contactState.envelope || draftState.status !== "ready" || !draftState.envelope || planState.status !== "ready" || !planState.envelope) return { migrated, plans, secondContact, contactState, draftState, planState, reason: "post-contact-not-ready" };
+    const draftRecord = draftState.envelope.records[0];
+    const recipients = contactState.envelope.records
+      .map((candidate) => {
+        const revision = candidate.revisions.find((item) => item.id === candidate.currentRevisionId && item.version === candidate.version)!;
+        return { supplierContactId: candidate.id, expectedContactVersion: candidate.version, expectedContactRevisionId: revision.id, expectedContactRevisionFingerprint: revision.fingerprint };
+      })
+      .sort((first, second) => first.supplierContactId < second.supplierContactId ? -1 : first.supplierContactId > second.supplierContactId ? 1 : 0);
+    const draftBase = {
+      inputSchemaVersion: 1 as const,
+      action: "upsert-dispatch-draft" as const,
+      projectId: draftRecord.projectId,
+      dispatchDraftId: draftRecord.id,
+      requestId: draftRecord.target.requestId,
+      expectedRequestVersion: draftRecord.target.requestVersion,
+      expectedRequestRevisionId: draftRecord.target.revisionId,
+      expectedRequestRevisionFingerprint: draftRecord.target.revisionFingerprint,
+      approvalId: draftRecord.target.approvalId,
+      expectedApprovalVersion: draftRecord.target.approvalVersion,
+      expectedApprovalRevisionId: draftRecord.target.approvalRevisionId,
+      expectedApprovalFingerprint: draftRecord.target.approvalFingerprint,
+      recipients,
+      expectedContactStoreVersion: contactState.envelope.storeVersion,
+      expectedDraftStoreVersion: draftState.envelope.storeVersion,
+      expectedDraftVersion: draftRecord.version,
+    };
+    const draftIdempotencyKey = `bg-f5-migrated-draft-update:${procurementDispatch.procurementDispatchHash(draftBase)}`;
+    const planKey = "bg-f5-migrated-draft-queue-plan";
+    const planBase = {
+      inputSchemaVersion: 1 as const,
+      action: "create-dispatch-plan" as const,
+      projectId: draftRecord.projectId,
+      planApprovalId: procurementDispatch.dispatchPlanApprovalIdForIdempotencyKey(planKey),
+      expectedContactStoreVersion: contactState.envelope.storeVersion,
+      expectedPlanStoreVersion: planState.envelope.storeVersion,
+      acknowledgement: { destinationsReviewed: true as const, payloadReviewed: true as const, privacyAndLocationReviewed: true as const },
+    };
+    const queueIdempotencyKey = "bg-f5-migrated-draft-one-click-queue";
+    const previousCheckpoints = dependencies.preconditionCheckpoints ?? [];
+    const requestReceiptPosition = Math.max(0, ...previousCheckpoints.map((checkpoint: any) => checkpoint.requestHead.receiptPosition)) + 1;
+    const approvalExpectedStoreVersion = Math.max(1, ...previousCheckpoints.map((checkpoint: any) => checkpoint.approvalHead.resultingStoreVersion));
+    const checkpointAt = new Date(Math.max(Date.parse(contactState.envelope.updatedAt), Date.parse(draftState.envelope.updatedAt), Date.parse(planState.envelope.updatedAt), ...previousCheckpoints.map((checkpoint: any) => Date.parse(checkpoint.recordedAt))) + 1).toISOString();
+    const checkpoint = procurementDispatch.finalizeProcurementDispatchPreconditionCheckpoint({
+      schemaVersion: 1,
+      checkpointKey: procurementDispatch.procurementDispatchPreconditionCheckpointKey("dispatch-queue", queueIdempotencyKey),
+      operation: "dispatch-queue",
+      commandPayloadHash: procurementDispatch.procurementDispatchHash({ inputSchemaVersion: 1, action: "queue-dispatch-plan", draft: draftBase, plan: planBase }),
+      projectId: draftRecord.projectId,
+      target: structuredClone(draftRecord.target),
+      requestHead: { receiptPosition: requestReceiptPosition, requestVersion: draftRecord.target.requestVersion, revisionId: draftRecord.target.revisionId, revisionFingerprint: draftRecord.target.revisionFingerprint },
+      approvalHead: { expectedStoreVersion: approvalExpectedStoreVersion, resultingStoreVersion: approvalExpectedStoreVersion + 1, approvalVersion: draftRecord.target.approvalVersion, revisionId: draftRecord.target.approvalRevisionId, revisionFingerprint: draftRecord.target.approvalFingerprint },
+      authorizationContextHash: dependencies.authority.authorizationHashes[draftRecord.projectId],
+      recordedAt: checkpointAt,
+    });
+    const stripFingerprint = ({ fingerprint: _fingerprint, ...value }: any) => value;
+    const effectiveDependencies = procurementDispatch.createProcurementDispatchDependencies(dependencies.authority, dependencies.requestRevisions.map(stripFingerprint), dependencies.contentApprovals.map(stripFingerprint), [...previousCheckpoints, checkpoint]);
+    const precondition = { checkpointKey: checkpoint.checkpointKey, checkpointFingerprint: checkpoint.fingerprint, requestReceiptPosition: checkpoint.requestHead.receiptPosition, approvalStoreVersion: checkpoint.approvalHead.resultingStoreVersion };
+    const queueCommand = {
+      inputSchemaVersion: 1 as const,
+      action: "queue-dispatch-plan" as const,
+      draft: { ...draftBase, precondition, idempotencyKey: draftIdempotencyKey },
+      plan: { ...planBase, precondition, idempotencyKey: planKey },
+      queueIdempotencyKey,
+    };
+    const queued = await procurementDispatch.executeProcurementDispatchQueue(queueCommand, () => effectiveDependencies as any);
+    const finalContacts = procurementDispatch.readSupplierContactState(authority as any);
+    const finalDrafts = procurementDispatch.readDispatchDraftState(effectiveDependencies as any, finalContacts);
+    const finalPlans = procurementDispatch.readDispatchPlanApprovalState(effectiveDependencies as any, finalContacts, finalDrafts);
+    return { migrated, plans, secondContact, queued, finalDrafts, finalPlans, queueRaw: window.localStorage.getItem(queueKey) };
+  }, { keys: bgF5FoundationStorageKeys, queueKey: bgF5DispatchPlanQueueIntentStorageKey, authority: base.authority, dependencies: base.dependencies, legacyRaw: JSON.stringify([legacyDraft]) });
+
+  expect(result.migrated).toMatchObject({ status: "ready" });
+  expect(result.plans).toMatchObject({ status: "ready" });
+  expect(result.secondContact).toMatchObject({ status: "created" });
+  expect(result.queued).toMatchObject({ status: "updated", dispatchDraftId: legacyDraft.id });
+  expect(result.finalDrafts).toMatchObject({ status: "ready" });
+  expect(result.finalDrafts.envelope.records[0]).toMatchObject({ id: legacyDraft.id, version: 2, legacyEvidence: { sourceGeneration: "v1-array" } });
+  expect(result.finalDrafts.envelope.records[0].revisions[1].recipientIds).toHaveLength(2);
+  expect(result.finalPlans).toMatchObject({ status: "ready" });
+  expect(result.finalPlans.envelope.records).toHaveLength(1);
+  expect(result.finalPlans.envelope.records[0].target).toMatchObject({ dispatchDraftId: legacyDraft.id, dispatchDraftVersion: 2 });
+  expect(result.queueRaw).toBeNull();
+});
+
+test("BG-F5 bounds Invite ids while migrating and updating maximum-length legacy Draft and Contact ids", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد شناسه بلند مبنا", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const base = await buildBgF5SyntheticDependencySet(page);
+  const request = base.dependencies.requestRevisions[0];
+  const approval = base.dependencies.contentApprovals[0];
+  const contactId = `contact-${"c".repeat(192)}`;
+  const draftId = `draft-${"d".repeat(194)}`;
+  expect(contactId).toHaveLength(200);
+  expect(draftId).toHaveLength(200);
+  const contactAt = new Date(Math.max(Date.parse(request.revisionCreatedAt), Date.parse(approval.updatedAt)) + 1).toISOString();
+  const draftAt = new Date(Date.parse(contactAt) + 1).toISOString();
+  const legacyContact = {
+    schemaVersion: 1,
+    id: contactId,
+    projectId: request.projectId,
+    displayName: "فولاد شناسه بلند",
+    category: "میلگرد",
+    tehranCoverage: "تهران",
+    responseCapability: "product",
+    source: "ثبت مستقیم سازنده",
+    networkStatus: "خارج از شبکه چیدا",
+    status: "active",
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    version: 1,
+    createdAt: contactAt,
+    updatedAt: contactAt,
+    archivedAt: null,
+    history: [{ id: "legacy-long-contact-created", type: "created", actor: "شما", at: contactAt, version: 1 }],
+  };
+  const destination = { displayName: legacyContact.displayName, category: legacyContact.category, tehranCoverage: legacyContact.tehranCoverage, responseCapability: legacyContact.responseCapability, networkStatus: "خارج از شبکه چیدا" };
+  const legacyDraft = buildBgF5LegacyDraftFixture({
+    id: draftId,
+    projectId: request.projectId,
+    contactId,
+    destination,
+    target: { requestId: request.requestId, requestVersion: request.requestVersion, revisionId: request.revisionId, approvalId: approval.approvalId },
+    payload: request.payload,
+    privacySnapshot: request.privacySnapshot,
+    createdAt: draftAt,
+  });
+  legacyDraft.revisions[0].inviteDrafts[0].id = "legacy-long-invite";
+  legacyDraft.revisions[0].fingerprint = bgF5LegacyFingerprint({ target: legacyDraft.target, recipientIds: legacyDraft.revisions[0].recipientIds, inviteDrafts: legacyDraft.revisions[0].inviteDrafts, payload: legacyDraft.revisions[0].payload, privacySnapshot: legacyDraft.revisions[0].privacySnapshot });
+
+  const migrated = await page.evaluate(async ({ keys, authority, dependencies, contactRaw, draftRaw }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    for (const foundation of Object.values(keys) as Array<{ legacy: string; canonical: string; marker: string }>) {
+      window.localStorage.removeItem(foundation.canonical);
+      window.localStorage.removeItem(foundation.marker);
+      window.localStorage.removeItem(foundation.legacy);
+    }
+    window.localStorage.setItem(keys.contacts.legacy, contactRaw);
+    window.localStorage.setItem(keys.drafts.legacy, draftRaw);
+    const contacts = await procurementDispatch.initializeSupplierContacts(() => authority as any);
+    const drafts = await procurementDispatch.initializeDispatchDrafts(() => dependencies as any);
+    return { contacts, drafts };
+  }, { keys: bgF5FoundationStorageKeys, authority: base.authority, dependencies: base.dependencies, contactRaw: JSON.stringify([legacyContact]), draftRaw: JSON.stringify([legacyDraft]) });
+  expect(migrated.contacts).toMatchObject({ status: "ready" });
+  expect(migrated.drafts).toMatchObject({ status: "ready" });
+  expect(migrated.drafts.envelope.records[0].revisions[0].inviteDrafts[0].id.length).toBeLessThanOrEqual(300);
+
+  const lifecycle = await page.evaluate(async ({ authority }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const initial = procurementDispatch.readSupplierContactState(authority as any);
+    if (initial.status !== "ready" || !initial.envelope) return { status: "contact-not-ready" };
+    const contact = initial.envelope.records[0];
+    const archived = await procurementDispatch.executeSupplierContactCommand({ inputSchemaVersion: 1, action: "archive-contact", projectId: contact.projectId, contactId: contact.id, expectedStoreVersion: initial.envelope.storeVersion, expectedContactVersion: contact.version, idempotencyKey: "bg-f5-long-id-archive" }, () => authority as any);
+    const archivedState = procurementDispatch.readSupplierContactState(authority as any);
+    if (archivedState.status !== "ready" || !archivedState.envelope) return { status: "archive-read-failure", archived };
+    const archivedContact = archivedState.envelope.records[0];
+    const restored = await procurementDispatch.executeSupplierContactCommand({ inputSchemaVersion: 1, action: "restore-contact", projectId: archivedContact.projectId, contactId: archivedContact.id, expectedStoreVersion: archivedState.envelope.storeVersion, expectedContactVersion: archivedContact.version, idempotencyKey: "bg-f5-long-id-restore" }, () => authority as any);
+    return { status: "ready", archived, restored };
+  }, { authority: base.authority });
+  expect(lifecycle).toMatchObject({ status: "ready", archived: { status: "updated" }, restored: { status: "updated" } });
+  const updated = await upsertBgF5SyntheticDraft(page, base.authority, base.dependencies, "bg-f5-long-id-draft-update");
+  expect(updated.status).toBe("updated");
+  expect(updated.drafts).toMatchObject({ status: "ready" });
+  expect(updated.drafts.envelope.records[0].id).toBe(draftId);
+  expect(updated.drafts.envelope.records[0].revisions[1].inviteDrafts[0].id.length).toBeLessThanOrEqual(300);
+});
+
+test("BG-F5 enforces the 100-record per-project cap for canonical Contacts and legacy Draft migration", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد cap مبنا", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const base = await buildBgF5SyntheticDependencySet(page);
+  const canonical = await page.evaluate(async ({ authority }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const state = procurementDispatch.readSupplierContactState(authority as any);
+    if (state.status !== "ready" || !state.envelope) return { hundred: false, hundredOne: false, reason: "contact-not-ready" };
+    const source = state.envelope;
+    const projectId = source.records[0].projectId;
+    const authorizationContextHash = authority.authorizationHashes[projectId];
+    const rehash = (value: any) => {
+      const { fingerprint: _fingerprint, ...payload } = value;
+      value.fingerprint = procurementDispatch.procurementDispatchHash(payload);
+      return value;
+    };
+    const records: any[] = [];
+    const receipts: any[] = [];
+    for (let index = 0; index < 101; index += 1) {
+      const key = `bg-f5-canonical-contact-cap-${index}`;
+      const id = procurementDispatch.supplierContactIdForIdempotencyKey(key);
+      const timestamp = new Date(Date.parse(source.migrationReports[0].migratedAt) + index + 1).toISOString();
+      const snapshot = { displayName: `فولاد cap ${index}`, category: "میلگرد", tehranCoverage: "تهران", responseCapability: "product", status: "active", archivedAt: null };
+      const revision = rehash({ id: `supplier-contact-revision:${id}:v1`, version: 1, createdAt: timestamp, snapshot, fingerprint: "" });
+      const commandPayload = { inputSchemaVersion: 1, action: "create-contact", projectId, contactId: id, draft: { displayName: snapshot.displayName, category: snapshot.category, tehranCoverage: snapshot.tehranCoverage, responseCapability: snapshot.responseCapability }, expectedStoreVersion: index + 1 };
+      const payloadHash = procurementDispatch.procurementDispatchHash(commandPayload);
+      const event = rehash({ id: `supplier-contact-event:${id}:v1`, type: "created", actor: "شما", actorPrincipalId: "local-builder-account", at: timestamp, version: 1, revisionId: revision.id, authorizationContextHash, idempotencyKey: key, commandPayloadHash: payloadHash, fingerprint: "" });
+      records.push(rehash({ schemaVersion: 2, objectType: "supplier-contact", id, projectId, ownerPrincipalType: "account", ownerPrincipalId: "local-builder-account", accountSide: "builder", scopeType: "project_private", scopeId: projectId, custodianService: "Supplier Contact Service", sensitivity: "private", ...snapshot, source: "ثبت مستقیم سازنده", networkStatus: "خارج از شبکه چیدا", visibility: "خصوصی پروژه", localStatus: "ثبت محلی", version: 1, currentRevisionId: revision.id, createdAt: timestamp, updatedAt: timestamp, history: [event], revisions: [revision], legacyEvidence: null, fingerprint: "" }));
+      receipts.push(rehash({ schemaVersion: 1, key, action: "create-contact", payloadHash, projectId, recordId: id, expectedStoreVersion: index + 1, expectedRecordVersion: null, expectedContactStoreVersion: null, expectedDraftStoreVersion: null, preconditionCheckpointKey: null, preconditionCheckpointFingerprint: null, requestPreconditionReceiptPosition: null, approvalPreconditionStoreVersion: null, aggregateQueueIdempotencyKey: null, aggregateCommandPayloadHash: null, result: "created", resultingStoreVersion: index + 2, resultingRecordVersion: 1, eventId: event.id, revisionId: revision.id, authorizationContextHash, recordedAt: timestamp, fingerprint: "" }));
+    }
+    const envelopeFor = (count: number) => rehash({ ...source, storeVersion: count + 1, records: records.slice(0, count), idempotencyReceipts: receipts.slice(0, count), updatedAt: receipts[count - 1].recordedAt, fingerprint: "" });
+    return {
+      hundred: procurementDispatch.parseSupplierContactEnvelope(envelopeFor(100), authority as any) !== null,
+      hundredOne: procurementDispatch.parseSupplierContactEnvelope(envelopeFor(101), authority as any) !== null,
+    };
+  }, { authority: base.authority });
+  expect(canonical).toEqual({ hundred: true, hundredOne: false });
+
+  const contact = (await readBgF5FoundationSet(page)).contacts.envelope.records[0];
+  const baseRequest = base.dependencies.requestRevisions[0];
+  const baseApproval = base.dependencies.contentApprovals[0];
+  const requests: any[] = [];
+  const approvals: any[] = [];
+  const legacyDrafts: any[] = [];
+  const createdAt = new Date(Math.max(Date.parse(contact.updatedAt), Date.parse(baseRequest.revisionCreatedAt), Date.parse(baseApproval.updatedAt)) + 1).toISOString();
+  for (let index = 0; index < 101; index += 1) {
+    const requestId = `bg-f5-legacy-cap-request-${index}`;
+    const revisionId = `bg-f5-legacy-cap-request-revision-${index}`;
+    const approvalId = `bg-f5-legacy-cap-approval-${index}`;
+    const approvalRevisionId = `bg-f5-legacy-cap-approval-revision-${index}`;
+    const request = { ...baseRequest, requestId, revisionId, revisionFingerprint: `sha256-${createHash("sha256").update(revisionId).digest("hex")}` };
+    delete request.fingerprint;
+    const approval = { ...baseApproval, approvalId, approvalRevisionId, approvalFingerprint: `sha256-${createHash("sha256").update(approvalRevisionId).digest("hex")}`, requestId, requestRevisionId: revisionId, requestRevisionFingerprint: request.revisionFingerprint };
+    delete approval.fingerprint;
+    requests.push(request);
+    approvals.push(approval);
+    legacyDrafts.push(buildBgF5LegacyDraftFixture({
+      id: `legacy-cap-draft-${index}`,
+      projectId: contact.projectId,
+      contactId: contact.id,
+      destination: { displayName: contact.displayName, category: contact.category, tehranCoverage: contact.tehranCoverage, responseCapability: contact.responseCapability, networkStatus: "خارج از شبکه چیدا" },
+      target: { requestId, requestVersion: request.requestVersion, revisionId, approvalId },
+      payload: request.payload,
+      privacySnapshot: request.privacySnapshot,
+      createdAt,
+    }));
+  }
+  const capDependencies = await createBgF5DependencySet(page, base.authority, requests, approvals);
+  const legacy = await page.evaluate(async ({ keys, dependencies, raw }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    window.localStorage.removeItem(keys.canonical);
+    window.localStorage.removeItem(keys.marker);
+    window.localStorage.setItem(keys.legacy, raw);
+    const initialized = await procurementDispatch.initializeDispatchDrafts(() => dependencies as any);
+    return { initialized, canonicalRaw: window.localStorage.getItem(keys.canonical), markerRaw: window.localStorage.getItem(keys.marker) };
+  }, { keys: bgF5FoundationStorageKeys.drafts, dependencies: capDependencies, raw: JSON.stringify(legacyDrafts) });
+  expect(legacy.initialized).toMatchObject({ status: "read-error", reason: "migration-source-unrepresentable" });
+  expect(legacy.canonicalRaw).toBeNull();
+  expect(legacy.markerRaw).toBeNull();
+});
+
+test("BG-F5 fails closed when equal-timestamp Contact lifecycle revisions make a legacy Draft pin ambiguous", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد lifecycle مبهم", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const base = await buildBgF5SyntheticDependencySet(page);
+  const originalContact = (await readBgF5FoundationSet(page)).contacts.envelope.records[0];
+  const baseAt = Math.max(Date.parse(base.dependencies.requestRevisions[0].revisionCreatedAt), Date.parse(base.dependencies.contentApprovals[0].updatedAt), Date.parse(originalContact.updatedAt));
+  const createdAt = new Date(baseAt + 1).toISOString();
+  const ambiguousAt = new Date(baseAt + 2).toISOString();
+  const legacyContact = {
+    schemaVersion: 1,
+    id: originalContact.id,
+    projectId: originalContact.projectId,
+    displayName: originalContact.displayName,
+    category: originalContact.category,
+    tehranCoverage: originalContact.tehranCoverage,
+    responseCapability: originalContact.responseCapability,
+    source: "ثبت مستقیم سازنده",
+    networkStatus: "خارج از شبکه چیدا",
+    status: "active",
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    version: 3,
+    createdAt,
+    updatedAt: ambiguousAt,
+    archivedAt: null,
+    history: [
+      { id: "legacy-contact-ambiguous-created", type: "created", actor: "شما", at: createdAt, version: 1 },
+      { id: "legacy-contact-ambiguous-archived", type: "archived", actor: "شما", at: ambiguousAt, version: 2 },
+      { id: "legacy-contact-ambiguous-restored", type: "restored", actor: "شما", at: ambiguousAt, version: 3 },
+    ],
+  };
+  const request = base.dependencies.requestRevisions[0];
+  const approval = base.dependencies.contentApprovals[0];
+  const legacyDraft = buildBgF5LegacyDraftFixture({
+    id: "legacy-dispatch-ambiguous-contact",
+    projectId: originalContact.projectId,
+    contactId: originalContact.id,
+    destination: {
+      displayName: originalContact.displayName,
+      category: originalContact.category,
+      tehranCoverage: originalContact.tehranCoverage,
+      responseCapability: originalContact.responseCapability,
+      networkStatus: "خارج از شبکه چیدا",
+    },
+    target: { requestId: request.requestId, requestVersion: request.requestVersion, revisionId: request.revisionId, approvalId: approval.approvalId },
+    payload: request.payload,
+    privacySnapshot: request.privacySnapshot,
+    createdAt: ambiguousAt,
+  });
+
+  const result = await page.evaluate(async ({ keys, authority, dependencies, contactLegacyRaw, draftLegacyRaw }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    window.localStorage.removeItem(keys.contacts.canonical);
+    window.localStorage.removeItem(keys.contacts.marker);
+    window.localStorage.setItem(keys.contacts.legacy, contactLegacyRaw);
+    window.localStorage.removeItem(keys.drafts.canonical);
+    window.localStorage.removeItem(keys.drafts.marker);
+    window.localStorage.setItem(keys.drafts.legacy, draftLegacyRaw);
+    window.localStorage.removeItem(keys.plans.canonical);
+    window.localStorage.removeItem(keys.plans.marker);
+    const contacts = await procurementDispatch.initializeSupplierContacts(() => authority as any);
+    const drafts = await procurementDispatch.initializeDispatchDrafts(() => dependencies as any);
+    return {
+      contacts,
+      drafts,
+      contactMarker: JSON.parse(window.localStorage.getItem(keys.contacts.marker) ?? "null"),
+      draftCanonicalRaw: window.localStorage.getItem(keys.drafts.canonical),
+      draftMarkerRaw: window.localStorage.getItem(keys.drafts.marker),
+      draftLegacyRaw: window.localStorage.getItem(keys.drafts.legacy),
+    };
+  }, { keys: bgF5FoundationStorageKeys, authority: base.authority, dependencies: base.dependencies, contactLegacyRaw: JSON.stringify([legacyContact]), draftLegacyRaw: JSON.stringify([legacyDraft]) });
+
+  expect(result.contacts).toMatchObject({ status: "ready" });
+  expect(result.contactMarker).toMatchObject({ state: "committed" });
+  expect(result.drafts).toMatchObject({ status: "read-error", reason: "migration-source-unrepresentable" });
+  expect(result.draftCanonicalRaw).toBeNull();
+  expect(result.draftMarkerRaw).toBeNull();
+  expect(result.draftLegacyRaw).toBe(JSON.stringify([legacyDraft]));
+});
+
+test("BG-F5 publishes Contact Draft and Plan as canonical v2 foundations and ignores late legacy writes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createCurrentProductDispatchDraft(page, ["فولاد بنیاد BG-F5"]);
+  await page.getByTestId("dispatch-plan-review").click();
+  await page.getByTestId("dispatch-plan-acknowledgement").check();
+  await page.getByTestId("dispatch-plan-approval-create").click();
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
+
+  const projectId = await readActiveProjectId(page);
+  expect(projectId).toEqual(expect.any(String));
+  const committed = await expectBgF5FoundationsCommitted(page);
+  for (const kind of Object.keys(bgF5FoundationStorageKeys) as BgF5FoundationKind[]) {
+    expectBgF5CanonicalEnvelope(committed[kind].envelope, projectId);
+    expect(committed[kind].marker).toMatchObject({
+      state: "committed",
+      fingerprint: expect.stringMatching(bgF5Sha256Pattern),
+    });
+  }
+  expect(committed.contacts.envelope.records[0]).toMatchObject({ displayName: "فولاد بنیاد BG-F5", status: "active" });
+  expect(committed.drafts.envelope.records[0]).toMatchObject({ status: "draft", externalEffect: "none", sendAuthorized: false });
+  expect(committed.plans.envelope.records[0]).toMatchObject({
+    status: "pending",
+    simulationOnly: true,
+    externalEffect: "none",
+    sendAuthorized: false,
+    externalActionAttempted: false,
+  });
+
+  await reopenFirstPurchaseRequestDispatch(page);
+  await page.getByTestId("dispatch-plan-review").click();
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
+  const reloaded = await expectBgF5FoundationsCommitted(page);
+  for (const kind of Object.keys(bgF5FoundationStorageKeys) as BgF5FoundationKind[]) {
+    expect(reloaded[kind].canonicalRaw).toBe(committed[kind].canonicalRaw);
+    expect(reloaded[kind].markerRaw).toBe(committed[kind].markerRaw);
+  }
+
+  await page.evaluate((keys) => {
+    for (const storageKeys of Object.values(keys)) window.localStorage.setItem(storageKeys.legacy, "[]");
+  }, bgF5FoundationStorageKeys);
+  await reopenFirstPurchaseRequestDispatch(page);
+  await expect(page.getByTestId("supplier-contact-card")).toHaveCount(1);
+  await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
+  await page.getByTestId("dispatch-plan-review").click();
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
+  const afterLateLegacyWrite = await expectBgF5FoundationsCommitted(page);
+  for (const kind of Object.keys(bgF5FoundationStorageKeys) as BgF5FoundationKind[]) {
+    expect(afterLateLegacyWrite[kind].canonicalRaw).toBe(committed[kind].canonicalRaw);
+    expect(afterLateLegacyWrite[kind].markerRaw).toBe(committed[kind].markerRaw);
+    expect(afterLateLegacyWrite[kind].legacyRaw).toBe("[]");
+  }
+});
+
+test("BG-F5 rejects a coherently rehashed Draft receipt with an impossible future Contact store version", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createCurrentProductDispatchDraft(page, ["فولاد receipt آینده"]);
+  const foundations = await readBgF5FoundationSet(page);
+  const drafts = foundations.drafts.envelope;
+  const contacts = foundations.contacts.envelope;
+  const receipt = drafts.idempotencyReceipts[0];
+  const record = drafts.records.find((candidate: any) => candidate.id === receipt.recordId);
+  const revision = record.revisions.find((candidate: any) => candidate.id === receipt.revisionId);
+  const event = record.history.find((candidate: any) => candidate.id === receipt.eventId);
+  receipt.expectedContactStoreVersion = contacts.storeVersion + 1;
+  const reconstructedPayload = {
+    inputSchemaVersion: 1,
+    action: "upsert-dispatch-draft",
+    projectId: receipt.projectId,
+    dispatchDraftId: receipt.recordId,
+    requestId: record.target.requestId,
+    expectedRequestVersion: record.target.requestVersion,
+    expectedRequestRevisionId: record.target.revisionId,
+    expectedRequestRevisionFingerprint: record.target.revisionFingerprint,
+    approvalId: record.target.approvalId,
+    expectedApprovalVersion: record.target.approvalVersion,
+    expectedApprovalRevisionId: record.target.approvalRevisionId,
+    expectedApprovalFingerprint: record.target.approvalFingerprint,
+    recipients: revision.inviteDrafts.map((invite: any) => ({
+      supplierContactId: invite.supplierContactId,
+      expectedContactVersion: invite.supplierContactVersion,
+      expectedContactRevisionId: invite.supplierContactRevisionId,
+      expectedContactRevisionFingerprint: invite.supplierContactRevisionFingerprint,
+    })),
+    expectedContactStoreVersion: receipt.expectedContactStoreVersion,
+    expectedDraftStoreVersion: receipt.expectedDraftStoreVersion,
+    expectedDraftVersion: receipt.expectedRecordVersion,
+    precondition: {
+      checkpointKey: receipt.preconditionCheckpointKey,
+      checkpointFingerprint: receipt.preconditionCheckpointFingerprint,
+      requestReceiptPosition: receipt.requestPreconditionReceiptPosition,
+      approvalStoreVersion: receipt.approvalPreconditionStoreVersion,
+    },
+  };
+  receipt.payloadHash = `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue(reconstructedPayload))).digest("hex")}`;
+  event.commandPayloadHash = receipt.payloadHash;
+  rehashProjectFoundationValue(event);
+  rehashProjectFoundationValue(receipt);
+  rehashProjectFoundationValue(record);
+  rehashProjectFoundationValue(drafts);
+  const forgedRaw = JSON.stringify(drafts);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF5DispatchDraftsCanonicalStorageKey, raw: forgedRaw });
+
+  await page.reload();
+  await reopenFirstPurchaseRequestDispatch(page);
+  await expect(page.getByTestId("supplier-contact-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("dispatch-draft-read-error")).toBeVisible();
+  await expect(page.getByTestId("dispatch-draft-preview")).toHaveCount(0);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchDraftsCanonicalStorageKey)).toBe(forgedRaw);
+});
+
+for (const upstreamVersion of ["expectedContactStoreVersion", "expectedDraftStoreVersion"] as const) {
+  test(`BG-F5 rejects a coherently rehashed Plan receipt with an impossible future ${upstreamVersion === "expectedContactStoreVersion" ? "Contact" : "Draft"} store version`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await createCurrentProductDispatchDraft(page, [`فولاد ${upstreamVersion}`]);
+    await page.getByTestId("dispatch-plan-review").click();
+    await page.getByTestId("dispatch-plan-acknowledgement").check();
+    await page.getByTestId("dispatch-plan-approval-create").click();
+    await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
+    const foundations = await readBgF5FoundationSet(page);
+    const plans = foundations.plans.envelope;
+    const receipt = plans.idempotencyReceipts[0];
+    const record = plans.records.find((candidate: any) => candidate.id === receipt.recordId);
+    const event = record.history.find((candidate: any) => candidate.id === receipt.eventId);
+    receipt[upstreamVersion] = (upstreamVersion === "expectedContactStoreVersion" ? foundations.contacts.envelope.storeVersion : foundations.drafts.envelope.storeVersion) + 1;
+    const reconstructedPayload = {
+      inputSchemaVersion: 1,
+      action: "create-dispatch-plan",
+      projectId: receipt.projectId,
+      planApprovalId: receipt.recordId,
+      dispatchDraftId: record.target.dispatchDraftId,
+      expectedContactStoreVersion: receipt.expectedContactStoreVersion,
+      expectedDraftStoreVersion: receipt.expectedDraftStoreVersion,
+      expectedDraftVersion: record.target.dispatchDraftVersion,
+      expectedDispatchRevisionId: record.target.dispatchRevisionId,
+      expectedDispatchRevisionFingerprint: record.target.dispatchRevisionFingerprint,
+      expectedPlanStoreVersion: receipt.expectedStoreVersion,
+      precondition: {
+        checkpointKey: receipt.preconditionCheckpointKey,
+        checkpointFingerprint: receipt.preconditionCheckpointFingerprint,
+        requestReceiptPosition: receipt.requestPreconditionReceiptPosition,
+        approvalStoreVersion: receipt.approvalPreconditionStoreVersion,
+      },
+      acknowledgement: record.snapshot.reviewAcknowledgement,
+    };
+    receipt.payloadHash = `sha256-${createHash("sha256").update(JSON.stringify(stableTestValue(reconstructedPayload))).digest("hex")}`;
+    event.commandPayloadHash = receipt.payloadHash;
+    rehashProjectFoundationValue(event);
+    rehashProjectFoundationValue(receipt);
+    rehashProjectFoundationValue(record);
+    rehashProjectFoundationValue(plans);
+    const forgedRaw = JSON.stringify(plans);
+    await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF5DispatchPlanApprovalsCanonicalStorageKey, raw: forgedRaw });
+
+    await page.reload();
+    await reopenFirstPurchaseRequestDispatch(page);
+    await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
+    await expect(page.getByTestId("dispatch-plan-approval-read-error")).toBeVisible();
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanApprovalsCanonicalStorageKey)).toBe(forgedRaw);
+  });
+}
+
+test("BG-F5 keeps an older valid Plan readable when a later Contact write has a rolled-back cross-store clock", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد ساعت برگشتی", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  const draft = await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-clock-draft");
+  const plan = await createBgF5SyntheticPlan(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-clock-plan");
+  expect(draft.status).toBe("created");
+  expect(plan.status).toBe("created");
+
+  await installBackwardBrowserClock(page);
+  const result = await page.evaluate(async ({ authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const before = procurementDispatch.readSupplierContactState(authority as any);
+    if (before.status !== "ready" || !before.envelope) return { status: "contact-not-ready", before };
+    const contact = before.envelope.records[0];
+    const archived = await procurementDispatch.executeSupplierContactCommand({
+      inputSchemaVersion: 1,
+      action: "archive-contact",
+      projectId: contact.projectId,
+      contactId: contact.id,
+      expectedStoreVersion: before.envelope.storeVersion,
+      expectedContactVersion: contact.version,
+      idempotencyKey: "bg-f5-clock-contact-archive",
+    }, () => authority as any);
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    const drafts = procurementDispatch.readDispatchDraftState(dependencies as any, contacts);
+    const plans = procurementDispatch.readDispatchPlanApprovalState(dependencies as any, contacts, drafts);
+    const contactReceipt = contacts.status === "ready" ? contacts.envelope?.idempotencyReceipts.at(-1) : null;
+    const planReceipt = plans.status === "ready" ? plans.envelope?.idempotencyReceipts[0] : JSON.parse(window.localStorage.getItem("chida-prototype-procurement-dispatch-plan-approvals:v2") ?? "null")?.idempotencyReceipts?.[0];
+    return { archived, contacts, drafts, plans, contactRecordedAt: contactReceipt?.recordedAt ?? null, planRecordedAt: planReceipt?.recordedAt ?? null };
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+
+  expect(result.archived).toMatchObject({ status: "updated" });
+  expect(result.contacts).toMatchObject({ status: "ready" });
+  expect(result.drafts).toMatchObject({ status: "ready" });
+  expect(result.plans).toMatchObject({ status: "ready" });
+  expect(Date.parse(result.contactRecordedAt)).toBeLessThan(Date.parse(result.planRecordedAt));
+});
+
+test("BG-F5 rejects a coherently rehashed Draft receipt whose Contact pin is stale at the claimed Contact prefix", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد pin تماس قدیمی", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  expect((await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-stale-contact-draft-v1")).status).toBe("created");
+  const lifecycle = await page.evaluate(async ({ authority }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const initial = procurementDispatch.readSupplierContactState(authority as any);
+    if (initial.status !== "ready" || !initial.envelope) return { status: "contact-not-ready" };
+    const contact = initial.envelope.records[0];
+    const archived = await procurementDispatch.executeSupplierContactCommand({ inputSchemaVersion: 1, action: "archive-contact", projectId: contact.projectId, contactId: contact.id, expectedStoreVersion: initial.envelope.storeVersion, expectedContactVersion: contact.version, idempotencyKey: "bg-f5-stale-contact-archive" }, () => authority as any);
+    const archivedState = procurementDispatch.readSupplierContactState(authority as any);
+    if (archivedState.status !== "ready" || !archivedState.envelope) return { status: "archive-read-failure", archived };
+    const archivedContact = archivedState.envelope.records[0];
+    const restored = await procurementDispatch.executeSupplierContactCommand({ inputSchemaVersion: 1, action: "restore-contact", projectId: archivedContact.projectId, contactId: archivedContact.id, expectedStoreVersion: archivedState.envelope.storeVersion, expectedContactVersion: archivedContact.version, idempotencyKey: "bg-f5-stale-contact-restore" }, () => authority as any);
+    return { status: "ready", archived, restored };
+  }, { authority: dependencySet.authority });
+  expect(lifecycle).toMatchObject({ status: "ready", archived: { status: "updated" }, restored: { status: "updated" } });
+  expect((await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-stale-contact-draft-v2")).status).toBe("updated");
+
+  const parsed = await page.evaluate(async ({ authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    const drafts = contacts.status === "ready" ? procurementDispatch.readDispatchDraftState(dependencies as any, contacts) : null;
+    if (contacts.status !== "ready" || !contacts.envelope || drafts?.status !== "ready" || !drafts.envelope) return { original: false, forged: false, reason: "foundation-not-ready" };
+    const forged = JSON.parse(JSON.stringify(drafts.envelope));
+    const record = forged.records[0];
+    const staleInvite = record.revisions[0].inviteDrafts[0];
+    const revision = record.revisions[1];
+    const invite = revision.inviteDrafts[0];
+    invite.supplierContactVersion = staleInvite.supplierContactVersion;
+    invite.supplierContactRevisionId = staleInvite.supplierContactRevisionId;
+    invite.supplierContactRevisionFingerprint = staleInvite.supplierContactRevisionFingerprint;
+    const rehash = (value: any) => {
+      const { fingerprint: _fingerprint, ...payload } = value;
+      value.fingerprint = procurementDispatch.procurementDispatchHash(payload);
+    };
+    rehash(invite);
+    rehash(revision);
+    const receipt = forged.idempotencyReceipts[1];
+    const reconstructed = {
+      inputSchemaVersion: 1,
+      action: "upsert-dispatch-draft",
+      projectId: receipt.projectId,
+      dispatchDraftId: receipt.recordId,
+      requestId: record.target.requestId,
+      expectedRequestVersion: record.target.requestVersion,
+      expectedRequestRevisionId: record.target.revisionId,
+      expectedRequestRevisionFingerprint: record.target.revisionFingerprint,
+      approvalId: record.target.approvalId,
+      expectedApprovalVersion: record.target.approvalVersion,
+      expectedApprovalRevisionId: record.target.approvalRevisionId,
+      expectedApprovalFingerprint: record.target.approvalFingerprint,
+      recipients: revision.inviteDrafts.map((candidate: any) => ({ supplierContactId: candidate.supplierContactId, expectedContactVersion: candidate.supplierContactVersion, expectedContactRevisionId: candidate.supplierContactRevisionId, expectedContactRevisionFingerprint: candidate.supplierContactRevisionFingerprint })),
+      expectedContactStoreVersion: receipt.expectedContactStoreVersion,
+      expectedDraftStoreVersion: receipt.expectedDraftStoreVersion,
+      expectedDraftVersion: receipt.expectedRecordVersion,
+      precondition: {
+        checkpointKey: receipt.preconditionCheckpointKey,
+        checkpointFingerprint: receipt.preconditionCheckpointFingerprint,
+        requestReceiptPosition: receipt.requestPreconditionReceiptPosition,
+        approvalStoreVersion: receipt.approvalPreconditionStoreVersion,
+      },
+    };
+    receipt.payloadHash = procurementDispatch.procurementDispatchHash(reconstructed);
+    const event = record.history.find((candidate: any) => candidate.id === receipt.eventId);
+    event.commandPayloadHash = receipt.payloadHash;
+    rehash(event);
+    rehash(receipt);
+    rehash(record);
+    rehash(forged);
+    return {
+      original: procurementDispatch.parseDispatchDraftEnvelope(drafts.envelope, dependencies as any, contacts.envelope) !== null,
+      forged: procurementDispatch.parseDispatchDraftEnvelope(forged, dependencies as any, contacts.envelope) !== null,
+    };
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+
+  expect(parsed.original).toBe(true);
+  expect(parsed.forged).toBe(false);
+});
+
+test("BG-F5 rejects a coherently rehashed Plan receipt whose Draft target is stale at the claimed Draft prefix", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد pin Draft نخست", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  expect((await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-stale-draft-v1")).status).toBe("created");
+  const secondContact = await page.evaluate(async ({ authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    if (contacts.status !== "ready" || !contacts.envelope) return { status: "contact-not-ready" };
+    const request = dependencies.requestRevisions[0];
+    const key = "bg-f5-stale-draft-second-contact";
+    return procurementDispatch.executeSupplierContactCommand({
+      inputSchemaVersion: 1,
+      action: "create-contact",
+      projectId: request.projectId,
+      contactId: procurementDispatch.supplierContactIdForIdempotencyKey(key),
+      draft: { displayName: "فولاد pin Draft دوم", category: "میلگرد", tehranCoverage: "تهران", responseCapability: "product" },
+      expectedStoreVersion: contacts.envelope.storeVersion,
+      idempotencyKey: key,
+    }, () => authority as any);
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+  expect(secondContact).toMatchObject({ status: "created" });
+  expect((await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-stale-draft-v2")).status).toBe("updated");
+  expect((await createBgF5SyntheticPlan(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-stale-draft-plan")).status).toBe("created");
+
+  const parsed = await page.evaluate(async ({ authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    const drafts = procurementDispatch.readDispatchDraftState(dependencies as any, contacts);
+    const plans = procurementDispatch.readDispatchPlanApprovalState(dependencies as any, contacts, drafts);
+    if (contacts.status !== "ready" || !contacts.envelope || drafts.status !== "ready" || !drafts.envelope || plans.status !== "ready" || !plans.envelope) return { original: false, forged: false, reason: "foundation-not-ready" };
+    const forged = JSON.parse(JSON.stringify(plans.envelope));
+    const draft = drafts.envelope.records[0];
+    const staleRevision = draft.revisions[0];
+    const record = forged.records[0];
+    record.target.dispatchDraftVersion = staleRevision.version;
+    record.target.dispatchRevisionId = staleRevision.id;
+    record.target.dispatchRevisionFingerprint = staleRevision.fingerprint;
+    record.snapshot.recipients = staleRevision.inviteDrafts.map((invite: any) => ({ supplierContactId: invite.supplierContactId, supplierContactVersion: invite.supplierContactVersion, supplierContactRevisionId: invite.supplierContactRevisionId, supplierContactRevisionFingerprint: invite.supplierContactRevisionFingerprint, destination: invite.destination }));
+    record.snapshot.recipientCount = record.snapshot.recipients.length;
+    record.snapshot.payload = staleRevision.payload;
+    record.snapshot.privacySnapshot = staleRevision.privacySnapshot;
+    record.planFingerprint = procurementDispatch.dispatchPlanFingerprint(record.target, record.snapshot);
+    record.dedupeKey = procurementDispatch.dispatchPlanDedupeKey(record.projectId, record.target, record.planFingerprint);
+    record.idempotencyKey = `${record.dedupeKey}:simulation-v2`;
+    const receipt = forged.idempotencyReceipts[0];
+    const reconstructed = {
+      inputSchemaVersion: 1,
+      action: "create-dispatch-plan",
+      projectId: receipt.projectId,
+      planApprovalId: receipt.recordId,
+      dispatchDraftId: record.target.dispatchDraftId,
+      expectedContactStoreVersion: receipt.expectedContactStoreVersion,
+      expectedDraftStoreVersion: receipt.expectedDraftStoreVersion,
+      expectedDraftVersion: record.target.dispatchDraftVersion,
+      expectedDispatchRevisionId: record.target.dispatchRevisionId,
+      expectedDispatchRevisionFingerprint: record.target.dispatchRevisionFingerprint,
+      expectedPlanStoreVersion: receipt.expectedStoreVersion,
+      precondition: {
+        checkpointKey: receipt.preconditionCheckpointKey,
+        checkpointFingerprint: receipt.preconditionCheckpointFingerprint,
+        requestReceiptPosition: receipt.requestPreconditionReceiptPosition,
+        approvalStoreVersion: receipt.approvalPreconditionStoreVersion,
+      },
+      acknowledgement: record.snapshot.reviewAcknowledgement,
+    };
+    receipt.payloadHash = procurementDispatch.procurementDispatchHash(reconstructed);
+    const event = record.history.find((candidate: any) => candidate.id === receipt.eventId);
+    event.commandPayloadHash = receipt.payloadHash;
+    const rehash = (value: any) => {
+      const { fingerprint: _fingerprint, ...payload } = value;
+      value.fingerprint = procurementDispatch.procurementDispatchHash(payload);
+    };
+    rehash(event);
+    rehash(receipt);
+    rehash(record);
+    rehash(forged);
+    return {
+      original: procurementDispatch.parseDispatchPlanApprovalEnvelope(plans.envelope, dependencies as any, contacts.envelope, drafts.envelope) !== null,
+      forged: procurementDispatch.parseDispatchPlanApprovalEnvelope(forged, dependencies as any, contacts.envelope, drafts.envelope) !== null,
+    };
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+
+  expect(parsed.original).toBe(true);
+  expect(parsed.forged).toBe(false);
+});
+
+test("BG-F5 rejects a coherently rehashed Draft receipt that links a create event to the later revision", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد receipt Draft نخست", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  expect((await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-link-draft-v1")).status).toBe("created");
+  const secondContact = await page.evaluate(async ({ authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    if (contacts.status !== "ready" || !contacts.envelope) return { status: "contact-not-ready" };
+    const key = "bg-f5-link-draft-second-contact";
+    return procurementDispatch.executeSupplierContactCommand({
+      inputSchemaVersion: 1,
+      action: "create-contact",
+      projectId: dependencies.requestRevisions[0].projectId,
+      contactId: procurementDispatch.supplierContactIdForIdempotencyKey(key),
+      draft: { displayName: "فولاد receipt Draft دوم", category: "میلگرد", tehranCoverage: "تهران", responseCapability: "product" },
+      expectedStoreVersion: contacts.envelope.storeVersion,
+      idempotencyKey: key,
+    }, () => authority as any);
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+  expect(secondContact).toMatchObject({ status: "created" });
+  expect((await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-link-draft-v2")).status).toBe("updated");
+
+  const parsed = await page.evaluate(async ({ authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    const drafts = procurementDispatch.readDispatchDraftState(dependencies as any, contacts);
+    if (contacts.status !== "ready" || !contacts.envelope || drafts.status !== "ready" || !drafts.envelope) return { original: false, forged: false };
+    const forged = JSON.parse(JSON.stringify(drafts.envelope));
+    const record = forged.records[0];
+    const laterRevision = record.revisions[1];
+    const receipt = forged.idempotencyReceipts[0];
+    receipt.revisionId = laterRevision.id;
+    receipt.resultingRecordVersion = laterRevision.version;
+    receipt.expectedContactStoreVersion = forged.idempotencyReceipts[1].expectedContactStoreVersion;
+    const reconstructed = {
+      inputSchemaVersion: 1,
+      action: "upsert-dispatch-draft",
+      projectId: receipt.projectId,
+      dispatchDraftId: receipt.recordId,
+      requestId: record.target.requestId,
+      expectedRequestVersion: record.target.requestVersion,
+      expectedRequestRevisionId: record.target.revisionId,
+      expectedRequestRevisionFingerprint: record.target.revisionFingerprint,
+      approvalId: record.target.approvalId,
+      expectedApprovalVersion: record.target.approvalVersion,
+      expectedApprovalRevisionId: record.target.approvalRevisionId,
+      expectedApprovalFingerprint: record.target.approvalFingerprint,
+      recipients: laterRevision.inviteDrafts.map((invite: any) => ({ supplierContactId: invite.supplierContactId, expectedContactVersion: invite.supplierContactVersion, expectedContactRevisionId: invite.supplierContactRevisionId, expectedContactRevisionFingerprint: invite.supplierContactRevisionFingerprint })),
+      expectedContactStoreVersion: receipt.expectedContactStoreVersion,
+      expectedDraftStoreVersion: receipt.expectedDraftStoreVersion,
+      expectedDraftVersion: receipt.expectedRecordVersion,
+      precondition: {
+        checkpointKey: receipt.preconditionCheckpointKey,
+        checkpointFingerprint: receipt.preconditionCheckpointFingerprint,
+        requestReceiptPosition: receipt.requestPreconditionReceiptPosition,
+        approvalStoreVersion: receipt.approvalPreconditionStoreVersion,
+      },
+    };
+    receipt.payloadHash = procurementDispatch.procurementDispatchHash(reconstructed);
+    const event = record.history.find((candidate: any) => candidate.id === receipt.eventId);
+    event.commandPayloadHash = receipt.payloadHash;
+    const rehash = (value: any) => {
+      const { fingerprint: _fingerprint, ...payload } = value;
+      value.fingerprint = procurementDispatch.procurementDispatchHash(payload);
+    };
+    rehash(event);
+    rehash(receipt);
+    rehash(record);
+    rehash(forged);
+    return {
+      original: procurementDispatch.parseDispatchDraftEnvelope(drafts.envelope, dependencies as any, contacts.envelope) !== null,
+      forged: procurementDispatch.parseDispatchDraftEnvelope(forged, dependencies as any, contacts.envelope) !== null,
+    };
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+
+  expect(parsed.original).toBe(true);
+  expect(parsed.forged).toBe(false);
+});
+
+test("BG-F5 rejects a coherently rehashed Plan receipt that links a create event to the later revision", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد receipt Plan", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  expect((await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-link-plan-draft")).status).toBe("created");
+  expect((await createBgF5SyntheticPlan(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-link-plan-create")).status).toBe("created");
+  const withdrawn = await page.evaluate(async ({ authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    const drafts = procurementDispatch.readDispatchDraftState(dependencies as any, contacts);
+    const plans = procurementDispatch.readDispatchPlanApprovalState(dependencies as any, contacts, drafts);
+    if (contacts.status !== "ready" || !contacts.envelope || drafts.status !== "ready" || !drafts.envelope || plans.status !== "ready" || !plans.envelope) return { status: "foundation-not-ready" };
+    const plan = plans.envelope.records[0];
+    const commandKey = "bg-f5-link-plan-withdraw";
+    const base = {
+      inputSchemaVersion: 1,
+      action: "withdraw-dispatch-plan",
+      projectId: plan.projectId,
+      planApprovalId: plan.id,
+      expectedContactStoreVersion: contacts.envelope.storeVersion,
+      expectedDraftStoreVersion: drafts.envelope.storeVersion,
+      expectedPlanStoreVersion: plans.envelope.storeVersion,
+      expectedPlanVersion: plan.version,
+    } as const;
+    const previousCheckpoints = dependencies.preconditionCheckpoints ?? [];
+    const request = dependencies.requestRevisions.find((candidate: any) => candidate.projectId === plan.projectId && candidate.requestId === plan.target.requestId && candidate.requestVersion === plan.target.requestVersion && candidate.revisionId === plan.target.requestRevisionId && candidate.revisionFingerprint === plan.target.requestRevisionFingerprint);
+    const approval = dependencies.contentApprovals.find((candidate: any) => candidate.projectId === plan.projectId && candidate.approvalId === plan.target.contentApprovalId && candidate.approvalVersion === plan.target.contentApprovalVersion && candidate.approvalRevisionId === plan.target.contentApprovalRevisionId && candidate.approvalFingerprint === plan.target.contentApprovalFingerprint);
+    if (!request || !approval) return { status: "dependency-target-not-ready" };
+    const requestReceiptPosition = Math.max(0, ...previousCheckpoints.map((checkpoint: any) => checkpoint.requestHead.receiptPosition)) + 1;
+    const approvalExpectedStoreVersion = Math.max(1, ...previousCheckpoints.map((checkpoint: any) => checkpoint.approvalHead.resultingStoreVersion));
+    const target = { requestId: plan.target.requestId, requestVersion: plan.target.requestVersion, revisionId: plan.target.requestRevisionId, revisionFingerprint: plan.target.requestRevisionFingerprint, approvalId: plan.target.contentApprovalId, approvalVersion: plan.target.contentApprovalVersion, approvalRevisionId: plan.target.contentApprovalRevisionId, approvalFingerprint: plan.target.contentApprovalFingerprint };
+    const recordedAt = new Date(Math.max(Date.parse(request.revisionCreatedAt), Date.parse(approval.updatedAt), ...previousCheckpoints.map((checkpoint: any) => Date.parse(checkpoint.recordedAt))) + 1).toISOString();
+    const checkpoint = procurementDispatch.finalizeProcurementDispatchPreconditionCheckpoint({ schemaVersion: 1, checkpointKey: procurementDispatch.procurementDispatchPreconditionCheckpointKey("dispatch-plan", commandKey), operation: "dispatch-plan", commandPayloadHash: procurementDispatch.procurementDispatchHash(base), projectId: base.projectId, target, requestHead: { receiptPosition: requestReceiptPosition, requestVersion: target.requestVersion, revisionId: target.revisionId, revisionFingerprint: target.revisionFingerprint }, approvalHead: { expectedStoreVersion: approvalExpectedStoreVersion, resultingStoreVersion: approvalExpectedStoreVersion + 1, approvalVersion: target.approvalVersion, revisionId: target.approvalRevisionId, revisionFingerprint: target.approvalFingerprint }, authorizationContextHash: dependencies.authority.authorizationHashes[base.projectId], recordedAt });
+    const stripFingerprint = ({ fingerprint: _fingerprint, ...value }: any) => value;
+    const effectiveDependencies = procurementDispatch.createProcurementDispatchDependencies(dependencies.authority, dependencies.requestRevisions.map(stripFingerprint), dependencies.contentApprovals.map(stripFingerprint), [...previousCheckpoints, checkpoint]);
+    const precondition = { checkpointKey: checkpoint.checkpointKey, checkpointFingerprint: checkpoint.fingerprint, requestReceiptPosition: checkpoint.requestHead.receiptPosition, approvalStoreVersion: checkpoint.approvalHead.resultingStoreVersion };
+    const result = await procurementDispatch.executeDispatchPlanApprovalCommand({ ...base, precondition, idempotencyKey: commandKey }, () => effectiveDependencies as any);
+    return { status: result.status, result, dependencies: effectiveDependencies };
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+  if ((withdrawn as any).dependencies) Object.assign(dependencySet.dependencies, (withdrawn as any).dependencies);
+  expect(withdrawn).toMatchObject({ status: "updated", result: { status: "updated" } });
+
+  const parsed = await page.evaluate(async ({ authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    const drafts = procurementDispatch.readDispatchDraftState(dependencies as any, contacts);
+    const plans = procurementDispatch.readDispatchPlanApprovalState(dependencies as any, contacts, drafts);
+    if (contacts.status !== "ready" || !contacts.envelope || drafts.status !== "ready" || !drafts.envelope || plans.status !== "ready" || !plans.envelope) return { original: false, forged: false };
+    const forged = JSON.parse(JSON.stringify(plans.envelope));
+    const record = forged.records[0];
+    const receipt = forged.idempotencyReceipts[0];
+    receipt.revisionId = record.revisions[1].id;
+    receipt.resultingRecordVersion = record.revisions[1].version;
+    const rehash = (value: any) => {
+      const { fingerprint: _fingerprint, ...payload } = value;
+      value.fingerprint = procurementDispatch.procurementDispatchHash(payload);
+    };
+    rehash(receipt);
+    rehash(forged);
+    return {
+      original: procurementDispatch.parseDispatchPlanApprovalEnvelope(plans.envelope, dependencies as any, contacts.envelope, drafts.envelope) !== null,
+      forged: procurementDispatch.parseDispatchPlanApprovalEnvelope(forged, dependencies as any, contacts.envelope, drafts.envelope) !== null,
+    };
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+
+  expect(parsed.original).toBe(true);
+  expect(parsed.forged).toBe(false);
+});
+
+test("BG-F5 keeps a malformed durable Draft and Plan intent fail-closed without clearing it", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد intent خراب BG-F5", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const before = await expectBgF5FoundationsCommitted(page);
+  const malformedIntentRaw = "{}";
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF5DispatchPlanQueueIntentStorageKey, raw: malformedIntentRaw });
+
+  await page.reload();
+  await reopenFirstPurchaseRequestDispatch(page);
+  await expect(page.getByTestId("supplier-contact-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("supplier-contact-card")).toContainText("فولاد intent خراب BG-F5");
+  await expect(page.getByTestId("supplier-contact-add")).toBeEnabled();
+  await expect(page.getByTestId("dispatch-draft-read-error")).toBeVisible();
+  await expect(page.getByTestId("dispatch-plan-approval-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey)).toBe(malformedIntentRaw);
+  const after = await readBgF5FoundationSet(page);
+  for (const kind of Object.keys(bgF5FoundationStorageKeys) as BgF5FoundationKind[]) {
+    expect(after[kind].canonicalRaw).toBe(before[kind].canonicalRaw);
+    expect(after[kind].markerRaw).toBe(before[kind].markerRaw);
+  }
+});
+
+test("BG-F5 rejects a legacy Plan whose history reuses an event id before creating its canonical generation", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createCurrentProductDispatchDraft(page, ["فولاد مهاجرت BG-F5"]);
+  await page.getByTestId("dispatch-plan-review").click();
+  await page.getByTestId("dispatch-plan-acknowledgement").check();
+  await page.getByTestId("dispatch-plan-approval-create").click();
+  await page.getByTestId("dispatch-plan-approval-withdraw").click();
+  const current = await expectBgF5FoundationsCommitted(page);
+  const contact = current.contacts.envelope.records[0];
+  const draft = current.drafts.envelope.records[0];
+  const plan = current.plans.envelope.records[0];
+  const legacyTarget = {
+    requestId: draft.target.requestId,
+    requestVersion: draft.target.requestVersion,
+    revisionId: draft.target.revisionId,
+    approvalId: draft.target.approvalId,
+  };
+  const legacyContact = {
+    schemaVersion: 1,
+    id: contact.id,
+    projectId: contact.projectId,
+    displayName: contact.displayName,
+    category: contact.category,
+    tehranCoverage: contact.tehranCoverage,
+    responseCapability: contact.responseCapability,
+    source: contact.source,
+    networkStatus: contact.networkStatus,
+    status: contact.status,
+    visibility: contact.visibility,
+    localStatus: contact.localStatus,
+    version: contact.version,
+    createdAt: contact.createdAt,
+    updatedAt: contact.updatedAt,
+    archivedAt: contact.archivedAt,
+    history: contact.history.map((event: any) => ({ id: event.id, type: event.type, actor: "شما", at: event.at, version: event.version })),
+  };
+  const legacyDraftRevisions = draft.revisions.map((revision: any) => {
+    const inviteDrafts = revision.inviteDrafts.map((invite: any) => ({
+      schemaVersion: 1,
+      id: invite.id,
+      projectId: invite.projectId,
+      supplierContactId: invite.supplierContactId,
+      destination: invite.destination,
+      target: legacyTarget,
+      source: invite.source,
+      continuation: invite.continuation,
+      externalEffect: invite.externalEffect,
+      sendAuthorized: invite.sendAuthorized,
+      version: 1,
+      createdAt: invite.createdAt,
+      updatedAt: invite.updatedAt,
+    }));
+    const fingerprintPayload = { target: legacyTarget, recipientIds: revision.recipientIds, inviteDrafts, payload: revision.payload, privacySnapshot: revision.privacySnapshot };
+    return { id: revision.id, version: revision.version, createdAt: revision.createdAt, recipientIds: revision.recipientIds, inviteDrafts, payload: revision.payload, privacySnapshot: revision.privacySnapshot, fingerprint: bgF5LegacyFingerprint(fingerprintPayload) };
+  });
+  const legacyDraft = {
+    schemaVersion: 1,
+    id: draft.id,
+    projectId: draft.projectId,
+    target: legacyTarget,
+    dedupeKey: `${draft.projectId}:${legacyTarget.requestId}:${legacyTarget.requestVersion}:${legacyTarget.revisionId}:dispatch-draft`,
+    status: "draft",
+    currentRevisionId: legacyDraftRevisions.at(-1).id,
+    externalEffect: "none",
+    sendAuthorized: false,
+    visibility: draft.visibility,
+    localStatus: draft.localStatus,
+    version: draft.version,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt,
+    history: draft.history.map((event: any) => ({ id: event.id, type: event.type, actor: "شما", at: event.at, version: event.version })),
+    revisions: legacyDraftRevisions,
+  };
+  const pinnedLegacyRevision = legacyDraftRevisions.find((revision: any) => revision.version === plan.target.dispatchDraftVersion)!;
+  const legacyPlanTarget = {
+    type: "dispatch-draft-revision",
+    dispatchDraftId: legacyDraft.id,
+    dispatchDraftVersion: pinnedLegacyRevision.version,
+    dispatchRevisionId: pinnedLegacyRevision.id,
+    dispatchRevisionFingerprint: pinnedLegacyRevision.fingerprint,
+    requestId: legacyTarget.requestId,
+    requestVersion: legacyTarget.requestVersion,
+    requestRevisionId: legacyTarget.revisionId,
+    contentApprovalId: legacyTarget.approvalId,
+  };
+  const legacyPlanSnapshot = {
+    recipients: plan.snapshot.recipients.map((recipient: any) => ({ supplierContactId: recipient.supplierContactId, supplierContactVersion: recipient.supplierContactVersion, destination: recipient.destination })),
+    recipientCount: plan.snapshot.recipientCount,
+    payload: plan.snapshot.payload,
+    privacySnapshot: plan.snapshot.privacySnapshot,
+    reviewAcknowledgement: plan.snapshot.reviewAcknowledgement,
+  };
+  const legacyPlanFingerprint = bgF5LegacyFingerprint({ target: legacyPlanTarget, snapshot: legacyPlanSnapshot });
+  const legacyPlanDedupeKey = `${plan.projectId}:${legacyPlanTarget.dispatchDraftId}:${legacyPlanTarget.dispatchRevisionId}:${legacyPlanFingerprint}:local-plan-approval`;
+  const duplicateEventId = "dispatch-plan-legacy-duplicate-event";
+  const legacyPlan = {
+    schemaVersion: 1,
+    id: plan.id,
+    projectId: plan.projectId,
+    purpose: plan.purpose,
+    target: legacyPlanTarget,
+    snapshot: legacyPlanSnapshot,
+    planFingerprint: legacyPlanFingerprint,
+    dedupeKey: legacyPlanDedupeKey,
+    idempotencyKey: `${legacyPlanDedupeKey}:simulation-v1`,
+    status: plan.status,
+    simulationOnly: true,
+    externalEffect: "none",
+    sendAuthorized: false,
+    externalActionAttempted: false,
+    actionRecord: null,
+    visibility: plan.visibility,
+    localStatus: plan.localStatus,
+    requestedBy: "شما",
+    decidedBy: null,
+    requestedAt: plan.requestedAt,
+    decidedAt: null,
+    createdAt: plan.createdAt,
+    updatedAt: plan.updatedAt,
+    version: plan.version,
+    history: plan.history.map((event: any) => ({ id: duplicateEventId, type: event.type, actor: "شما", at: event.at, version: event.version })),
   };
 
-  await expectLegacyApprovalReadable();
+  await page.evaluate(({ keys, contacts, drafts, plans }) => {
+    for (const storageKeys of Object.values(keys)) {
+      window.localStorage.removeItem(storageKeys.canonical);
+      window.localStorage.removeItem(storageKeys.marker);
+    }
+    window.localStorage.removeItem("chida-prototype-project-dispatch-drafts:v2:plan-queue-intent:v1");
+    window.localStorage.setItem(keys.contacts.legacy, JSON.stringify(contacts));
+    window.localStorage.setItem(keys.drafts.legacy, JSON.stringify(drafts));
+    window.localStorage.setItem(keys.plans.legacy, JSON.stringify(plans));
+  }, { keys: bgF5FoundationStorageKeys, contacts: [legacyContact], drafts: [legacyDraft], plans: [legacyPlan] });
+
   await page.reload();
-  await expectLegacyApprovalReadable();
+  await reopenFirstPurchaseRequestDispatch(page);
+  await expect(page.getByTestId("supplier-contact-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("dispatch-draft-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
+  await expect(page.getByTestId("dispatch-plan-approval-read-error")).toBeVisible();
+  const after = await readBgF5FoundationSet(page);
+  expect(after.contacts.marker?.state).toBe("committed");
+  expect(after.drafts.marker?.state).toBe("committed");
+  expect(after.plans.canonicalRaw).toBeNull();
+  expect(after.plans.markerRaw).toBeNull();
+  expect(after.plans.legacyRaw).toBe(JSON.stringify([legacyPlan]));
+});
+
+test("BG-F5 never falls back from an unknown canonical Contact generation to valid legacy records", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  const projectId = await readActiveProjectId(page);
+  if (!projectId) throw new Error("Active project is unavailable for the BG-F5 canonical fail-close oracle");
+  const timestamp = new Date().toISOString();
+  const legacyRaw = JSON.stringify([{
+    schemaVersion: 1,
+    id: "supplier-contact-bg-f5-valid-legacy",
+    projectId,
+    displayName: "گیرنده معتبر legacy",
+    category: "میلگرد",
+    tehranCoverage: "تهران",
+    responseCapability: "product",
+    source: "ثبت مستقیم سازنده",
+    networkStatus: "خارج از شبکه چیدا",
+    status: "active",
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    version: 1,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    archivedAt: null,
+    history: [{ id: "supplier-contact-event-bg-f5-valid-legacy", type: "created", actor: "شما", at: timestamp, version: 1 }],
+  }]);
+  const futureCanonicalRaw = JSON.stringify({ schemaVersion: 99, storeVersion: 1, records: [], future: "must-not-downgrade" });
+  await page.evaluate(({ canonicalKey, markerKey, legacyKey, canonicalRaw, sourceRaw }) => {
+    window.localStorage.setItem(canonicalKey, canonicalRaw);
+    window.localStorage.removeItem(markerKey);
+    window.localStorage.setItem(legacyKey, sourceRaw);
+  }, {
+    canonicalKey: bgF5SupplierContactsCanonicalStorageKey,
+    markerKey: bgF5SupplierContactsCutoverMarkerStorageKey,
+    legacyKey: bgF5SupplierContactsLegacyStorageKey,
+    canonicalRaw: futureCanonicalRaw,
+    sourceRaw: legacyRaw,
+  });
+
+  await reopenFirstPurchaseRequestDispatch(page);
+  await expect(page.getByTestId("supplier-contact-read-error")).toBeVisible();
+  await expect(page.getByTestId("supplier-contact-card")).toHaveCount(0);
+  await expect(page.getByTestId("supplier-contact-add")).toBeDisabled();
+  const after = await readBgF5FoundationSet(page);
+  expect(after.contacts.canonicalRaw).toBe(futureCanonicalRaw);
+  expect(after.contacts.legacyRaw).toBe(legacyRaw);
+  expect(after.contacts.markerRaw).toBeNull();
+});
+
+test("BG-F5 replays two same-key queued Contact creates as one record and one receipt", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await expectBgF5FoundationsCommitted(page);
+  const secondPage = await context.newPage();
+  try {
+    await secondPage.setViewportSize({ width: 390, height: 844 });
+    await reopenFirstPurchaseRequestDispatch(secondPage);
+    for (const targetPage of [page, secondPage]) {
+      await targetPage.getByTestId("supplier-contact-add").click();
+      await targetPage.getByTestId("supplier-contact-name-input").fill("فولاد همسان BG-F5");
+      await targetPage.getByTestId("supplier-contact-category-input").fill("میلگرد");
+      await targetPage.getByTestId("supplier-contact-coverage-input").fill("تهران");
+      await targetPage.getByTestId("supplier-contact-capability-product").click();
+    }
+
+    await page.evaluate((name) => {
+      const testWindow = window as Window & { __bgF5ContactLockHeld?: boolean; __releaseBgF5ContactLock?: () => void };
+      void navigator.locks.request(name, { mode: "exclusive" }, async () => {
+        testWindow.__bgF5ContactLockHeld = true;
+        await new Promise<void>((resolve) => { testWindow.__releaseBgF5ContactLock = resolve; });
+      });
+    }, bgF5SharedWriteLockName);
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __bgF5ContactLockHeld?: boolean }).__bgF5ContactLockHeld))).toBe(true);
+
+    await page.getByTestId("supplier-contact-save").click();
+    await secondPage.getByTestId("supplier-contact-save").click();
+    await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, bgF5SharedWriteLockName)).toBe(2);
+    await page.evaluate(() => {
+      const testWindow = window as Window & { __releaseBgF5ContactLock?: () => void };
+      const release = testWindow.__releaseBgF5ContactLock;
+      delete testWindow.__releaseBgF5ContactLock;
+      release?.();
+    });
+
+    await expect(page.getByTestId("supplier-contact-editor-sheet")).toBeHidden();
+    await expect(secondPage.getByTestId("supplier-contact-editor-sheet")).toBeHidden();
+    await expect.poll(async () => (await readBgF5FoundationSet(page)).contacts.envelope?.records?.length ?? 0).toBe(1);
+    const contactFoundation = (await readBgF5FoundationSet(page)).contacts.envelope;
+    expect(contactFoundation.records).toHaveLength(1);
+    expect(contactFoundation.records[0]).toMatchObject({ displayName: "فولاد همسان BG-F5", version: 1 });
+    expect(contactFoundation.idempotencyReceipts).toHaveLength(1);
+    expect(contactFoundation.records[0].history).toHaveLength(1);
+    expect(contactFoundation.records[0].revisions).toHaveLength(1);
+  } finally {
+    await page.evaluate(() => (window as Window & { __releaseBgF5ContactLock?: () => void }).__releaseBgF5ContactLock?.()).catch(() => undefined);
+    await secondPage.close();
+  }
+});
+
+test("BG-F5 accepts one Plan decision winner and rejects the stale queued opposite decision", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createCurrentProductDispatchDraft(page);
+  await page.getByTestId("dispatch-plan-review").click();
+  await page.getByTestId("dispatch-plan-acknowledgement").check();
+  await page.getByTestId("dispatch-plan-approval-create").click();
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
+  const secondPage = await context.newPage();
+  try {
+    await secondPage.setViewportSize({ width: 390, height: 844 });
+    await reopenFirstPurchaseRequestDispatch(secondPage);
+    await secondPage.getByTestId("dispatch-plan-review").click();
+    await expect(secondPage.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
+
+    await page.evaluate((name) => {
+      const testWindow = window as Window & { __bgF5PlanLockHeld?: boolean; __releaseBgF5PlanLock?: () => void };
+      void navigator.locks.request(name, { mode: "exclusive" }, async () => {
+        testWindow.__bgF5PlanLockHeld = true;
+        await new Promise<void>((resolve) => { testWindow.__releaseBgF5PlanLock = resolve; });
+      });
+    }, bgF5SharedWriteLockName);
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __bgF5PlanLockHeld?: boolean }).__bgF5PlanLockHeld))).toBe(true);
+
+    await page.getByTestId("dispatch-plan-approval-approve").click();
+    await secondPage.getByTestId("dispatch-plan-approval-withdraw").click();
+    await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, bgF5SharedWriteLockName)).toBe(2);
+    await page.evaluate(() => {
+      const testWindow = window as Window & { __releaseBgF5PlanLock?: () => void };
+      const release = testWindow.__releaseBgF5PlanLock;
+      delete testWindow.__releaseBgF5PlanLock;
+      release?.();
+    });
+
+    await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("تأییدشده");
+    await expect(secondPage.getByTestId("dispatch-plan-approval-storage-error")).toBeVisible();
+    await expect.poll(async () => (await readBgF5FoundationSet(page)).plans.envelope?.records?.[0]?.version ?? 0).toBe(2);
+    const planFoundation = (await readBgF5FoundationSet(page)).plans.envelope;
+    expect(planFoundation.records).toHaveLength(1);
+    expect(planFoundation.records[0]).toMatchObject({ status: "approved", version: 2 });
+    expect(planFoundation.records[0].history.map((event: any) => event.type)).toEqual(["created", "approved"]);
+    expect(planFoundation.records[0].revisions).toHaveLength(2);
+    expect(planFoundation.idempotencyReceipts).toHaveLength(2);
+    expect(await secondPage.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanApprovalsCanonicalStorageKey)).toBe(JSON.stringify(planFoundation));
+  } finally {
+    await page.evaluate(() => (window as Window & { __releaseBgF5PlanLock?: () => void }).__releaseBgF5PlanLock?.()).catch(() => undefined);
+    await secondPage.close();
+  }
+});
+
+test("BG-F5 preserves a dirty recipient selection when a queued Draft save loses a stale race", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createCurrentProductDispatchDraft(page, ["فولاد برنده", "فولاد بازنده", "فولاد مشترک"]);
+  const secondPage = await context.newPage();
+  try {
+    await secondPage.setViewportSize({ width: 390, height: 844 });
+    await reopenFirstPurchaseRequestDispatch(secondPage);
+    const firstWinnerCard = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد برنده" });
+    const firstLoserCard = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد بازنده" });
+    const secondWinnerCard = secondPage.getByTestId("supplier-contact-card").filter({ hasText: "فولاد برنده" });
+    const secondLoserCard = secondPage.getByTestId("supplier-contact-card").filter({ hasText: "فولاد بازنده" });
+    const secondSharedCard = secondPage.getByTestId("supplier-contact-card").filter({ hasText: "فولاد مشترک" });
+    await firstWinnerCard.getByTestId("supplier-contact-select").click();
+    await secondLoserCard.getByTestId("supplier-contact-select").click();
+
+    await page.evaluate((name) => {
+      const testWindow = window as Window & { __bgF5DraftLockHeld?: boolean; __releaseBgF5DraftLock?: () => void };
+      void navigator.locks.request(name, { mode: "exclusive" }, async () => {
+        testWindow.__bgF5DraftLockHeld = true;
+        await new Promise<void>((resolve) => { testWindow.__releaseBgF5DraftLock = resolve; });
+      });
+    }, bgF5SharedWriteLockName);
+    await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __bgF5DraftLockHeld?: boolean }).__bgF5DraftLockHeld))).toBe(true);
+
+    await page.getByTestId("dispatch-draft-save").click();
+    await secondPage.getByTestId("dispatch-draft-save").click();
+    await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, bgF5SharedWriteLockName)).toBe(2);
+    await page.evaluate(() => {
+      const testWindow = window as Window & { __releaseBgF5DraftLock?: () => void };
+      const release = testWindow.__releaseBgF5DraftLock;
+      delete testWindow.__releaseBgF5DraftLock;
+      release?.();
+    });
+
+    await expect(page.getByTestId("dispatch-save-announcement")).toContainText("نسخهٔ جدید Draft محلی ذخیره شد");
+    await expect(secondPage.getByTestId("dispatch-storage-error")).toContainText("انتخاب شما حفظ ماند");
+    await expect(secondWinnerCard.getByTestId("supplier-contact-select")).toHaveAttribute("aria-pressed", "true");
+    await expect(secondLoserCard.getByTestId("supplier-contact-select")).toHaveAttribute("aria-pressed", "false");
+    await expect(secondSharedCard.getByTestId("supplier-contact-select")).toHaveAttribute("aria-pressed", "true");
+    await expect(secondPage.getByTestId("dispatch-selected-count")).toContainText("۲ تأمین‌کننده انتخاب شده");
+    const currentDraft = (await readBgF5FoundationSet(secondPage)).drafts.envelope.records[0];
+    const currentRevision = currentDraft.revisions.find((revision: any) => revision.id === currentDraft.currentRevisionId);
+    const contacts = (await readBgF5FoundationSet(secondPage)).contacts.envelope.records;
+    expect(currentRevision.recipientIds.map((id: string) => contacts.find((contact: any) => contact.id === id)?.displayName).sort()).toEqual(["فولاد بازنده", "فولاد مشترک"].sort());
+  } finally {
+    await page.evaluate(() => (window as Window & { __releaseBgF5DraftLock?: () => void }).__releaseBgF5DraftLock?.()).catch(() => undefined);
+    await secondPage.close();
+  }
+});
+
+test("BG-F5 creates a fresh Draft and Plan after an archived Contact is restored with the same id", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createCurrentProductDispatchDraft(page, ["فولاد بازگشتی"]);
+  await page.getByTestId("dispatch-plan-review").click();
+  await page.getByTestId("dispatch-plan-acknowledgement").check();
+  await page.getByTestId("dispatch-plan-approval-create").click();
+  await page.getByTestId("dispatch-plan-approval-approve").click();
+  await page.getByTestId("dispatch-plan-approval-back").click();
+
+  const contactCard = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد بازگشتی" });
+  await contactCard.locator("summary").click();
+  await contactCard.getByTestId("supplier-contact-status").click();
+  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۰ تأمین‌کننده انتخاب شده");
+  await contactCard.getByTestId("supplier-contact-status").click();
+  await contactCard.getByTestId("supplier-contact-select").click();
+  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۱ تأمین‌کننده انتخاب شده");
+  await expect(page.getByText("انتخاب‌های روی صفحه با Draft ذخیره‌شده یکی نیست؛ اول نسخهٔ تازهٔ Draft را ذخیره کن.")).toBeVisible();
+  await expect(page.getByTestId("dispatch-plan-review")).toBeDisabled();
+
+  await page.getByTestId("dispatch-submit-to-tasks").click();
+  await expect(page.getByTestId("project-dispatch-plan-approval-detail-view")).toBeVisible();
+  await expect.poll(async () => (await readBgF5FoundationSet(page)).plans.envelope.records.length).toBe(2);
+  const foundations = await readBgF5FoundationSet(page);
+  const draft = foundations.drafts.envelope.records[0];
+  const currentRevision = draft.revisions.find((revision: any) => revision.id === draft.currentRevisionId);
+  const contact = foundations.contacts.envelope.records[0];
+  expect(draft).toMatchObject({ version: 2 });
+  expect(currentRevision.inviteDrafts[0]).toMatchObject({
+    supplierContactId: contact.id,
+    supplierContactVersion: 3,
+    supplierContactRevisionId: contact.currentRevisionId,
+  });
+  expect(foundations.plans.envelope.records.map((record: any) => record.target.dispatchRevisionId)).toEqual([
+    draft.revisions[0].id,
+    currentRevision.id,
+  ]);
+  expect(foundations.plans.envelope.records[0]).toMatchObject({ status: "approved" });
+  expect(foundations.plans.envelope.records[1]).toMatchObject({ status: "pending" });
+});
+
+test("BG-F5 lets a stale tab deselect a recipient archived in another tab", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await createCurrentProductDispatchDraft(page, ["فولاد آرشیو همزمان"]);
+  const secondPage = await context.newPage();
+  try {
+    await secondPage.setViewportSize({ width: 390, height: 844 });
+    await reopenFirstPurchaseRequestDispatch(secondPage);
+    const secondCard = secondPage.getByTestId("supplier-contact-card").filter({ hasText: "فولاد آرشیو همزمان" });
+    await secondCard.locator("summary").click();
+    await secondCard.getByTestId("supplier-contact-status").click();
+
+    const staleCard = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد آرشیو همزمان" });
+    const staleSelection = staleCard.getByTestId("supplier-contact-select");
+    await expect(staleCard).toHaveClass(/is-archived/);
+    await expect(staleSelection).toHaveAttribute("aria-pressed", "true");
+    await expect(staleSelection).toBeEnabled();
+    await staleSelection.click();
+    await expect(page.getByTestId("dispatch-selected-count")).toContainText("۰ تأمین‌کننده انتخاب شده");
+    await expect(page.getByTestId("dispatch-draft-save")).toBeDisabled();
+    await expect(page.getByTestId("dispatch-submit-to-tasks")).toBeDisabled();
+  } finally {
+    await secondPage.close();
+  }
+});
+
+test("BG-F5 locks Contact and recipient controls while their queued mutations are pending", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await page.getByTestId("supplier-contact-add").click();
+  await page.getByTestId("supplier-contact-name-input").fill("فولاد snapshot A");
+  await page.getByTestId("supplier-contact-category-input").fill("میلگرد");
+  await page.getByTestId("supplier-contact-coverage-input").fill("تهران");
+  await page.getByTestId("supplier-contact-capability-product").click();
+
+  const holdLock = async (flag: "contact" | "queue") => {
+    await page.evaluate(({ name, flag }) => {
+      const testWindow = window as Window & Record<string, any>;
+      void navigator.locks.request(name, { mode: "exclusive" }, async () => {
+        testWindow[`__bgF5PendingHeld_${flag}`] = true;
+        await new Promise<void>((resolve) => { testWindow[`__releaseBgF5Pending_${flag}`] = resolve; });
+      });
+    }, { name: bgF5SharedWriteLockName, flag });
+    await expect.poll(() => page.evaluate((flag) => Boolean((window as Window & Record<string, any>)[`__bgF5PendingHeld_${flag}`]), flag)).toBe(true);
+  };
+  const releaseLock = async (flag: "contact" | "queue") => {
+    await page.evaluate((flag) => {
+      const testWindow = window as Window & Record<string, any>;
+      const release = testWindow[`__releaseBgF5Pending_${flag}`] as (() => void) | undefined;
+      delete testWindow[`__releaseBgF5Pending_${flag}`];
+      release?.();
+    }, flag);
+  };
+
+  await holdLock("contact");
+  await page.getByTestId("supplier-contact-save").click();
+  await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, bgF5SharedWriteLockName)).toBe(1);
+  await expect(page.getByTestId("supplier-contact-name-input")).toBeDisabled();
+  await expect(page.getByTestId("supplier-contact-category-input")).toBeDisabled();
+  await expect(page.getByTestId("supplier-contact-coverage-input")).toBeDisabled();
+  await expect(page.getByTestId("supplier-contact-capability-service")).toBeDisabled();
+  await expect(page.getByTestId("dispatch-planner-back")).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("supplier-contact-editor-sheet")).toBeVisible();
+  await expect(page.getByTestId("supplier-contact-name-input")).toHaveValue("فولاد snapshot A");
+  await releaseLock("contact");
+  await expect(page.getByTestId("supplier-contact-editor-sheet")).toBeHidden();
+  await expect(page.getByTestId("supplier-contact-card")).toContainText("فولاد snapshot A");
+
+  await addLocalSupplierContact(page, { name: "فولاد snapshot B", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const secondCard = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد snapshot B" });
+  await secondCard.getByTestId("supplier-contact-select").click();
+  await expect(page.getByTestId("dispatch-selected-count")).toContainText("۱ تأمین‌کننده انتخاب شده");
+  await holdLock("queue");
+  await page.getByTestId("dispatch-submit-to-tasks").click();
+  await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, bgF5SharedWriteLockName)).toBe(1);
+  await expect(page.getByTestId("supplier-contact-select").first()).toBeDisabled();
+  await expect(page.getByTestId("supplier-contact-select").last()).toBeDisabled();
+  await expect(page.getByTestId("dispatch-planner-back")).toBeDisabled();
+  await releaseLock("queue");
+  await expect(page.getByTestId("project-dispatch-plan-approval-detail-view")).toBeVisible();
+  const queuedPlan = (await readBgF5FoundationSet(page)).plans.envelope.records[0];
+  expect(queuedPlan.snapshot.recipients).toHaveLength(1);
+  expect(queuedPlan.snapshot.recipients[0].destination.displayName).toBe("فولاد snapshot A");
+});
+
+test("BG-F5 resumes an interrupted target queue after an unrelated active-project snapshot change", async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد target binding", category: "میلگرد", coverage: "تهران", capability: "product" });
+  await page.evaluate((planKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__bgF5TargetNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === planKey) throw new DOMException("BG-F5 target interruption", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  }, bgF5DispatchPlanApprovalsCanonicalStorageKey);
+  await page.getByTestId("dispatch-submit-to-tasks").click();
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey)).not.toBeNull();
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __bgF5TargetNativeSetItem: typeof Storage.prototype.setItem }).__bgF5TargetNativeSetItem;
+  });
+
+  const secondPage = await context.newPage();
+  try {
+    await secondPage.setViewportSize({ width: 390, height: 844 });
+    await enterBuilderHome(secondPage);
+    await addAndActivateProject(secondPage, "پروژه تغییر snapshot نامرتبط");
+    await page.reload();
+    await reachBuilderWelcome(page);
+    await page.getByTestId("enter-home").click();
+    await expect(page.getByTestId("builder-home")).toBeVisible();
+    await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey)).toBeNull();
+    const resumed = await readBgF5FoundationSet(page);
+    expect(resumed.drafts.envelope.records).toHaveLength(1);
+    expect(resumed.plans.envelope.records).toHaveLength(1);
+    expect(resumed.plans.envelope.records[0].snapshot.recipients[0].destination.displayName).toBe("فولاد target binding");
+  } finally {
+    await secondPage.close();
+  }
+});
+
+test("BG-F5 resumes an interrupted one-click Draft and Plan queue from its durable exact intent", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد intent BG-F5", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const before = await expectBgF5FoundationsCommitted(page);
+
+  await page.evaluate((planKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__bgF5IntentNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === planKey) throw new DOMException("BG-F5 plan interruption", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  }, bgF5DispatchPlanApprovalsCanonicalStorageKey);
+  await page.getByTestId("dispatch-submit-to-tasks").click();
+  await expect(page.getByTestId("dispatch-plan-approval-storage-error")).toBeVisible();
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey)).not.toBeNull();
+  await expect(page.getByTestId("supplier-contact-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("dispatch-draft-read-error")).toBeVisible();
+  await expect(page.getByTestId("dispatch-plan-approval-read-error")).toBeVisible();
+  await expect(page.getByTestId("dispatch-draft-save")).toBeDisabled();
+
+  const interrupted = await readBgF5FoundationSet(page);
+  expect(interrupted.drafts.envelope.records).toHaveLength(1);
+  expect(interrupted.drafts.envelope.idempotencyReceipts).toHaveLength(1);
+  expect(interrupted.plans.canonicalRaw).toBe(before.plans.canonicalRaw);
+  const interruptedDraftRaw = interrupted.drafts.canonicalRaw;
 
   await page.evaluate(() => {
-    const decidedAt = "2026-08-28T09:03:00.000Z";
-    const returnedAt = "2026-08-28T09:04:00.000Z";
-    const requests = JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]");
-    requests[0].status = "draft";
-    requests[0].version = 3;
-    requests[0].updatedAt = returnedAt;
-    requests[0].readyAt = null;
-    requests[0].history.push({ id: "legacy-t6b2-request-returned", type: "returned-to-draft", actor: "شما", at: returnedAt, version: 3 });
-    const approvals = JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]");
-    approvals[0].status = "approved";
-    approvals[0].decidedBy = "شما";
-    approvals[0].decidedAt = decidedAt;
-    approvals[0].updatedAt = decidedAt;
-    approvals[0].version = 2;
-    approvals[0].history.push({ id: "legacy-t6b2-approval-approved", type: "approved", actor: "شما", at: decidedAt, version: 2 });
-    window.localStorage.setItem("chida-prototype-project-purchase-requests:v1", JSON.stringify(requests));
-    window.localStorage.setItem("chida-prototype-project-approvals:v1", JSON.stringify(approvals));
+    Storage.prototype.setItem = (window as Window & { __bgF5IntentNativeSetItem: typeof Storage.prototype.setItem }).__bgF5IntentNativeSetItem;
+  });
+  await reopenFirstPurchaseRequestDispatch(page);
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey)).toBeNull();
+  const resumed = await expectBgF5FoundationsCommitted(page);
+  expect(resumed.drafts.canonicalRaw).toBe(interruptedDraftRaw);
+  expect(resumed.drafts.envelope.records).toHaveLength(1);
+  expect(resumed.drafts.envelope.idempotencyReceipts).toHaveLength(1);
+  expect(resumed.plans.envelope.records).toHaveLength(1);
+  expect(resumed.plans.envelope.idempotencyReceipts).toHaveLength(1);
+  await page.getByTestId("dispatch-plan-review").click();
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
+});
+
+test("BG-F5 keeps the Contact form retryable and writes no generation when Web Locks are unavailable", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  const before = await expectBgF5FoundationsCommitted(page);
+  await page.getByTestId("supplier-contact-add").click();
+  await page.getByTestId("supplier-contact-name-input").fill("پیش‌نویس حفظ‌شده بدون قفل");
+  await page.getByTestId("supplier-contact-category-input").fill("میلگرد");
+  await page.getByTestId("supplier-contact-coverage-input").fill("تهران");
+  await page.getByTestId("supplier-contact-capability-product").click();
+  await page.evaluate(({ canonicalKey, markerKey, legacyKey }) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    const testWindow = window as Window & { __bgF5NoLockWriteAttempts?: number };
+    testWindow.__bgF5NoLockWriteAttempts = 0;
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && (key === canonicalKey || key === markerKey || key === legacyKey)) {
+        testWindow.__bgF5NoLockWriteAttempts = (testWindow.__bgF5NoLockWriteAttempts ?? 0) + 1;
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+    Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined });
+  }, {
+    canonicalKey: bgF5SupplierContactsCanonicalStorageKey,
+    markerKey: bgF5SupplierContactsCutoverMarkerStorageKey,
+    legacyKey: bgF5SupplierContactsLegacyStorageKey,
   });
 
-  const expectHistoricalLegacyApprovalReadable = async () => {
-    await reachBuilderWelcome(page);
-    await page.getByTestId("enter-home").click();
-    await page.getByTestId("menu-button").click();
-    await page.getByTestId("drawer-tasks-entry").click();
-    await page.getByTestId("project-task-filter-completed").click();
-    await expect(page.getByTestId("project-approval-read-error")).toHaveCount(0);
-    await expect(page.getByTestId("project-approval-card")).toHaveCount(1);
-    await expect(page.getByTestId("project-approval-card")).toContainText("میلگرد آجدار");
-  };
+  await page.getByTestId("supplier-contact-save").click();
+  await expect(page.getByTestId("supplier-contact-editor-sheet")).toBeVisible();
+  await expect(page.getByTestId("supplier-contact-storage-error")).toBeVisible();
+  await expect(page.getByTestId("supplier-contact-name-input")).toHaveValue("پیش‌نویس حفظ‌شده بدون قفل");
+  await expect(page.getByTestId("supplier-contact-category-input")).toHaveValue("میلگرد");
+  await expect(page.getByTestId("supplier-contact-coverage-input")).toHaveValue("تهران");
+  expect(await page.evaluate(() => (window as Window & { __bgF5NoLockWriteAttempts?: number }).__bgF5NoLockWriteAttempts)).toBe(0);
+  const after = await readBgF5FoundationSet(page);
+  expect(after.contacts.canonicalRaw).toBe(before.contacts.canonicalRaw);
+  expect(after.contacts.markerRaw).toBe(before.contacts.markerRaw);
+  expect(after.contacts.legacyRaw).toBe(before.contacts.legacyRaw);
+});
+
+test("BG-F5 queue regression replays an aggregate key after cleanup and rejects a changed payload", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد replay تجمیعی", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  const queued = await executeBgF5SyntheticQueue(page, dependencySet.authority, dependencySet.dependencies, {
+    draftIdempotencyKey: "bg-f5-aggregate-replay-draft",
+    planIdempotencyKey: "bg-f5-aggregate-replay-plan",
+    queueIdempotencyKey: "bg-f5-aggregate-replay-queue",
+  });
+  expect(queued).toMatchObject({ status: "updated", result: { status: "updated" } });
+
+  const committed = await readBgF5FoundationSet(page);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey)).toBeNull();
+  const replay = await page.evaluate(async ({ command, dependencies, keys }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const exact = await procurementDispatch.executeProcurementDispatchQueue(command as any, () => dependencies as any);
+    const changed = structuredClone(command) as any;
+    changed.plan.idempotencyKey = "bg-f5-aggregate-replay-plan-changed";
+    changed.plan.planApprovalId = procurementDispatch.dispatchPlanApprovalIdForIdempotencyKey(changed.plan.idempotencyKey);
+    const conflict = await procurementDispatch.executeProcurementDispatchQueue(changed, () => dependencies as any);
+    return {
+      exact,
+      conflict,
+      draftRaw: window.localStorage.getItem(keys.draft),
+      planRaw: window.localStorage.getItem(keys.plan),
+      queueRaw: window.localStorage.getItem(keys.queue),
+    };
+  }, {
+    command: queued.command,
+    dependencies: dependencySet.dependencies,
+    keys: { draft: bgF5DispatchDraftsCanonicalStorageKey, plan: bgF5DispatchPlanApprovalsCanonicalStorageKey, queue: bgF5DispatchPlanQueueIntentStorageKey },
+  });
+  expect(replay.exact).toMatchObject({ status: "unchanged" });
+  expect(replay.conflict).toMatchObject({ status: "idempotency-payload-mismatch", reason: "aggregate-queue-idempotency-key-reused" });
+  expect(replay.draftRaw).toBe(committed.drafts.canonicalRaw);
+  expect(replay.planRaw).toBe(committed.plans.canonicalRaw);
+  expect(replay.queueRaw).toBeNull();
+});
+
+test("BG-F5 queue regression orders non-ASCII recipient ids by canonical code units", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد مبنای Unicode", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  const request = dependencySet.dependencies.requestRevisions[0];
+  const approval = dependencySet.dependencies.contentApprovals[0];
+  const createdAt = new Date(Math.max(Date.parse(request.revisionCreatedAt), Date.parse(approval.updatedAt)) + 1).toISOString();
+  const legacyContacts = [
+    { id: "é-contact", displayName: "فولاد Unicode دوم" },
+    { id: "z-contact", displayName: "فولاد Unicode اول" },
+  ].map(({ id, displayName }) => ({
+    schemaVersion: 1,
+    id,
+    projectId: request.projectId,
+    displayName,
+    category: "میلگرد",
+    tehranCoverage: "تهران",
+    responseCapability: "product",
+    source: "ثبت مستقیم سازنده",
+    networkStatus: "خارج از شبکه چیدا",
+    status: "active",
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    version: 1,
+    createdAt,
+    updatedAt: createdAt,
+    archivedAt: null,
+    history: [{ id: `legacy-unicode-contact:${id}`, type: "created", actor: "شما", at: createdAt, version: 1 }],
+  }));
+  const initialized = await page.evaluate(async ({ keys, queueKey, authority, dependencies, contactRaw }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    window.localStorage.removeItem(queueKey);
+    for (const foundation of Object.values(keys) as Array<{ legacy: string; canonical: string; marker: string }>) {
+      window.localStorage.removeItem(foundation.legacy);
+      window.localStorage.removeItem(foundation.canonical);
+      window.localStorage.removeItem(foundation.marker);
+    }
+    window.localStorage.setItem(keys.contacts.legacy, contactRaw);
+    const contacts = await procurementDispatch.initializeSupplierContacts(() => authority as any);
+    const drafts = await procurementDispatch.initializeDispatchDrafts(() => dependencies as any);
+    const plans = await procurementDispatch.initializeDispatchPlanApprovals(() => dependencies as any);
+    return { contacts, drafts, plans };
+  }, {
+    keys: bgF5FoundationStorageKeys,
+    queueKey: bgF5DispatchPlanQueueIntentStorageKey,
+    authority: dependencySet.authority,
+    dependencies: dependencySet.dependencies,
+    contactRaw: JSON.stringify(legacyContacts),
+  });
+  expect(initialized.contacts).toMatchObject({ status: "ready" });
+  expect(initialized.drafts).toMatchObject({ status: "ready" });
+  expect(initialized.plans).toMatchObject({ status: "ready" });
+
+  const canonicalIds = ["z-contact", "é-contact"];
+  expect([...canonicalIds].sort((first, second) => first < second ? -1 : first > second ? 1 : 0)).toEqual(canonicalIds);
+  const queued = await executeBgF5SyntheticQueue(page, dependencySet.authority, dependencySet.dependencies, {
+    draftIdempotencyKey: "bg-f5-unicode-draft",
+    planIdempotencyKey: "bg-f5-unicode-plan",
+    queueIdempotencyKey: "bg-f5-unicode-queue",
+    recipientIds: canonicalIds,
+  });
+  expect(queued).toMatchObject({ status: "updated" });
+  const committed = await readBgF5FoundationSet(page);
+  expect(committed.drafts.envelope.records[0].revisions[0].recipientIds).toEqual(canonicalIds);
+
+  const reversed = await page.evaluate(async ({ command, dependencies, keys }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const forged = structuredClone(command) as any;
+    forged.draft.recipients.reverse();
+    const result = await procurementDispatch.executeProcurementDispatchQueue(forged, () => dependencies as any);
+    return {
+      result,
+      draftRaw: window.localStorage.getItem(keys.draft),
+      planRaw: window.localStorage.getItem(keys.plan),
+      queueRaw: window.localStorage.getItem(keys.queue),
+    };
+  }, {
+    command: queued.command,
+    dependencies: dependencySet.dependencies,
+    keys: { draft: bgF5DispatchDraftsCanonicalStorageKey, plan: bgF5DispatchPlanApprovalsCanonicalStorageKey, queue: bgF5DispatchPlanQueueIntentStorageKey },
+  });
+  expect(reversed.result).toMatchObject({ status: "schema-invalid", reason: "command-invalid" });
+  expect(reversed.draftRaw).toBe(committed.drafts.canonicalRaw);
+  expect(reversed.planRaw).toBe(committed.plans.canonicalRaw);
+  expect(reversed.queueRaw).toBeNull();
+});
+
+test("BG-F5 queue regression accepts a maximum-length Plan idempotency key", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد کلید بلند Plan", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  const planIdempotencyKey = `plan-${"پ".repeat(195)}`;
+  expect(planIdempotencyKey).toHaveLength(200);
+  const queued = await executeBgF5SyntheticQueue(page, dependencySet.authority, dependencySet.dependencies, {
+    draftIdempotencyKey: "bg-f5-long-plan-draft",
+    planIdempotencyKey,
+    queueIdempotencyKey: "bg-f5-long-plan-queue",
+  });
+  expect(queued).toMatchObject({ status: "updated" });
+  const committed = await readBgF5FoundationSet(page);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey)).toBeNull();
+  expect(committed.plans.envelope.idempotencyReceipts).toHaveLength(1);
+  expect(committed.plans.envelope.idempotencyReceipts[0]).toMatchObject({
+    key: planIdempotencyKey,
+    aggregateQueueIdempotencyKey: "bg-f5-long-plan-queue",
+  });
+  expect(committed.plans.envelope.records).toHaveLength(1);
+});
+
+test("BG-F5 queue regression rolls a half-committed Draft back byte-for-byte when its target dependency changes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد rollback وابستگی", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  await page.evaluate((planKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__bgF5DependencyNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === planKey) throw new DOMException("BG-F5 dependency interruption", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  }, bgF5DispatchPlanApprovalsCanonicalStorageKey);
+  const interrupted = await executeBgF5SyntheticQueue(page, dependencySet.authority, dependencySet.dependencies, {
+    draftIdempotencyKey: "bg-f5-dependency-rollback-draft",
+    planIdempotencyKey: "bg-f5-dependency-rollback-plan",
+    queueIdempotencyKey: "bg-f5-dependency-rollback-queue",
+  });
+  expect(interrupted).toMatchObject({ status: "write-failure", result: { status: "write-failure", reason: "queue-plan-write-failure" } });
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __bgF5DependencyNativeSetItem: typeof Storage.prototype.setItem }).__bgF5DependencyNativeSetItem;
+    delete (window as Window & { __bgF5DependencyNativeSetItem?: typeof Storage.prototype.setItem }).__bgF5DependencyNativeSetItem;
+  });
+
+  const intentRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey);
+  expect(intentRaw).not.toBeNull();
+  const intent = JSON.parse(intentRaw!);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchDraftsCanonicalStorageKey)).toBe(intent.nextDraftRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanApprovalsCanonicalStorageKey)).toBe(intent.previousPlanRaw);
+
+  const rolledBack = await page.evaluate(async ({ dependencies, intentRaw: exactIntentRaw, keys }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const stripFingerprint = ({ fingerprint: _fingerprint, ...value }: any) => value;
+    const targetRequestId = JSON.parse(exactIntentRaw).requestId;
+    const changedRequests = dependencies.requestRevisions.map((request: any) => {
+      const value = stripFingerprint(request);
+      return request.requestId === targetRequestId ? { ...value, isCurrentReadyForReview: false } : value;
+    });
+    const changedApprovals = dependencies.contentApprovals.map(stripFingerprint);
+    const changedDependencies = procurementDispatch.createProcurementDispatchDependencies(dependencies.authority, changedRequests, changedApprovals, dependencies.preconditionCheckpoints);
+    const result = await procurementDispatch.resumeProcurementDispatchQueueIntent(() => changedDependencies as any);
+    return {
+      result,
+      draftRaw: window.localStorage.getItem(keys.draft),
+      planRaw: window.localStorage.getItem(keys.plan),
+      queueRaw: window.localStorage.getItem(keys.queue),
+    };
+  }, {
+    dependencies: dependencySet.dependencies,
+    intentRaw,
+    keys: { draft: bgF5DispatchDraftsCanonicalStorageKey, plan: bgF5DispatchPlanApprovalsCanonicalStorageKey, queue: bgF5DispatchPlanQueueIntentStorageKey },
+  });
+  expect(rolledBack.result).toMatchObject({ status: "version-conflict", reason: "queue-target-dependency-changed-rolled-back" });
+  expect(rolledBack.draftRaw).toBe(intent.previousDraftRaw);
+  expect(rolledBack.planRaw).toBe(intent.previousPlanRaw);
+  expect(rolledBack.queueRaw).toBeNull();
+});
+
+test("BG-F5 queue regression fails closed when the exact Plan and new Draft candidate pair is replaced", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد pair دقیق", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  await page.evaluate((planKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__bgF5PairNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === planKey) throw new DOMException("BG-F5 pair interruption", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  }, bgF5DispatchPlanApprovalsCanonicalStorageKey);
+  const interrupted = await executeBgF5SyntheticQueue(page, dependencySet.authority, dependencySet.dependencies, {
+    draftIdempotencyKey: "bg-f5-pair-draft",
+    planIdempotencyKey: "bg-f5-pair-plan",
+    queueIdempotencyKey: "bg-f5-pair-queue",
+  });
+  expect(interrupted).toMatchObject({ status: "write-failure", result: { reason: "queue-plan-write-failure" } });
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __bgF5PairNativeSetItem: typeof Storage.prototype.setItem }).__bgF5PairNativeSetItem;
+    delete (window as Window & { __bgF5PairNativeSetItem?: typeof Storage.prototype.setItem }).__bgF5PairNativeSetItem;
+  });
+  const intentRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey);
+  expect(intentRaw).not.toBeNull();
+  const originalIntent = JSON.parse(intentRaw!);
+  const forgedIntent = structuredClone(originalIntent);
+  forgedIntent.nextPlanRaw = `${forgedIntent.previousPlanRaw} `;
+  rehashProjectFoundationValue(forgedIntent);
+  const forgedIntentRaw = JSON.stringify(forgedIntent);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF5DispatchPlanQueueIntentStorageKey, raw: forgedIntentRaw });
+
+  const failedClosed = await page.evaluate(async ({ dependencies, keys }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const result = await procurementDispatch.resumeProcurementDispatchQueueIntent(() => dependencies as any);
+    return {
+      result,
+      draftRaw: window.localStorage.getItem(keys.draft),
+      planRaw: window.localStorage.getItem(keys.plan),
+      queueRaw: window.localStorage.getItem(keys.queue),
+    };
+  }, {
+    dependencies: dependencySet.dependencies,
+    keys: { draft: bgF5DispatchDraftsCanonicalStorageKey, plan: bgF5DispatchPlanApprovalsCanonicalStorageKey, queue: bgF5DispatchPlanQueueIntentStorageKey },
+  });
+  expect(failedClosed.result).toMatchObject({ status: "read-failure", reason: "queue-candidate-invalid" });
+  expect(failedClosed.draftRaw).toBe(originalIntent.nextDraftRaw);
+  expect(failedClosed.planRaw).toBe(originalIntent.previousPlanRaw);
+  expect(failedClosed.queueRaw).toBe(forgedIntentRaw);
+});
+
+test("BG-F5 queue regression accepts only an exact Request pin append in the upstream intent", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد intent upstream", category: "میلگرد", coverage: "تهران", capability: "product" });
+  await page.evaluate(({ approvalKey, intentKey }) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__bgF5UpstreamIntentNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === approvalKey && window.localStorage.getItem(intentKey) !== null) {
+        throw new DOMException("BG-F5 upstream approval interruption", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  }, { approvalKey: bgF4ApprovalCanonicalStorageKey, intentKey: bgF5DispatchPreconditionIntentStorageKey });
+  await page.getByTestId("dispatch-submit-to-tasks").click();
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPreconditionIntentStorageKey)).not.toBeNull();
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __bgF5UpstreamIntentNativeSetItem: typeof Storage.prototype.setItem }).__bgF5UpstreamIntentNativeSetItem;
+    delete (window as Window & { __bgF5UpstreamIntentNativeSetItem?: typeof Storage.prototype.setItem }).__bgF5UpstreamIntentNativeSetItem;
+  });
+
+  const exactIntentRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPreconditionIntentStorageKey);
+  const exactIntent = JSON.parse(exactIntentRaw!);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(exactIntent.nextRequestsRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCanonicalStorageKey)).toBe(exactIntent.previousApprovalsRaw);
+  const forgedIntent = structuredClone(exactIntent);
+  const forgedRequests = JSON.parse(forgedIntent.nextRequestsRaw);
+  const targetRequest = forgedRequests.find((request: any) => request.id === forgedIntent.requestId);
+  expect(targetRequest?.history[0]?.id).toEqual(expect.any(String));
+  targetRequest.history[0].id = `${targetRequest.history[0].id}:tampered`;
+  forgedIntent.nextRequestsRaw = JSON.stringify(forgedRequests);
+  rehashProjectFoundationValue(forgedIntent);
+  const forgedIntentRaw = JSON.stringify(forgedIntent);
+  await page.evaluate(({ requestKey, intentKey, previousRequestRaw, forgedRaw }) => {
+    window.localStorage.setItem(requestKey, previousRequestRaw);
+    window.localStorage.setItem(intentKey, forgedRaw);
+  }, {
+    requestKey: purchaseRequestRecoverySourceKey,
+    intentKey: bgF5DispatchPreconditionIntentStorageKey,
+    previousRequestRaw: exactIntent.previousRequestsRaw,
+    forgedRaw: forgedIntentRaw,
+  });
 
   await page.reload();
-  await expectHistoricalLegacyApprovalReadable();
+  await reachBuilderWelcome(page);
+  await page.getByTestId("enter-home").click();
+  await page.getByTestId("quick-action-purchase-request").click();
+  await expect(page.getByTestId("purchase-request-read-error")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), purchaseRequestRecoverySourceKey)).toBe(exactIntent.previousRequestsRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF4ApprovalCanonicalStorageKey)).toBe(exactIntent.previousApprovalsRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPreconditionIntentStorageKey)).toBe(forgedIntentRaw);
+});
+
+test("BG-F5 queue regression rejects an orphan queue Draft after its durable intent is removed", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد orphan queue", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const before = await expectBgF5FoundationsCommitted(page);
+  await page.evaluate((planKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__bgF5OrphanNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === planKey) throw new DOMException("BG-F5 orphan interruption", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  }, bgF5DispatchPlanApprovalsCanonicalStorageKey);
+  await page.getByTestId("dispatch-submit-to-tasks").click();
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey)).not.toBeNull();
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __bgF5OrphanNativeSetItem: typeof Storage.prototype.setItem }).__bgF5OrphanNativeSetItem;
+    delete (window as Window & { __bgF5OrphanNativeSetItem?: typeof Storage.prototype.setItem }).__bgF5OrphanNativeSetItem;
+  });
+  const interrupted = await readBgF5FoundationSet(page);
+  expect(interrupted.drafts.canonicalRaw).not.toBe(before.drafts.canonicalRaw);
+  expect(interrupted.drafts.envelope.idempotencyReceipts[0]).toMatchObject({
+    aggregateQueueIdempotencyKey: expect.any(String),
+    aggregateCommandPayloadHash: expect.stringMatching(bgF5Sha256Pattern),
+  });
+  expect(interrupted.plans.canonicalRaw).toBe(before.plans.canonicalRaw);
+  await page.evaluate((key) => window.localStorage.removeItem(key), bgF5DispatchPlanQueueIntentStorageKey);
+
   await page.reload();
-  await expectHistoricalLegacyApprovalReadable();
+  await reopenFirstPurchaseRequestDispatch(page);
+  await expect(page.getByTestId("supplier-contact-read-error")).toHaveCount(0);
+  await expect(page.getByTestId("dispatch-draft-read-error")).toBeVisible();
+  await expect(page.getByTestId("dispatch-plan-approval-read-error")).toBeVisible();
+  await expect(page.getByTestId("dispatch-draft-preview")).toHaveCount(0);
+  await expect(page.getByTestId("dispatch-draft-save")).toBeDisabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchDraftsCanonicalStorageKey)).toBe(interrupted.drafts.canonicalRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanApprovalsCanonicalStorageKey)).toBe(before.plans.canonicalRaw);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanQueueIntentStorageKey)).toBeNull();
+});
+
+test("BG-F5 queue regression keeps a direct Draft readable and mutable when only the Plan store is unreadable", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد direct مستقل نخست", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  expect((await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-direct-independent-v1")).status).toBe("created");
+  const firstDraftRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchDraftsCanonicalStorageKey);
+  const secondContact = await page.evaluate(async ({ authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    if (contacts.status !== "ready" || !contacts.envelope) return { status: "contact-not-ready" };
+    const key = "bg-f5-direct-independent-contact-v2";
+    return procurementDispatch.executeSupplierContactCommand({
+      inputSchemaVersion: 1,
+      action: "create-contact",
+      projectId: dependencies.requestRevisions[0].projectId,
+      contactId: procurementDispatch.supplierContactIdForIdempotencyKey(key),
+      draft: { displayName: "فولاد direct مستقل دوم", category: "میلگرد", tehranCoverage: "تهران", responseCapability: "product" },
+      expectedStoreVersion: contacts.envelope.storeVersion,
+      idempotencyKey: key,
+    }, () => authority as any);
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+  expect(secondContact).toMatchObject({ status: "created" });
+  const unreadablePlanRaw = "{unreadable-direct-independent-plan";
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF5DispatchPlanApprovalsCanonicalStorageKey, raw: unreadablePlanRaw });
+
+  const updated = await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-direct-independent-v2");
+  expect(updated).toMatchObject({ status: "updated", drafts: { status: "ready" } });
+  const states = await page.evaluate(async ({ authority, dependencies, keys }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    const drafts = procurementDispatch.readDispatchDraftState(dependencies as any, contacts);
+    const plans = procurementDispatch.readDispatchPlanApprovalState(dependencies as any, contacts, drafts);
+    return {
+      contacts,
+      drafts,
+      plans,
+      draftRaw: window.localStorage.getItem(keys.draft),
+      planRaw: window.localStorage.getItem(keys.plan),
+    };
+  }, {
+    authority: dependencySet.authority,
+    dependencies: dependencySet.dependencies,
+    keys: { draft: bgF5DispatchDraftsCanonicalStorageKey, plan: bgF5DispatchPlanApprovalsCanonicalStorageKey },
+  });
+  expect(states.contacts).toMatchObject({ status: "ready" });
+  expect(states.drafts).toMatchObject({ status: "ready" });
+  expect(states.drafts.envelope.records[0]).toMatchObject({ version: 2 });
+  expect(states.drafts.envelope.idempotencyReceipts.every((receipt: any) => receipt.aggregateQueueIdempotencyKey === null && receipt.aggregateCommandPayloadHash === null)).toBe(true);
+  expect(states.plans).toMatchObject({ status: "read-error", reason: "canonical-invalid" });
+  expect(states.draftRaw).not.toBe(firstDraftRaw);
+  expect(states.planRaw).toBe(unreadablePlanRaw);
+});
+
+test("BG-F5 queue regression rejects fresh Draft and Plan receipts that reuse a historical non-current Approval proof", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovedPurchaseRequestDispatch(page);
+  await addLocalSupplierContact(page, { name: "فولاد proof تاریخی نخست", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dependencySet = await buildBgF5SyntheticDependencySet(page);
+  expect((await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-historical-proof-draft-v1")).status).toBe("created");
+  const firstDraftCheckpoint = structuredClone(dependencySet.dependencies.preconditionCheckpoints.find((checkpoint: any) => checkpoint.operation === "dispatch-draft"));
+  const draftPrefixRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchDraftsCanonicalStorageKey);
+  expect((await createBgF5SyntheticPlan(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-historical-proof-plan-v1")).status).toBe("created");
+  const firstPlanCheckpoint = structuredClone(dependencySet.dependencies.preconditionCheckpoints.find((checkpoint: any) => checkpoint.operation === "dispatch-plan"));
+  const planPrefixRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanApprovalsCanonicalStorageKey);
+  expect(firstDraftCheckpoint).toBeTruthy();
+  expect(firstPlanCheckpoint).toBeTruthy();
+  expect((await withdrawBgF5SyntheticPlan(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-historical-proof-plan-v2")).status).toBe("updated");
+
+  const secondContact = await page.evaluate(async ({ authority, dependencies }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    if (contacts.status !== "ready" || !contacts.envelope) return { status: "contact-not-ready" };
+    const key = "bg-f5-historical-proof-contact-v2";
+    return procurementDispatch.executeSupplierContactCommand({
+      inputSchemaVersion: 1,
+      action: "create-contact",
+      projectId: dependencies.requestRevisions[0].projectId,
+      contactId: procurementDispatch.supplierContactIdForIdempotencyKey(key),
+      draft: { displayName: "فولاد proof تاریخی دوم", category: "میلگرد", tehranCoverage: "تهران", responseCapability: "product" },
+      expectedStoreVersion: contacts.envelope.storeVersion,
+      idempotencyKey: key,
+    }, () => authority as any);
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies });
+  expect(secondContact).toMatchObject({ status: "created" });
+  expect((await upsertBgF5SyntheticDraft(page, dependencySet.authority, dependencySet.dependencies, "bg-f5-historical-proof-draft-v2")).status).toBe("updated");
+  const fullDraftRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchDraftsCanonicalStorageKey);
+  const fullPlanRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF5DispatchPlanApprovalsCanonicalStorageKey);
+
+  const historical = await page.evaluate(async ({ authority, dependencies, firstDraftCheckpoint, firstPlanCheckpoint, draftPrefixRaw, planPrefixRaw, fullDraftRaw, fullPlanRaw }) => {
+    const procurementDispatch = await import("/src/procurementDispatch.ts");
+    const stripFingerprint = ({ fingerprint: _fingerprint, ...value }: any) => value;
+    const requests = dependencies.requestRevisions.map(stripFingerprint);
+    const originalApproval = stripFingerprint(dependencies.contentApprovals[0]);
+    const historicalApproval = { ...originalApproval, isCurrent: false };
+    const currentApproval = {
+      ...historicalApproval,
+      approvalVersion: historicalApproval.approvalVersion + 1,
+      approvalRevisionId: `${historicalApproval.approvalRevisionId}:current-v2`,
+      approvalFingerprint: `sha256-${"7".repeat(64)}`,
+      status: "changes-requested",
+      isCurrent: true,
+      updatedAt: new Date(Date.parse(historicalApproval.updatedAt) + 1).toISOString(),
+    };
+    const historicalDependencies = procurementDispatch.createProcurementDispatchDependencies(authority, requests, [historicalApproval, currentApproval], [firstDraftCheckpoint, firstPlanCheckpoint]);
+    const contacts = procurementDispatch.readSupplierContactState(authority as any);
+    if (contacts.status !== "ready" || !contacts.envelope) return { status: "contact-not-ready" };
+    const draftPrefix = JSON.parse(draftPrefixRaw);
+    const planPrefix = JSON.parse(planPrefixRaw);
+    const positiveDraft = procurementDispatch.parseDispatchDraftEnvelope(draftPrefix, historicalDependencies as any, contacts.envelope) !== null;
+    const positivePlan = procurementDispatch.parseDispatchPlanApprovalEnvelope(planPrefix, historicalDependencies as any, contacts.envelope, draftPrefix) !== null;
+    const preconditionFrom = (checkpoint: any) => ({
+      checkpointKey: checkpoint.checkpointKey,
+      checkpointFingerprint: checkpoint.fingerprint,
+      requestReceiptPosition: checkpoint.requestHead.receiptPosition,
+      approvalStoreVersion: checkpoint.approvalHead.resultingStoreVersion,
+    });
+    const applyReceiptPrecondition = (receipt: any, checkpoint: any) => {
+      receipt.preconditionCheckpointKey = checkpoint.checkpointKey;
+      receipt.preconditionCheckpointFingerprint = checkpoint.fingerprint;
+      receipt.requestPreconditionReceiptPosition = checkpoint.requestHead.receiptPosition;
+      receipt.approvalPreconditionStoreVersion = checkpoint.approvalHead.resultingStoreVersion;
+    };
+    const rehash = (value: any) => {
+      const { fingerprint: _fingerprint, ...payload } = value;
+      value.fingerprint = procurementDispatch.procurementDispatchHash(payload);
+    };
+
+    const forgedDraft = JSON.parse(fullDraftRaw);
+    const draftReceipt = forgedDraft.idempotencyReceipts.at(-1);
+    const draftRecord = forgedDraft.records.find((record: any) => record.id === draftReceipt.recordId);
+    const draftRevision = draftRecord.revisions.find((revision: any) => revision.id === draftReceipt.revisionId);
+    applyReceiptPrecondition(draftReceipt, firstDraftCheckpoint);
+    const draftPayload = {
+      inputSchemaVersion: 1,
+      action: "upsert-dispatch-draft",
+      projectId: draftReceipt.projectId,
+      dispatchDraftId: draftReceipt.recordId,
+      requestId: draftRecord.target.requestId,
+      expectedRequestVersion: draftRecord.target.requestVersion,
+      expectedRequestRevisionId: draftRecord.target.revisionId,
+      expectedRequestRevisionFingerprint: draftRecord.target.revisionFingerprint,
+      approvalId: draftRecord.target.approvalId,
+      expectedApprovalVersion: draftRecord.target.approvalVersion,
+      expectedApprovalRevisionId: draftRecord.target.approvalRevisionId,
+      expectedApprovalFingerprint: draftRecord.target.approvalFingerprint,
+      recipients: draftRevision.inviteDrafts.map((invite: any) => ({ supplierContactId: invite.supplierContactId, expectedContactVersion: invite.supplierContactVersion, expectedContactRevisionId: invite.supplierContactRevisionId, expectedContactRevisionFingerprint: invite.supplierContactRevisionFingerprint })),
+      expectedContactStoreVersion: draftReceipt.expectedContactStoreVersion,
+      expectedDraftStoreVersion: draftReceipt.expectedDraftStoreVersion,
+      expectedDraftVersion: draftReceipt.expectedRecordVersion,
+      precondition: preconditionFrom(firstDraftCheckpoint),
+    };
+    draftReceipt.payloadHash = procurementDispatch.procurementDispatchHash(draftPayload);
+    const draftEvent = draftRecord.history.find((event: any) => event.id === draftReceipt.eventId);
+    draftEvent.commandPayloadHash = draftReceipt.payloadHash;
+    rehash(draftEvent);
+    rehash(draftReceipt);
+    rehash(draftRecord);
+    rehash(forgedDraft);
+
+    const forgedPlan = JSON.parse(fullPlanRaw);
+    const planReceipt = forgedPlan.idempotencyReceipts.at(-1);
+    const planRecord = forgedPlan.records.find((record: any) => record.id === planReceipt.recordId);
+    applyReceiptPrecondition(planReceipt, firstPlanCheckpoint);
+    const planPayload = {
+      inputSchemaVersion: 1,
+      action: planReceipt.action,
+      projectId: planReceipt.projectId,
+      planApprovalId: planReceipt.recordId,
+      expectedContactStoreVersion: planReceipt.expectedContactStoreVersion,
+      expectedDraftStoreVersion: planReceipt.expectedDraftStoreVersion,
+      expectedPlanStoreVersion: planReceipt.expectedStoreVersion,
+      expectedPlanVersion: planReceipt.expectedRecordVersion,
+      precondition: preconditionFrom(firstPlanCheckpoint),
+    };
+    planReceipt.payloadHash = procurementDispatch.procurementDispatchHash(planPayload);
+    const planEvent = planRecord.history.find((event: any) => event.id === planReceipt.eventId);
+    planEvent.commandPayloadHash = planReceipt.payloadHash;
+    rehash(planEvent);
+    rehash(planReceipt);
+    rehash(planRecord);
+    rehash(forgedPlan);
+    return {
+      status: "ready",
+      positiveDraft,
+      positivePlan,
+      forgedDraft: procurementDispatch.parseDispatchDraftEnvelope(forgedDraft, historicalDependencies as any, contacts.envelope) !== null,
+      forgedPlan: procurementDispatch.parseDispatchPlanApprovalEnvelope(forgedPlan, historicalDependencies as any, contacts.envelope, draftPrefix) !== null,
+    };
+  }, { authority: dependencySet.authority, dependencies: dependencySet.dependencies, firstDraftCheckpoint, firstPlanCheckpoint, draftPrefixRaw, planPrefixRaw, fullDraftRaw, fullPlanRaw });
+  expect(historical).toEqual({ status: "ready", positiveDraft: true, positivePlan: true, forgedDraft: false, forgedPlan: false });
 });
 
 test("T6-C builds an exact local product dispatch draft for direct builder contacts without any network effect", async ({ page }) => {
@@ -10688,8 +14186,8 @@ test("T6-C builds an exact local product dispatch draft for direct builder conta
   await expect(page.getByTestId("invite-draft-card")).toContainText("ادامهٔ احتمالی در فاز تأمین‌کننده");
 
   const stored = await page.evaluate(() => ({
-    contacts: JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]"),
-    dispatches: JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]"),
+    contacts: JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2") ?? "{\"records\":[]}").records,
+    dispatches: JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2") ?? "{\"records\":[]}").records,
   }));
   expect(stored.contacts).toHaveLength(2);
   expect(stored.contacts[0]).toMatchObject({ source: "ثبت مستقیم سازنده", networkStatus: "خارج از شبکه چیدا", visibility: "خصوصی پروژه", localStatus: "ثبت محلی", status: "active", version: 1 });
@@ -10758,13 +14256,13 @@ test("T6-C versions recipient changes, keeps archived history, and treats an unc
   await expect(page.getByTestId("dispatch-selected-count")).toContainText("۲ تأمین‌کننده انتخاب شده");
   await page.getByTestId("dispatch-draft-save").click();
   await expect(page.getByTestId("invite-draft-card")).toHaveCount(2);
-  const firstStoredDraft = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]")[0]);
+  const firstStoredDraft = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2") ?? "{\"records\":[]}").records[0]);
   expect(firstStoredDraft).toMatchObject({ version: 1 });
   expect(firstStoredDraft.revisions).toHaveLength(1);
 
   await page.getByTestId("dispatch-draft-save").click();
   await expect(page.getByTestId("dispatch-save-announcement")).toContainText("نسخهٔ اضافه‌ای ساخته نشد");
-  const noOpStoredDraft = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]")[0]);
+  const noOpStoredDraft = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2") ?? "{\"records\":[]}").records[0]);
   expect(noOpStoredDraft).toEqual(firstStoredDraft);
 
   const firstContactCard = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد یک" });
@@ -10777,11 +14275,11 @@ test("T6-C versions recipient changes, keeps archived history, and treats an unc
   await page.getByTestId("dispatch-draft-save").click();
   await expect(page.getByTestId("invite-draft-card")).toHaveCount(1);
 
-  const versionedDraft = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]")[0]);
+  const versionedDraft = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2") ?? "{\"records\":[]}").records[0]);
   expect(versionedDraft.version).toBe(2);
   expect(versionedDraft.history.map((event: { type: string }) => event.type)).toEqual(["created", "updated"]);
   expect(versionedDraft.revisions.map((revision: { recipientIds: string[] }) => revision.recipientIds.length)).toEqual([2, 1]);
-  const contacts = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]"));
+  const contacts = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2") ?? "{\"records\":[]}").records);
   expect(contacts.find((contact: { displayName: string }) => contact.displayName === "فولاد یک")).toMatchObject({ status: "archived", version: 2, archivedAt: expect.any(String) });
 
   await page.reload();
@@ -10825,8 +14323,8 @@ test("T6-C keeps contacts and dispatch drafts isolated when the builder changes 
   const isolationState = {
     activeProjectId: await readActiveProjectId(page),
     ...await page.evaluate(() => ({
-    contacts: JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]"),
-    dispatches: JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]"),
+    contacts: JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2") ?? "{\"records\":[]}").records,
+    dispatches: JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2") ?? "{\"records\":[]}").records,
     })),
   };
   expect(isolationState.activeProjectId).toBe(secondProjectId);
@@ -10856,8 +14354,9 @@ test("T6-C exposes the service location for manual review without claiming seman
   await expect(page.getByTestId("dispatch-privacy-preview")).toContainText("پاک‌سازی معنایی ادعا نمی‌شود");
   await addLocalSupplierContact(page, { name: "مجری عایق بام", category: "عایق‌کاری", coverage: "تمام تهران", capability: "service" });
   await page.getByTestId("dispatch-draft-save").click();
+  await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
 
-  const revision = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]")[0].revisions[0]);
+  const revision = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2") ?? "{\"records\":[]}").records[0].revisions[0]);
   expect(revision.payload).toMatchObject({ requestKind: "service", items: [], delivery: null, unresolvedTerms: null, service: { scope: "آماده‌سازی و اجرای عایق دولایهٔ بام", location: "بام پروژه، ضلع جنوبی، نشانی آزاد نیازمند بازبینی", locationPrecision: "area-or-project-section", sizeOrVolume: "۸۵۰ مترمربع" } });
   expect(revision.payload.service).not.toHaveProperty("exactAddress");
   expect(revision.privacySnapshot).toMatchObject({ exactAddressFieldIncluded: false, locationReviewRequired: true });
@@ -10868,28 +14367,18 @@ test("T6-C rejects coordinated dispatch tampering and locks writes while leaving
   await openApprovedPurchaseRequestDispatch(page);
   await addLocalSupplierContact(page, { name: "فولاد امن", category: "میلگرد", coverage: "تهران", capability: "product" });
   await page.getByTestId("dispatch-draft-save").click();
-  const validDispatchStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"));
-  const validContactStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1"));
-
-  await page.evaluate(() => {
-    const stableValue = (value: unknown): unknown => {
-      if (Array.isArray(value)) return value.map(stableValue);
-      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stableValue(item)]));
-      return value;
-    };
-    const stableHash = (serialized: string) => {
-      let hash = 2166136261;
-      for (let index = 0; index < serialized.length; index += 1) {
-        hash ^= serialized.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-      }
-      return (hash >>> 0).toString(16).padStart(8, "0");
-    };
-    const dispatches = JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]");
-    const revision = dispatches[0].revisions[0];
-    revision.payload.items[0].quantity = "999";
-    revision.fingerprint = `fnv1a-${stableHash(JSON.stringify(stableValue({ target: dispatches[0].target, recipientIds: revision.recipientIds, inviteDrafts: revision.inviteDrafts, payload: revision.payload, privacySnapshot: revision.privacySnapshot })))}`;
-    window.localStorage.setItem("chida-prototype-project-dispatch-drafts:v1", JSON.stringify(dispatches));
+  const validDispatchStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"));
+  const validContactStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2"));
+  const payloadTamperedEnvelope = JSON.parse(validDispatchStore ?? "{\"records\":[]}");
+  const payloadTamperedDraft = payloadTamperedEnvelope.records[0];
+  const payloadTamperedRevision = payloadTamperedDraft.revisions[0];
+  payloadTamperedRevision.payload.items[0].quantity = "999";
+  rehashProjectFoundationValue(payloadTamperedRevision);
+  rehashProjectFoundationValue(payloadTamperedDraft);
+  rehashProjectFoundationValue(payloadTamperedEnvelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), {
+    key: "chida-prototype-project-dispatch-drafts:v2",
+    raw: JSON.stringify(payloadTamperedEnvelope),
   });
   await page.reload();
   await reopenFirstPurchaseRequestDispatch(page);
@@ -10899,43 +14388,41 @@ test("T6-C rejects coordinated dispatch tampering and locks writes while leaving
   await expect(page.getByTestId("dispatch-draft-preview")).toHaveCount(0);
   await expect(page.getByTestId("dispatch-draft-save")).toBeDisabled();
 
-  await page.evaluate((stored) => {
-    const dispatches = JSON.parse(stored ?? "[]");
-    dispatches[0].sendAuthorized = true;
-    window.localStorage.setItem("chida-prototype-project-dispatch-drafts:v1", JSON.stringify(dispatches));
-  }, validDispatchStore);
+  const authorizationTamperedEnvelope = JSON.parse(validDispatchStore ?? "{\"records\":[]}");
+  authorizationTamperedEnvelope.records[0].sendAuthorized = true;
+  rehashProjectFoundationValue(authorizationTamperedEnvelope.records[0]);
+  rehashProjectFoundationValue(authorizationTamperedEnvelope);
+  await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), {
+    key: "chida-prototype-project-dispatch-drafts:v2",
+    raw: JSON.stringify(authorizationTamperedEnvelope),
+  });
   await page.reload();
   await reopenFirstPurchaseRequestDispatch(page);
   await expect(page.getByTestId("dispatch-draft-read-error")).toBeVisible();
   await expect(page.getByTestId("dispatch-draft-save")).toBeDisabled();
 
-  await page.evaluate(({ contactsStore, dispatchStore }) => {
-    const stableValue = (value: unknown): unknown => {
-      if (Array.isArray(value)) return value.map(stableValue);
-      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([first], [second]) => first.localeCompare(second)).map(([key, item]) => [key, stableValue(item)]));
-      return value;
-    };
-    const stableHash = (serialized: string) => {
-      let hash = 2166136261;
-      for (let index = 0; index < serialized.length; index += 1) {
-        hash ^= serialized.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-      }
-      return (hash >>> 0).toString(16).padStart(8, "0");
-    };
-    const contacts = JSON.parse(contactsStore ?? "[]");
-    const dispatches = JSON.parse(dispatchStore ?? "[]");
-    contacts[0].responseCapability = "service";
-    const revision = dispatches[0].revisions[0];
-    revision.inviteDrafts[0].destination.responseCapability = "service";
-    revision.fingerprint = `fnv1a-${stableHash(JSON.stringify(stableValue({ target: dispatches[0].target, recipientIds: revision.recipientIds, inviteDrafts: revision.inviteDrafts, payload: revision.payload, privacySnapshot: revision.privacySnapshot })))}`;
-    window.localStorage.setItem("chida-prototype-project-supplier-contacts:v1", JSON.stringify(contacts));
-    window.localStorage.setItem("chida-prototype-project-dispatch-drafts:v1", JSON.stringify(dispatches));
-  }, { contactsStore: validContactStore, dispatchStore: validDispatchStore });
+  const destinationTamperedEnvelope = JSON.parse(validDispatchStore ?? "{\"records\":[]}");
+  const destinationTamperedDraft = destinationTamperedEnvelope.records[0];
+  const destinationTamperedRevision = destinationTamperedDraft.revisions[0];
+  destinationTamperedRevision.inviteDrafts[0].destination.responseCapability = "service";
+  rehashProjectFoundationValue(destinationTamperedRevision.inviteDrafts[0]);
+  rehashProjectFoundationValue(destinationTamperedRevision);
+  rehashProjectFoundationValue(destinationTamperedDraft);
+  rehashProjectFoundationValue(destinationTamperedEnvelope);
+  await page.evaluate(({ contactKey, contactRaw, draftKey, draftRaw }) => {
+    window.localStorage.setItem(contactKey, contactRaw);
+    window.localStorage.setItem(draftKey, draftRaw);
+  }, {
+    contactKey: "chida-prototype-project-supplier-contacts:v2",
+    contactRaw: validContactStore!,
+    draftKey: "chida-prototype-project-dispatch-drafts:v2",
+    draftRaw: JSON.stringify(destinationTamperedEnvelope),
+  });
   await page.reload();
   await reopenFirstPurchaseRequestDispatch(page);
   await expect(page.getByTestId("supplier-contact-read-error")).toHaveCount(0);
-  await expect(page.getByTestId("supplier-contact-card")).toContainText("قابل انتخاب نیست");
+  await expect(page.getByTestId("supplier-contact-card")).toContainText("فولاد امن");
+  await expect(page.getByTestId("supplier-contact-add")).toBeEnabled();
   await expect(page.getByTestId("dispatch-draft-read-error")).toBeVisible();
   await expect(page.getByTestId("dispatch-draft-preview")).toHaveCount(0);
 });
@@ -10951,18 +14438,29 @@ for (const malformedAppend of [
     await addLocalSupplierContact(page, { name: "گیرنده تاریخچه", category: "میلگرد", coverage: "تهران", capability: "product" });
     await page.getByTestId("dispatch-draft-save").click();
 
-    await page.evaluate(({ store }) => {
+    const malformedEnvelope = await page.evaluate(({ store }) => {
+      const key = store === "contact-history"
+        ? "chida-prototype-project-supplier-contacts:v2"
+        : "chida-prototype-project-dispatch-drafts:v2";
+      return JSON.parse(window.localStorage.getItem(key) ?? "{\"records\":[]}");
+    }, { store: malformedAppend.store });
+    const malformedRecord = malformedEnvelope.records[0];
+    if (malformedAppend.store === "contact-history") {
+      malformedRecord.history.push({ id: "malformed-contact-event", type: "updated", actor: "شما", at: "not-a-date", version: 2 });
+    } else if (malformedAppend.store === "dispatch-history") {
+      malformedRecord.history.push({ id: "malformed-dispatch-event", type: "updated", actor: "شما", at: "not-a-date", version: 2 });
+    } else {
+      malformedRecord.revisions.push({ id: "malformed-dispatch-revision" });
+    }
+    rehashProjectFoundationValue(malformedRecord);
+    rehashProjectFoundationValue(malformedEnvelope);
+    await page.evaluate(({ store, raw }) => {
       if (store === "contact-history") {
-        const contacts = JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]");
-        contacts[0].history.push({ id: "malformed-contact-event", type: "updated", actor: "شما", at: "not-a-date", version: 2 });
-        window.localStorage.setItem("chida-prototype-project-supplier-contacts:v1", JSON.stringify(contacts));
+        window.localStorage.setItem("chida-prototype-project-supplier-contacts:v2", raw);
         return;
       }
-      const dispatches = JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]");
-      if (store === "dispatch-history") dispatches[0].history.push({ id: "malformed-dispatch-event", type: "updated", actor: "شما", at: "not-a-date", version: 2 });
-      else dispatches[0].revisions.push({ id: "malformed-dispatch-revision" });
-      window.localStorage.setItem("chida-prototype-project-dispatch-drafts:v1", JSON.stringify(dispatches));
-    }, { store: malformedAppend.store });
+      window.localStorage.setItem("chida-prototype-project-dispatch-drafts:v2", raw);
+    }, { store: malformedAppend.store, raw: JSON.stringify(malformedEnvelope) });
 
     await page.reload();
     await reopenFirstPurchaseRequestDispatch(page);
@@ -10977,11 +14475,12 @@ for (const malformedAppend of [
 test("T6-C rejects duplicate contact ids and rolls back failed contact or dispatch writes", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openApprovedPurchaseRequestDispatch(page);
+  const contactStoreBeforeFailure = (await readBgF5FoundationSet(page)).contacts.canonicalRaw;
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
     Object.defineProperty(window, "__t6cNativeSetItem", { value: nativeSetItem, configurable: true });
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-supplier-contacts:v1") throw new DOMException("Contact write failed", "QuotaExceededError");
+      if (this === window.localStorage && key === "chida-prototype-project-supplier-contacts:v2") throw new DOMException("Contact write failed", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
   });
@@ -10995,30 +14494,32 @@ test("T6-C rejects duplicate contact ids and rolls back failed contact or dispat
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("supplier-contact-editor-sheet")).toBeHidden();
   await expect(page.getByTestId("supplier-contact-card")).toHaveCount(0);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1"))).toBeNull();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2"))).toBe(contactStoreBeforeFailure);
 
   await page.evaluate(() => {
     Storage.prototype.setItem = (window as Window & { __t6cNativeSetItem: typeof Storage.prototype.setItem }).__t6cNativeSetItem;
   });
   await addLocalSupplierContact(page, { name: "گیرنده سالم", category: "میلگرد", coverage: "تهران", capability: "product" });
+  const dispatchStoreBeforeFailure = (await readBgF5FoundationSet(page)).drafts.canonicalRaw;
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-dispatch-drafts:v1") throw new DOMException("Dispatch write failed", "QuotaExceededError");
+      if (this === window.localStorage && key === "chida-prototype-project-dispatch-drafts:v2") throw new DOMException("Dispatch write failed", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
   });
   await page.getByTestId("dispatch-draft-save").click();
   await expect(page.getByTestId("dispatch-storage-error")).toContainText("Draft اشتراک ذخیره نشد");
   await expect(page.getByTestId("dispatch-draft-preview")).toHaveCount(0);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"))).toBeNull();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"))).toBe(dispatchStoreBeforeFailure);
 
-  await page.evaluate(() => {
+  const duplicateContactEnvelope = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2") ?? "{\"records\":[]}"));
+  duplicateContactEnvelope.records.push(structuredClone(duplicateContactEnvelope.records[0]));
+  rehashProjectFoundationValue(duplicateContactEnvelope);
+  await page.evaluate((raw) => {
     Storage.prototype.setItem = (window as Window & { __t6cNativeSetItem: typeof Storage.prototype.setItem }).__t6cNativeSetItem;
-    const contacts = JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]");
-    contacts.push(structuredClone(contacts[0]));
-    window.localStorage.setItem("chida-prototype-project-supplier-contacts:v1", JSON.stringify(contacts));
-  });
+    window.localStorage.setItem("chida-prototype-project-supplier-contacts:v2", raw);
+  }, JSON.stringify(duplicateContactEnvelope));
   await page.reload();
   await reopenFirstPurchaseRequestDispatch(page);
   await expect(page.getByTestId("supplier-contact-read-error")).toContainText("گیرنده‌های محلی کامل خوانده نشدند");
@@ -11028,8 +14529,8 @@ test("T6-C rejects duplicate contact ids and rolls back failed contact or dispat
 });
 
 for (const readFailure of [
-  { label: "contact", key: "chida-prototype-project-supplier-contacts:v1" },
-  { label: "dispatch", key: "chida-prototype-project-dispatch-drafts:v1" },
+  { label: "contact", key: "chida-prototype-project-supplier-contacts:v2" },
+  { label: "dispatch", key: "chida-prototype-project-dispatch-drafts:v2" },
 ] as const) {
   test(`T6-C fail-closes ${readFailure.label} getItem exceptions without attempting a dependent write`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -11081,12 +14582,12 @@ test("fast purchase flow sends the final decision to Tasks without attempting a 
   await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("منتظر تأیید نهایی");
   await expect(page.getByTestId("project-dispatch-plan-approval-technical")).not.toHaveAttribute("open", "");
 
-  const pending = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0]);
+  const pending = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records[0]);
   expect(pending).toMatchObject({ status: "pending", simulationOnly: true, externalEffect: "none", sendAuthorized: false, externalActionAttempted: false });
   await page.getByTestId("dispatch-plan-approval-approve").click();
   await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("تأیید نهایی ثبت شد");
   await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در این نمونه چیزی ارسال نشد");
-  const approved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0]);
+  const approved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records[0]);
   expect(approved).toMatchObject({ status: "approved", simulationOnly: true, externalEffect: "none", sendAuthorized: false, externalActionAttempted: false });
   expect(networkRequests).toEqual([]);
   expect(await page.getByTestId("project-dispatch-plan-approval-detail-view").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
@@ -11096,10 +14597,10 @@ test("T6-D independently approves the exact current dispatch plan without author
   await page.setViewportSize({ width: 390, height: 844 });
   await createCurrentProductDispatchDraft(page);
 
-  const requestApprovalBefore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1"));
-  const currentDispatch = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]")[0]);
+  const requestApprovalBefore = (await readBgF4ApprovalFoundation(page)).envelope;
+  const currentDispatch = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2") ?? "{\"records\":[]}").records[0]);
   const currentRevision = currentDispatch.revisions.at(-1);
-  const currentContacts = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]"));
+  const currentContacts = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2") ?? "{\"records\":[]}").records);
   const expectedRecipients = currentRevision.inviteDrafts.map((invite: { supplierContactId: string; destination: unknown }) => ({
     supplierContactId: invite.supplierContactId,
     supplierContactVersion: currentContacts.find((contact: { id: string }) => contact.id === invite.supplierContactId).version,
@@ -11121,9 +14622,9 @@ test("T6-D independently approves the exact current dispatch plan without author
   await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
   await expect(page.getByTestId("dispatch-plan-approval-status")).toBeFocused();
 
-  const pendingApproval = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0]);
+  const pendingApproval = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records[0]);
   expect(pendingApproval).toMatchObject({
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: currentDispatch.projectId,
     status: "pending",
     target: {
@@ -11154,18 +14655,18 @@ test("T6-D independently approves the exact current dispatch plan without author
   await page.getByTestId("dispatch-plan-approval-withdraw").click();
   await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("پس‌گرفته‌شده");
   await expect(page.getByTestId("dispatch-plan-approval-status")).toBeFocused();
-  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0].status)).toBe("withdrawn");
+  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records[0].status)).toBe("withdrawn");
 
   await page.getByTestId("dispatch-plan-approval-reopen").click();
   await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
   await expect(page.getByTestId("dispatch-plan-approval-status")).toBeFocused();
-  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0].status)).toBe("pending");
+  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records[0].status)).toBe("pending");
 
   await page.getByTestId("dispatch-plan-approval-approve").click();
   await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("تأییدشده");
   await expect(page.getByTestId("dispatch-plan-approval-status")).toBeFocused();
   await expect(page.getByTestId("dispatch-plan-approval-action-record")).toContainText("تأیید محلی برنامهٔ ارسال");
-  const approved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0]);
+  const approved = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records[0]);
   expect(approved).toMatchObject({
     status: "approved",
     simulationOnly: true,
@@ -11176,7 +14677,13 @@ test("T6-D independently approves the exact current dispatch plan without author
   });
   expect(approved.history.map((event: { type: string }) => event.type)).toEqual(["created", "withdrawn", "reopened", "approved"]);
   expect(JSON.stringify(approved)).not.toMatch(/"(?:sent|sentAt|receipt|deliveryReceipt)":/);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-approvals:v1"))).toBe(requestApprovalBefore);
+  const requestApprovalAfter = (await readBgF4ApprovalFoundation(page)).envelope;
+  expect(requestApprovalAfter.records).toEqual(requestApprovalBefore.records);
+  expect(requestApprovalAfter.idempotencyReceipts.slice(0, requestApprovalBefore.idempotencyReceipts.length)).toEqual(requestApprovalBefore.idempotencyReceipts);
+  const dispatchPreconditionPins = requestApprovalAfter.idempotencyReceipts.slice(requestApprovalBefore.idempotencyReceipts.length);
+  expect(dispatchPreconditionPins).toHaveLength(4);
+  expect(dispatchPreconditionPins.every((receipt: { action: string; checkpoint?: { operation?: string } }) => receipt.action === "pin-procurement-dispatch-precondition" && receipt.checkpoint?.operation === "dispatch-plan")).toBe(true);
+  expect(requestApprovalAfter.storeVersion).toBe(requestApprovalBefore.storeVersion + dispatchPreconditionPins.length);
   expect(networkRequests).toEqual([]);
   expect(await page.getByTestId("dispatch-plan-approval-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
@@ -11195,7 +14702,7 @@ test("T6-D invalidates and preserves an approved historical plan when recipients
   await page.getByTestId("dispatch-plan-acknowledgement").check();
   await page.getByTestId("dispatch-plan-approval-create").click();
   await page.getByTestId("dispatch-plan-approval-approve").click();
-  const historicalApprovalBeforeChange = await page.evaluate(() => structuredClone(JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0]));
+  const historicalApprovalBeforeChange = await page.evaluate(() => structuredClone(JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records[0]));
   await page.getByTestId("dispatch-plan-approval-back").click();
 
   const removedContact = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد نسخه یک" });
@@ -11216,7 +14723,7 @@ test("T6-D invalidates and preserves an approved historical plan when recipients
   await expect(historicalCard.getByTestId("dispatch-plan-approval-reopen")).toHaveCount(0);
   await expect(historicalCard.getByTestId("dispatch-plan-approval-approve")).toHaveCount(0);
 
-  const invalidatedHistoricalRecord = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0]);
+  const invalidatedHistoricalRecord = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records[0]);
   expect(invalidatedHistoricalRecord).toEqual(historicalApprovalBeforeChange);
   expect(invalidatedHistoricalRecord).toMatchObject({
     status: "approved",
@@ -11228,8 +14735,9 @@ test("T6-D invalidates and preserves an approved historical plan when recipients
 
   await page.getByTestId("dispatch-plan-acknowledgement").check();
   await page.getByTestId("dispatch-plan-approval-create").click();
-  const approvals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]"));
-  const currentDispatch = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1") ?? "[]")[0]);
+  await expect.poll(async () => page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records.length)).toBe(2);
+  const approvals = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records);
+  const currentDispatch = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2") ?? "{\"records\":[]}").records[0]);
   const currentRevision = currentDispatch.revisions.at(-1);
   expect(approvals).toHaveLength(2);
   expect(approvals[0]).toEqual(historicalApprovalBeforeChange);
@@ -11260,12 +14768,13 @@ test("T6-D rolls back failed approval writes before changing the visible or pers
   await createCurrentProductDispatchDraft(page);
   await page.getByTestId("dispatch-plan-review").click();
   await page.getByTestId("dispatch-plan-acknowledgement").check();
+  const planStoreBeforeFailure = (await readBgF5FoundationSet(page)).plans.canonicalRaw;
 
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
     Object.defineProperty(window, "__t6dNativeSetItem", { value: nativeSetItem, configurable: true });
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-dispatch-plan-approvals:v1") throw new DOMException("Dispatch plan approval write failed", "QuotaExceededError");
+      if (this === window.localStorage && key === "chida-prototype-project-dispatch-plan-approvals:v2") throw new DOMException("Dispatch plan approval write failed", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
   });
@@ -11273,19 +14782,19 @@ test("T6-D rolls back failed approval writes before changing the visible or pers
   await expect(page.getByTestId("dispatch-plan-approval-storage-error")).toBeVisible();
   await expect(page.getByTestId("dispatch-plan-approval-create")).toBeVisible();
   await expect(page.getByTestId("dispatch-plan-approval-status")).toHaveCount(0);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1"))).toBeNull();
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2"))).toBe(planStoreBeforeFailure);
 
   await page.evaluate(() => {
     Storage.prototype.setItem = (window as Window & { __t6dNativeSetItem: typeof Storage.prototype.setItem }).__t6dNativeSetItem;
   });
   await page.getByTestId("dispatch-plan-approval-create").click();
   await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
-  const pendingStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1"));
+  const pendingStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2"));
 
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-project-dispatch-plan-approvals:v1") throw new DOMException("Dispatch plan approval decision failed", "QuotaExceededError");
+      if (this === window.localStorage && key === "chida-prototype-project-dispatch-plan-approvals:v2") throw new DOMException("Dispatch plan approval decision failed", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
   });
@@ -11293,7 +14802,7 @@ test("T6-D rolls back failed approval writes before changing the visible or pers
   await expect(page.getByTestId("dispatch-plan-approval-storage-error")).toBeVisible();
   await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
   await expect(page.getByTestId("dispatch-plan-approval-approve")).toBeVisible();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1"))).toBe(pendingStore);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2"))).toBe(pendingStore);
 
   await page.evaluate(() => {
     Storage.prototype.setItem = (window as Window & { __t6dNativeSetItem: typeof Storage.prototype.setItem }).__t6dNativeSetItem;
@@ -11307,12 +14816,11 @@ test("T6-D fails closed on a tampered approval without locking the valid dispatc
   await page.getByTestId("dispatch-plan-acknowledgement").check();
   await page.getByTestId("dispatch-plan-approval-create").click();
   await page.getByTestId("dispatch-plan-approval-approve").click();
-  await page.evaluate(() => {
-    const key = "chida-prototype-project-dispatch-plan-approvals:v1";
-    const records = JSON.parse(window.localStorage.getItem(key) ?? "[]");
-    records[0].sendAuthorized = true;
-    window.localStorage.setItem(key, JSON.stringify(records));
-  });
+  const tamperedPlanEnvelope = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}"));
+  tamperedPlanEnvelope.records[0].sendAuthorized = true;
+  rehashProjectFoundationValue(tamperedPlanEnvelope.records[0]);
+  rehashProjectFoundationValue(tamperedPlanEnvelope);
+  await page.evaluate((raw) => window.localStorage.setItem("chida-prototype-project-dispatch-plan-approvals:v2", raw), JSON.stringify(tamperedPlanEnvelope));
 
   await reopenFirstPurchaseRequestDispatch(page);
   await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
@@ -11321,7 +14829,7 @@ test("T6-D fails closed on a tampered approval without locking the valid dispatc
   await page.getByTestId("dispatch-plan-review").click();
   await page.getByTestId("dispatch-plan-acknowledgement").check();
   await expect(page.getByTestId("dispatch-plan-approval-create")).toBeDisabled();
-  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1") ?? "[]")[0].sendAuthorized)).toBe(true);
+  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records[0].sendAuthorized)).toBe(true);
 });
 
 test("T6-D rejects a temporally impossible approval before its exact dependencies existed", async ({ page }) => {
@@ -11330,19 +14838,30 @@ test("T6-D rejects a temporally impossible approval before its exact dependencie
   await page.getByTestId("dispatch-plan-review").click();
   await page.getByTestId("dispatch-plan-acknowledgement").check();
   await page.getByTestId("dispatch-plan-approval-create").click();
-  await page.evaluate(() => {
-    const approvalsKey = "chida-prototype-project-dispatch-plan-approvals:v1";
-    const dispatchKey = "chida-prototype-project-dispatch-drafts:v1";
-    const records = JSON.parse(window.localStorage.getItem(approvalsKey) ?? "[]");
-    const dispatch = JSON.parse(window.localStorage.getItem(dispatchKey) ?? "[]")[0];
-    const revision = dispatch.revisions.at(-1);
-    const impossibleTimestamp = new Date(new Date(revision.createdAt).getTime() - 1000).toISOString();
-    records[0].requestedAt = impossibleTimestamp;
-    records[0].createdAt = impossibleTimestamp;
-    records[0].updatedAt = impossibleTimestamp;
-    records[0].history[0].at = impossibleTimestamp;
-    window.localStorage.setItem(approvalsKey, JSON.stringify(records));
-  });
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
+  const temporalStores = await page.evaluate(() => ({
+    plans: JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}"),
+    drafts: JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2") ?? "{\"records\":[]}"),
+  }));
+  const temporalPlan = temporalStores.plans.records[0];
+  const temporalRevision = temporalPlan.revisions[0];
+  const temporalEvent = temporalPlan.history[0];
+  const temporalReceipt = temporalStores.plans.idempotencyReceipts[0];
+  const dispatchRevision = temporalStores.drafts.records[0].revisions.at(-1);
+  const impossibleTimestamp = new Date(new Date(dispatchRevision.createdAt).getTime() - 1000).toISOString();
+  temporalPlan.requestedAt = impossibleTimestamp;
+  temporalPlan.createdAt = impossibleTimestamp;
+  temporalPlan.updatedAt = impossibleTimestamp;
+  temporalRevision.createdAt = impossibleTimestamp;
+  temporalEvent.at = impossibleTimestamp;
+  temporalReceipt.recordedAt = impossibleTimestamp;
+  temporalStores.plans.updatedAt = impossibleTimestamp;
+  rehashProjectFoundationValue(temporalRevision);
+  rehashProjectFoundationValue(temporalEvent);
+  rehashProjectFoundationValue(temporalReceipt);
+  rehashProjectFoundationValue(temporalPlan);
+  rehashProjectFoundationValue(temporalStores.plans);
+  await page.evaluate((raw) => window.localStorage.setItem("chida-prototype-project-dispatch-plan-approvals:v2", raw), JSON.stringify(temporalStores.plans));
 
   await reopenFirstPurchaseRequestDispatch(page);
   await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
@@ -11367,8 +14886,8 @@ test("T7-A records a two-item product proposal with exact lineage, separated pro
   await page.getByTestId("project-space-back").click();
 
   await createTwoItemProductProposalPrerequisites(page);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"))).toBeNull();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v1"))).toBeNull();
+  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2") ?? "{\"records\":[]}").records)).toEqual([]);
+  expect(await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-dispatch-plan-approvals:v2") ?? "{\"records\":[]}").records)).toEqual([]);
   const overlongFileName = `${"ف".repeat(141)}.pdf`;
   await page.evaluate((displayName) => {
     const key = "chida-prototype-project-files:v1";
@@ -11423,13 +14942,13 @@ test("T7-A records a two-item product proposal with exact lineage, separated pro
   expect(await page.getByTestId("proposal-detail").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 
-  const stored = await page.evaluate(() => {
+  const storedSources = await page.evaluate(() => {
     const proposals = JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]");
     const requests = JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]");
-    const approvals = JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]");
-    const contacts = JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]");
-    return { proposal: proposals[0], request: requests[0], approval: approvals[0], contact: contacts[0] };
+    const contacts = JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2") ?? "{\"records\":[]}").records;
+    return { proposal: proposals[0], request: requests[0], contact: contacts[0] };
   });
+  const stored = { ...storedSources, approval: (await readBgF4ApprovalFoundation(page)).envelope.records[0] };
   const exactReview = stored.request.reviewRevisions.find((revision: { id: string }) => revision.id === stored.approval.target.revisionId);
   expect(stored.proposal).toMatchObject({
     schemaVersion: 1,
@@ -11601,9 +15120,10 @@ test("T7-A rejects a coordinated proposal claimed to be created after its suppli
   const orderedProposalContact = page.getByTestId("supplier-contact-card").filter({ hasText: "فولاد ترتیب تماس" });
   await orderedProposalContact.locator("summary").click();
   await orderedProposalContact.getByTestId("supplier-contact-status").click();
+  await expect(orderedProposalContact.getByTestId("supplier-contact-status")).toHaveText("بازگرداندن");
 
   const records = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1") ?? "[]"));
-  const contacts = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1") ?? "[]"));
+  const contacts = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2") ?? "{\"records\":[]}").records);
   const archivedContact = contacts.find((contact: { displayName: string }) => contact.displayName === "فولاد ترتیب تماس");
   const claimedCreatedAt = new Date(new Date(archivedContact.history.at(-1).at).getTime() + 1).toISOString();
   records[0].createdAt = claimedCreatedAt;
@@ -11722,19 +15242,44 @@ test("T7-A fail-closes an otherwise well-formed unsupported supplier-contact upd
   await page.getByTestId("proposal-save").click();
   const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"));
 
-  await page.evaluate(() => {
-    const key = "chida-prototype-project-supplier-contacts:v1";
-    const contacts = JSON.parse(window.localStorage.getItem(key) ?? "[]");
-    const contact = contacts.find((item: { displayName: string }) => item.displayName === "فولاد تماس بدون revision");
-    const updatedAt = new Date(new Date(contact.updatedAt).getTime() + 1).toISOString();
-    contact.version = 2;
-    contact.updatedAt = updatedAt;
-    contact.status = "active";
-    contact.archivedAt = null;
-    contact.history.push({ id: "supplier-contact-event-unsupported-update", type: "updated", actor: "شما", at: updatedAt, version: 2 });
-    window.localStorage.setItem(key, JSON.stringify(contacts));
-  });
-  const contactStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1"));
+  const unsupportedContactEnvelope = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2") ?? "{\"records\":[]}"));
+  const unsupportedContact = unsupportedContactEnvelope.records.find((item: { displayName: string }) => item.displayName === "فولاد تماس بدون revision");
+  const unsupportedUpdatedAt = new Date(new Date(unsupportedContact.updatedAt).getTime() + 1).toISOString();
+  const unsupportedRevision = {
+    id: `supplier-contact-revision:${unsupportedContact.id}:v2`,
+    version: 2,
+    createdAt: unsupportedUpdatedAt,
+    snapshot: {
+      ...unsupportedContact.revisions[0].snapshot,
+      category: "دستهٔ تغییرکردهٔ پشتیبانی‌نشده",
+    },
+    fingerprint: "",
+  };
+  const unsupportedEvent = {
+    id: `supplier-contact-event:${unsupportedContact.id}:v2`,
+    type: "updated",
+    actor: "شما",
+    actorPrincipalId: "local-builder-account",
+    at: unsupportedUpdatedAt,
+    version: 2,
+    revisionId: unsupportedRevision.id,
+    authorizationContextHash: unsupportedContact.history[0].authorizationContextHash,
+    idempotencyKey: "unsupported-contact-update",
+    commandPayloadHash: `sha256-${"0".repeat(64)}`,
+    fingerprint: "",
+  };
+  rehashProjectFoundationValue(unsupportedRevision);
+  rehashProjectFoundationValue(unsupportedEvent);
+  unsupportedContact.version = 2;
+  unsupportedContact.updatedAt = unsupportedUpdatedAt;
+  unsupportedContact.currentRevisionId = unsupportedRevision.id;
+  unsupportedContact.category = unsupportedRevision.snapshot.category;
+  unsupportedContact.history.push(unsupportedEvent);
+  unsupportedContact.revisions.push(unsupportedRevision);
+  rehashProjectFoundationValue(unsupportedContact);
+  rehashProjectFoundationValue(unsupportedContactEnvelope);
+  const contactStore = JSON.stringify(unsupportedContactEnvelope);
+  await page.evaluate((raw) => window.localStorage.setItem("chida-prototype-project-supplier-contacts:v2", raw), contactStore);
 
   await page.reload();
   await reachBuilderWelcome(page);
@@ -11744,7 +15289,7 @@ test("T7-A fail-closes an otherwise well-formed unsupported supplier-contact upd
   await expect(page.getByTestId("proposal-card")).toHaveCount(0);
   await expect(page.getByTestId("proposal-add")).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"))).toBe(proposalStore);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v1"))).toBe(contactStore);
+  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2"))).toBe(contactStore);
 });
 
 test("T7-A rolls back failed writes and fails closed on a tampered proposal record", async ({ page }) => {
@@ -11842,8 +15387,8 @@ test("T7-B1 builds an exact product comparison without mutating its sources and 
   const sourceStoresBeforeComparison = await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
   }));
   const sourceProposals = JSON.parse(sourceStoresBeforeComparison.proposals ?? "[]");
   const firstProposal = sourceProposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === firstSupplier);
@@ -11967,8 +15512,8 @@ test("T7-B1 builds an exact product comparison without mutating its sources and 
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
   }))).toEqual(sourceStoresBeforeComparison);
 
   await page.getByTestId("comparison-decision-outcome").selectOption("preferred-for-follow-up");
@@ -12011,8 +15556,8 @@ test("T7-B1 builds an exact product comparison without mutating its sources and 
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
   }))).toEqual(sourceStoresBeforeComparison);
 
   await page.reload();
@@ -12076,8 +15621,8 @@ test("T7-B1 keeps unknown comparison data incomplete and rolls back a failed com
   const sourceStoresBeforeComparison = await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
   }));
 
   await openProposalSecondaryView(page, "proposal-comparisons-entry");
@@ -12104,8 +15649,8 @@ test("T7-B1 keeps unknown comparison data incomplete and rolls back a failed com
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
   }))).toEqual(sourceStoresBeforeComparison);
 
   await page.evaluate(() => {
@@ -12141,8 +15686,8 @@ test("T7-B1 keeps unknown comparison data incomplete and rolls back a failed com
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
   }))).toEqual(sourceStoresBeforeComparison);
 });
 
@@ -12278,15 +15823,15 @@ test("T7-B2 stores a traceable qualitative service matrix and keeps the human de
   const sourceStoresBeforeComparison = await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
     productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
     productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
   }));
-  const requestAndApproval = await page.evaluate(() => ({
-    request: JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]")[0],
-    approval: JSON.parse(window.localStorage.getItem("chida-prototype-project-approvals:v1") ?? "[]")[0],
-  }));
+  const requestAndApproval = {
+    request: await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]")[0]),
+    approval: (await readBgF4ApprovalFoundation(page)).envelope.records[0],
+  };
   const exactReview = requestAndApproval.request.reviewRevisions.find((revision: { id: string }) => revision.id === requestAndApproval.approval.target.revisionId);
   const appOrigin = new URL(page.url()).origin;
   const externalRequests: string[] = [];
@@ -12391,8 +15936,8 @@ test("T7-B2 stores a traceable qualitative service matrix and keeps the human de
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
     productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
     productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
   }))).toEqual(sourceStoresBeforeComparison);
@@ -12444,8 +15989,8 @@ test("T7-B2 stores a traceable qualitative service matrix and keeps the human de
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
     productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
     productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
   }))).toEqual(sourceStoresBeforeComparison);
@@ -12459,8 +16004,8 @@ test("T7-B2 preserves a declared value with unknown assessment and rolls back a 
   const sourceStoresBeforeComparison = await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
   }));
   const appOrigin = new URL(page.url()).origin;
   const externalRequests: string[] = [];
@@ -12492,8 +16037,8 @@ test("T7-B2 preserves a declared value with unknown assessment and rolls back a 
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
   }))).toEqual(sourceStoresBeforeComparison);
 
   await page.evaluate(() => {
@@ -12527,8 +16072,8 @@ test("T7-B2 preserves a declared value with unknown assessment and rolls back a 
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v1"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
-    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v1"),
-    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v1"),
+    approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
+    dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
   }))).toEqual(sourceStoresBeforeComparison);
   expect(externalRequests).toEqual([]);
 });

@@ -77,6 +77,64 @@ import {
   type ProjectTaskState,
   type ProjectTaskStatus,
 } from "./projectTasks";
+import {
+  createProcurementDispatchDependencies,
+  dispatchDraftIdForTarget,
+  dispatchPlanApprovalEffectiveStatus as canonicalDispatchPlanApprovalEffectiveStatus,
+  dispatchPlanApprovalIdForIdempotencyKey,
+  executeDispatchDraftCommand,
+  executeDispatchPlanApprovalCommand,
+  executeProcurementDispatchQueue,
+  executeSupplierContactCommand,
+  finalizeProcurementDispatchPreconditionCheckpoint,
+  initializeProcurementDispatch,
+  initializeSupplierContacts,
+  legacyProjectDispatchDraftsStorageKey,
+  legacyProjectDispatchPlanApprovalsStorageKey,
+  legacyProjectSupplierContactsStorageKey,
+  procurementDispatchHash,
+  procurementDispatchPreconditionCheckpointKey,
+  procurementDispatchQueueIntentKey,
+  projectDispatchDraftsCutoverMarkerKey,
+  projectDispatchDraftsStorageKey,
+  projectDispatchPlanApprovalsCutoverMarkerKey,
+  projectDispatchPlanApprovalsStorageKey,
+  projectSupplierContactsCutoverMarkerKey,
+  projectSupplierContactsStorageKey,
+  readProcurementDispatchState,
+  readSupplierContactState,
+  supplierContactIdForIdempotencyKey,
+} from "./procurementDispatch";
+import type {
+  DispatchDraftUpsertCommand,
+  DispatchDraftEnvelope,
+  DispatchDraftRecord,
+  DispatchDraftRevision,
+  DispatchDependencyTarget,
+  DispatchPayload,
+  DispatchPayloadProductItem,
+  DispatchPayloadService,
+  DispatchPlanApprovalEffectiveStatus,
+  DispatchPlanApprovalEnvelope,
+  DispatchPlanApprovalEventType,
+  DispatchPlanApprovalRecord,
+  DispatchPlanApprovalStatus,
+  DispatchPrivacySnapshot,
+  InviteDraft,
+  ProcurementDispatchDependencies,
+  ProcurementDispatchPreconditionCheckpoint,
+  ProcurementDispatchPreconditionReference,
+  ProcurementDispatchQueueCommand,
+  ProcurementDispatchQueueResult,
+  ProcurementDispatchState,
+  ProcurementMutationResult,
+  SupplierContactCommand,
+  SupplierContactDraft,
+  SupplierContactEnvelope,
+  SupplierContactRecord,
+  SupplierContactResponseCapability,
+  SupplierContactStatus,
+} from "./procurementDispatch";
 
 type Screen = "role" | "invite" | "phone" | "otp" | "success" | "home";
 type SheetName = "supplier" | "models" | "attach" | "tools" | "build" | "brief" | "projects" | "new-project" | "settings" | null;
@@ -1010,6 +1068,22 @@ type PurchaseRequestMutationReceipt = {
   recordedAt: string;
   fingerprint: string;
 };
+type PurchaseRequestDispatchPreconditionReceipt = {
+  schemaVersion: 1;
+  key: string;
+  action: "pin-procurement-dispatch-precondition";
+  payloadHash: string;
+  projectId: string;
+  requestId: string;
+  expectedRequestVersion: number;
+  resultingRequestVersion: number;
+  relatedApprovalId: string;
+  authorizationContextHash: string;
+  recordedAt: string;
+  checkpoint: ProcurementDispatchPreconditionCheckpoint;
+  fingerprint: string;
+};
+type PurchaseRequestOperationReceipt = PurchaseRequestMutationReceipt | PurchaseRequestDispatchPreconditionReceipt;
 type ProjectPurchaseRequestRecord = {
   schemaVersion: 2;
   id: string;
@@ -1034,7 +1108,7 @@ type ProjectPurchaseRequestRecord = {
   updatedAt: string;
   readyAt: string | null;
   history: PurchaseRequestEvent[];
-  mutationReceipts: PurchaseRequestMutationReceipt[];
+  mutationReceipts: PurchaseRequestOperationReceipt[];
 };
 type ProductRequestItemDraft = {
   id: string;
@@ -1080,8 +1154,8 @@ type ProjectPurchaseRequestMutationResult = {
 type PurchaseRequestFieldErrors = { rawNeed: string; quantity: string; quantityIndex: number | null; serviceScope: string; serviceLocation: string };
 type ProjectApprovalStatus = "pending" | "approved" | "changes-requested";
 type ProjectApprovalEventType = "created" | "approved" | "changes-requested";
-type ProjectApprovalEvent = { id: string; type: ProjectApprovalEventType; actor: "شما"; at: string; version: number };
-type ProjectApprovalRecord = {
+type LegacyProjectApprovalEvent = { id: string; type: ProjectApprovalEventType; actor: "شما"; at: string; version: number };
+type LegacyProjectApprovalRecord = {
   schemaVersion: 2;
   id: string;
   projectId: string;
@@ -1109,164 +1183,254 @@ type ProjectApprovalRecord = {
   updatedAt: string;
   decidedAt: string | null;
   version: number;
-  history: ProjectApprovalEvent[];
+  history: LegacyProjectApprovalEvent[];
 };
-type SupplierContactResponseCapability = "product" | "service" | "both";
-type SupplierContactStatus = "active" | "archived";
-type SupplierContactEventType = "created" | "archived" | "restored";
-type SupplierContactEvent = { id: string; type: SupplierContactEventType; actor: "شما"; at: string; version: number };
-type SupplierContactRecord = {
-  schemaVersion: 1;
-  id: string;
-  projectId: string;
-  displayName: string;
-  category: string;
-  tehranCoverage: string;
-  responseCapability: SupplierContactResponseCapability;
-  source: "ثبت مستقیم سازنده";
-  networkStatus: "خارج از شبکه چیدا";
-  status: SupplierContactStatus;
-  visibility: "خصوصی پروژه";
-  localStatus: "ثبت محلی";
-  version: number;
-  createdAt: string;
-  updatedAt: string;
-  archivedAt: string | null;
-  history: SupplierContactEvent[];
+type ProjectApprovalRevisionSnapshot = {
+  status: ProjectApprovalStatus;
+  decidedBy: "local-builder-account" | null;
+  decidedAt: string | null;
 };
-type SupplierContactDraft = Pick<SupplierContactRecord, "displayName" | "category" | "tehranCoverage" | "responseCapability">;
-type DispatchPayloadProductItem = Pick<ProductRequestItem, "name" | "quantity" | "unit" | "brandOrGrade" | "specification" | "alternatives">;
-type DispatchPayloadService = Pick<ServiceRequestSpec, "scope" | "location" | "locationPrecision" | "sizeOrVolume" | "qualification" | "timing" | "method" | "inScope" | "outOfScope" | "warranty" | "paymentTerms">;
-type DispatchPayload = {
-  requestKind: PurchaseRequestKind;
-  items: DispatchPayloadProductItem[];
-  service: DispatchPayloadService | null;
-  delivery: { area: string; neededBy: string | null } | null;
-  unresolvedTerms: { transport: string; tax: string; paymentTerms: string } | null;
-};
-type InviteDraft = {
-  schemaVersion: 1;
-  id: string;
-  projectId: string;
-  supplierContactId: string;
-  destination: {
-    displayName: string;
-    category: string;
-    tehranCoverage: string;
-    responseCapability: SupplierContactResponseCapability;
-    networkStatus: "خارج از شبکه چیدا";
-  };
-  target: { requestId: string; requestVersion: number; revisionId: string; approvalId: string };
-  source: "ثبت مستقیم سازنده";
-  continuation: "ادامهٔ احتمالی در فاز تأمین‌کننده";
-  externalEffect: "none";
-  sendAuthorized: false;
-  version: number;
-  createdAt: string;
-  updatedAt: string;
-};
-type DispatchPrivacySnapshot = {
-  shareableFields: PurchaseRequestApprovalShareableField[];
-  excludedFields: string[];
-  projectNameShared: false;
-  exactAddressFieldIncluded: false;
-  budgetShared: false;
-  filesShared: false;
-  memoryShared: false;
-  rawNeedShared: false;
-  clarificationAnswersShared: false;
-  locationReviewRequired: true;
-};
-type DispatchDraftRevision = {
+type ProjectApprovalRevision = {
   id: string;
   version: number;
   createdAt: string;
-  recipientIds: string[];
-  inviteDrafts: InviteDraft[];
-  payload: DispatchPayload;
-  privacySnapshot: DispatchPrivacySnapshot;
+  snapshot: ProjectApprovalRevisionSnapshot;
   fingerprint: string;
 };
-type DispatchDraftEvent = { id: string; type: "created" | "updated"; actor: "شما"; at: string; version: number };
-type DispatchDraftRecord = {
-  schemaVersion: 1;
+type ProjectApprovalEvent = {
   id: string;
-  projectId: string;
-  target: { requestId: string; requestVersion: number; revisionId: string; approvalId: string };
-  dedupeKey: string;
-  status: "draft";
-  currentRevisionId: string;
-  externalEffect: "none";
-  sendAuthorized: false;
-  visibility: "خصوصی پروژه";
-  localStatus: "ثبت محلی";
+  type: ProjectApprovalEventType;
+  actor: "شما" | "سامانهٔ مهاجرت";
+  actorPrincipalId: "local-builder-account";
+  at: string;
   version: number;
-  createdAt: string;
-  updatedAt: string;
-  history: DispatchDraftEvent[];
-  revisions: DispatchDraftRevision[];
+  revisionId: string;
+  authorizationContextHash: string;
+  idempotencyKey: string | null;
+  commandPayloadHash: string | null;
+  fingerprint: string;
 };
-type DispatchPlanApprovalStatus = "pending" | "approved" | "withdrawn";
-type DispatchPlanApprovalEffectiveStatus = DispatchPlanApprovalStatus | "invalidated";
-type DispatchPlanApprovalEventType = "created" | "approved" | "withdrawn" | "reopened";
-type DispatchPlanApprovalEvent = { id: string; type: DispatchPlanApprovalEventType; actor: "شما"; at: string; version: number };
-type DispatchPlanApprovalRecord = {
+type ProjectApprovalLegacyEvidence = {
   schemaVersion: 1;
+  sourceGeneration: "v1-array";
+  sourceIndex: number;
+  sourceRecordHash: string;
+  sourceSchemaVersion: 0 | 2;
+  sourceVersion: number;
+  receiptCoverage: "request-confirmation" | "legacy-unproven";
+  history: LegacyProjectApprovalEvent[];
+  fingerprint: string;
+};
+type ProjectApprovalRecord = {
+  schemaVersion: 3;
+  objectType: "request-content-approval";
   id: string;
   projectId: string;
-  purpose: "approve-local-dispatch-plan-simulation";
-  target: {
-    type: "dispatch-draft-revision";
-    dispatchDraftId: string;
-    dispatchDraftVersion: number;
-    dispatchRevisionId: string;
-    dispatchRevisionFingerprint: string;
-    requestId: string;
-    requestVersion: number;
-    requestRevisionId: string;
-    contentApprovalId: string;
-  };
-  snapshot: {
-    recipients: Array<{
-      supplierContactId: string;
-      supplierContactVersion: number;
-      destination: InviteDraft["destination"];
-    }>;
-    recipientCount: number;
-    payload: DispatchPayload;
-    privacySnapshot: DispatchPrivacySnapshot;
-    reviewAcknowledgement: {
-      destinationsReviewed: true;
-      payloadReviewed: true;
-      privacyAndLocationReviewed: true;
-    };
-  };
-  planFingerprint: string;
+  ownerPrincipalType: "account";
+  ownerPrincipalId: "local-builder-account";
+  accountSide: "builder";
+  scopeType: "project_private";
+  scopeId: string;
+  custodianService: "Approval Domain Service";
+  sensitivity: "private";
+  purpose: "review-purchase-request-version";
+  target: { type: "purchase-request"; id: string; version: number; updatedAt: string; revisionId: string; revisionFingerprint: string };
   dedupeKey: string;
-  idempotencyKey: string;
-  status: DispatchPlanApprovalStatus;
-  simulationOnly: true;
-  externalEffect: "none";
-  sendAuthorized: false;
-  externalActionAttempted: false;
-  actionRecord: null | {
-    kind: "record-local-dispatch-plan-approval";
-    result: "local-dispatch-plan-approved";
-    label: "تأیید محلی برنامهٔ ارسال";
-    error: null;
-    recordedAt: string;
+  snapshot: PurchaseRequestSnapshot;
+  privacySnapshot: {
+    shareableFields: PurchaseRequestApprovalShareableField[];
+    projectNameShared: false;
+    exactAddressShared: false;
+    budgetShared: false;
+    filesShared: false;
+    memoryShared: false;
   };
+  externalEffect: "none";
+  destination: null;
+  sendAuthorized: false;
+  status: ProjectApprovalStatus;
   visibility: "خصوصی پروژه";
   localStatus: "ثبت محلی";
   requestedBy: "شما";
   decidedBy: "شما" | null;
   requestedAt: string;
-  decidedAt: string | null;
-  createdAt: string;
   updatedAt: string;
+  decidedAt: string | null;
   version: number;
-  history: DispatchPlanApprovalEvent[];
+  authorizationContextHash: string;
+  currentRevisionId: string;
+  revisions: ProjectApprovalRevision[];
+  history: ProjectApprovalEvent[];
+  legacyEvidence: ProjectApprovalLegacyEvidence | null;
+  fingerprint: string;
 };
+type ProjectApprovalAction = "create-content-approval" | "decide-content-approval" | "confirm-for-recipients";
+type ProjectApprovalReceipt = {
+  schemaVersion: 1;
+  key: string;
+  action: ProjectApprovalAction;
+  payloadHash: string;
+  projectId: string;
+  requestId: string;
+  approvalId: string;
+  requestMutationReceiptKey: string | null;
+  decision: Exclude<ProjectApprovalStatus, "pending"> | null;
+  expectedStoreVersion: number;
+  expectedApprovalVersion: number | null;
+  expectedRequestVersion: number;
+  result: "created" | "updated";
+  resultingStoreVersion: number;
+  resultingApprovalVersion: number;
+  eventIds: string[];
+  revisionIds: string[];
+  authorizationContextHash: string;
+  recordedAt: string;
+  fingerprint: string;
+};
+type ProjectApprovalDispatchCheckpointReceipt = {
+  schemaVersion: 1;
+  key: string;
+  action: "pin-procurement-dispatch-precondition";
+  payloadHash: string;
+  projectId: string;
+  requestId: string;
+  approvalId: string;
+  requestMutationReceiptKey: string;
+  decision: null;
+  expectedStoreVersion: number;
+  expectedApprovalVersion: number;
+  expectedRequestVersion: number;
+  result: "checkpointed";
+  resultingStoreVersion: number;
+  resultingApprovalVersion: number;
+  eventIds: [];
+  revisionIds: [];
+  authorizationContextHash: string;
+  recordedAt: string;
+  checkpoint: ProcurementDispatchPreconditionCheckpoint;
+  fingerprint: string;
+};
+type ProjectApprovalOperationReceipt = ProjectApprovalReceipt | ProjectApprovalDispatchCheckpointReceipt;
+type ProjectApprovalOrphanConfirmationRollback = {
+  schemaVersion: 1;
+  kind: "bg-f3-orphan-confirmation-rollback-v1";
+  projectId: string;
+  requestId: string;
+  approvalId: string;
+  sourceRequestVersion: number;
+  candidateRequestVersion: number;
+  sourceRequestRecordHash: string;
+  candidateRequestRecordHash: string;
+  candidateRequestRecord: ProjectPurchaseRequestRecord;
+  removedHistoryEvent: PurchaseRequestEvent;
+  removedReviewRevision: PurchaseRequestReviewRevision;
+  removedReceipt: PurchaseRequestMutationReceipt;
+  fingerprint: string;
+};
+type ProjectApprovalMigrationReport = {
+  schemaVersion: 1;
+  id: string;
+  sourceGeneration: "v1-array" | "none";
+  sourceKey: string | null;
+  sourceRawHash: string | null;
+  requestSourceRawHash: string | null;
+  requestCandidateRawHash: string | null;
+  migratedAt: string;
+  recordCount: number;
+  migratedRecordFingerprints: string[];
+  orphanConfirmationRollbacks: ProjectApprovalOrphanConfirmationRollback[];
+  fingerprint: string;
+};
+type ProjectApprovalEnvelope = {
+  schemaVersion: 2;
+  fingerprintVersion: "request-content-approval-domain-v1";
+  storeVersion: number;
+  records: ProjectApprovalRecord[];
+  idempotencyReceipts: ProjectApprovalOperationReceipt[];
+  migrationReports: [ProjectApprovalMigrationReport];
+  updatedAt: string;
+  fingerprint: string;
+};
+type ProjectApprovalConfirmationIntent = {
+  schemaVersion: 1;
+  operation: "confirm-request-and-approval";
+  id: string;
+  projectId: string;
+  requestId: string;
+  approvalId: string;
+  idempotencyKey: string;
+  previousRequestsRaw: string;
+  nextRequestsRaw: string;
+  previousApprovalsRaw: string;
+  nextApprovalsRaw: string;
+  approvalMarkerRaw: string;
+  authoritySnapshotHash: string;
+  authorizationContextHash: string;
+  createdAt: string;
+  fingerprint: string;
+};
+type ProcurementDispatchPreconditionIntent = {
+  schemaVersion: 1;
+  operation: "pin-procurement-dispatch-precondition";
+  id: string;
+  checkpointKey: string;
+  checkpointFingerprint: string;
+  projectId: string;
+  requestId: string;
+  approvalId: string;
+  previousRequestsRaw: string;
+  nextRequestsRaw: string;
+  previousApprovalsRaw: string;
+  nextApprovalsRaw: string;
+  approvalMarkerRaw: string;
+  authoritySnapshotHash: string;
+  authorizationContextHash: string;
+  createdAt: string;
+  fingerprint: string;
+};
+type ProjectApprovalCutoverSource = "v1-array" | "none";
+type ProjectApprovalPendingMarker = {
+  schemaVersion: 1;
+  state: "pending";
+  migrationId: string;
+  sourceGeneration: ProjectApprovalCutoverSource;
+  sourceKey: string | null;
+  sourceRawHash: string | null;
+  requestSourceRawHash: string | null;
+  requestCandidateRawHash: string | null;
+  migrationAt: string;
+  identityBindingHash: string;
+  fingerprint: string;
+};
+type ProjectApprovalVerifiedMarker = Omit<ProjectApprovalPendingMarker, "state"> & {
+  state: "verified";
+  initialStoreVersion: 1;
+  initialCanonicalHash: string;
+  migrationReportHash: string;
+  verifiedAt: string;
+};
+type ProjectApprovalCommittedMarker = Omit<ProjectApprovalVerifiedMarker, "state" | "verifiedAt"> & {
+  state: "committed";
+  committedAt: string;
+};
+type ProjectApprovalMarker = ProjectApprovalPendingMarker | ProjectApprovalVerifiedMarker | ProjectApprovalCommittedMarker;
+type ProjectApprovalState = {
+  status: "loading" | "ready" | "read-error";
+  envelope: ProjectApprovalEnvelope | null;
+  reason: string;
+};
+type ProjectApprovalMutationStatus = ProjectPurchaseRequestMutationStatus;
+type ProjectApprovalMutationResult = {
+  status: ProjectApprovalMutationStatus;
+  envelope?: ProjectApprovalEnvelope;
+  requests?: ProjectPurchaseRequestRecord[];
+  requestId?: string;
+  approvalId?: string;
+  reason?: string;
+};
+type ProjectApprovalCommand =
+  | { inputSchemaVersion: 1; action: "create-content-approval"; projectId: string; requestId: string; expectedStoreVersion: number; expectedRequestVersion: number; idempotencyKey: string }
+  | { inputSchemaVersion: 1; action: "decide-content-approval"; projectId: string; requestId: string; approvalId: string; decision: Exclude<ProjectApprovalStatus, "pending">; expectedStoreVersion: number; expectedApprovalVersion: number; expectedRequestVersion: number; idempotencyKey: string };
 type BuilderRecordedProposalLineStatus = "quoted" | "unavailable" | "alternative" | "not-mentioned";
 type BuilderRecordedProposalEvent = { id: string; type: "created" | "updated"; actor: "شما"; at: string; version: number };
 type BuilderRecordedProposalRequestSnapshot = {
@@ -2018,10 +2182,11 @@ const projectPurchaseRequestsStorageKey = "chida-prototype-project-purchase-requ
 const projectPurchaseRequestsRecoveryBackupPrefix = `${projectPurchaseRequestsStorageKey}:recovery-backup:`;
 const projectPurchaseRequestsRecoveryIntentKey = `${projectPurchaseRequestsStorageKey}:recovery-intent:v1`;
 const projectPurchaseRequestsWriteLockName = `${projectPurchaseRequestsStorageKey}:write`;
-const projectApprovalsStorageKey = "chida-prototype-project-approvals:v1";
-const projectSupplierContactsStorageKey = "chida-prototype-project-supplier-contacts:v1";
-const projectDispatchDraftsStorageKey = "chida-prototype-project-dispatch-drafts:v1";
-const projectDispatchPlanApprovalsStorageKey = "chida-prototype-project-dispatch-plan-approvals:v1";
+const legacyProjectApprovalsStorageKey = "chida-prototype-project-approvals:v1";
+const projectApprovalsStorageKey = "chida-prototype-project-approvals:v2";
+const projectApprovalsCutoverMarkerKey = `${projectApprovalsStorageKey}:cutover:v1`;
+const projectApprovalConfirmationIntentKey = `${projectApprovalsStorageKey}:request-confirmation-intent:v1`;
+const procurementDispatchPreconditionIntentKey = `${projectApprovalsStorageKey}:dispatch-precondition-intent:v1`;
 const projectBuilderRecordedProposalsStorageKey = "chida-prototype-builder-recorded-proposals:v1";
 const projectBuilderProposalComparisonsStorageKey = "chida-prototype-builder-proposal-comparisons:v1";
 const projectBuilderProposalComparisonDecisionsStorageKey = "chida-prototype-builder-proposal-comparison-decisions:v1";
@@ -2800,6 +2965,15 @@ function isApprovalEligibleForDispatch(approval: ProjectApprovalRecord | undefin
     && request.version === approval!.target.version
     && approval!.target.id === request.id
     && approvalSnapshotMatchesRevision(approval!, request);
+}
+
+function procurementDispatchPreconditionReference(checkpoint: ProcurementDispatchPreconditionCheckpoint): ProcurementDispatchPreconditionReference {
+  return {
+    checkpointKey: checkpoint.checkpointKey,
+    checkpointFingerprint: checkpoint.fingerprint,
+    requestReceiptPosition: checkpoint.requestHead.receiptPosition,
+    approvalStoreVersion: checkpoint.approvalHead.resultingStoreVersion,
+  };
 }
 
 function supplierContactResponseCapabilityLabel(value: SupplierContactResponseCapability) {
@@ -4059,68 +4233,6 @@ function dispatchPrivacySnapshot(shareableFields: PurchaseRequestApprovalShareab
   };
 }
 
-function dispatchRevisionFingerprint(target: DispatchDraftRecord["target"], recipientIds: string[], inviteDrafts: InviteDraft[], payload: DispatchPayload, privacySnapshot: DispatchPrivacySnapshot) {
-  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ target, recipientIds, inviteDrafts, payload, privacySnapshot })))}`;
-}
-
-function dispatchPlanApprovalTarget(dispatchDraft: DispatchDraftRecord, revision: DispatchDraftRevision): DispatchPlanApprovalRecord["target"] {
-  return {
-    type: "dispatch-draft-revision",
-    dispatchDraftId: dispatchDraft.id,
-    dispatchDraftVersion: revision.version,
-    dispatchRevisionId: revision.id,
-    dispatchRevisionFingerprint: revision.fingerprint,
-    requestId: dispatchDraft.target.requestId,
-    requestVersion: dispatchDraft.target.requestVersion,
-    requestRevisionId: dispatchDraft.target.revisionId,
-    contentApprovalId: dispatchDraft.target.approvalId,
-  };
-}
-
-function dispatchPlanFingerprint(target: DispatchPlanApprovalRecord["target"], snapshot: DispatchPlanApprovalRecord["snapshot"]) {
-  return `fnv1a-${purchaseRequestStableHash(JSON.stringify(stablePurchaseRequestValue({ target, snapshot })))}`;
-}
-
-function dispatchPlanApprovalDedupeKey(projectId: string, target: DispatchPlanApprovalRecord["target"], planFingerprint: string) {
-  return `${projectId}:${target.dispatchDraftId}:${target.dispatchRevisionId}:${planFingerprint}:local-plan-approval`;
-}
-
-function dispatchPlanApprovalEffectiveStatus(
-  record: DispatchPlanApprovalRecord,
-  dispatchDraft: DispatchDraftRecord | null,
-  request: ProjectPurchaseRequestRecord,
-  contentApproval: ProjectApprovalRecord,
-  contacts: SupplierContactRecord[],
-): DispatchPlanApprovalEffectiveStatus {
-  const revision = dispatchDraft?.revisions.find((item) => item.id === record.target.dispatchRevisionId) ?? null;
-  const dependenciesAreExactAndCurrent = Boolean(dispatchDraft)
-    && dispatchDraft!.projectId === record.projectId
-    && dispatchDraft!.id === record.target.dispatchDraftId
-    && dispatchDraft!.currentRevisionId === record.target.dispatchRevisionId
-    && dispatchDraft!.version === record.target.dispatchDraftVersion
-    && revision?.version === record.target.dispatchDraftVersion
-    && revision?.fingerprint === record.target.dispatchRevisionFingerprint
-    && request.projectId === record.projectId
-    && request.id === record.target.requestId
-    && request.version === record.target.requestVersion
-    && request.status === "ready-for-review"
-    && request.reviewRevisions.some((item) => item.id === record.target.requestRevisionId && item.requestVersion === record.target.requestVersion)
-    && contentApproval.projectId === record.projectId
-    && contentApproval.id === record.target.contentApprovalId
-    && contentApproval.status === "approved"
-    && contentApproval.target.id === record.target.requestId
-    && contentApproval.target.version === record.target.requestVersion
-    && contentApproval.target.revisionId === record.target.requestRevisionId
-    && approvalSnapshotMatchesRevision(contentApproval, request)
-    && record.snapshot.recipients.every((recipient) => {
-      const contact = contacts.find((item) => item.id === recipient.supplierContactId && item.projectId === record.projectId);
-      return Boolean(contact)
-        && contact!.version === recipient.supplierContactVersion
-        && supplierContactCanRespond(contact!, request.requestKind);
-    });
-  return dependenciesAreExactAndCurrent ? record.status : "invalidated";
-}
-
 function dispatchPayloadRows(payload: DispatchPayload) {
   if (payload.requestKind === "service" && payload.service) {
     return [
@@ -4493,6 +4605,61 @@ function projectTaskAuthoritySnapshot(): ProjectTaskAuthority | null {
     projectIds,
     authorizationHashes: Object.fromEntries(projectIds.map((projectId) => [projectId, projectFoundationAuthorizationHash(projectId)])),
   };
+}
+
+function procurementDispatchDependenciesSnapshot(): ProcurementDispatchDependencies | null {
+  const authority = projectTaskAuthoritySnapshot();
+  if (!authority) return null;
+  const requestRead = readStoredProjectPurchaseRequests();
+  if (requestRead.readError) return null;
+  const approvalState = readProjectApprovalState(requestRead, authority);
+  if (approvalState.status !== "ready" || !approvalState.envelope) return null;
+  const requestRevisions = requestRead.records.flatMap((request) => request.reviewRevisions.map((revision) => ({
+    projectId: request.projectId,
+    requestId: request.id,
+    requestVersion: revision.requestVersion,
+    revisionId: revision.id,
+    revisionFingerprint: revision.fingerprint,
+    revisionCreatedAt: revision.createdAt,
+    requestKind: revision.snapshot.requestKind,
+    isCurrentReadyForReview: request.status === "ready-for-review" && request.version === revision.requestVersion,
+    payload: dispatchPayloadFromSnapshot(revision.snapshot),
+    privacySnapshot: dispatchPrivacySnapshot(revision.shareableFields),
+  })));
+  const contentApprovals = approvalState.envelope.records.flatMap((approval) => {
+    const request = requestRead.records.find((item) => item.id === approval.target.id && item.projectId === approval.projectId);
+    if (!request) return [];
+    return approval.revisions.map((revision) => ({
+      projectId: approval.projectId,
+      approvalId: approval.id,
+      approvalVersion: revision.version,
+      approvalRevisionId: revision.id,
+      approvalFingerprint: revision.fingerprint,
+      requestId: approval.target.id,
+      requestVersion: approval.target.version,
+      requestRevisionId: approval.target.revisionId,
+      requestRevisionFingerprint: approval.target.revisionFingerprint,
+      status: revision.snapshot.status,
+      isCurrent: approval.currentRevisionId === revision.id
+        && approval.version === revision.version
+        && request.status === "ready-for-review"
+        && request.version === approval.target.version
+        && approvalSnapshotMatchesRevision(approval, request),
+      updatedAt: revision.createdAt,
+    }));
+  });
+  const preconditionCheckpoints = approvalState.envelope.idempotencyReceipts.flatMap((receipt) => {
+    if (receipt.action !== "pin-procurement-dispatch-precondition") return [];
+    const request = requestRead.records.find((candidate) => candidate.id === receipt.requestId && candidate.projectId === receipt.projectId);
+    const requestPin = request?.mutationReceipts[receipt.checkpoint.requestHead.receiptPosition - 1];
+    return requestPin?.action === "pin-procurement-dispatch-precondition"
+      && requestPin.key === receipt.key
+      && requestPin.payloadHash === receipt.payloadHash
+      && JSON.stringify(requestPin.checkpoint) === JSON.stringify(receipt.checkpoint)
+      ? [structuredClone(receipt.checkpoint)]
+      : [];
+  });
+  return createProcurementDispatchDependencies(authority, requestRevisions, contentApprovals, preconditionCheckpoints);
 }
 
 function exactProjectFoundationString(value: unknown, maximumLength = 240) {
@@ -8371,20 +8538,64 @@ function createProjectTaskMonitorRecord(task: ProjectBackboneTaskRecord, project
   };
 }
 
-function purchaseRequestMutationReceiptFingerprint(receipt: Omit<PurchaseRequestMutationReceipt, "fingerprint"> | PurchaseRequestMutationReceipt) {
-  const { fingerprint: _fingerprint, ...payload } = receipt as PurchaseRequestMutationReceipt;
+function purchaseRequestMutationReceiptFingerprint(receipt: Omit<PurchaseRequestOperationReceipt, "fingerprint"> | PurchaseRequestOperationReceipt) {
+  const { fingerprint: _fingerprint, ...payload } = receipt as PurchaseRequestOperationReceipt;
   return projectFoundationHash(payload);
 }
 
-function parsePurchaseRequestMutationReceipt(value: any): PurchaseRequestMutationReceipt | null {
-  const keys = ["schemaVersion", "key", "action", "payloadHash", "projectId", "requestId", "expectedRequestVersion", "resultingRequestVersion", "relatedApprovalId", "authorizationContextHash", "recordedAt", "fingerprint"];
+function parseProcurementDispatchPreconditionCheckpoint(value: unknown): ProcurementDispatchPreconditionCheckpoint | null {
+  const keys = ["schemaVersion", "checkpointKey", "operation", "commandPayloadHash", "projectId", "target", "requestHead", "approvalHead", "authorizationContextHash", "recordedAt", "fingerprint"];
+  if (!hasExactObjectKeys(value, keys)) return null;
+  const checkpoint = value as ProcurementDispatchPreconditionCheckpoint;
+  if (!hasExactObjectKeys(checkpoint.target, ["requestId", "requestVersion", "revisionId", "revisionFingerprint", "approvalId", "approvalVersion", "approvalRevisionId", "approvalFingerprint"])
+    || !hasExactObjectKeys(checkpoint.requestHead, ["receiptPosition", "requestVersion", "revisionId", "revisionFingerprint"])
+    || !hasExactObjectKeys(checkpoint.approvalHead, ["expectedStoreVersion", "resultingStoreVersion", "approvalVersion", "revisionId", "revisionFingerprint"])) return null;
+  const { fingerprint: _fingerprint, ...payload } = checkpoint;
+  if (checkpoint.schemaVersion !== 1
+    || typeof checkpoint.checkpointKey !== "string" || !checkpoint.checkpointKey || checkpoint.checkpointKey.trim() !== checkpoint.checkpointKey || checkpoint.checkpointKey.length > 200
+    || !["dispatch-draft", "dispatch-plan", "dispatch-queue"].includes(checkpoint.operation)
+    || !/^sha256-[0-9a-f]{64}$/.test(checkpoint.commandPayloadHash)
+    || typeof checkpoint.projectId !== "string" || !checkpoint.projectId || checkpoint.projectId.trim() !== checkpoint.projectId || checkpoint.projectId.length > 200
+    || typeof checkpoint.target.requestId !== "string" || !checkpoint.target.requestId || checkpoint.target.requestId.trim() !== checkpoint.target.requestId || checkpoint.target.requestId.length > 200
+    || !Number.isSafeInteger(checkpoint.target.requestVersion) || checkpoint.target.requestVersion < 1
+    || typeof checkpoint.target.revisionId !== "string" || !checkpoint.target.revisionId || checkpoint.target.revisionId.trim() !== checkpoint.target.revisionId || checkpoint.target.revisionId.length > 260
+    || !/^(?:sha256-[0-9a-f]{64}|fnv1a-[0-9a-f]{8})$/.test(checkpoint.target.revisionFingerprint)
+    || typeof checkpoint.target.approvalId !== "string" || !checkpoint.target.approvalId || checkpoint.target.approvalId.trim() !== checkpoint.target.approvalId || checkpoint.target.approvalId.length > 200
+    || !Number.isSafeInteger(checkpoint.target.approvalVersion) || checkpoint.target.approvalVersion < 1
+    || typeof checkpoint.target.approvalRevisionId !== "string" || !checkpoint.target.approvalRevisionId || checkpoint.target.approvalRevisionId.trim() !== checkpoint.target.approvalRevisionId || checkpoint.target.approvalRevisionId.length > 260
+    || !/^sha256-[0-9a-f]{64}$/.test(checkpoint.target.approvalFingerprint)
+    || !Number.isSafeInteger(checkpoint.requestHead.receiptPosition) || checkpoint.requestHead.receiptPosition < 1
+    || checkpoint.requestHead.requestVersion !== checkpoint.target.requestVersion
+    || checkpoint.requestHead.revisionId !== checkpoint.target.revisionId
+    || checkpoint.requestHead.revisionFingerprint !== checkpoint.target.revisionFingerprint
+    || !Number.isSafeInteger(checkpoint.approvalHead.expectedStoreVersion) || checkpoint.approvalHead.expectedStoreVersion < 1
+    || checkpoint.approvalHead.resultingStoreVersion !== checkpoint.approvalHead.expectedStoreVersion + 1
+    || checkpoint.approvalHead.approvalVersion !== checkpoint.target.approvalVersion
+    || checkpoint.approvalHead.revisionId !== checkpoint.target.approvalRevisionId
+    || checkpoint.approvalHead.revisionFingerprint !== checkpoint.target.approvalFingerprint
+    || !/^sha256-[0-9a-f]{64}$/.test(checkpoint.authorizationContextHash)
+    || !isValidProjectFileDate(checkpoint.recordedAt)
+    || checkpoint.fingerprint !== procurementDispatchHash(payload)) return null;
+  return checkpoint;
+}
+
+function parsePurchaseRequestMutationReceipt(value: any): PurchaseRequestOperationReceipt | null {
+  const semanticKeys = ["schemaVersion", "key", "action", "payloadHash", "projectId", "requestId", "expectedRequestVersion", "resultingRequestVersion", "relatedApprovalId", "authorizationContextHash", "recordedAt", "fingerprint"];
+  const pinKeys = [...semanticKeys.slice(0, -1), "checkpoint", "fingerprint"];
+  const action = value?.action as PurchaseRequestMutationAction | "pin-procurement-dispatch-precondition";
+  const keys = action === "pin-procurement-dispatch-precondition" ? pinKeys : semanticKeys;
   if (!hasExactObjectKeys(value, keys)) return null;
   const key = typeof value.key === "string" ? value.key.trim() : "";
   const projectId = typeof value.projectId === "string" ? value.projectId.trim() : "";
   const requestId = typeof value.requestId === "string" ? value.requestId.trim() : "";
   const relatedApprovalId = value.relatedApprovalId === null ? null : typeof value.relatedApprovalId === "string" ? value.relatedApprovalId.trim() : "";
   const recordedAt = typeof value.recordedAt === "string" ? value.recordedAt.trim() : "";
-  const action = value.action as PurchaseRequestMutationAction;
+  if (action === "pin-procurement-dispatch-precondition") {
+    const checkpoint = parseProcurementDispatchPreconditionCheckpoint(value.checkpoint);
+    const receipt = { schemaVersion: 1, key, action, payloadHash: value.payloadHash, projectId, requestId, expectedRequestVersion: value.expectedRequestVersion, resultingRequestVersion: value.resultingRequestVersion, relatedApprovalId, authorizationContextHash: value.authorizationContextHash, recordedAt, checkpoint: checkpoint!, fingerprint: value.fingerprint } satisfies PurchaseRequestDispatchPreconditionReceipt;
+    if (value.schemaVersion !== 1 || key !== value.key || projectId !== value.projectId || requestId !== value.requestId || relatedApprovalId !== value.relatedApprovalId || recordedAt !== value.recordedAt || !key || key.length > 200 || !projectId || !requestId || !checkpoint || key !== checkpoint.checkpointKey || receipt.payloadHash !== checkpoint.fingerprint || projectId !== checkpoint.projectId || requestId !== checkpoint.target.requestId || relatedApprovalId !== checkpoint.target.approvalId || receipt.expectedRequestVersion !== checkpoint.requestHead.requestVersion || receipt.resultingRequestVersion !== receipt.expectedRequestVersion || receipt.authorizationContextHash !== checkpoint.authorizationContextHash || recordedAt !== checkpoint.recordedAt || receipt.fingerprint !== purchaseRequestMutationReceiptFingerprint(receipt)) return null;
+    return receipt;
+  }
   const receipt = {
     schemaVersion: 1,
     key,
@@ -8499,24 +8710,37 @@ function parseV2ProjectPurchaseRequest(request: any): ProjectPurchaseRequestReco
     : request?.status === "draft" && readyAt === null && ["created", "updated", "returned-to-draft"].includes(history[history.length - 1]?.type ?? "");
   if (!historyIsValid || !readyStateIsValid || new Set(currentSnapshot.items.map((item) => item.id)).size !== currentSnapshot.items.length) return null;
 
+  const rawMutationReceipts = request?.mutationReceipts === undefined ? [] : request.mutationReceipts;
+  if (!Array.isArray(rawMutationReceipts)) return null;
+  const parsedMutationReceipts = rawMutationReceipts.map(parsePurchaseRequestMutationReceipt);
+  if (parsedMutationReceipts.some((receipt) => receipt === null)) return null;
+  const mutationReceipts = parsedMutationReceipts as PurchaseRequestOperationReceipt[];
   const receiptKeys = new Set<string>();
   const receiptVersions = new Set<number>();
-  let latestReceiptVersion = 0;
-  const mutationReceipts: PurchaseRequestMutationReceipt[] = request?.mutationReceipts === undefined
-    ? []
-    : Array.isArray(request.mutationReceipts)
-      ? request.mutationReceipts.flatMap((value: any): PurchaseRequestMutationReceipt[] => {
-        const receipt = parsePurchaseRequestMutationReceipt(value);
-        if (!receipt || receiptKeys.has(receipt.key) || receiptVersions.has(receipt.resultingRequestVersion) || receipt.resultingRequestVersion <= latestReceiptVersion || receipt.projectId !== projectId || receipt.requestId !== id || receipt.resultingRequestVersion > version || receipt.recordedAt !== history[receipt.resultingRequestVersion - 1]?.at || (receipt.expectedRequestVersion === null ? receipt.resultingRequestVersion !== 1 : receipt.expectedRequestVersion + 1 !== receipt.resultingRequestVersion)) return [];
-        const eventType = history[receipt.resultingRequestVersion - 1]?.type;
-        if (receipt.action === "create-request" && eventType !== "created" || receipt.action === "update-request" && eventType !== "updated" || (receipt.action === "mark-ready" || receipt.action === "confirm-for-recipients") && eventType !== "marked-ready-for-review" || receipt.action === "return-to-draft" && eventType !== "returned-to-draft") return [];
-        receiptKeys.add(receipt.key);
-        receiptVersions.add(receipt.resultingRequestVersion);
-        latestReceiptVersion = receipt.resultingRequestVersion;
-        return [receipt];
-      })
-      : [];
-  if (request?.mutationReceipts !== undefined && (!Array.isArray(request.mutationReceipts) || mutationReceipts.length !== request.mutationReceipts.length)) return null;
+  const semanticReceiptCount = mutationReceipts.filter((receipt) => receipt.action !== "pin-procurement-dispatch-precondition").length;
+  let replayVersion = version - semanticReceiptCount;
+  if (replayVersion < 0) return null;
+  for (const [receiptIndex, receipt] of mutationReceipts.entries()) {
+    if (receiptKeys.has(receipt.key) || receipt.projectId !== projectId || receipt.requestId !== id || receipt.resultingRequestVersion > version) return null;
+    receiptKeys.add(receipt.key);
+    if (receipt.action === "pin-procurement-dispatch-precondition") {
+      if (replayVersion < 1
+        || receipt.checkpoint.requestHead.receiptPosition !== receiptIndex + 1
+        || receipt.expectedRequestVersion !== replayVersion
+        || receipt.resultingRequestVersion !== replayVersion
+        || history[replayVersion - 1]?.type !== "marked-ready-for-review") return null;
+      continue;
+    }
+    const expectedVersionIsValid = replayVersion === 0
+      ? receipt.action === "create-request" && receipt.expectedRequestVersion === null
+      : receipt.action !== "create-request" && receipt.expectedRequestVersion === replayVersion;
+    if (!expectedVersionIsValid || receipt.resultingRequestVersion !== replayVersion + 1 || receiptVersions.has(receipt.resultingRequestVersion) || receipt.recordedAt !== history[receipt.resultingRequestVersion - 1]?.at) return null;
+    const eventType = history[receipt.resultingRequestVersion - 1]?.type;
+    if (receipt.action === "create-request" && eventType !== "created" || receipt.action === "update-request" && eventType !== "updated" || (receipt.action === "mark-ready" || receipt.action === "confirm-for-recipients") && eventType !== "marked-ready-for-review" || receipt.action === "return-to-draft" && eventType !== "returned-to-draft") return null;
+    receiptVersions.add(receipt.resultingRequestVersion);
+    replayVersion = receipt.resultingRequestVersion;
+  }
+  if (replayVersion !== version) return null;
 
   const revisionIds = new Set<string>();
   const revisionVersions = new Set<number>();
@@ -8542,7 +8766,8 @@ function parseV2ProjectPurchaseRequest(request: any): ProjectPurchaseRequestReco
   const readyEventCount = readyVersions.length;
   const currentRevision = reviewRevisions.find((revision) => revision.requestVersion === version);
   const coveredReadyVersions = new Set([...reviewRevisions.map((revision) => revision.requestVersion), ...(migration?.unverifiedReadyVersions ?? [])]);
-  if (migration === undefined || reviewRevisions.length !== request.reviewRevisions?.length || coveredReadyVersions.size !== readyEventCount || readyVersions.some((readyVersion) => !coveredReadyVersions.has(readyVersion)) || reviewRevisions.some((revision) => migration?.unverifiedReadyVersions.includes(revision.requestVersion)) || (derivedStatus === "ready-for-review" && (!currentRevision || migration?.unverifiedReadyVersions.includes(version) || JSON.stringify(stablePurchaseRequestValue(currentRevision.snapshot)) !== JSON.stringify(stablePurchaseRequestValue(currentSnapshot)) || JSON.stringify(currentRevision.shareableFields) !== JSON.stringify(purchaseRequestApprovalShareableFields({ ...request, ...currentSnapshot, schemaVersion: 2, reviewRevisions, migration } as ProjectPurchaseRequestRecord))))) return null;
+  const checkpointPinsAreValid = mutationReceipts.every((receipt) => receipt.action !== "pin-procurement-dispatch-precondition" || reviewRevisions.some((revision) => revision.requestVersion === receipt.resultingRequestVersion && revision.id === receipt.checkpoint.requestHead.revisionId && revision.fingerprint === receipt.checkpoint.requestHead.revisionFingerprint));
+  if (migration === undefined || !checkpointPinsAreValid || reviewRevisions.length !== request.reviewRevisions?.length || coveredReadyVersions.size !== readyEventCount || readyVersions.some((readyVersion) => !coveredReadyVersions.has(readyVersion)) || reviewRevisions.some((revision) => migration?.unverifiedReadyVersions.includes(revision.requestVersion)) || (derivedStatus === "ready-for-review" && (!currentRevision || migration?.unverifiedReadyVersions.includes(version) || JSON.stringify(stablePurchaseRequestValue(currentRevision.snapshot)) !== JSON.stringify(stablePurchaseRequestValue(currentSnapshot)) || JSON.stringify(currentRevision.shareableFields) !== JSON.stringify(purchaseRequestApprovalShareableFields({ ...request, ...currentSnapshot, schemaVersion: 2, reviewRevisions, migration } as ProjectPurchaseRequestRecord))))) return null;
 
   const record = {
     schemaVersion: 2,
@@ -8774,11 +8999,11 @@ function parseStoredProjectPurchaseRequests(rawRequests: string | null): LocalRe
 
 function readStoredProjectPurchaseRequests(): LocalRecordsReadResult<ProjectPurchaseRequestRecord> {
   try {
-    if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) return { records: [], readError: true };
+    if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { records: [], readError: true };
     const parsed = parseStoredProjectPurchaseRequests(window.localStorage.getItem(projectPurchaseRequestsStorageKey));
     if (parsed.readError) return parsed;
     const authority = projectTaskAuthoritySnapshot();
-    if (!projectPurchaseRequestAuthorityIsValid(authority) || parsed.records.some((request) => !authority.projectIds.includes(request.projectId) || request.mutationReceipts.some((receipt) => receipt.authorizationContextHash !== authority.authorizationHashes[request.projectId]))) return { records: [], readError: true };
+    if (!projectPurchaseRequestAuthorityIsValid(authority) || !projectPurchaseRequestReadMatchesAuthority(parsed, authority)) return { records: [], readError: true };
     return parsed;
   } catch {
     return { records: [], readError: true };
@@ -8857,6 +9082,11 @@ function projectPurchaseRequestAuthorityIsValid(authority: ProjectTaskAuthority 
   return keys.length === authority.projectIds.length && keys.every((key, index) => key === [...authority.projectIds].sort()[index] && /^sha256-[0-9a-f]{64}$/.test(authority.authorizationHashes[key]));
 }
 
+function projectPurchaseRequestReadMatchesAuthority(read: LocalRecordsReadResult<ProjectPurchaseRequestRecord>, authority: ProjectTaskAuthority) {
+  return !read.readError && read.records.every((request) => authority.projectIds.includes(request.projectId)
+    && request.mutationReceipts.every((receipt) => receipt.authorizationContextHash === authority.authorizationHashes[request.projectId]));
+}
+
 async function withProjectPurchaseRequestsWriteLock<Result>(fallback: Result, operation: () => Result | Promise<Result>): Promise<Result> {
   try {
     if (!window.navigator.locks?.request) return fallback;
@@ -8881,10 +9111,10 @@ function restoreOwnedProjectPurchaseRequestBytes(key: string, previousRaw: strin
 
 function readProjectPurchaseRequestsForMutation(authority: ProjectTaskAuthority) {
   try {
-    if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) return null;
+    if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return null;
     const raw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
     const parsed = parseStoredProjectPurchaseRequests(raw);
-    if (parsed.readError || parsed.records.some((request) => !authority.projectIds.includes(request.projectId) || request.mutationReceipts.some((receipt) => receipt.authorizationContextHash !== authority.authorizationHashes[request.projectId]))) return null;
+    if (!projectPurchaseRequestReadMatchesAuthority(parsed, authority)) return null;
     return { raw, records: parsed.records };
   } catch {
     return null;
@@ -8896,13 +9126,13 @@ function commitProjectPurchaseRequestRecords(previousRaw: string | null, records
   const candidate = parseStoredProjectPurchaseRequests(candidateRaw);
   if (candidate.readError || JSON.stringify(candidate.records) !== JSON.stringify(records)) return { status: "schema-invalid", reason: "candidate-invalid" };
   try {
-    if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== previousRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || getAuthority()?.snapshotHash !== authority.snapshotHash) return { status: "version-conflict", reason: "preimage-changed" };
+    if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== previousRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null || getAuthority()?.snapshotHash !== authority.snapshotHash) return { status: "version-conflict", reason: "preimage-changed" };
     if (candidateRaw === null) window.localStorage.removeItem(projectPurchaseRequestsStorageKey);
     else window.localStorage.setItem(projectPurchaseRequestsStorageKey, candidateRaw);
     const afterAuthority = getAuthority();
     const readbackRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
     const readback = parseStoredProjectPurchaseRequests(readbackRaw);
-    if (readbackRaw === candidateRaw && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null && afterAuthority?.snapshotHash === authority.snapshotHash && !readback.readError && JSON.stringify(readback.records) === JSON.stringify(records)) return { status: "updated", records: readback.records };
+    if (readbackRaw === candidateRaw && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null && window.localStorage.getItem(projectApprovalConfirmationIntentKey) === null && window.localStorage.getItem(procurementDispatchPreconditionIntentKey) === null && afterAuthority?.snapshotHash === authority.snapshotHash && !readback.readError && JSON.stringify(readback.records) === JSON.stringify(records)) return { status: "updated", records: readback.records };
     return restoreOwnedProjectPurchaseRequestBytes(projectPurchaseRequestsStorageKey, previousRaw, candidateRaw) ? { status: "write-failure", reason: "readback-failure" } : { status: "read-failure", reason: "rollback-failure" };
   } catch {
     return restoreOwnedProjectPurchaseRequestBytes(projectPurchaseRequestsStorageKey, previousRaw, candidateRaw) ? { status: "write-failure", reason: "persistence-failure" } : { status: "read-failure", reason: "rollback-failure" };
@@ -8910,6 +9140,10 @@ function commitProjectPurchaseRequestRecords(previousRaw: string | null, records
 }
 
 function finalizePurchaseRequestMutationReceipt(receipt: Omit<PurchaseRequestMutationReceipt, "fingerprint">): PurchaseRequestMutationReceipt {
+  return { ...receipt, fingerprint: purchaseRequestMutationReceiptFingerprint(receipt) };
+}
+
+function finalizePurchaseRequestDispatchPreconditionReceipt(receipt: Omit<PurchaseRequestDispatchPreconditionReceipt, "fingerprint">): PurchaseRequestDispatchPreconditionReceipt {
   return { ...receipt, fingerprint: purchaseRequestMutationReceiptFingerprint(receipt) };
 }
 
@@ -9161,6 +9395,7 @@ function preserveProjectPurchaseRequestsRecoveryIntent(recoveryKey: string) {
 function recoverStoredProjectPurchaseRequestsUnlocked(): ProjectPurchaseRequestsRecoveryResult {
   let pendingRecoveryKey: string | null;
   try {
+    if (window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { status: "read-failure" };
     pendingRecoveryKey = window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey);
   } catch {
     return { status: "read-failure" };
@@ -9181,6 +9416,7 @@ function recoverStoredProjectPurchaseRequestsUnlocked(): ProjectPurchaseRequests
     if (currentRequests === null) {
       if (pendingRecoveryRaw === null) return { status: "read-failure" };
       try {
+        if (window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { status: "read-failure" };
         window.localStorage.setItem(projectPurchaseRequestsStorageKey, pendingRecoveryRaw);
         if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== pendingRecoveryRaw) return { status: "reset-failure" };
       } catch {
@@ -9189,6 +9425,7 @@ function recoverStoredProjectPurchaseRequestsUnlocked(): ProjectPurchaseRequests
     }
 
     try {
+      if (window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { status: "read-failure" };
       window.localStorage.removeItem(projectPurchaseRequestsRecoveryIntentKey);
       if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) return { status: "reset-failure" };
     } catch {
@@ -9199,6 +9436,7 @@ function recoverStoredProjectPurchaseRequestsUnlocked(): ProjectPurchaseRequests
 
   let rawRequests: string | null;
   try {
+    if (window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { status: "read-failure" };
     rawRequests = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
   } catch {
     return { status: "read-failure" };
@@ -9210,6 +9448,7 @@ function recoverStoredProjectPurchaseRequestsUnlocked(): ProjectPurchaseRequests
 
   const recoveryKey = `${projectPurchaseRequestsRecoveryBackupPrefix}${new Date().toISOString()}:${window.crypto.randomUUID()}`;
   try {
+    if (window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { status: "read-failure" };
     window.localStorage.setItem(recoveryKey, rawRequests);
     if (window.localStorage.getItem(recoveryKey) !== rawRequests) return { status: "backup-failure" };
     window.localStorage.setItem(projectPurchaseRequestsRecoveryIntentKey, recoveryKey);
@@ -9220,6 +9459,7 @@ function recoverStoredProjectPurchaseRequestsUnlocked(): ProjectPurchaseRequests
 
   let removalAttempted = false;
   try {
+    if (window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { status: "read-failure" };
     if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== rawRequests) return { status: "source-changed" };
     removalAttempted = true;
     window.localStorage.removeItem(projectPurchaseRequestsStorageKey);
@@ -9232,6 +9472,10 @@ function recoverStoredProjectPurchaseRequestsUnlocked(): ProjectPurchaseRequests
 
   let resetStore: LocalRecordsReadResult<ProjectPurchaseRequestRecord>;
   try {
+    if (window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) {
+      restoreProjectPurchaseRequestsAfterFailedReset(rawRequests);
+      return { status: "read-failure" };
+    }
     resetStore = parseStoredProjectPurchaseRequests(window.localStorage.getItem(projectPurchaseRequestsStorageKey));
   } catch {
     restoreProjectPurchaseRequestsAfterFailedReset(rawRequests);
@@ -9243,6 +9487,10 @@ function recoverStoredProjectPurchaseRequestsUnlocked(): ProjectPurchaseRequests
   }
 
   try {
+    if (window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) {
+      restoreProjectPurchaseRequestsAfterFailedReset(rawRequests);
+      return { status: "read-failure" };
+    }
     window.localStorage.removeItem(projectPurchaseRequestsRecoveryIntentKey);
     if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) {
       restoreProjectPurchaseRequestsAfterFailedReset(rawRequests);
@@ -9260,7 +9508,7 @@ async function recoverStoredProjectPurchaseRequests(): Promise<ProjectPurchaseRe
   return withProjectPurchaseRequestsWriteLock<ProjectPurchaseRequestsRecoveryResult>({ status: "read-failure" }, recoverStoredProjectPurchaseRequestsUnlocked);
 }
 
-function parseV2ProjectApproval(approval: any, purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): ProjectApprovalRecord | null {
+function parseV2ProjectApproval(approval: any, purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): LegacyProjectApprovalRecord | null {
   const id = typeof approval?.id === "string" ? approval.id.trim() : "";
   const projectId = typeof approval?.projectId === "string" ? approval.projectId.trim() : "";
   const targetId = typeof approval?.target?.id === "string" ? approval.target.id.trim() : "";
@@ -9275,7 +9523,7 @@ function parseV2ProjectApproval(approval: any, purchaseRequests: LocalRecordsRea
   const version = approval?.version;
   const status = approval?.status as ProjectApprovalStatus;
   const eventIds = new Set<string>();
-  const history: ProjectApprovalEvent[] = Array.isArray(approval?.history) ? approval.history.flatMap((event: any): ProjectApprovalEvent[] => {
+  const history: LegacyProjectApprovalEvent[] = Array.isArray(approval?.history) ? approval.history.flatMap((event: any): LegacyProjectApprovalEvent[] => {
     const eventId = typeof event?.id === "string" ? event.id.trim() : "";
     const at = typeof event?.at === "string" ? event.at.trim() : "";
     if (!eventId || eventIds.has(eventId) || !["created", "approved", "changes-requested"].includes(event?.type) || event?.actor !== "شما" || !Number.isInteger(event?.version) || event.version < 1 || !isValidProjectFileDate(at)) return [];
@@ -9314,7 +9562,7 @@ function parseV2ProjectApproval(approval: any, purchaseRequests: LocalRecordsRea
   };
 }
 
-function parseStoredProjectApprovals(rawApprovals: string | null, purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): LocalRecordsReadResult<ProjectApprovalRecord> {
+function parseLegacyStoredProjectApprovals(rawApprovals: string | null, purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): LocalRecordsReadResult<LegacyProjectApprovalRecord> {
   try {
     const confirmationReceipts = purchaseRequests.records.flatMap((request) => request.mutationReceipts.filter((receipt) => receipt.action === "confirm-for-recipients"));
     if (rawApprovals === null) return { records: [], readError: purchaseRequests.readError || confirmationReceipts.length > 0 };
@@ -9324,7 +9572,7 @@ function parseStoredProjectApprovals(rawApprovals: string | null, purchaseReques
     const seenApprovalIds = new Set<string>();
     const seenDedupeKeys = new Set<string>();
     let readError = purchaseRequests.readError;
-    const records = parsed.flatMap((approval): ProjectApprovalRecord[] => {
+    const records = parsed.flatMap((approval): LegacyProjectApprovalRecord[] => {
       if (approval?.schemaVersion === 2) {
         const record = parseV2ProjectApproval(approval, purchaseRequests);
         if (!record || seenApprovalIds.has(record.id) || seenDedupeKeys.has(record.dedupeKey)) {
@@ -9334,6 +9582,10 @@ function parseStoredProjectApprovals(rawApprovals: string | null, purchaseReques
         seenApprovalIds.add(record.id);
         seenDedupeKeys.add(record.dedupeKey);
         return [record];
+      }
+      if (approval?.schemaVersion !== undefined) {
+        readError = true;
+        return [];
       }
       const id = typeof approval?.id === "string" ? approval.id.trim() : "";
       const projectId = typeof approval?.projectId === "string" ? approval.projectId.trim() : "";
@@ -9355,7 +9607,7 @@ function parseStoredProjectApprovals(rawApprovals: string | null, purchaseReques
       const decidedAt = approval?.decidedAt === null ? null : typeof approval?.decidedAt === "string" ? approval.decidedAt.trim() : "";
       const version = approval?.version;
       const eventIds = new Set<string>();
-      const history: ProjectApprovalEvent[] = Array.isArray(approval?.history) ? approval.history.flatMap((event: any): ProjectApprovalEvent[] => {
+      const history: LegacyProjectApprovalEvent[] = Array.isArray(approval?.history) ? approval.history.flatMap((event: any): LegacyProjectApprovalEvent[] => {
         const eventId = typeof event?.id === "string" ? event.id.trim() : "";
         const at = typeof event?.at === "string" ? event.at.trim() : "";
         if (
@@ -9438,9 +9690,13 @@ function parseStoredProjectApprovals(rawApprovals: string | null, purchaseReques
           unresolvedTerms: { transport: "unknown", tax: "unknown", paymentTerms: "unknown" },
         };
         const migratedSnapshot: PurchaseRequestSnapshot = {
-          ...clarificationSource,
+          requestKind: clarificationSource.requestKind,
           rawNeed,
+          items: clarificationSource.items,
           item: migratedItem,
+          service: clarificationSource.service,
+          delivery: clarificationSource.delivery,
+          unresolvedTerms: clarificationSource.unresolvedTerms,
           clarificationAnswers: reconcilePurchaseRequestClarifications(clarificationSource, [], targetUpdatedAt, "مهاجرت محلی"),
           sharingStatus: "ارسال نشده",
         };
@@ -9537,7 +9793,7 @@ function parseStoredProjectApprovals(rawApprovals: string | null, purchaseReques
         targetRequest.migration.unverifiedReadyVersions = targetRequest.migration.unverifiedReadyVersions.filter((readyVersion) => readyVersion !== targetVersion);
       }
 
-      const record: ProjectApprovalRecord = {
+      const record: LegacyProjectApprovalRecord = {
         schemaVersion: 2,
         id,
         projectId,
@@ -9585,12 +9841,1683 @@ function parseStoredProjectApprovals(rawApprovals: string | null, purchaseReques
   }
 }
 
-function readStoredProjectApprovals(purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): LocalRecordsReadResult<ProjectApprovalRecord> {
-  try {
-    return parseStoredProjectApprovals(window.localStorage.getItem(projectApprovalsStorageKey), purchaseRequests);
-  } catch {
-    return { records: [], readError: true };
+function projectApprovalValueHash(value: unknown) {
+  return projectFoundationHash(value);
+}
+
+function finalizeProjectApprovalRevision(revision: Omit<ProjectApprovalRevision, "fingerprint">): ProjectApprovalRevision {
+  return { ...revision, fingerprint: projectApprovalValueHash(revision) };
+}
+
+function finalizeProjectApprovalEvent(event: Omit<ProjectApprovalEvent, "fingerprint">): ProjectApprovalEvent {
+  return { ...event, fingerprint: projectApprovalValueHash(event) };
+}
+
+function finalizeProjectApprovalLegacyEvidence(evidence: Omit<ProjectApprovalLegacyEvidence, "fingerprint">): ProjectApprovalLegacyEvidence {
+  return { ...evidence, fingerprint: projectApprovalValueHash(evidence) };
+}
+
+function finalizeProjectApprovalRecord(record: Omit<ProjectApprovalRecord, "fingerprint"> | ProjectApprovalRecord): ProjectApprovalRecord {
+  const { fingerprint: _fingerprint, ...payload } = record as ProjectApprovalRecord;
+  return { ...payload, fingerprint: projectApprovalValueHash(payload) } as ProjectApprovalRecord;
+}
+
+function migratedInitialProjectApprovalRecord(record: ProjectApprovalRecord): ProjectApprovalRecord {
+  if (!record.legacyEvidence || record.version === record.legacyEvidence.sourceVersion) return record;
+  const version = record.legacyEvidence.sourceVersion;
+  const revisions = record.revisions.slice(0, version);
+  const history = record.history.slice(0, version);
+  const currentRevision = revisions.at(-1)!;
+  return finalizeProjectApprovalRecord({
+    ...record,
+    status: currentRevision.snapshot.status,
+    decidedBy: currentRevision.snapshot.decidedBy ? "شما" : null,
+    requestedAt: history[0].at,
+    updatedAt: history.at(-1)!.at,
+    decidedAt: currentRevision.snapshot.decidedAt,
+    version,
+    currentRevisionId: currentRevision.id,
+    revisions,
+    history,
+  });
+}
+
+function finalizeProjectApprovalReceipt(receipt: Omit<ProjectApprovalReceipt, "fingerprint">): ProjectApprovalReceipt {
+  return { ...receipt, fingerprint: projectApprovalValueHash(receipt) };
+}
+
+function finalizeProjectApprovalDispatchCheckpointReceipt(receipt: Omit<ProjectApprovalDispatchCheckpointReceipt, "fingerprint">): ProjectApprovalDispatchCheckpointReceipt {
+  return { ...receipt, fingerprint: projectApprovalValueHash(receipt) };
+}
+
+function finalizeProjectApprovalOrphanConfirmationRollback(evidence: Omit<ProjectApprovalOrphanConfirmationRollback, "fingerprint">): ProjectApprovalOrphanConfirmationRollback {
+  return { ...evidence, fingerprint: projectApprovalValueHash(evidence) };
+}
+
+function finalizeProjectApprovalMigrationReport(report: Omit<ProjectApprovalMigrationReport, "fingerprint">): ProjectApprovalMigrationReport {
+  return { ...report, fingerprint: projectApprovalValueHash(report) };
+}
+
+function finalizeProjectApprovalEnvelope(envelope: Omit<ProjectApprovalEnvelope, "fingerprint"> | ProjectApprovalEnvelope): ProjectApprovalEnvelope {
+  const { fingerprint: _fingerprint, ...payload } = envelope as ProjectApprovalEnvelope;
+  return { ...payload, fingerprint: projectApprovalValueHash(payload) } as ProjectApprovalEnvelope;
+}
+
+function finalizeProjectApprovalMarker<Marker extends Omit<ProjectApprovalMarker, "fingerprint">>(marker: Marker): Marker & { fingerprint: string } {
+  return { ...marker, fingerprint: projectApprovalValueHash(marker) };
+}
+
+function projectApprovalRevisionSnapshot(status: ProjectApprovalStatus, decidedAt: string | null): ProjectApprovalRevisionSnapshot {
+  return { status, decidedBy: status === "pending" ? null : "local-builder-account", decidedAt: status === "pending" ? null : decidedAt };
+}
+
+function projectApprovalRevisionId(approvalId: string, version: number, idempotencyKey: string | null) {
+  if (idempotencyKey === null) return `request-content-approval-revision:${approvalId}:legacy:v${version}`;
+  const digest = memoryCoreSha256(`request-content-approval-revision:${approvalId}:${version}:${idempotencyKey}`);
+  return `approval-revision-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+}
+
+function projectApprovalEventId(approvalId: string, version: number, idempotencyKey: string | null) {
+  if (idempotencyKey === null) return `request-content-approval-event:${approvalId}:legacy:v${version}`;
+  const digest = memoryCoreSha256(`request-content-approval-event:${approvalId}:${version}:${idempotencyKey}`);
+  return `approval-event-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+}
+
+function projectApprovalIdForCreateKey(idempotencyKey: string) {
+  const digest = memoryCoreSha256(`request-content-approval-create:${idempotencyKey}`);
+  return `approval-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+}
+
+function projectApprovalCommandPayload(command: {
+  inputSchemaVersion: 1;
+  action: ProjectApprovalAction;
+  projectId: string;
+  requestId: string;
+  approvalId?: string;
+  decision?: Exclude<ProjectApprovalStatus, "pending">;
+  expectedStoreVersion: number;
+  expectedApprovalVersion?: number;
+  expectedRequestVersion: number;
+}) {
+  return {
+    inputSchemaVersion: command.inputSchemaVersion,
+    action: command.action,
+    projectId: command.projectId,
+    requestId: command.requestId,
+    ...(command.approvalId ? { approvalId: command.approvalId } : {}),
+    ...(command.decision ? { decision: command.decision } : {}),
+  };
+}
+
+function migratedProjectApprovalRecord(
+  record: LegacyProjectApprovalRecord,
+  sourceValue: unknown,
+  sourceIndex: number,
+  authority: ProjectTaskAuthority,
+  purchaseRequests: ProjectPurchaseRequestRecord[],
+): ProjectApprovalRecord | null {
+  const request = purchaseRequests.find((candidate) => candidate.id === record.target.id && candidate.projectId === record.projectId);
+  const requestRevision = request?.reviewRevisions.find((revision) => revision.id === record.target.revisionId && revision.requestVersion === record.target.version);
+  const authorizationContextHash = authority.authorizationHashes[record.projectId];
+  if (!request || !requestRevision || !authorizationContextHash) return null;
+  const confirmationReceipt = request.mutationReceipts.find((receipt) => receipt.action === "confirm-for-recipients"
+    && receipt.relatedApprovalId === record.id
+    && receipt.projectId === record.projectId
+    && receipt.requestId === record.target.id
+    && receipt.expectedRequestVersion !== null
+    && receipt.expectedRequestVersion + 1 === record.target.version
+    && receipt.resultingRequestVersion === record.target.version
+    && receipt.recordedAt === record.target.updatedAt
+    && receipt.recordedAt === record.requestedAt
+    && receipt.recordedAt === record.updatedAt
+    && receipt.recordedAt === record.decidedAt
+    && receipt.authorizationContextHash === authorizationContextHash
+    && receipt.payloadHash === purchaseRequestCommandPayloadHash({ inputSchemaVersion: 1, action: "confirm-for-recipients", projectId: receipt.projectId, requestId: receipt.requestId, expectedRequestVersion: receipt.expectedRequestVersion, idempotencyKey: receipt.key }));
+  const legacyEvidence = finalizeProjectApprovalLegacyEvidence({
+    schemaVersion: 1,
+    sourceGeneration: "v1-array",
+    sourceIndex,
+    sourceRecordHash: projectApprovalValueHash(sourceValue),
+    sourceSchemaVersion: (sourceValue as { schemaVersion?: unknown })?.schemaVersion === 2 ? 2 : 0,
+    sourceVersion: record.version,
+    receiptCoverage: confirmationReceipt ? "request-confirmation" : "legacy-unproven",
+    history: structuredClone(record.history),
+  });
+  const revisions = record.history.map((legacyEvent) => finalizeProjectApprovalRevision({
+    id: projectApprovalRevisionId(record.id, legacyEvent.version, null),
+    version: legacyEvent.version,
+    createdAt: legacyEvent.at,
+    snapshot: projectApprovalRevisionSnapshot(legacyEvent.type === "created" ? "pending" : legacyEvent.type, legacyEvent.type === "created" ? null : legacyEvent.at),
+  }));
+  const history = record.history.map((legacyEvent, index) => finalizeProjectApprovalEvent({
+    id: projectApprovalEventId(record.id, legacyEvent.version, null),
+    type: legacyEvent.type,
+    actor: "سامانهٔ مهاجرت",
+    actorPrincipalId: "local-builder-account",
+    at: legacyEvent.at,
+    version: legacyEvent.version,
+    revisionId: revisions[index].id,
+    authorizationContextHash,
+    idempotencyKey: null,
+    commandPayloadHash: null,
+  }));
+  return finalizeProjectApprovalRecord({
+    schemaVersion: 3,
+    objectType: "request-content-approval",
+    id: record.id,
+    projectId: record.projectId,
+    ownerPrincipalType: "account",
+    ownerPrincipalId: "local-builder-account",
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: record.projectId,
+    custodianService: "Approval Domain Service",
+    sensitivity: "private",
+    purpose: "review-purchase-request-version",
+    target: { ...record.target, revisionFingerprint: requestRevision.fingerprint },
+    dedupeKey: record.dedupeKey,
+    snapshot: structuredClone(record.snapshot),
+    privacySnapshot: structuredClone(record.privacySnapshot),
+    externalEffect: "none",
+    destination: null,
+    sendAuthorized: false,
+    status: record.status,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    requestedBy: "شما",
+    decidedBy: record.decidedBy,
+    requestedAt: record.requestedAt,
+    updatedAt: record.updatedAt,
+    decidedAt: record.decidedAt,
+    version: record.version,
+    authorizationContextHash,
+    currentRevisionId: revisions.at(-1)!.id,
+    revisions,
+    history,
+    legacyEvidence,
+  });
+}
+
+function parseProjectApprovalLegacyEvidence(value: unknown): ProjectApprovalLegacyEvidence | null {
+  if (!hasExactObjectKeys(value, ["schemaVersion", "sourceGeneration", "sourceIndex", "sourceRecordHash", "sourceSchemaVersion", "sourceVersion", "receiptCoverage", "history", "fingerprint"])) return null;
+  const evidence = value as ProjectApprovalLegacyEvidence;
+  if (evidence.schemaVersion !== 1 || evidence.sourceGeneration !== "v1-array" || !Number.isSafeInteger(evidence.sourceIndex) || evidence.sourceIndex < 0 || !/^sha256-[0-9a-f]{64}$/.test(evidence.sourceRecordHash) || ![0, 2].includes(evidence.sourceSchemaVersion) || !Number.isSafeInteger(evidence.sourceVersion) || ![1, 2].includes(evidence.sourceVersion) || !["request-confirmation", "legacy-unproven"].includes(evidence.receiptCoverage) || !Array.isArray(evidence.history) || evidence.history.length !== evidence.sourceVersion) return null;
+  const history = evidence.history as LegacyProjectApprovalEvent[];
+  if (history.some((event, index) => !hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || typeof event.id !== "string" || !event.id || !["created", "approved", "changes-requested"].includes(event.type) || event.actor !== "شما" || !isValidProjectFileDate(event.at) || event.version !== index + 1) || history[0]?.type !== "created" || history.length === 2 && !["approved", "changes-requested"].includes(history[1].type)) return null;
+  const { fingerprint: _fingerprint, ...payload } = evidence;
+  return evidence.fingerprint === projectApprovalValueHash(payload) ? evidence : null;
+}
+
+function parseProjectApprovalRevision(value: unknown): ProjectApprovalRevision | null {
+  if (!hasExactObjectKeys(value, ["id", "version", "createdAt", "snapshot", "fingerprint"])) return null;
+  const revision = value as ProjectApprovalRevision;
+  if (typeof revision.id !== "string" || !revision.id || !Number.isSafeInteger(revision.version) || revision.version < 1 || !isValidProjectFileDate(revision.createdAt) || !hasExactObjectKeys(revision.snapshot, ["status", "decidedBy", "decidedAt"]) || !["pending", "approved", "changes-requested"].includes(revision.snapshot.status) || (revision.snapshot.status === "pending" ? revision.snapshot.decidedBy !== null || revision.snapshot.decidedAt !== null : revision.snapshot.decidedBy !== "local-builder-account" || revision.snapshot.decidedAt === null || !isValidProjectFileDate(revision.snapshot.decidedAt))) return null;
+  const { fingerprint: _fingerprint, ...payload } = revision;
+  return revision.fingerprint === projectApprovalValueHash(payload) ? revision : null;
+}
+
+function parseProjectApprovalEvent(value: unknown): ProjectApprovalEvent | null {
+  if (!hasExactObjectKeys(value, ["id", "type", "actor", "actorPrincipalId", "at", "version", "revisionId", "authorizationContextHash", "idempotencyKey", "commandPayloadHash", "fingerprint"])) return null;
+  const event = value as ProjectApprovalEvent;
+  if (typeof event.id !== "string" || !event.id || !["created", "approved", "changes-requested"].includes(event.type) || !["شما", "سامانهٔ مهاجرت"].includes(event.actor) || event.actorPrincipalId !== "local-builder-account" || !isValidProjectFileDate(event.at) || !Number.isSafeInteger(event.version) || event.version < 1 || typeof event.revisionId !== "string" || !event.revisionId || !/^sha256-[0-9a-f]{64}$/.test(event.authorizationContextHash) || (event.idempotencyKey !== null && (typeof event.idempotencyKey !== "string" || !event.idempotencyKey || event.idempotencyKey.length > 200)) || (event.commandPayloadHash !== null && !/^sha256-[0-9a-f]{64}$/.test(event.commandPayloadHash))) return null;
+  const { fingerprint: _fingerprint, ...payload } = event;
+  return event.fingerprint === projectApprovalValueHash(payload) ? event : null;
+}
+
+function parseCanonicalProjectApproval(
+  value: unknown,
+  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+  authority: ProjectTaskAuthority,
+): ProjectApprovalRecord | null {
+  const expectedKeys = ["schemaVersion", "objectType", "id", "projectId", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "custodianService", "sensitivity", "purpose", "target", "dedupeKey", "snapshot", "privacySnapshot", "externalEffect", "destination", "sendAuthorized", "status", "visibility", "localStatus", "requestedBy", "decidedBy", "requestedAt", "updatedAt", "decidedAt", "version", "authorizationContextHash", "currentRevisionId", "revisions", "history", "legacyEvidence", "fingerprint"];
+  if (!hasExactObjectKeys(value, expectedKeys)) return null;
+  const record = value as ProjectApprovalRecord;
+  if (record.schemaVersion !== 3 || record.objectType !== "request-content-approval" || typeof record.id !== "string" || !record.id || record.id.trim() !== record.id || typeof record.projectId !== "string" || !record.projectId || record.projectId.trim() !== record.projectId || record.ownerPrincipalType !== "account" || record.ownerPrincipalId !== "local-builder-account" || record.accountSide !== "builder" || record.scopeType !== "project_private" || record.scopeId !== record.projectId || record.custodianService !== "Approval Domain Service" || record.sensitivity !== "private" || record.purpose !== "review-purchase-request-version" || !hasExactObjectKeys(record.target, ["type", "id", "version", "updatedAt", "revisionId", "revisionFingerprint"]) || record.target.type !== "purchase-request" || typeof record.target.id !== "string" || !record.target.id || record.target.id.trim() !== record.target.id || !Number.isSafeInteger(record.target.version) || record.target.version < 1 || !isValidProjectFileDate(record.target.updatedAt) || typeof record.target.revisionId !== "string" || !record.target.revisionId || !/^fnv1a-[0-9a-f]{8}$/.test(record.target.revisionFingerprint) || record.dedupeKey !== purchaseRequestApprovalDedupeKey(record.projectId, record.target.id, record.target.version)) return null;
+  const request = purchaseRequests.records.find((candidate) => candidate.id === record.target.id && candidate.projectId === record.projectId);
+  const requestRevision = request?.reviewRevisions.find((revision) => revision.id === record.target.revisionId && revision.requestVersion === record.target.version);
+  const snapshot = parsePurchaseRequestSnapshot(record.snapshot);
+  const expectedAuthorizationHash = authority.authorizationHashes[record.projectId];
+  if (!request || !requestRevision || !snapshot || JSON.stringify(snapshot) !== JSON.stringify(record.snapshot) || record.target.updatedAt !== requestRevision.createdAt || record.target.revisionFingerprint !== requestRevision.fingerprint || JSON.stringify(stablePurchaseRequestValue(snapshot)) !== JSON.stringify(stablePurchaseRequestValue(requestRevision.snapshot)) || !hasExactObjectKeys(record.privacySnapshot, ["shareableFields", "projectNameShared", "exactAddressShared", "budgetShared", "filesShared", "memoryShared"]) || JSON.stringify(record.privacySnapshot.shareableFields) !== JSON.stringify(requestRevision.shareableFields) || record.privacySnapshot.projectNameShared !== false || record.privacySnapshot.exactAddressShared !== false || record.privacySnapshot.budgetShared !== false || record.privacySnapshot.filesShared !== false || record.privacySnapshot.memoryShared !== false || record.externalEffect !== "none" || record.destination !== null || record.sendAuthorized !== false || !["pending", "approved", "changes-requested"].includes(record.status) || record.visibility !== "خصوصی پروژه" || record.localStatus !== "ثبت محلی" || record.requestedBy !== "شما" || !["شما", null].includes(record.decidedBy) || !isValidProjectFileDate(record.requestedAt) || Date.parse(record.requestedAt) < Date.parse(record.target.updatedAt) || !isValidProjectFileDate(record.updatedAt) || (record.decidedAt !== null && !isValidProjectFileDate(record.decidedAt)) || !Number.isSafeInteger(record.version) || ![1, 2].includes(record.version) || record.authorizationContextHash !== expectedAuthorizationHash || typeof record.currentRevisionId !== "string" || !Array.isArray(record.revisions) || !Array.isArray(record.history) || record.revisions.length !== record.version || record.history.length !== record.version) return null;
+  const revisions = record.revisions.map(parseProjectApprovalRevision);
+  const history = record.history.map(parseProjectApprovalEvent);
+  if (revisions.some((revision) => !revision) || history.some((event) => !event)) return null;
+  const exactRevisions = revisions as ProjectApprovalRevision[];
+  const exactHistory = history as ProjectApprovalEvent[];
+  const legacyEvidence = record.legacyEvidence === null ? null : parseProjectApprovalLegacyEvidence(record.legacyEvidence);
+  if (record.legacyEvidence !== null && !legacyEvidence) return null;
+  const migratedCompoundConfirmationIsProven = legacyEvidence?.receiptCoverage === "request-confirmation"
+    && request.mutationReceipts.some((receipt) => projectApprovalRequestConfirmationReceiptMatchesRecord(receipt, record));
+  for (let index = 0; index < record.version; index += 1) {
+    const revision = exactRevisions[index];
+    const event = exactHistory[index];
+    const expectedStatus: ProjectApprovalStatus = index === 0 ? "pending" : event.type as Exclude<ProjectApprovalStatus, "pending">;
+    const previousEvent = index > 0 ? exactHistory[index - 1] : null;
+    const compoundConfirmationEvent = previousEvent !== null
+      && previousEvent.idempotencyKey !== null
+      && previousEvent.idempotencyKey === event.idempotencyKey
+      && previousEvent.commandPayloadHash === event.commandPayloadHash
+      && previousEvent.type === "created"
+      && event.type === "approved";
+    const migratedCompoundConfirmationEvent = migratedCompoundConfirmationIsProven
+      && index === 1
+      && legacyEvidence !== null
+      && index < legacyEvidence.sourceVersion
+      && previousEvent?.type === "created"
+      && event.type === "approved"
+      && previousEvent.idempotencyKey === null
+      && event.idempotencyKey === null
+      && previousEvent.commandPayloadHash === null
+      && event.commandPayloadHash === null;
+    if (revision.version !== index + 1 || event.version !== index + 1 || revision.id !== event.revisionId || revision.id !== projectApprovalRevisionId(record.id, index + 1, event.idempotencyKey) || event.id !== projectApprovalEventId(record.id, index + 1, event.idempotencyKey) || revision.createdAt !== event.at || revision.snapshot.status !== expectedStatus || event.type !== (index === 0 ? "created" : expectedStatus) || event.authorizationContextHash !== record.authorizationContextHash || previousEvent && (Date.parse(event.at) < Date.parse(previousEvent.at) || Date.parse(event.at) === Date.parse(previousEvent.at) && !compoundConfirmationEvent && !migratedCompoundConfirmationEvent)) return null;
+    const migratedSourceEvent = legacyEvidence !== null && index < legacyEvidence.sourceVersion;
+    if (migratedSourceEvent ? event.actor !== "سامانهٔ مهاجرت" || event.idempotencyKey !== null || event.commandPayloadHash !== null : event.actor !== "شما" || typeof event.idempotencyKey !== "string" || !/^sha256-[0-9a-f]{64}$/.test(event.commandPayloadHash ?? "")) return null;
   }
+  const currentRevision = exactRevisions.at(-1)!;
+  if (record.currentRevisionId !== currentRevision.id || record.status !== currentRevision.snapshot.status || record.decidedBy !== (currentRevision.snapshot.decidedBy ? "شما" : null) || record.decidedAt !== currentRevision.snapshot.decidedAt || record.requestedAt !== exactHistory[0].at || record.updatedAt !== exactHistory.at(-1)!.at || record.status === "pending" && (record.version !== 1 || record.decidedBy !== null || record.decidedAt !== null || request.version !== record.target.version || request.status !== "ready-for-review") || record.status !== "pending" && (record.version !== 2 || record.decidedBy !== "شما" || record.decidedAt !== record.updatedAt)) return null;
+  if (legacyEvidence && (legacyEvidence.sourceVersion > record.version || legacyEvidence.history.length !== legacyEvidence.sourceVersion || legacyEvidence.history.some((event, index) => event.type !== exactHistory[index].type || event.at !== exactHistory[index].at || event.version !== exactHistory[index].version))) return null;
+  const { fingerprint: _fingerprint, ...payload } = record;
+  return record.fingerprint === projectApprovalValueHash(payload) ? record : null;
+}
+
+function parseProjectApprovalReceipt(value: unknown): ProjectApprovalOperationReceipt | null {
+  const semanticKeys = ["schemaVersion", "key", "action", "payloadHash", "projectId", "requestId", "approvalId", "requestMutationReceiptKey", "decision", "expectedStoreVersion", "expectedApprovalVersion", "expectedRequestVersion", "result", "resultingStoreVersion", "resultingApprovalVersion", "eventIds", "revisionIds", "authorizationContextHash", "recordedAt", "fingerprint"];
+  const action = (value as any)?.action;
+  const keys = action === "pin-procurement-dispatch-precondition" ? [...semanticKeys.slice(0, -1), "checkpoint", "fingerprint"] : semanticKeys;
+  if (!hasExactObjectKeys(value, keys)) return null;
+  if (action === "pin-procurement-dispatch-precondition") {
+    const receipt = value as ProjectApprovalDispatchCheckpointReceipt;
+    const checkpoint = parseProcurementDispatchPreconditionCheckpoint(receipt.checkpoint);
+    const { fingerprint: _fingerprint, ...payload } = receipt;
+    if (!checkpoint || receipt.schemaVersion !== 1 || receipt.key !== checkpoint.checkpointKey || receipt.payloadHash !== checkpoint.fingerprint || receipt.projectId !== checkpoint.projectId || receipt.requestId !== checkpoint.target.requestId || receipt.approvalId !== checkpoint.target.approvalId || receipt.requestMutationReceiptKey !== receipt.key || receipt.decision !== null || receipt.expectedStoreVersion !== checkpoint.approvalHead.expectedStoreVersion || receipt.expectedApprovalVersion !== checkpoint.approvalHead.approvalVersion || receipt.expectedRequestVersion !== checkpoint.requestHead.requestVersion || receipt.result !== "checkpointed" || receipt.resultingStoreVersion !== checkpoint.approvalHead.resultingStoreVersion || receipt.resultingApprovalVersion !== checkpoint.approvalHead.approvalVersion || !Array.isArray(receipt.eventIds) || receipt.eventIds.length !== 0 || !Array.isArray(receipt.revisionIds) || receipt.revisionIds.length !== 0 || receipt.authorizationContextHash !== checkpoint.authorizationContextHash || receipt.recordedAt !== checkpoint.recordedAt || receipt.fingerprint !== projectApprovalValueHash(payload)) return null;
+    return receipt;
+  }
+  const receipt = value as ProjectApprovalReceipt;
+  if (receipt.schemaVersion !== 1 || typeof receipt.key !== "string" || !receipt.key || receipt.key.trim() !== receipt.key || receipt.key.length > 200 || !["create-content-approval", "decide-content-approval", "confirm-for-recipients"].includes(receipt.action) || !/^sha256-[0-9a-f]{64}$/.test(receipt.payloadHash) || typeof receipt.projectId !== "string" || !receipt.projectId || typeof receipt.requestId !== "string" || !receipt.requestId || typeof receipt.approvalId !== "string" || !receipt.approvalId || ![null, "approved", "changes-requested"].includes(receipt.decision) || !Number.isSafeInteger(receipt.expectedStoreVersion) || receipt.expectedStoreVersion < 1 || (receipt.expectedApprovalVersion !== null && (!Number.isSafeInteger(receipt.expectedApprovalVersion) || receipt.expectedApprovalVersion < 1)) || !Number.isSafeInteger(receipt.expectedRequestVersion) || receipt.expectedRequestVersion < 1 || !["created", "updated"].includes(receipt.result) || !Number.isSafeInteger(receipt.resultingStoreVersion) || receipt.resultingStoreVersion < 2 || !Number.isSafeInteger(receipt.resultingApprovalVersion) || ![1, 2].includes(receipt.resultingApprovalVersion) || !Array.isArray(receipt.eventIds) || !Array.isArray(receipt.revisionIds) || receipt.eventIds.length !== receipt.revisionIds.length || ![1, 2].includes(receipt.eventIds.length) || receipt.eventIds.some((id) => typeof id !== "string" || !id) || receipt.revisionIds.some((id) => typeof id !== "string" || !id) || !/^sha256-[0-9a-f]{64}$/.test(receipt.authorizationContextHash) || !isValidProjectFileDate(receipt.recordedAt)) return null;
+  if (receipt.action === "create-content-approval" ? receipt.requestMutationReceiptKey !== null || receipt.decision !== null || receipt.expectedApprovalVersion !== null || receipt.result !== "created" || receipt.resultingApprovalVersion !== 1 || receipt.eventIds.length !== 1 : receipt.action === "decide-content-approval" ? receipt.requestMutationReceiptKey !== null || !receipt.decision || receipt.expectedApprovalVersion !== 1 || receipt.result !== "updated" || receipt.resultingApprovalVersion !== 2 || receipt.eventIds.length !== 1 : receipt.requestMutationReceiptKey !== receipt.key || receipt.decision !== "approved" || receipt.expectedApprovalVersion !== null || receipt.result !== "updated" || receipt.resultingApprovalVersion !== 2 || receipt.eventIds.length !== 2) return null;
+  const { fingerprint: _fingerprint, ...payload } = receipt;
+  return receipt.fingerprint === projectApprovalValueHash(payload) ? receipt : null;
+}
+
+function purchaseRequestReceiptIsConfirmation(receipt: PurchaseRequestOperationReceipt): receipt is PurchaseRequestMutationReceipt & { action: "confirm-for-recipients" } {
+  return receipt.action === "confirm-for-recipients";
+}
+
+function projectApprovalRequestConfirmationReceiptMatchesRecord(receipt: PurchaseRequestOperationReceipt, record: ProjectApprovalRecord) {
+  return receipt.action === "confirm-for-recipients"
+    && receipt.projectId === record.projectId
+    && receipt.requestId === record.target.id
+    && receipt.relatedApprovalId === record.id
+    && receipt.expectedRequestVersion !== null
+    && receipt.expectedRequestVersion + 1 === record.target.version
+    && receipt.resultingRequestVersion === record.target.version
+    && receipt.recordedAt === record.target.updatedAt
+    && receipt.recordedAt === record.requestedAt
+    && receipt.recordedAt === record.updatedAt
+    && receipt.recordedAt === record.decidedAt
+    && receipt.authorizationContextHash === record.authorizationContextHash
+    && receipt.payloadHash === purchaseRequestCommandPayloadHash({ inputSchemaVersion: 1, action: "confirm-for-recipients", projectId: receipt.projectId, requestId: receipt.requestId, expectedRequestVersion: receipt.expectedRequestVersion, idempotencyKey: receipt.key })
+    && record.status === "approved"
+    && record.version === 2
+    && record.history[0]?.type === "created"
+    && record.history[1]?.type === "approved";
+}
+
+function parseProjectApprovalOrphanConfirmationRollback(value: unknown): ProjectApprovalOrphanConfirmationRollback | null {
+  if (!hasExactObjectKeys(value, ["schemaVersion", "kind", "projectId", "requestId", "approvalId", "sourceRequestVersion", "candidateRequestVersion", "sourceRequestRecordHash", "candidateRequestRecordHash", "candidateRequestRecord", "removedHistoryEvent", "removedReviewRevision", "removedReceipt", "fingerprint"])) return null;
+  const evidence = value as ProjectApprovalOrphanConfirmationRollback;
+  const event = evidence.removedHistoryEvent;
+  const revision = evidence.removedReviewRevision;
+  const receipt = parsePurchaseRequestMutationReceipt(evidence.removedReceipt);
+  const candidateRaw = JSON.stringify([evidence.candidateRequestRecord]);
+  const candidateRead = parseStoredProjectPurchaseRequests(candidateRaw);
+  if (evidence.schemaVersion !== 1
+    || evidence.kind !== "bg-f3-orphan-confirmation-rollback-v1"
+    || typeof evidence.projectId !== "string"
+    || !evidence.projectId
+    || evidence.projectId.trim() !== evidence.projectId
+    || typeof evidence.requestId !== "string"
+    || !evidence.requestId
+    || evidence.requestId.trim() !== evidence.requestId
+    || evidence.approvalId !== purchaseRequestApprovalIdForConfirmationKey(receipt?.key ?? "")
+    || !Number.isSafeInteger(evidence.sourceRequestVersion)
+    || evidence.sourceRequestVersion < 2
+    || evidence.candidateRequestVersion !== evidence.sourceRequestVersion - 1
+    || !/^sha256-[0-9a-f]{64}$/.test(evidence.sourceRequestRecordHash)
+    || !/^sha256-[0-9a-f]{64}$/.test(evidence.candidateRequestRecordHash)
+    || candidateRead.readError
+    || candidateRead.records.length !== 1
+    || JSON.stringify(candidateRead.records[0]) !== JSON.stringify(evidence.candidateRequestRecord)
+    || evidence.candidateRequestRecord.id !== evidence.requestId
+    || evidence.candidateRequestRecord.projectId !== evidence.projectId
+    || evidence.candidateRequestRecord.version !== evidence.candidateRequestVersion
+    || evidence.candidateRequestRecord.status !== "draft"
+    || evidence.candidateRequestRecord.readyAt !== null
+    || projectApprovalValueHash(evidence.candidateRequestRecord) !== evidence.candidateRequestRecordHash
+    || !hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"])
+    || typeof event.id !== "string"
+    || !event.id
+    || event.type !== "marked-ready-for-review"
+    || event.actor !== "شما"
+    || event.version !== evidence.sourceRequestVersion
+    || !isValidProjectFileDate(event.at)
+    || !hasExactObjectKeys(revision, ["id", "requestVersion", "createdAt", "snapshot", "shareableFields", "fingerprint"])
+    || typeof revision.id !== "string"
+    || !revision.id
+    || revision.requestVersion !== evidence.sourceRequestVersion
+    || revision.createdAt !== event.at
+    || !parsePurchaseRequestSnapshot(revision.snapshot)
+    || !Array.isArray(revision.shareableFields)
+    || JSON.stringify(revision.shareableFields) !== JSON.stringify(purchaseRequestApprovalShareableFields(revision.snapshot as PurchaseRequestSnapshot))
+    || revision.fingerprint !== purchaseRequestRevisionFingerprint(revision.snapshot as PurchaseRequestSnapshot, revision.shareableFields)
+    || !receipt
+    || receipt.action !== "confirm-for-recipients"
+    || receipt.projectId !== evidence.projectId
+    || receipt.requestId !== evidence.requestId
+    || receipt.relatedApprovalId !== evidence.approvalId
+    || receipt.expectedRequestVersion !== evidence.candidateRequestVersion
+    || receipt.resultingRequestVersion !== evidence.sourceRequestVersion
+    || receipt.recordedAt !== event.at) return null;
+  const reconstructedSource: ProjectPurchaseRequestRecord = {
+    ...structuredClone(evidence.candidateRequestRecord),
+    status: "ready-for-review",
+    version: evidence.sourceRequestVersion,
+    updatedAt: event.at,
+    readyAt: event.at,
+    history: [...structuredClone(evidence.candidateRequestRecord.history), structuredClone(event)],
+    reviewRevisions: [...structuredClone(evidence.candidateRequestRecord.reviewRevisions), structuredClone(revision)],
+    mutationReceipts: [...structuredClone(evidence.candidateRequestRecord.mutationReceipts), structuredClone(receipt)],
+  };
+  const reconstructedRead = parseStoredProjectPurchaseRequests(JSON.stringify([reconstructedSource]));
+  if (reconstructedRead.readError || reconstructedRead.records.length !== 1 || JSON.stringify(reconstructedRead.records[0]) !== JSON.stringify(reconstructedSource) || projectApprovalValueHash(reconstructedRead.records[0]) !== evidence.sourceRequestRecordHash) return null;
+  const { fingerprint: _fingerprint, ...payload } = evidence;
+  return evidence.fingerprint === projectApprovalValueHash(payload) ? evidence : null;
+}
+
+function parseProjectApprovalMigrationReport(value: unknown): ProjectApprovalMigrationReport | null {
+  if (!hasExactObjectKeys(value, ["schemaVersion", "id", "sourceGeneration", "sourceKey", "sourceRawHash", "requestSourceRawHash", "requestCandidateRawHash", "migratedAt", "recordCount", "migratedRecordFingerprints", "orphanConfirmationRollbacks", "fingerprint"])) return null;
+  const report = value as ProjectApprovalMigrationReport;
+  const rollbacks = Array.isArray(report.orphanConfirmationRollbacks) ? report.orphanConfirmationRollbacks.map(parseProjectApprovalOrphanConfirmationRollback) : [];
+  if (report.schemaVersion !== 1 || typeof report.id !== "string" || !report.id || !["v1-array", "none"].includes(report.sourceGeneration) || (report.sourceGeneration === "v1-array" ? report.sourceKey !== legacyProjectApprovalsStorageKey || !/^sha256-[0-9a-f]{64}$/.test(report.sourceRawHash ?? "") : report.sourceKey !== null || report.sourceRawHash !== null) || (report.requestSourceRawHash !== null && !/^sha256-[0-9a-f]{64}$/.test(report.requestSourceRawHash)) || (report.requestCandidateRawHash !== null && !/^sha256-[0-9a-f]{64}$/.test(report.requestCandidateRawHash)) || !isValidProjectFileDate(report.migratedAt) || !Number.isSafeInteger(report.recordCount) || report.recordCount < 0 || !Array.isArray(report.migratedRecordFingerprints) || report.migratedRecordFingerprints.length !== report.recordCount || report.migratedRecordFingerprints.some((fingerprint) => !/^sha256-[0-9a-f]{64}$/.test(fingerprint)) || !Array.isArray(report.orphanConfirmationRollbacks) || report.orphanConfirmationRollbacks.length > 1 || rollbacks.some((rollback) => !rollback) || new Set((rollbacks as ProjectApprovalOrphanConfirmationRollback[]).map((rollback) => rollback.requestId)).size !== rollbacks.length) return null;
+  const { fingerprint: _fingerprint, ...payload } = report;
+  return report.fingerprint === projectApprovalValueHash(payload) ? report : null;
+}
+
+function projectApprovalOrphanConfirmationRollbackMatchesCandidate(
+  evidence: ProjectApprovalOrphanConfirmationRollback,
+  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+  approvalRecords: ProjectApprovalRecord[],
+  authority: ProjectTaskAuthority,
+) {
+  const currentRequest = purchaseRequests.records.find((request) => request.id === evidence.requestId && request.projectId === evidence.projectId);
+  const candidate = evidence.candidateRequestRecord;
+  if (!currentRequest
+    || currentRequest.version < evidence.candidateRequestVersion
+    || JSON.stringify(currentRequest.history.slice(0, candidate.history.length)) !== JSON.stringify(candidate.history)
+    || JSON.stringify(currentRequest.reviewRevisions.filter((revision) => revision.requestVersion <= evidence.candidateRequestVersion)) !== JSON.stringify(candidate.reviewRevisions)
+    || JSON.stringify(currentRequest.mutationReceipts.filter((receipt) => receipt.resultingRequestVersion <= evidence.candidateRequestVersion)) !== JSON.stringify(candidate.mutationReceipts)
+    || currentRequest.version === evidence.candidateRequestVersion && JSON.stringify(currentRequest) !== JSON.stringify(candidate)
+    || evidence.removedReceipt.authorizationContextHash !== authority.authorizationHashes[evidence.projectId]
+    || approvalRecords.some((record) => record.id === evidence.approvalId)) return false;
+  const sourceRecord: ProjectPurchaseRequestRecord = {
+    ...structuredClone(evidence.candidateRequestRecord),
+    status: "ready-for-review",
+    version: evidence.sourceRequestVersion,
+    updatedAt: evidence.removedHistoryEvent.at,
+    readyAt: evidence.removedHistoryEvent.at,
+    history: [...structuredClone(candidate.history), structuredClone(evidence.removedHistoryEvent)],
+    reviewRevisions: [...structuredClone(candidate.reviewRevisions), structuredClone(evidence.removedReviewRevision)],
+    mutationReceipts: [...structuredClone(candidate.mutationReceipts), structuredClone(evidence.removedReceipt)],
+  };
+  const sourceRaw = JSON.stringify([sourceRecord]);
+  const sourceRead = parseStoredProjectPurchaseRequests(sourceRaw);
+  return !sourceRead.readError
+    && sourceRead.records.length === 1
+    && JSON.stringify(sourceRead.records[0]) === JSON.stringify(sourceRecord)
+    && projectPurchaseRequestReadMatchesAuthority(sourceRead, authority)
+    && projectApprovalValueHash(sourceRead.records[0]) === evidence.sourceRequestRecordHash;
+}
+
+function projectApprovalVersionAtStoreVersion(record: ProjectApprovalRecord, receipts: ProjectApprovalOperationReceipt[], storeVersion: number) {
+  let version = record.legacyEvidence?.sourceVersion ?? 0;
+  for (const receipt of receipts) {
+    if (receipt.resultingStoreVersion > storeVersion || receipt.action === "pin-procurement-dispatch-precondition" || receipt.projectId !== record.projectId || receipt.approvalId !== record.id) continue;
+    version = receipt.resultingApprovalVersion;
+  }
+  return version;
+}
+
+function parseProjectApprovalEnvelope(
+  raw: string | null,
+  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+  authority: ProjectTaskAuthority,
+): ProjectApprovalEnvelope | null {
+  if (raw === null || purchaseRequests.readError) return null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (!hasExactObjectKeys(value, ["schemaVersion", "fingerprintVersion", "storeVersion", "records", "idempotencyReceipts", "migrationReports", "updatedAt", "fingerprint"])) return null;
+    const envelope = value as ProjectApprovalEnvelope;
+    if (envelope.schemaVersion !== 2 || envelope.fingerprintVersion !== "request-content-approval-domain-v1" || !Number.isSafeInteger(envelope.storeVersion) || envelope.storeVersion < 1 || !Array.isArray(envelope.records) || !Array.isArray(envelope.idempotencyReceipts) || !Array.isArray(envelope.migrationReports) || envelope.migrationReports.length !== 1 || !isValidProjectFileDate(envelope.updatedAt)) return null;
+    const report = parseProjectApprovalMigrationReport(envelope.migrationReports[0]);
+    const records = envelope.records.map((record) => parseCanonicalProjectApproval(record, purchaseRequests, authority));
+    const receipts = envelope.idempotencyReceipts.map(parseProjectApprovalReceipt);
+    if (!report || records.some((record) => !record) || receipts.some((receipt) => !receipt)) return null;
+    const exactRecords = records as ProjectApprovalRecord[];
+    const exactReceipts = receipts as ProjectApprovalOperationReceipt[];
+    if (new Set(exactRecords.map((record) => record.id)).size !== exactRecords.length || new Set(exactRecords.map((record) => record.dedupeKey)).size !== exactRecords.length || new Set(exactReceipts.map((receipt) => receipt.key)).size !== exactReceipts.length || envelope.storeVersion !== exactReceipts.length + 1) return null;
+    const migratedRecords = exactRecords.filter((record) => record.legacyEvidence !== null);
+    if (migratedRecords.length !== report.recordCount || exactRecords.slice(0, migratedRecords.length).some((record) => !record.legacyEvidence) || exactRecords.slice(migratedRecords.length).some((record) => record.legacyEvidence) || migratedRecords.some((record, index) => record.legacyEvidence?.sourceIndex !== index || migratedInitialProjectApprovalRecord(record).fingerprint !== report.migratedRecordFingerprints[index]) || report.sourceGeneration === "none" && migratedRecords.length !== 0 || report.sourceGeneration === "v1-array" && migratedRecords.length !== report.recordCount) return null;
+    if (report.orphanConfirmationRollbacks.some((evidence) => !projectApprovalOrphanConfirmationRollbackMatchesCandidate(evidence, purchaseRequests, exactRecords, authority))) return null;
+    if (migratedRecords.some((record) => Date.parse(migratedInitialProjectApprovalRecord(record).updatedAt) >= Date.parse(report.migratedAt))) return null;
+    const coveredEventIds = new Set<string>();
+    const lastCheckpointRequestPosition = new Map<string, number>();
+    for (const [index, receipt] of exactReceipts.entries()) {
+      if (receipt.expectedStoreVersion !== index + 1 || receipt.resultingStoreVersion !== index + 2 || index === 0 && Date.parse(receipt.recordedAt) <= Date.parse(report.migratedAt) || index > 0 && Date.parse(receipt.recordedAt) <= Date.parse(exactReceipts[index - 1].recordedAt) || receipt.authorizationContextHash !== authority.authorizationHashes[receipt.projectId] || receipt.eventIds.some((eventId) => coveredEventIds.has(eventId))) return null;
+      const record = exactRecords.find((candidate) => candidate.id === receipt.approvalId && candidate.projectId === receipt.projectId && candidate.target.id === receipt.requestId);
+      if (!record || record.authorizationContextHash !== receipt.authorizationContextHash || record.version < receipt.resultingApprovalVersion) return null;
+      if (receipt.action === "pin-procurement-dispatch-precondition") {
+        const checkpoint = receipt.checkpoint;
+        const prefixVersion = projectApprovalVersionAtStoreVersion(record, exactReceipts, receipt.expectedStoreVersion);
+        const prefixRevision = prefixVersion > 0 ? record.revisions[prefixVersion - 1] : null;
+        const request = purchaseRequests.records.find((candidate) => candidate.id === receipt.requestId && candidate.projectId === receipt.projectId);
+        const requestPin = request?.mutationReceipts[checkpoint.requestHead.receiptPosition - 1];
+        const requestPositionKey = `${receipt.projectId}:${receipt.requestId}`;
+        const previousRequestPosition = lastCheckpointRequestPosition.get(requestPositionKey) ?? 0;
+        if (!prefixRevision
+          || prefixVersion !== checkpoint.target.approvalVersion
+          || prefixRevision.snapshot.status !== "approved"
+          || prefixRevision.id !== checkpoint.target.approvalRevisionId
+          || prefixRevision.fingerprint !== checkpoint.target.approvalFingerprint
+          || record.target.id !== checkpoint.target.requestId
+          || record.target.version !== checkpoint.target.requestVersion
+          || record.target.revisionId !== checkpoint.target.revisionId
+          || record.target.revisionFingerprint !== checkpoint.target.revisionFingerprint
+          || !requestPin
+          || requestPin.action !== "pin-procurement-dispatch-precondition"
+          || requestPin.key !== receipt.key
+          || requestPin.payloadHash !== receipt.payloadHash
+          || checkpoint.requestHead.receiptPosition <= previousRequestPosition
+          || JSON.stringify(requestPin.checkpoint) !== JSON.stringify(checkpoint)) return null;
+        lastCheckpointRequestPosition.set(requestPositionKey, checkpoint.requestHead.receiptPosition);
+        continue;
+      }
+      if (receipt.action === "confirm-for-recipients" ? record.target.version !== receipt.expectedRequestVersion + 1 : record.target.version !== receipt.expectedRequestVersion) return null;
+      const expectedVersions = receipt.action === "confirm-for-recipients" ? [1, 2] : receipt.action === "create-content-approval" ? [1] : [2];
+      const expectedTypes: ProjectApprovalEventType[] = receipt.action === "confirm-for-recipients" ? ["created", "approved"] : receipt.action === "create-content-approval" ? ["created"] : [receipt.decision!];
+      const expectedRevisionStatuses: ProjectApprovalStatus[] = receipt.action === "confirm-for-recipients" ? ["pending", "approved"] : receipt.action === "create-content-approval" ? ["pending"] : [receipt.decision!];
+      const events = expectedVersions.map((version) => record.history[version - 1]);
+      const revisions = expectedVersions.map((version) => record.revisions[version - 1]);
+      if (events.some((event) => !event)
+        || revisions.some((revision) => !revision)
+        || receipt.resultingApprovalVersion !== expectedVersions.at(-1)
+        || JSON.stringify(receipt.eventIds) !== JSON.stringify(events.map((event) => event.id))
+        || JSON.stringify(receipt.revisionIds) !== JSON.stringify(revisions.map((revision) => revision.id))
+        || events.some((event, eventIndex) => event.type !== expectedTypes[eventIndex] || event.revisionId !== revisions[eventIndex].id || event.idempotencyKey !== receipt.key || event.commandPayloadHash !== receipt.payloadHash || event.at !== receipt.recordedAt || event.version !== expectedVersions[eventIndex] || revisions[eventIndex].version !== expectedVersions[eventIndex] || revisions[eventIndex].snapshot.status !== expectedRevisionStatuses[eventIndex])) return null;
+      receipt.eventIds.forEach((eventId) => coveredEventIds.add(eventId));
+      const commandPayload = projectApprovalCommandPayload({ inputSchemaVersion: 1, action: receipt.action, projectId: receipt.projectId, requestId: receipt.requestId, ...(receipt.action === "decide-content-approval" ? { approvalId: receipt.approvalId, decision: receipt.decision!, expectedApprovalVersion: receipt.expectedApprovalVersion! } : {}), expectedStoreVersion: receipt.expectedStoreVersion, expectedRequestVersion: receipt.expectedRequestVersion });
+      if (receipt.payloadHash !== projectApprovalValueHash(commandPayload) || receipt.action === "create-content-approval" && receipt.approvalId !== projectApprovalIdForCreateKey(receipt.key) || receipt.action === "confirm-for-recipients" && receipt.approvalId !== purchaseRequestApprovalIdForConfirmationKey(receipt.key)) return null;
+      if (receipt.action === "confirm-for-recipients") {
+        const request = purchaseRequests.records.find((candidate) => candidate.id === receipt.requestId && candidate.projectId === receipt.projectId);
+        const requestReceipt = request?.mutationReceipts.find((candidate) => candidate.key === receipt.key && candidate.action === "confirm-for-recipients");
+        if (!requestReceipt || !projectApprovalRequestConfirmationReceiptMatchesRecord(requestReceipt, record) || requestReceipt.expectedRequestVersion !== receipt.expectedRequestVersion || requestReceipt.recordedAt !== receipt.recordedAt || requestReceipt.authorizationContextHash !== receipt.authorizationContextHash) return null;
+      }
+    }
+    const requestConfirmationReceipts = purchaseRequests.records.flatMap((request) => request.mutationReceipts.filter(purchaseRequestReceiptIsConfirmation));
+    if (new Set(requestConfirmationReceipts.map((receipt) => receipt.key)).size !== requestConfirmationReceipts.length) return null;
+    for (const requestReceipt of requestConfirmationReceipts) {
+      const record = exactRecords.find((candidate) => candidate.id === requestReceipt.relatedApprovalId && candidate.projectId === requestReceipt.projectId && candidate.target.id === requestReceipt.requestId);
+      if (!record || !projectApprovalRequestConfirmationReceiptMatchesRecord(requestReceipt, record)) return null;
+      const canonicalReceipt = exactReceipts.find((receipt) => receipt.key === requestReceipt.key && receipt.action === "confirm-for-recipients");
+      if (record.legacyEvidence === null ? !canonicalReceipt : record.legacyEvidence.receiptCoverage !== "request-confirmation" || canonicalReceipt !== undefined) return null;
+    }
+    for (const record of migratedRecords) {
+      const requestReceipt = requestConfirmationReceipts.find((receipt) => receipt.relatedApprovalId === record.id && receipt.projectId === record.projectId && receipt.requestId === record.target.id);
+      if (record.legacyEvidence?.receiptCoverage === "request-confirmation" ? !requestReceipt : requestReceipt !== undefined) return null;
+    }
+    const createdRecordIds = exactReceipts.filter((receipt) => receipt.action === "create-content-approval" || receipt.action === "confirm-for-recipients").map((receipt) => receipt.approvalId);
+    if (JSON.stringify(exactRecords.slice(migratedRecords.length).map((record) => record.id)) !== JSON.stringify(createdRecordIds)) return null;
+    if (exactRecords.some((record) => record.history.some((event, index) => index >= (record.legacyEvidence?.sourceVersion ?? 0) && !coveredEventIds.has(event.id)))) return null;
+    const expectedUpdatedAt = exactReceipts.at(-1)?.recordedAt ?? report.migratedAt;
+    if (envelope.updatedAt !== expectedUpdatedAt) return null;
+    const { fingerprint: _fingerprint, ...payload } = envelope;
+    return envelope.fingerprint === projectApprovalValueHash(payload) ? envelope : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseProjectApprovalMarker(raw: string | null): ProjectApprovalMarker | null {
+  if (raw === null) return null;
+  try {
+    const value = JSON.parse(raw) as any;
+    const common = ["schemaVersion", "state", "migrationId", "sourceGeneration", "sourceKey", "sourceRawHash", "requestSourceRawHash", "requestCandidateRawHash", "migrationAt", "identityBindingHash", "fingerprint"];
+    const expected = value?.state === "pending" ? common : value?.state === "verified" ? [...common, "initialStoreVersion", "initialCanonicalHash", "migrationReportHash", "verifiedAt"] : value?.state === "committed" ? [...common, "initialStoreVersion", "initialCanonicalHash", "migrationReportHash", "committedAt"] : [];
+    if (!hasExactObjectKeys(value, expected)) return null;
+    const marker = value as ProjectApprovalMarker;
+    if (marker.schemaVersion !== 1 || !["pending", "verified", "committed"].includes(marker.state) || typeof marker.migrationId !== "string" || !marker.migrationId || !["v1-array", "none"].includes(marker.sourceGeneration) || (marker.sourceGeneration === "v1-array" ? marker.sourceKey !== legacyProjectApprovalsStorageKey || !/^sha256-[0-9a-f]{64}$/.test(marker.sourceRawHash ?? "") : marker.sourceKey !== null || marker.sourceRawHash !== null) || (marker.requestSourceRawHash !== null && !/^sha256-[0-9a-f]{64}$/.test(marker.requestSourceRawHash)) || (marker.requestCandidateRawHash !== null && !/^sha256-[0-9a-f]{64}$/.test(marker.requestCandidateRawHash)) || !isValidProjectFileDate(marker.migrationAt) || !/^sha256-[0-9a-f]{64}$/.test(marker.identityBindingHash)) return null;
+    if (marker.state !== "pending" && (marker.initialStoreVersion !== 1 || !/^sha256-[0-9a-f]{64}$/.test(marker.initialCanonicalHash) || !/^sha256-[0-9a-f]{64}$/.test(marker.migrationReportHash) || (marker.state === "verified" ? marker.verifiedAt : marker.committedAt) !== marker.migrationAt)) return null;
+    const { fingerprint: _fingerprint, ...payload } = marker;
+    return marker.fingerprint === projectApprovalValueHash(payload) ? marker : null;
+  } catch {
+    return null;
+  }
+}
+
+function initialProjectApprovalEnvelopeHash(envelope: ProjectApprovalEnvelope) {
+  const migratedRecords = envelope.records.filter((record) => record.legacyEvidence !== null).map(migratedInitialProjectApprovalRecord);
+  return projectFoundationRawHash(JSON.stringify(finalizeProjectApprovalEnvelope({ schemaVersion: 2, fingerprintVersion: "request-content-approval-domain-v1", storeVersion: 1, records: migratedRecords, idempotencyReceipts: [], migrationReports: envelope.migrationReports, updatedAt: envelope.migrationReports[0].migratedAt })))!;
+}
+
+function projectApprovalMarkerBindingIsValid(envelope: ProjectApprovalEnvelope, marker: ProjectApprovalVerifiedMarker | ProjectApprovalCommittedMarker, authority: ProjectTaskAuthority) {
+  const report = envelope.migrationReports[0];
+  return marker.identityBindingHash === authority.identityBindingHash
+    && marker.sourceGeneration === report.sourceGeneration
+    && marker.sourceKey === report.sourceKey
+    && marker.sourceRawHash === report.sourceRawHash
+    && marker.requestSourceRawHash === report.requestSourceRawHash
+    && marker.requestCandidateRawHash === report.requestCandidateRawHash
+    && marker.migrationAt === report.migratedAt
+    && report.id === `request-content-approval-migration-report:${marker.migrationId}`
+    && marker.migrationReportHash === report.fingerprint
+    && marker.initialCanonicalHash === initialProjectApprovalEnvelopeHash(envelope);
+}
+
+function projectApprovalConfirmationIntentId(idempotencyKey: string) {
+  return `request-content-approval-confirmation-intent:${memoryCoreSha256(idempotencyKey)}`;
+}
+
+function finalizeProjectApprovalConfirmationIntent(intent: Omit<ProjectApprovalConfirmationIntent, "fingerprint">): ProjectApprovalConfirmationIntent {
+  return { ...intent, fingerprint: projectApprovalValueHash(intent) };
+}
+
+function parseProjectApprovalConfirmationIntent(raw: string | null): ProjectApprovalConfirmationIntent | null {
+  if (raw === null) return null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (!hasExactObjectKeys(value, ["schemaVersion", "operation", "id", "projectId", "requestId", "approvalId", "idempotencyKey", "previousRequestsRaw", "nextRequestsRaw", "previousApprovalsRaw", "nextApprovalsRaw", "approvalMarkerRaw", "authoritySnapshotHash", "authorizationContextHash", "createdAt", "fingerprint"])) return null;
+    const intent = value as ProjectApprovalConfirmationIntent;
+    if (intent.schemaVersion !== 1
+      || intent.operation !== "confirm-request-and-approval"
+      || typeof intent.idempotencyKey !== "string"
+      || !intent.idempotencyKey
+      || intent.idempotencyKey.trim() !== intent.idempotencyKey
+      || intent.idempotencyKey.length > 200
+      || intent.id !== projectApprovalConfirmationIntentId(intent.idempotencyKey)
+      || typeof intent.projectId !== "string"
+      || !intent.projectId
+      || intent.projectId.trim() !== intent.projectId
+      || typeof intent.requestId !== "string"
+      || !intent.requestId
+      || intent.requestId.trim() !== intent.requestId
+      || intent.approvalId !== purchaseRequestApprovalIdForConfirmationKey(intent.idempotencyKey)
+      || typeof intent.previousRequestsRaw !== "string"
+      || !intent.previousRequestsRaw
+      || typeof intent.nextRequestsRaw !== "string"
+      || !intent.nextRequestsRaw
+      || typeof intent.previousApprovalsRaw !== "string"
+      || !intent.previousApprovalsRaw
+      || typeof intent.nextApprovalsRaw !== "string"
+      || !intent.nextApprovalsRaw
+      || intent.previousRequestsRaw === intent.nextRequestsRaw
+      || intent.previousApprovalsRaw === intent.nextApprovalsRaw
+      || typeof intent.approvalMarkerRaw !== "string"
+      || !intent.approvalMarkerRaw
+      || !/^sha256-[0-9a-f]{64}$/.test(intent.authoritySnapshotHash)
+      || !/^sha256-[0-9a-f]{64}$/.test(intent.authorizationContextHash)
+      || !isValidProjectFileDate(intent.createdAt)) return null;
+    const { fingerprint: _fingerprint, ...payload } = intent;
+    return intent.fingerprint === projectApprovalValueHash(payload) ? intent : null;
+  } catch {
+    return null;
+  }
+}
+
+type ProjectApprovalConfirmationCandidates = {
+  previousRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>;
+  nextRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>;
+  previousEnvelope: ProjectApprovalEnvelope;
+  nextEnvelope: ProjectApprovalEnvelope;
+  nextRequest: ProjectPurchaseRequestRecord;
+  nextApproval: ProjectApprovalRecord;
+};
+
+function projectApprovalConfirmationAuthorityIsValid(intent: ProjectApprovalConfirmationIntent, authority: ProjectTaskAuthority | null): authority is ProjectTaskAuthority {
+  return projectPurchaseRequestAuthorityIsValid(authority)
+    && authority.projectIds.includes(intent.projectId)
+    && authority.authorizationHashes[intent.projectId] === intent.authorizationContextHash;
+}
+
+function projectApprovalConfirmationIntentCandidates(
+  intent: ProjectApprovalConfirmationIntent,
+  authority: ProjectTaskAuthority,
+): ProjectApprovalConfirmationCandidates | null {
+  const marker = parseProjectApprovalMarker(intent.approvalMarkerRaw);
+  if (!marker || marker.state !== "committed" || !projectApprovalConfirmationAuthorityIsValid(intent, authority)) return null;
+  const previousRequests = parseStoredProjectPurchaseRequests(intent.previousRequestsRaw);
+  const nextRequests = parseStoredProjectPurchaseRequests(intent.nextRequestsRaw);
+  if (!projectPurchaseRequestReadMatchesAuthority(previousRequests, authority)
+    || !projectPurchaseRequestReadMatchesAuthority(nextRequests, authority)
+    || JSON.stringify(nextRequests.records) !== intent.nextRequestsRaw) return null;
+  const previousEnvelope = parseProjectApprovalEnvelope(intent.previousApprovalsRaw, previousRequests, authority);
+  const nextEnvelope = parseProjectApprovalEnvelope(intent.nextApprovalsRaw, nextRequests, authority);
+  if (!previousEnvelope
+    || !nextEnvelope
+    || JSON.stringify(nextEnvelope) !== intent.nextApprovalsRaw
+    || !projectApprovalMarkerBindingIsValid(previousEnvelope, marker, authority)
+    || !projectApprovalMarkerBindingIsValid(nextEnvelope, marker, authority)) return null;
+  if (nextEnvelope.storeVersion !== previousEnvelope.storeVersion + 1
+    || nextEnvelope.records.length !== previousEnvelope.records.length + 1
+    || nextEnvelope.idempotencyReceipts.length !== previousEnvelope.idempotencyReceipts.length + 1
+    || JSON.stringify(nextEnvelope.records.slice(0, -1)) !== JSON.stringify(previousEnvelope.records)
+    || JSON.stringify(nextEnvelope.idempotencyReceipts.slice(0, -1)) !== JSON.stringify(previousEnvelope.idempotencyReceipts)
+    || JSON.stringify(nextEnvelope.migrationReports) !== JSON.stringify(previousEnvelope.migrationReports)) return null;
+  if (nextRequests.records.length !== previousRequests.records.length
+    || JSON.stringify(nextRequests.records.map((request) => request.id)) !== JSON.stringify(previousRequests.records.map((request) => request.id))) return null;
+  const previousRequestIndex = previousRequests.records.findIndex((request) => request.id === intent.requestId && request.projectId === intent.projectId);
+  if (previousRequestIndex < 0) return null;
+  if (previousRequests.records.some((request, index) => index !== previousRequestIndex && JSON.stringify(request) !== JSON.stringify(nextRequests.records[index]))) return null;
+  const previousRequest = previousRequests.records[previousRequestIndex];
+  const nextRequest = nextRequests.records[previousRequestIndex];
+  const nextApproval = nextEnvelope.records.at(-1)!;
+  const requestReceipt = nextRequest.mutationReceipts.at(-1);
+  const approvalReceipt = nextEnvelope.idempotencyReceipts.at(-1);
+  if (!requestReceipt
+    || !approvalReceipt
+    || nextRequest.projectId !== intent.projectId
+    || nextRequest.version !== previousRequest.version + 1
+    || Date.parse(intent.createdAt) <= Date.parse(previousRequest.updatedAt)
+    || Date.parse(intent.createdAt) <= Date.parse(previousEnvelope.updatedAt)
+    || nextRequest.status !== "ready-for-review"
+    || nextRequest.readyAt !== intent.createdAt
+    || nextRequest.updatedAt !== intent.createdAt
+    || nextRequest.history.length !== previousRequest.history.length + 1
+    || JSON.stringify(nextRequest.history.slice(0, -1)) !== JSON.stringify(previousRequest.history)
+    || nextRequest.history.at(-1)?.type !== "marked-ready-for-review"
+    || nextRequest.history.at(-1)?.version !== nextRequest.version
+    || nextRequest.history.at(-1)?.at !== intent.createdAt
+    || nextRequest.reviewRevisions.length !== previousRequest.reviewRevisions.length + 1
+    || JSON.stringify(nextRequest.reviewRevisions.slice(0, -1)) !== JSON.stringify(previousRequest.reviewRevisions)
+    || nextRequest.reviewRevisions.at(-1)?.requestVersion !== nextRequest.version
+    || nextRequest.reviewRevisions.at(-1)?.createdAt !== intent.createdAt
+    || nextRequest.mutationReceipts.length !== previousRequest.mutationReceipts.length + 1
+    || JSON.stringify(nextRequest.mutationReceipts.slice(0, -1)) !== JSON.stringify(previousRequest.mutationReceipts)
+    || requestReceipt.key !== intent.idempotencyKey
+    || !projectApprovalRequestConfirmationReceiptMatchesRecord(requestReceipt, nextApproval)
+    || requestReceipt.expectedRequestVersion !== previousRequest.version
+    || requestReceipt.recordedAt !== intent.createdAt
+    || nextApproval.id !== intent.approvalId
+    || nextApproval.requestedAt !== intent.createdAt
+    || approvalReceipt.key !== intent.idempotencyKey
+    || approvalReceipt.action !== "confirm-for-recipients"
+    || approvalReceipt.approvalId !== intent.approvalId
+    || approvalReceipt.requestMutationReceiptKey !== requestReceipt.key
+    || approvalReceipt.expectedStoreVersion !== previousEnvelope.storeVersion
+    || approvalReceipt.expectedRequestVersion !== previousRequest.version
+    || approvalReceipt.resultingStoreVersion !== nextEnvelope.storeVersion
+    || approvalReceipt.recordedAt !== intent.createdAt) return null;
+  const { status: _previousStatus, version: _previousVersion, updatedAt: _previousUpdatedAt, readyAt: _previousReadyAt, history: _previousHistory, reviewRevisions: _previousReviewRevisions, mutationReceipts: _previousMutationReceipts, ...previousStableRequest } = previousRequest;
+  const { status: _nextStatus, version: _nextVersion, updatedAt: _nextUpdatedAt, readyAt: _nextReadyAt, history: _nextHistory, reviewRevisions: _nextReviewRevisions, mutationReceipts: _nextMutationReceipts, ...nextStableRequest } = nextRequest;
+  if (JSON.stringify(previousStableRequest) !== JSON.stringify(nextStableRequest)) return null;
+  return { previousRequests, nextRequests, previousEnvelope, nextEnvelope, nextRequest, nextApproval };
+}
+
+function clearProjectApprovalConfirmationIntentAtSnapshot(
+  intentRaw: string,
+  intent: ProjectApprovalConfirmationIntent,
+  getAuthority: () => ProjectTaskAuthority | null,
+) {
+  const currentAuthorityStillAuthorizes = () => projectApprovalConfirmationAuthorityIsValid(intent, getAuthority());
+  const exactCommittedSnapshot = () => window.localStorage.getItem(projectApprovalConfirmationIntentKey) === intentRaw
+    && window.localStorage.getItem(projectPurchaseRequestsStorageKey) === intent.nextRequestsRaw
+    && window.localStorage.getItem(projectApprovalsStorageKey) === intent.nextApprovalsRaw
+    && window.localStorage.getItem(projectApprovalsCutoverMarkerKey) === intent.approvalMarkerRaw
+    && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null
+    && window.localStorage.getItem(procurementDispatchPreconditionIntentKey) === null
+    && currentAuthorityStillAuthorizes();
+  const restoreIntentBlocker = () => {
+    try {
+      if (window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null
+        || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null
+        || window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== intent.nextRequestsRaw
+        || window.localStorage.getItem(projectApprovalsStorageKey) !== intent.nextApprovalsRaw
+        || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== intent.approvalMarkerRaw
+        || !currentAuthorityStillAuthorizes()) return false;
+      window.localStorage.setItem(projectApprovalConfirmationIntentKey, intentRaw);
+      return window.localStorage.getItem(projectApprovalConfirmationIntentKey) === intentRaw;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    if (!exactCommittedSnapshot()) return false;
+    window.localStorage.removeItem(projectApprovalConfirmationIntentKey);
+    if (window.localStorage.getItem(projectApprovalConfirmationIntentKey) === null
+      && window.localStorage.getItem(projectPurchaseRequestsStorageKey) === intent.nextRequestsRaw
+      && window.localStorage.getItem(projectApprovalsStorageKey) === intent.nextApprovalsRaw
+      && window.localStorage.getItem(projectApprovalsCutoverMarkerKey) === intent.approvalMarkerRaw
+      && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null
+      && window.localStorage.getItem(procurementDispatchPreconditionIntentKey) === null
+      && currentAuthorityStillAuthorizes()) return true;
+    restoreIntentBlocker();
+    return false;
+  } catch {
+    restoreIntentBlocker();
+    return false;
+  }
+}
+
+function resumeProjectApprovalConfirmationIntent(intentRaw: string, getAuthority: () => ProjectTaskAuthority | null) {
+  try {
+    const intent = parseProjectApprovalConfirmationIntent(intentRaw);
+    const authority = getAuthority();
+    if (!intent || !projectApprovalConfirmationAuthorityIsValid(intent, authority)) return false;
+    const candidates = projectApprovalConfirmationIntentCandidates(intent, authority);
+    if (!candidates
+      || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== intentRaw
+      || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== intent.approvalMarkerRaw
+      || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null
+      || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null
+      || !projectApprovalConfirmationAuthorityIsValid(intent, getAuthority())) return false;
+    const currentRequestsRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    const currentApprovalsRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+    const phase = currentRequestsRaw === intent.previousRequestsRaw && currentApprovalsRaw === intent.previousApprovalsRaw
+      ? "prepared"
+      : currentRequestsRaw === intent.nextRequestsRaw && currentApprovalsRaw === intent.previousApprovalsRaw
+        ? "request-written"
+        : currentRequestsRaw === intent.nextRequestsRaw && currentApprovalsRaw === intent.nextApprovalsRaw
+          ? "committed"
+          : "invalid";
+    if (phase === "invalid") return false;
+    if (phase === "prepared") {
+      window.localStorage.setItem(projectPurchaseRequestsStorageKey, intent.nextRequestsRaw);
+      if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== intent.nextRequestsRaw
+        || window.localStorage.getItem(projectApprovalsStorageKey) !== intent.previousApprovalsRaw
+        || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== intentRaw
+        || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== intent.approvalMarkerRaw
+        || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null
+        || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null
+        || !projectApprovalConfirmationAuthorityIsValid(intent, getAuthority())) return false;
+    }
+    if (phase === "prepared" || phase === "request-written") {
+      window.localStorage.setItem(projectApprovalsStorageKey, intent.nextApprovalsRaw);
+      if (window.localStorage.getItem(projectApprovalsStorageKey) !== intent.nextApprovalsRaw) return false;
+    }
+    const afterAuthority = getAuthority();
+    if (!projectApprovalConfirmationAuthorityIsValid(intent, afterAuthority)
+      || window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== intent.nextRequestsRaw
+      || window.localStorage.getItem(projectApprovalsStorageKey) !== intent.nextApprovalsRaw
+      || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== intent.approvalMarkerRaw
+      || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== intentRaw
+      || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null
+      || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null
+      || !projectApprovalConfirmationIntentCandidates(intent, afterAuthority)) return false;
+    return clearProjectApprovalConfirmationIntentAtSnapshot(intentRaw, intent, getAuthority);
+  } catch {
+    return false;
+  }
+}
+
+function finalizeProcurementDispatchPreconditionIntent(intent: Omit<ProcurementDispatchPreconditionIntent, "fingerprint">): ProcurementDispatchPreconditionIntent {
+  return { ...intent, fingerprint: projectApprovalValueHash(intent) };
+}
+
+function parseProcurementDispatchPreconditionIntent(raw: string | null): ProcurementDispatchPreconditionIntent | null {
+  if (raw === null) return null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (!hasExactObjectKeys(value, ["schemaVersion", "operation", "id", "checkpointKey", "checkpointFingerprint", "projectId", "requestId", "approvalId", "previousRequestsRaw", "nextRequestsRaw", "previousApprovalsRaw", "nextApprovalsRaw", "approvalMarkerRaw", "authoritySnapshotHash", "authorizationContextHash", "createdAt", "fingerprint"])) return null;
+    const intent = value as ProcurementDispatchPreconditionIntent;
+    const { fingerprint: _fingerprint, ...payload } = intent;
+    if (intent.schemaVersion !== 1
+      || intent.operation !== "pin-procurement-dispatch-precondition"
+      || intent.id !== `procurement-dispatch-precondition-intent:${memoryCoreSha256(intent.checkpointKey)}`
+      || typeof intent.checkpointKey !== "string" || !intent.checkpointKey || intent.checkpointKey.length > 200 || intent.checkpointKey.trim() !== intent.checkpointKey
+      || !/^sha256-[0-9a-f]{64}$/.test(intent.checkpointFingerprint)
+      || typeof intent.projectId !== "string" || !intent.projectId || intent.projectId.trim() !== intent.projectId
+      || typeof intent.requestId !== "string" || !intent.requestId || intent.requestId.trim() !== intent.requestId
+      || typeof intent.approvalId !== "string" || !intent.approvalId || intent.approvalId.trim() !== intent.approvalId
+      || typeof intent.previousRequestsRaw !== "string" || typeof intent.nextRequestsRaw !== "string" || intent.previousRequestsRaw === intent.nextRequestsRaw
+      || typeof intent.previousApprovalsRaw !== "string" || typeof intent.nextApprovalsRaw !== "string" || intent.previousApprovalsRaw === intent.nextApprovalsRaw
+      || typeof intent.approvalMarkerRaw !== "string" || !intent.approvalMarkerRaw
+      || !/^sha256-[0-9a-f]{64}$/.test(intent.authoritySnapshotHash)
+      || !/^sha256-[0-9a-f]{64}$/.test(intent.authorizationContextHash)
+      || !isValidProjectFileDate(intent.createdAt)
+      || intent.fingerprint !== projectApprovalValueHash(payload)) return null;
+    return intent;
+  } catch { return null; }
+}
+
+function procurementDispatchPreconditionIntentCandidates(intent: ProcurementDispatchPreconditionIntent, authority: ProjectTaskAuthority) {
+  const marker = parseProjectApprovalMarker(intent.approvalMarkerRaw);
+  if (!marker || marker.state !== "committed" || !projectPurchaseRequestAuthorityIsValid(authority) || authority.snapshotHash !== intent.authoritySnapshotHash || authority.authorizationHashes[intent.projectId] !== intent.authorizationContextHash) return null;
+  const previousRequests = parseStoredProjectPurchaseRequests(intent.previousRequestsRaw);
+  const nextRequests = parseStoredProjectPurchaseRequests(intent.nextRequestsRaw);
+  if (!projectPurchaseRequestReadMatchesAuthority(previousRequests, authority) || !projectPurchaseRequestReadMatchesAuthority(nextRequests, authority) || JSON.stringify(nextRequests.records) !== intent.nextRequestsRaw) return null;
+  const previousEnvelope = parseProjectApprovalEnvelope(intent.previousApprovalsRaw, previousRequests, authority);
+  const nextEnvelope = parseProjectApprovalEnvelope(intent.nextApprovalsRaw, nextRequests, authority);
+  if (!previousEnvelope || !nextEnvelope || JSON.stringify(nextEnvelope) !== intent.nextApprovalsRaw || !projectApprovalMarkerBindingIsValid(previousEnvelope, marker, authority) || !projectApprovalMarkerBindingIsValid(nextEnvelope, marker, authority)) return null;
+  const requestIndex = previousRequests.records.findIndex((request) => request.id === intent.requestId && request.projectId === intent.projectId);
+  if (requestIndex < 0) return null;
+  const previousRequest = previousRequests.records[requestIndex];
+  const nextRequest = nextRequests.records[requestIndex];
+  if (!nextRequest) return null;
+  const requestPin = nextRequest.mutationReceipts.at(-1);
+  const approvalPin = nextEnvelope.idempotencyReceipts.at(-1);
+  const approval = previousEnvelope.records.find((record) => record.id === intent.approvalId && record.projectId === intent.projectId && record.target.id === intent.requestId);
+  const currentRequestRevision = previousRequest.reviewRevisions.find((revision) => revision.requestVersion === previousRequest.version);
+  const currentApprovalRevision = approval?.revisions.find((revision) => revision.id === approval.currentRevisionId && revision.version === approval.version);
+  if (!approval || !currentRequestRevision || !currentApprovalRevision
+    || previousRequest.status !== "ready-for-review"
+    || approval.status !== "approved"
+    || approval.target.version !== previousRequest.version
+    || approval.target.revisionId !== currentRequestRevision.id
+    || approval.target.revisionFingerprint !== currentRequestRevision.fingerprint
+    || nextRequest.version !== previousRequest.version
+    || nextRequest.status !== previousRequest.status
+    || nextRequest.updatedAt !== previousRequest.updatedAt
+    || nextRequest.mutationReceipts.length !== previousRequest.mutationReceipts.length + 1
+    || JSON.stringify(nextRequest.mutationReceipts.slice(0, -1)) !== JSON.stringify(previousRequest.mutationReceipts)
+    || !requestPin || requestPin.action !== "pin-procurement-dispatch-precondition"
+    || !approvalPin || approvalPin.action !== "pin-procurement-dispatch-precondition"
+    || requestPin.key !== intent.checkpointKey || approvalPin.key !== intent.checkpointKey
+    || requestPin.payloadHash !== intent.checkpointFingerprint || approvalPin.payloadHash !== intent.checkpointFingerprint
+    || requestPin.checkpoint.fingerprint !== intent.checkpointFingerprint
+    || JSON.stringify(requestPin.checkpoint) !== JSON.stringify(approvalPin.checkpoint)
+    || requestPin.checkpoint.requestHead.receiptPosition !== previousRequest.mutationReceipts.length + 1
+    || requestPin.checkpoint.approvalHead.expectedStoreVersion !== previousEnvelope.storeVersion
+    || requestPin.checkpoint.approvalHead.resultingStoreVersion !== nextEnvelope.storeVersion
+    || requestPin.checkpoint.recordedAt !== intent.createdAt
+    || nextEnvelope.updatedAt !== intent.createdAt) return null;
+  const expectedNextRequests = previousRequests.records.map((request, index) => index === requestIndex
+    ? { ...previousRequest, mutationReceipts: [...previousRequest.mutationReceipts, requestPin] }
+    : request);
+  const expectedNextEnvelope = finalizeProjectApprovalEnvelope({
+    ...previousEnvelope,
+    storeVersion: previousEnvelope.storeVersion + 1,
+    idempotencyReceipts: [...previousEnvelope.idempotencyReceipts, approvalPin],
+    updatedAt: intent.createdAt,
+  });
+  if (JSON.stringify(nextRequests.records) !== JSON.stringify(expectedNextRequests)
+    || JSON.stringify(nextEnvelope) !== JSON.stringify(expectedNextEnvelope)) return null;
+  return { previousRequests, nextRequests, previousEnvelope, nextEnvelope, checkpoint: requestPin.checkpoint };
+}
+
+function resumeProcurementDispatchPreconditionIntent(intentRaw: string, getAuthority: () => ProjectTaskAuthority | null) {
+  try {
+    const intent = parseProcurementDispatchPreconditionIntent(intentRaw);
+    const authority = getAuthority();
+    if (!intent || !projectPurchaseRequestAuthorityIsValid(authority) || !procurementDispatchPreconditionIntentCandidates(intent, authority) || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== intentRaw || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== intent.approvalMarkerRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null) return false;
+    const requestRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    const approvalRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+    const phase = requestRaw === intent.previousRequestsRaw && approvalRaw === intent.previousApprovalsRaw ? "prepared" : requestRaw === intent.nextRequestsRaw && approvalRaw === intent.previousApprovalsRaw ? "request-written" : requestRaw === intent.nextRequestsRaw && approvalRaw === intent.nextApprovalsRaw ? "committed" : "invalid";
+    if (phase === "invalid") return false;
+    if (phase === "prepared") {
+      window.localStorage.setItem(projectPurchaseRequestsStorageKey, intent.nextRequestsRaw);
+      if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== intent.nextRequestsRaw || window.localStorage.getItem(projectApprovalsStorageKey) !== intent.previousApprovalsRaw || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== intentRaw) return false;
+    }
+    if (phase !== "committed") {
+      window.localStorage.setItem(projectApprovalsStorageKey, intent.nextApprovalsRaw);
+      if (window.localStorage.getItem(projectApprovalsStorageKey) !== intent.nextApprovalsRaw) return false;
+    }
+    const afterAuthority = getAuthority();
+    if (!projectPurchaseRequestAuthorityIsValid(afterAuthority) || afterAuthority.snapshotHash !== intent.authoritySnapshotHash || !procurementDispatchPreconditionIntentCandidates(intent, afterAuthority) || window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== intent.nextRequestsRaw || window.localStorage.getItem(projectApprovalsStorageKey) !== intent.nextApprovalsRaw || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== intentRaw) return false;
+    window.localStorage.removeItem(procurementDispatchPreconditionIntentKey);
+    return window.localStorage.getItem(procurementDispatchPreconditionIntentKey) === null && window.localStorage.getItem(projectPurchaseRequestsStorageKey) === intent.nextRequestsRaw && window.localStorage.getItem(projectApprovalsStorageKey) === intent.nextApprovalsRaw;
+  } catch { return false; }
+}
+
+type ProjectApprovalMigrationCandidate = {
+  requestSourceRaw: string | null;
+  requestCandidateRaw: string | null;
+  requestRecords: ProjectPurchaseRequestRecord[];
+  canonicalRaw: string;
+  envelope: ProjectApprovalEnvelope;
+};
+
+function canonicalProjectApprovalRequestCandidate(
+  requestSourceRaw: string | null,
+  originalRecords: ProjectPurchaseRequestRecord[],
+  normalizedRecords: ProjectPurchaseRequestRecord[],
+): { raw: string | null; records: ProjectPurchaseRequestRecord[] } | null {
+  if (JSON.stringify(normalizedRecords) === JSON.stringify(originalRecords)) {
+    return { raw: requestSourceRaw, records: originalRecords };
+  }
+  const normalizedRead = parseStoredProjectPurchaseRequests(JSON.stringify(normalizedRecords));
+  if (normalizedRead.readError) return null;
+  const canonicalRaw = JSON.stringify(normalizedRead.records);
+  const canonicalRead = parseStoredProjectPurchaseRequests(canonicalRaw);
+  if (canonicalRead.readError || JSON.stringify(canonicalRead.records) !== canonicalRaw) return null;
+  return { raw: canonicalRaw, records: canonicalRead.records };
+}
+
+type PreparedProjectApprovalLegacySource = {
+  records: LegacyProjectApprovalRecord[];
+  requestRecords: ProjectPurchaseRequestRecord[];
+  orphanConfirmationRollbacks: ProjectApprovalOrphanConfirmationRollback[];
+};
+
+function rollbackBgF3OrphanConfirmation(
+  request: ProjectPurchaseRequestRecord,
+  receipt: PurchaseRequestMutationReceipt,
+  authority: ProjectTaskAuthority,
+): { request: ProjectPurchaseRequestRecord; evidence: ProjectApprovalOrphanConfirmationRollback } | null {
+  const removedHistoryEvent = request.history.at(-1);
+  const removedReviewRevision = request.reviewRevisions.at(-1);
+  const previousHistoryEvent = request.history.at(-2);
+  if (request.status !== "ready-for-review"
+    || request.version < 2
+    || request.readyAt !== request.updatedAt
+    || request.updatedAt !== receipt.recordedAt
+    || request.mutationReceipts.at(-1)?.key !== receipt.key
+    || receipt.action !== "confirm-for-recipients"
+    || receipt.projectId !== request.projectId
+    || receipt.requestId !== request.id
+    || receipt.expectedRequestVersion !== request.version - 1
+    || receipt.resultingRequestVersion !== request.version
+    || receipt.relatedApprovalId !== purchaseRequestApprovalIdForConfirmationKey(receipt.key)
+    || receipt.authorizationContextHash !== authority.authorizationHashes[request.projectId]
+    || receipt.payloadHash !== purchaseRequestCommandPayloadHash({ inputSchemaVersion: 1, action: "confirm-for-recipients", projectId: request.projectId, requestId: request.id, expectedRequestVersion: receipt.expectedRequestVersion, idempotencyKey: receipt.key })
+    || !removedHistoryEvent
+    || removedHistoryEvent.type !== "marked-ready-for-review"
+    || removedHistoryEvent.version !== request.version
+    || removedHistoryEvent.at !== receipt.recordedAt
+    || !removedReviewRevision
+    || removedReviewRevision.requestVersion !== request.version
+    || removedReviewRevision.createdAt !== receipt.recordedAt
+    || !previousHistoryEvent
+    || previousHistoryEvent.version !== request.version - 1) return null;
+  const candidate: ProjectPurchaseRequestRecord = {
+    ...structuredClone(request),
+    status: "draft",
+    version: request.version - 1,
+    updatedAt: previousHistoryEvent.at,
+    readyAt: null,
+    history: structuredClone(request.history.slice(0, -1)),
+    reviewRevisions: structuredClone(request.reviewRevisions.slice(0, -1)),
+    mutationReceipts: structuredClone(request.mutationReceipts.slice(0, -1)),
+  };
+  const candidateRaw = JSON.stringify([candidate]);
+  const candidateRead = parseStoredProjectPurchaseRequests(candidateRaw);
+  if (candidateRead.readError || candidateRead.records.length !== 1 || JSON.stringify(candidateRead.records[0]) !== JSON.stringify(candidate) || !projectPurchaseRequestReadMatchesAuthority(candidateRead, authority)) return null;
+  const evidence = finalizeProjectApprovalOrphanConfirmationRollback({
+    schemaVersion: 1,
+    kind: "bg-f3-orphan-confirmation-rollback-v1",
+    projectId: request.projectId,
+    requestId: request.id,
+    approvalId: receipt.relatedApprovalId,
+    sourceRequestVersion: request.version,
+    candidateRequestVersion: candidate.version,
+    sourceRequestRecordHash: projectApprovalValueHash(request),
+    candidateRequestRecordHash: projectApprovalValueHash(candidate),
+    candidateRequestRecord: structuredClone(candidate),
+    removedHistoryEvent: structuredClone(removedHistoryEvent),
+    removedReviewRevision: structuredClone(removedReviewRevision),
+    removedReceipt: structuredClone(receipt),
+  });
+  return parseProjectApprovalOrphanConfirmationRollback(evidence) ? { request: candidateRead.records[0], evidence } : null;
+}
+
+function prepareProjectApprovalLegacySource(
+  legacyRaw: string | null,
+  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+  authority: ProjectTaskAuthority,
+): PreparedProjectApprovalLegacySource | null {
+  const direct = parseLegacyStoredProjectApprovals(legacyRaw, purchaseRequests);
+  if (!direct.readError) return { records: direct.records, requestRecords: purchaseRequests.records, orphanConfirmationRollbacks: [] };
+  const recoveries: PreparedProjectApprovalLegacySource[] = [];
+  for (const request of purchaseRequests.records) {
+    for (const receipt of request.mutationReceipts.filter(purchaseRequestReceiptIsConfirmation)) {
+      const rollback = rollbackBgF3OrphanConfirmation(request, receipt, authority);
+      if (!rollback) continue;
+      const candidateRecords = purchaseRequests.records.map((candidate) => candidate.id === request.id ? rollback.request : structuredClone(candidate));
+      const candidateRaw = JSON.stringify(candidateRecords);
+      const candidateRead = parseStoredProjectPurchaseRequests(candidateRaw);
+      if (candidateRead.readError || JSON.stringify(candidateRead.records) !== candidateRaw || !projectPurchaseRequestReadMatchesAuthority(candidateRead, authority)) continue;
+      const legacyRead = parseLegacyStoredProjectApprovals(legacyRaw, candidateRead);
+      if (legacyRead.readError
+        || legacyRead.records.some((record) => record.id === rollback.evidence.approvalId || record.dedupeKey === purchaseRequestApprovalDedupeKey(rollback.evidence.projectId, rollback.evidence.requestId, rollback.evidence.sourceRequestVersion))) continue;
+      recoveries.push({ records: legacyRead.records, requestRecords: candidateRead.records, orphanConfirmationRollbacks: [rollback.evidence] });
+    }
+  }
+  return recoveries.length === 1 ? recoveries[0] : null;
+}
+
+function projectApprovalMigrationSourceStillMatches(marker: Pick<ProjectApprovalPendingMarker, "sourceGeneration" | "sourceRawHash">) {
+  const legacyRaw = window.localStorage.getItem(legacyProjectApprovalsStorageKey);
+  return marker.sourceGeneration === "v1-array" ? projectFoundationRawHash(legacyRaw) === marker.sourceRawHash : legacyRaw === null;
+}
+
+function buildProjectApprovalMigrationEnvelope(
+  marker: Pick<ProjectApprovalPendingMarker, "migrationId" | "sourceGeneration" | "sourceKey" | "sourceRawHash" | "requestSourceRawHash" | "requestCandidateRawHash" | "migrationAt">,
+  legacyRecords: LegacyProjectApprovalRecord[],
+  sourceValues: unknown[],
+  requestRecords: ProjectPurchaseRequestRecord[],
+  authority: ProjectTaskAuthority,
+  orphanConfirmationRollbacks: ProjectApprovalOrphanConfirmationRollback[],
+): ProjectApprovalEnvelope | null {
+  if (legacyRecords.length !== sourceValues.length) return null;
+  const records = legacyRecords.map((record, index) => migratedProjectApprovalRecord(record, sourceValues[index], index, authority, requestRecords));
+  if (records.some((record) => record === null)) return null;
+  const exactRecords = records as ProjectApprovalRecord[];
+  const report = finalizeProjectApprovalMigrationReport({
+    schemaVersion: 1,
+    id: `request-content-approval-migration-report:${marker.migrationId}`,
+    sourceGeneration: marker.sourceGeneration,
+    sourceKey: marker.sourceKey,
+    sourceRawHash: marker.sourceRawHash,
+    requestSourceRawHash: marker.requestSourceRawHash,
+    requestCandidateRawHash: marker.requestCandidateRawHash,
+    migratedAt: marker.migrationAt,
+    recordCount: exactRecords.length,
+    migratedRecordFingerprints: exactRecords.map((record) => record.fingerprint),
+    orphanConfirmationRollbacks: structuredClone(orphanConfirmationRollbacks),
+  });
+  return finalizeProjectApprovalEnvelope({
+    schemaVersion: 2,
+    fingerprintVersion: "request-content-approval-domain-v1",
+    storeVersion: 1,
+    records: exactRecords,
+    idempotencyReceipts: [],
+    migrationReports: [report],
+    updatedAt: marker.migrationAt,
+  });
+}
+
+function prepareProjectApprovalMigrationCandidate(
+  marker: ProjectApprovalPendingMarker | ProjectApprovalVerifiedMarker,
+  authority: ProjectTaskAuthority,
+): ProjectApprovalMigrationCandidate | null {
+  try {
+    if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null || !projectApprovalMigrationSourceStillMatches(marker)) return null;
+    const requestSourceRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    const requestSourceHash = projectFoundationRawHash(requestSourceRaw);
+    if (requestSourceHash !== marker.requestSourceRawHash && requestSourceHash !== marker.requestCandidateRawHash) return null;
+    const requestRead = parseStoredProjectPurchaseRequests(requestSourceRaw);
+    if (!projectPurchaseRequestReadMatchesAuthority(requestRead, authority)) return null;
+    const originalRequestRecords = structuredClone(requestRead.records);
+    const normalizedRequestRead: LocalRecordsReadResult<ProjectPurchaseRequestRecord> = { records: structuredClone(requestRead.records), readError: false };
+    const legacyRaw = marker.sourceGeneration === "v1-array" ? window.localStorage.getItem(legacyProjectApprovalsStorageKey) : null;
+    const sourceValues = legacyRaw === null ? [] : JSON.parse(legacyRaw) as unknown;
+    if (!Array.isArray(sourceValues)) return null;
+    if (requestSourceHash === marker.requestCandidateRawHash && requestSourceHash !== marker.requestSourceRawHash) {
+      const existingCanonicalRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+      const existingEnvelope = parseProjectApprovalEnvelope(existingCanonicalRaw, requestRead, authority);
+      const existingReport = existingEnvelope?.migrationReports[0];
+      const migratedRecords = existingEnvelope?.records.filter((record) => record.legacyEvidence !== null) ?? [];
+      if (!existingCanonicalRaw
+        || !existingEnvelope
+        || !existingReport
+        || existingEnvelope.storeVersion !== 1
+        || existingReport.id !== `request-content-approval-migration-report:${marker.migrationId}`
+        || existingReport.sourceGeneration !== marker.sourceGeneration
+        || existingReport.sourceKey !== marker.sourceKey
+        || existingReport.sourceRawHash !== marker.sourceRawHash
+        || existingReport.requestSourceRawHash !== marker.requestSourceRawHash
+        || existingReport.requestCandidateRawHash !== marker.requestCandidateRawHash
+        || existingReport.migratedAt !== marker.migrationAt
+        || migratedRecords.length !== sourceValues.length
+        || migratedRecords.some((record, index) => record.legacyEvidence?.sourceRecordHash !== projectApprovalValueHash(sourceValues[index]))) return null;
+      return { requestSourceRaw, requestCandidateRaw: requestSourceRaw, requestRecords: requestRead.records, canonicalRaw: existingCanonicalRaw, envelope: existingEnvelope };
+    }
+    const prepared = prepareProjectApprovalLegacySource(legacyRaw, normalizedRequestRead, authority);
+    if (!prepared || prepared.records.length !== sourceValues.length) return null;
+    normalizedRequestRead.records = prepared.requestRecords;
+    const requestCandidate = canonicalProjectApprovalRequestCandidate(requestSourceRaw, originalRequestRecords, normalizedRequestRead.records);
+    if (!requestCandidate || projectFoundationRawHash(requestCandidate.raw) !== marker.requestCandidateRawHash) return null;
+    const envelope = buildProjectApprovalMigrationEnvelope(marker, prepared.records, sourceValues, requestCandidate.records, authority, prepared.orphanConfirmationRollbacks);
+    if (!envelope) return null;
+    const canonicalRaw = JSON.stringify(envelope);
+    const parsedEnvelope = parseProjectApprovalEnvelope(canonicalRaw, { records: requestCandidate.records, readError: false }, authority);
+    if (!parsedEnvelope || parsedEnvelope.fingerprint !== envelope.fingerprint) return null;
+    return { requestSourceRaw, requestCandidateRaw: requestCandidate.raw, requestRecords: requestCandidate.records, canonicalRaw, envelope };
+  } catch {
+    return null;
+  }
+}
+
+function commitVerifiedProjectApprovalMarker(
+  marker: ProjectApprovalVerifiedMarker,
+  expectedMarkerRaw: string,
+  getAuthority: () => ProjectTaskAuthority | null,
+): ProjectApprovalState {
+  try {
+    const authority = getAuthority();
+    if (!projectPurchaseRequestAuthorityIsValid(authority) || authority.identityBindingHash !== marker.identityBindingHash) return { status: "read-error", envelope: null, reason: "verified-authority-invalid" };
+    const canonicalRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+    const requestRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    const requestRead = parseStoredProjectPurchaseRequests(requestRaw);
+    const envelope = parseProjectApprovalEnvelope(canonicalRaw, requestRead, authority);
+    if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== expectedMarkerRaw || !canonicalRaw || projectFoundationRawHash(canonicalRaw) !== marker.initialCanonicalHash || !projectPurchaseRequestReadMatchesAuthority(requestRead, authority) || !envelope || envelope.storeVersion !== 1 || !projectApprovalMarkerBindingIsValid(envelope, marker, authority)) return { status: "read-error", envelope: null, reason: "verified-binding-invalid" };
+    const committed = finalizeProjectApprovalMarker({
+      schemaVersion: 1,
+      state: "committed",
+      migrationId: marker.migrationId,
+      sourceGeneration: marker.sourceGeneration,
+      sourceKey: marker.sourceKey,
+      sourceRawHash: marker.sourceRawHash,
+      requestSourceRawHash: marker.requestSourceRawHash,
+      requestCandidateRawHash: marker.requestCandidateRawHash,
+      migrationAt: marker.migrationAt,
+      identityBindingHash: marker.identityBindingHash,
+      initialStoreVersion: 1,
+      initialCanonicalHash: marker.initialCanonicalHash,
+      migrationReportHash: marker.migrationReportHash,
+      committedAt: marker.verifiedAt,
+    }) as ProjectApprovalCommittedMarker;
+    const committedRaw = JSON.stringify(committed);
+    const publishAuthority = getAuthority();
+    if (!projectPurchaseRequestAuthorityIsValid(publishAuthority) || publishAuthority.snapshotHash !== authority.snapshotHash || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== expectedMarkerRaw || window.localStorage.getItem(projectApprovalsStorageKey) !== canonicalRaw || window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== requestRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { status: "read-error", envelope: null, reason: "verified-preimage-changed" };
+    // `verified` already records the exact legacy-source cutover. Publishing
+    // `committed` validates only current canonical/dependency/authority bytes;
+    // v1 is deliberately no longer consulted or allowed to regain authority.
+    window.localStorage.setItem(projectApprovalsCutoverMarkerKey, committedRaw);
+    const afterAuthority = getAuthority();
+    const readbackRequestRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    const readbackRequest = parseStoredProjectPurchaseRequests(readbackRequestRaw);
+    const readbackCanonicalRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+    const readbackEnvelope = projectPurchaseRequestAuthorityIsValid(afterAuthority) && projectPurchaseRequestReadMatchesAuthority(readbackRequest, afterAuthority) ? parseProjectApprovalEnvelope(readbackCanonicalRaw, readbackRequest, afterAuthority) : null;
+    if (window.localStorage.getItem(projectApprovalsCutoverMarkerKey) === committedRaw && window.localStorage.getItem(projectApprovalConfirmationIntentKey) === null && window.localStorage.getItem(procurementDispatchPreconditionIntentKey) === null && afterAuthority?.snapshotHash === authority.snapshotHash && readbackRequestRaw === requestRaw && readbackCanonicalRaw === canonicalRaw && readbackEnvelope && projectApprovalMarkerBindingIsValid(readbackEnvelope, committed, afterAuthority)) return { status: "ready", envelope: readbackEnvelope, reason: "" };
+    return { status: "read-error", envelope: null, reason: "commit-readback-failure" };
+  } catch {
+    return { status: "read-error", envelope: null, reason: "commit-write-failure" };
+  }
+}
+
+function writeProjectApprovalMigrationCandidate(
+  marker: ProjectApprovalPendingMarker,
+  expectedMarkerRaw: string,
+  getAuthority: () => ProjectTaskAuthority | null,
+): ProjectApprovalState {
+  let previousRequestRaw: string | null = null;
+  let previousCanonicalRaw: string | null = null;
+  let requestCandidateRaw: string | null = null;
+  let canonicalCandidateRaw: string | null = null;
+  let requestWritten = false;
+  let canonicalWritten = false;
+  const rollbackPendingCandidates = () => {
+    const requestRolledBack = !requestWritten || restoreOwnedProjectPurchaseRequestBytes(projectPurchaseRequestsStorageKey, previousRequestRaw, requestCandidateRaw);
+    const canonicalRolledBack = !canonicalWritten || requestRolledBack && canonicalCandidateRaw !== null && restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousCanonicalRaw, canonicalCandidateRaw);
+    return requestRolledBack && canonicalRolledBack;
+  };
+  try {
+    const authority = getAuthority();
+    if (!projectPurchaseRequestAuthorityIsValid(authority) || authority.identityBindingHash !== marker.identityBindingHash || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== expectedMarkerRaw) return { status: "read-error", envelope: null, reason: "migration-preimage-changed" };
+    const migration = prepareProjectApprovalMigrationCandidate(marker, authority);
+    if (!migration) return { status: "read-error", envelope: null, reason: "migration-source-invalid" };
+    previousRequestRaw = migration.requestSourceRaw;
+    requestCandidateRaw = migration.requestCandidateRaw;
+    previousCanonicalRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+    canonicalCandidateRaw = migration.canonicalRaw;
+    if (previousCanonicalRaw !== null && previousCanonicalRaw !== canonicalCandidateRaw) return { status: "read-error", envelope: null, reason: "migration-candidate-conflict" };
+    if (previousCanonicalRaw === null) {
+      window.localStorage.setItem(projectApprovalsStorageKey, canonicalCandidateRaw);
+      canonicalWritten = true;
+    }
+    if (window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== expectedMarkerRaw || window.localStorage.getItem(projectApprovalsStorageKey) !== canonicalCandidateRaw || window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== previousRequestRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null || getAuthority()?.snapshotHash !== authority.snapshotHash || !projectApprovalMigrationSourceStillMatches(marker)) {
+      rollbackPendingCandidates();
+      return { status: "read-error", envelope: null, reason: "request-candidate-preimage-changed" };
+    }
+    if (previousRequestRaw !== requestCandidateRaw) {
+      window.localStorage.setItem(projectPurchaseRequestsStorageKey, requestCandidateRaw!);
+      requestWritten = true;
+    }
+    const afterCandidateAuthority = getAuthority();
+    const requestReadbackRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    const requestReadback = parseStoredProjectPurchaseRequests(requestReadbackRaw);
+    const canonicalReadbackRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+    const canonicalReadback = projectPurchaseRequestAuthorityIsValid(afterCandidateAuthority) ? parseProjectApprovalEnvelope(canonicalReadbackRaw, requestReadback, afterCandidateAuthority) : null;
+    if (afterCandidateAuthority?.snapshotHash !== authority.snapshotHash || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== expectedMarkerRaw || requestReadbackRaw !== requestCandidateRaw || canonicalReadbackRaw !== canonicalCandidateRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null || !projectApprovalMigrationSourceStillMatches(marker) || !canonicalReadback) {
+      return { status: "read-error", envelope: null, reason: rollbackPendingCandidates() ? "candidate-readback-failure" : "candidate-rollback-uncertain" };
+    }
+    const verified = finalizeProjectApprovalMarker({
+      schemaVersion: 1,
+      state: "verified",
+      migrationId: marker.migrationId,
+      sourceGeneration: marker.sourceGeneration,
+      sourceKey: marker.sourceKey,
+      sourceRawHash: marker.sourceRawHash,
+      requestSourceRawHash: marker.requestSourceRawHash,
+      requestCandidateRawHash: marker.requestCandidateRawHash,
+      migrationAt: marker.migrationAt,
+      identityBindingHash: marker.identityBindingHash,
+      initialStoreVersion: 1,
+      initialCanonicalHash: projectFoundationRawHash(canonicalCandidateRaw)!,
+      migrationReportHash: migration.envelope.migrationReports[0].fingerprint,
+      verifiedAt: marker.migrationAt,
+    }) as ProjectApprovalVerifiedMarker;
+    const verifiedRaw = JSON.stringify(verified);
+    const cutoverAuthority = getAuthority();
+    if (!projectPurchaseRequestAuthorityIsValid(cutoverAuthority) || cutoverAuthority.snapshotHash !== authority.snapshotHash || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== expectedMarkerRaw || window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== requestCandidateRaw || window.localStorage.getItem(projectApprovalsStorageKey) !== canonicalCandidateRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null || !projectApprovalMigrationSourceStillMatches(marker)) return { status: "read-error", envelope: null, reason: rollbackPendingCandidates() ? "verified-preimage-changed" : "candidate-rollback-uncertain" };
+    window.localStorage.setItem(projectApprovalsCutoverMarkerKey, verifiedRaw);
+    const verifiedReadbackRaw = window.localStorage.getItem(projectApprovalsCutoverMarkerKey);
+    if (verifiedReadbackRaw === verifiedRaw) return commitVerifiedProjectApprovalMarker(verified, verifiedRaw, getAuthority);
+    if (verifiedReadbackRaw === expectedMarkerRaw) return { status: "read-error", envelope: null, reason: rollbackPendingCandidates() ? "verified-write-failure" : "candidate-rollback-uncertain" };
+    return { status: "read-error", envelope: null, reason: "verified-write-uncertain" };
+  } catch {
+    try {
+      const currentMarkerRaw = window.localStorage.getItem(projectApprovalsCutoverMarkerKey);
+      const currentMarker = parseProjectApprovalMarker(currentMarkerRaw);
+      if (currentMarkerRaw && currentMarker?.state === "verified" && currentMarker.migrationId === marker.migrationId) return commitVerifiedProjectApprovalMarker(currentMarker, currentMarkerRaw, getAuthority);
+      if (currentMarkerRaw === expectedMarkerRaw) return { status: "read-error", envelope: null, reason: rollbackPendingCandidates() ? "migration-write-failure" : "candidate-rollback-uncertain" };
+      return { status: "read-error", envelope: null, reason: "migration-write-uncertain" };
+    } catch {
+      return { status: "read-error", envelope: null, reason: "migration-write-uncertain" };
+    }
+  }
+}
+
+async function initializeProjectApprovals(getAuthority: () => ProjectTaskAuthority | null): Promise<ProjectApprovalState> {
+  return withProjectPurchaseRequestsWriteLock<ProjectApprovalState>({ status: "read-error", envelope: null, reason: "lock-unavailable" }, () => {
+    try {
+      const authority = getAuthority();
+      if (!projectPurchaseRequestAuthorityIsValid(authority)) return { status: "read-error", envelope: null, reason: "foundation-invalid" };
+      if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) return { status: "read-error", envelope: null, reason: "request-recovery-pending" };
+      const checkpointIntentRaw = window.localStorage.getItem(procurementDispatchPreconditionIntentKey);
+      if (checkpointIntentRaw !== null && !resumeProcurementDispatchPreconditionIntent(checkpointIntentRaw, getAuthority)) return { status: "read-error", envelope: null, reason: "dispatch-precondition-recovery-failed" };
+      const confirmationIntentRaw = window.localStorage.getItem(projectApprovalConfirmationIntentKey);
+      if (confirmationIntentRaw !== null && !resumeProjectApprovalConfirmationIntent(confirmationIntentRaw, getAuthority)) return { status: "read-error", envelope: null, reason: "request-confirmation-recovery-failed" };
+      const markerRaw = window.localStorage.getItem(projectApprovalsCutoverMarkerKey);
+      const canonicalRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+      if (markerRaw !== null) {
+        const marker = parseProjectApprovalMarker(markerRaw);
+        if (!marker || marker.identityBindingHash !== authority.identityBindingHash) return { status: "read-error", envelope: null, reason: "marker-invalid" };
+        if (marker.state === "committed") {
+          const requestRead = readStoredProjectPurchaseRequests();
+          const envelope = parseProjectApprovalEnvelope(canonicalRaw, requestRead, authority);
+          return canonicalRaw && envelope && projectApprovalMarkerBindingIsValid(envelope, marker, authority) ? { status: "ready", envelope, reason: "" } : { status: "read-error", envelope: null, reason: "canonical-invalid" };
+        }
+        if (marker.state === "verified") return commitVerifiedProjectApprovalMarker(marker, markerRaw, getAuthority);
+        return writeProjectApprovalMigrationCandidate(marker, markerRaw, getAuthority);
+      }
+      if (canonicalRaw !== null) return { status: "read-error", envelope: null, reason: "marker-missing" };
+      const requestRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+      const requestRead = parseStoredProjectPurchaseRequests(requestRaw);
+      if (!projectPurchaseRequestReadMatchesAuthority(requestRead, authority)) return { status: "read-error", envelope: null, reason: "request-store-invalid" };
+      const originalRequestRecords = structuredClone(requestRead.records);
+      const normalizedRequestRead: LocalRecordsReadResult<ProjectPurchaseRequestRecord> = { records: structuredClone(requestRead.records), readError: false };
+      const legacyRaw = window.localStorage.getItem(legacyProjectApprovalsStorageKey);
+      const sourceGeneration: ProjectApprovalCutoverSource = legacyRaw === null ? "none" : "v1-array";
+      const prepared = prepareProjectApprovalLegacySource(legacyRaw, normalizedRequestRead, authority);
+      if (!prepared) return { status: "read-error", envelope: null, reason: "legacy-invalid" };
+      normalizedRequestRead.records = prepared.requestRecords;
+      const requestCandidate = canonicalProjectApprovalRequestCandidate(requestRaw, originalRequestRecords, normalizedRequestRead.records);
+      if (!requestCandidate) return { status: "read-error", envelope: null, reason: "request-candidate-invalid" };
+      const requestCandidateRaw = requestCandidate.raw;
+      const latestApprovalTime = prepared.records.reduce((latest, approval) => Math.max(latest, Date.parse(approval.updatedAt)), Number.NEGATIVE_INFINITY);
+      const latestRequestTime = normalizedRequestRead.records.reduce((latest, request) => Math.max(latest, Date.parse(request.updatedAt)), Number.NEGATIVE_INFINITY);
+      const migrationAt = new Date(Math.max(Date.now(), Number.isFinite(latestApprovalTime) ? latestApprovalTime + 1 : Date.now(), Number.isFinite(latestRequestTime) ? latestRequestTime + 1 : Date.now())).toISOString();
+      const pending = finalizeProjectApprovalMarker({
+        schemaVersion: 1,
+        state: "pending",
+        migrationId: `request-content-approval-migration:${window.crypto.randomUUID()}`,
+        sourceGeneration,
+        sourceKey: sourceGeneration === "v1-array" ? legacyProjectApprovalsStorageKey : null,
+        sourceRawHash: projectFoundationRawHash(legacyRaw),
+        requestSourceRawHash: projectFoundationRawHash(requestRaw),
+        requestCandidateRawHash: projectFoundationRawHash(requestCandidateRaw),
+        migrationAt,
+        identityBindingHash: authority.identityBindingHash,
+      }) as ProjectApprovalPendingMarker;
+      const sourceValues = legacyRaw === null ? [] : JSON.parse(legacyRaw) as unknown;
+      if (!Array.isArray(sourceValues)) return { status: "read-error", envelope: null, reason: "legacy-invalid" };
+      const candidateEnvelope = buildProjectApprovalMigrationEnvelope(pending, prepared.records, sourceValues, requestCandidate.records, authority, prepared.orphanConfirmationRollbacks);
+      if (!candidateEnvelope || !parseProjectApprovalEnvelope(JSON.stringify(candidateEnvelope), { records: requestCandidate.records, readError: false }, authority)) return { status: "read-error", envelope: null, reason: "migration-source-unrepresentable" };
+      const pendingRaw = JSON.stringify(pending);
+      const pendingAuthority = getAuthority();
+      if (!projectPurchaseRequestAuthorityIsValid(pendingAuthority) || pendingAuthority.snapshotHash !== authority.snapshotHash || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== null || window.localStorage.getItem(projectApprovalsStorageKey) !== null || window.localStorage.getItem(legacyProjectApprovalsStorageKey) !== legacyRaw || window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== requestRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { status: "read-error", envelope: null, reason: "pending-preimage-changed" };
+      window.localStorage.setItem(projectApprovalsCutoverMarkerKey, pendingRaw);
+      if (window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== pendingRaw) return { status: "read-error", envelope: null, reason: "pending-readback-failure" };
+      return writeProjectApprovalMigrationCandidate(pending, pendingRaw, getAuthority);
+    } catch {
+      return { status: "read-error", envelope: null, reason: "initialization-failure" };
+    }
+  });
+}
+
+function readProjectApprovalState(
+  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
+  authority: ProjectTaskAuthority | null,
+): ProjectApprovalState {
+  try {
+    if (!projectPurchaseRequestAuthorityIsValid(authority)) return { status: "read-error", envelope: null, reason: "dependency-invalid" };
+    if (window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { status: "loading", envelope: null, reason: "dispatch-precondition-recovery-required" };
+    if (window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null) return { status: "loading", envelope: null, reason: "request-confirmation-recovery-required" };
+    if (purchaseRequests.readError) return { status: "read-error", envelope: null, reason: "dependency-invalid" };
+    const canonicalRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+    const markerRaw = window.localStorage.getItem(projectApprovalsCutoverMarkerKey);
+    if (markerRaw === null) return canonicalRaw === null ? { status: "loading", envelope: null, reason: "migration-required" } : { status: "read-error", envelope: null, reason: "marker-missing" };
+    const marker = parseProjectApprovalMarker(markerRaw);
+    if (!marker || marker.identityBindingHash !== authority.identityBindingHash) return { status: "read-error", envelope: null, reason: "marker-invalid" };
+    if (marker.state !== "committed") return { status: "loading", envelope: null, reason: "migration-incomplete" };
+    const envelope = parseProjectApprovalEnvelope(canonicalRaw, purchaseRequests, authority);
+    return envelope && projectApprovalMarkerBindingIsValid(envelope, marker, authority)
+      ? { status: "ready", envelope, reason: "" }
+      : { status: "read-error", envelope: null, reason: "canonical-invalid" };
+  } catch {
+    return { status: "read-error", envelope: null, reason: "storage-read-failure" };
+  }
+}
+
+function readStoredProjectApprovals(purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): LocalRecordsReadResult<ProjectApprovalRecord> {
+  const state = readProjectApprovalState(purchaseRequests, projectTaskAuthoritySnapshot());
+  return { records: state.envelope?.records ?? [], readError: state.status !== "ready" };
+}
+
+function projectApprovalCommandIsValid(command: ProjectApprovalCommand) {
+  if (!command || command.inputSchemaVersion !== 1 || typeof command.projectId !== "string" || !command.projectId || command.projectId.trim() !== command.projectId || typeof command.requestId !== "string" || !command.requestId || command.requestId.trim() !== command.requestId || !Number.isSafeInteger(command.expectedStoreVersion) || command.expectedStoreVersion < 1 || !Number.isSafeInteger(command.expectedRequestVersion) || command.expectedRequestVersion < 1 || typeof command.idempotencyKey !== "string" || !command.idempotencyKey || command.idempotencyKey.trim() !== command.idempotencyKey || command.idempotencyKey.length > 200) return false;
+  if (command.action === "create-content-approval") return hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "requestId", "expectedStoreVersion", "expectedRequestVersion", "idempotencyKey"]);
+  return hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "requestId", "approvalId", "decision", "expectedStoreVersion", "expectedApprovalVersion", "expectedRequestVersion", "idempotencyKey"])
+    && typeof command.approvalId === "string" && command.approvalId.length > 0 && command.approvalId.trim() === command.approvalId
+    && (command.decision === "approved" || command.decision === "changes-requested")
+    && Number.isSafeInteger(command.expectedApprovalVersion) && command.expectedApprovalVersion >= 1;
+}
+
+function readProjectApprovalMutationState(authority: ProjectTaskAuthority) {
+  try {
+    const requests = readProjectPurchaseRequestsForMutation(authority);
+    if (!requests) return null;
+    const markerRaw = window.localStorage.getItem(projectApprovalsCutoverMarkerKey);
+    const marker = parseProjectApprovalMarker(markerRaw);
+    const canonicalRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+    const envelope = parseProjectApprovalEnvelope(canonicalRaw, { records: requests.records, readError: false }, authority);
+    if (!markerRaw || !marker || marker.state !== "committed" || !envelope || !projectApprovalMarkerBindingIsValid(envelope, marker, authority)) return null;
+    return { requestsRaw: requests.raw, requests: requests.records, markerRaw, canonicalRaw: canonicalRaw!, envelope };
+  } catch {
+    return null;
+  }
+}
+
+function commitProjectApprovalEnvelope(
+  current: NonNullable<ReturnType<typeof readProjectApprovalMutationState>>,
+  candidate: ProjectApprovalEnvelope,
+  authority: ProjectTaskAuthority,
+  getAuthority: () => ProjectTaskAuthority | null,
+): ProjectApprovalMutationResult {
+  const candidateRaw = JSON.stringify(candidate);
+  const candidateRead = parseProjectApprovalEnvelope(candidateRaw, { records: current.requests, readError: false }, authority);
+  if (!candidateRead || candidateRead.fingerprint !== candidate.fingerprint) return { status: "schema-invalid", requests: current.requests, reason: "approval-candidate-invalid" };
+  try {
+    if (window.localStorage.getItem(projectApprovalsStorageKey) !== current.canonicalRaw || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== current.markerRaw || window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== current.requestsRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null || getAuthority()?.snapshotHash !== authority.snapshotHash) return { status: "version-conflict", requests: current.requests, reason: "preimage-changed" };
+    window.localStorage.setItem(projectApprovalsStorageKey, candidateRaw);
+    const afterAuthority = getAuthority();
+    const requestReadbackRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    const requestReadback = parseStoredProjectPurchaseRequests(requestReadbackRaw);
+    const approvalReadbackRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+    const approvalReadback = projectPurchaseRequestAuthorityIsValid(afterAuthority) ? parseProjectApprovalEnvelope(approvalReadbackRaw, requestReadback, afterAuthority) : null;
+    const markerReadback = parseProjectApprovalMarker(window.localStorage.getItem(projectApprovalsCutoverMarkerKey));
+    if (approvalReadbackRaw === candidateRaw && requestReadbackRaw === current.requestsRaw && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null && window.localStorage.getItem(projectApprovalConfirmationIntentKey) === null && window.localStorage.getItem(procurementDispatchPreconditionIntentKey) === null && afterAuthority?.snapshotHash === authority.snapshotHash && markerReadback?.state === "committed" && approvalReadback && projectApprovalMarkerBindingIsValid(approvalReadback, markerReadback, afterAuthority)) return { status: "updated", envelope: approvalReadback, requests: requestReadback.records };
+    return restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, current.canonicalRaw, candidateRaw)
+      ? { status: "write-failure", requests: current.requests, reason: "approval-readback-failure" }
+      : { status: "read-failure", reason: "approval-rollback-uncertain" };
+  } catch {
+    return restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, current.canonicalRaw, candidateRaw)
+      ? { status: "write-failure", requests: current.requests, reason: "approval-persistence-failure" }
+      : { status: "read-failure", reason: "approval-rollback-uncertain" };
+  }
+}
+
+type ProcurementDispatchCheckpointRequest = {
+  operation: ProcurementDispatchPreconditionCheckpoint["operation"];
+  commandKey: string;
+  commandPayloadHash: string;
+  projectId: string;
+  target: DispatchDependencyTarget;
+};
+
+type ProcurementDispatchCheckpointResult =
+  | { status: "ready"; checkpoint: ProcurementDispatchPreconditionCheckpoint }
+  | { status: "read-failure" | "version-conflict" | "write-failure" | "lock-unavailable"; reason: string };
+
+async function ensureProcurementDispatchPreconditionCheckpoint(
+  input: ProcurementDispatchCheckpointRequest,
+  getAuthority: () => ProjectTaskAuthority | null,
+): Promise<ProcurementDispatchCheckpointResult> {
+  return withProjectPurchaseRequestsWriteLock<ProcurementDispatchCheckpointResult>({ status: "lock-unavailable", reason: "lock-unavailable" }, () => {
+    try {
+      if (!/^sha256-[0-9a-f]{64}$/.test(input.commandPayloadHash) || typeof input.commandKey !== "string" || !input.commandKey || input.commandKey.length > 200) return { status: "read-failure" as const, reason: "checkpoint-input-invalid" };
+      const pendingRaw = window.localStorage.getItem(procurementDispatchPreconditionIntentKey);
+      if (pendingRaw !== null && !resumeProcurementDispatchPreconditionIntent(pendingRaw, getAuthority)) return { status: "read-failure" as const, reason: "checkpoint-recovery-failed" };
+      if (window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) return { status: "read-failure" as const, reason: "upstream-transaction-pending" };
+      const authority = getAuthority();
+      if (!projectPurchaseRequestAuthorityIsValid(authority) || authority.projectIds.includes(input.projectId) === false) return { status: "read-failure" as const, reason: "foundation-invalid" };
+      const current = readProjectApprovalMutationState(authority);
+      if (!current || current.requestsRaw === null) return { status: "read-failure" as const, reason: "upstream-store-invalid" };
+      const request = current.requests.find((candidate) => candidate.id === input.target.requestId && candidate.projectId === input.projectId);
+      const requestRevision = request?.reviewRevisions.find((revision) => revision.id === input.target.revisionId && revision.requestVersion === input.target.requestVersion && revision.fingerprint === input.target.revisionFingerprint);
+      const approval = current.envelope.records.find((candidate) => candidate.id === input.target.approvalId && candidate.projectId === input.projectId);
+      const approvalRevision = approval?.revisions.find((revision) => revision.id === input.target.approvalRevisionId && revision.version === input.target.approvalVersion && revision.fingerprint === input.target.approvalFingerprint);
+      if (!request || !requestRevision || request.status !== "ready-for-review" || request.version !== input.target.requestVersion || !approval || !approvalRevision || approval.status !== "approved" || approval.version !== input.target.approvalVersion || approval.currentRevisionId !== approvalRevision.id || approval.target.id !== request.id || approval.target.version !== request.version || approval.target.revisionId !== requestRevision.id || approval.target.revisionFingerprint !== requestRevision.fingerprint || !approvalSnapshotMatchesRevision(approval, request)) return { status: "version-conflict" as const, reason: "checkpoint-target-not-current" };
+      const checkpointKey = procurementDispatchPreconditionCheckpointKey(input.operation, input.commandKey);
+      const existingRequestReceipt = request.mutationReceipts.find((receipt) => receipt.key === checkpointKey);
+      const existingApprovalReceipt = current.envelope.idempotencyReceipts.find((receipt) => receipt.key === checkpointKey);
+      if (existingRequestReceipt || existingApprovalReceipt) {
+        if (!existingRequestReceipt || existingRequestReceipt.action !== "pin-procurement-dispatch-precondition" || !existingApprovalReceipt || existingApprovalReceipt.action !== "pin-procurement-dispatch-precondition" || JSON.stringify(existingRequestReceipt.checkpoint) !== JSON.stringify(existingApprovalReceipt.checkpoint) || existingRequestReceipt.checkpoint.operation !== input.operation || existingRequestReceipt.checkpoint.commandPayloadHash !== input.commandPayloadHash || JSON.stringify(existingRequestReceipt.checkpoint.target) !== JSON.stringify(input.target)) return { status: "read-failure" as const, reason: "checkpoint-idempotency-mismatch" };
+        return { status: "ready" as const, checkpoint: existingRequestReceipt.checkpoint };
+      }
+      const timestamp = new Date(Math.max(Date.now(), Date.parse(request.updatedAt) + 1, Date.parse(current.envelope.updatedAt) + 1)).toISOString();
+      const checkpoint = finalizeProcurementDispatchPreconditionCheckpoint({
+        schemaVersion: 1,
+        checkpointKey,
+        operation: input.operation,
+        commandPayloadHash: input.commandPayloadHash,
+        projectId: input.projectId,
+        target: structuredClone(input.target),
+        requestHead: { receiptPosition: request.mutationReceipts.length + 1, requestVersion: request.version, revisionId: requestRevision.id, revisionFingerprint: requestRevision.fingerprint },
+        approvalHead: { expectedStoreVersion: current.envelope.storeVersion, resultingStoreVersion: current.envelope.storeVersion + 1, approvalVersion: approval.version, revisionId: approvalRevision.id, revisionFingerprint: approvalRevision.fingerprint },
+        authorizationContextHash: authority.authorizationHashes[input.projectId],
+        recordedAt: timestamp,
+      });
+      const requestPin = finalizePurchaseRequestDispatchPreconditionReceipt({ schemaVersion: 1, key: checkpointKey, action: "pin-procurement-dispatch-precondition", payloadHash: checkpoint.fingerprint, projectId: input.projectId, requestId: request.id, expectedRequestVersion: request.version, resultingRequestVersion: request.version, relatedApprovalId: approval.id, authorizationContextHash: checkpoint.authorizationContextHash, recordedAt: timestamp, checkpoint });
+      const approvalPin = finalizeProjectApprovalDispatchCheckpointReceipt({ schemaVersion: 1, key: checkpointKey, action: "pin-procurement-dispatch-precondition", payloadHash: checkpoint.fingerprint, projectId: input.projectId, requestId: request.id, approvalId: approval.id, requestMutationReceiptKey: checkpointKey, decision: null, expectedStoreVersion: current.envelope.storeVersion, expectedApprovalVersion: approval.version, expectedRequestVersion: request.version, result: "checkpointed", resultingStoreVersion: current.envelope.storeVersion + 1, resultingApprovalVersion: approval.version, eventIds: [], revisionIds: [], authorizationContextHash: checkpoint.authorizationContextHash, recordedAt: timestamp, checkpoint });
+      const nextRequests = current.requests.map((candidate) => candidate.id === request.id ? { ...candidate, mutationReceipts: [...candidate.mutationReceipts, requestPin] } : candidate);
+      const nextRequestsRaw = JSON.stringify(nextRequests);
+      const nextRequestRead = parseStoredProjectPurchaseRequests(nextRequestsRaw);
+      const nextEnvelope = finalizeProjectApprovalEnvelope({ ...current.envelope, storeVersion: current.envelope.storeVersion + 1, idempotencyReceipts: [...current.envelope.idempotencyReceipts, approvalPin], updatedAt: timestamp });
+      const nextApprovalsRaw = JSON.stringify(nextEnvelope);
+      if (nextRequestRead.readError || JSON.stringify(nextRequestRead.records) !== nextRequestsRaw || !parseProjectApprovalEnvelope(nextApprovalsRaw, nextRequestRead, authority)) return { status: "read-failure" as const, reason: "checkpoint-candidate-invalid" };
+      const intent = finalizeProcurementDispatchPreconditionIntent({ schemaVersion: 1, operation: "pin-procurement-dispatch-precondition", id: `procurement-dispatch-precondition-intent:${memoryCoreSha256(checkpointKey)}`, checkpointKey, checkpointFingerprint: checkpoint.fingerprint, projectId: input.projectId, requestId: request.id, approvalId: approval.id, previousRequestsRaw: current.requestsRaw, nextRequestsRaw, previousApprovalsRaw: current.canonicalRaw, nextApprovalsRaw, approvalMarkerRaw: current.markerRaw, authoritySnapshotHash: authority.snapshotHash, authorizationContextHash: checkpoint.authorizationContextHash, createdAt: timestamp });
+      const intentRaw = JSON.stringify(intent);
+      if (!parseProcurementDispatchPreconditionIntent(intentRaw) || !procurementDispatchPreconditionIntentCandidates(intent, authority) || window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== current.requestsRaw || window.localStorage.getItem(projectApprovalsStorageKey) !== current.canonicalRaw || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== current.markerRaw || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null || getAuthority()?.snapshotHash !== authority.snapshotHash) return { status: "version-conflict" as const, reason: "checkpoint-preimage-changed" };
+      window.localStorage.setItem(procurementDispatchPreconditionIntentKey, intentRaw);
+      if (window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== intentRaw || !resumeProcurementDispatchPreconditionIntent(intentRaw, getAuthority)) return { status: "write-failure" as const, reason: "checkpoint-commit-failed" };
+      const readbackRequests = readStoredProjectPurchaseRequests();
+      const readbackApprovals = readProjectApprovalState(readbackRequests, getAuthority());
+      const requestReadback = readbackRequests.records.find((candidate) => candidate.id === request.id && candidate.projectId === input.projectId);
+      const approvalReadback = readbackApprovals.envelope?.records.find((candidate) => candidate.id === approval.id && candidate.projectId === input.projectId);
+      const requestPinReadback = requestReadback?.mutationReceipts.find((receipt) => receipt.key === checkpointKey && receipt.action === "pin-procurement-dispatch-precondition");
+      const approvalPinReadback = readbackApprovals.envelope?.idempotencyReceipts.find((receipt) => receipt.key === checkpointKey && receipt.action === "pin-procurement-dispatch-precondition");
+      if (readbackApprovals.status !== "ready"
+        || requestReadback?.status !== "ready-for-review"
+        || requestReadback.version !== checkpoint.target.requestVersion
+        || approvalReadback?.status !== "approved"
+        || approvalReadback.version !== checkpoint.target.approvalVersion
+        || approvalReadback.currentRevisionId !== checkpoint.target.approvalRevisionId
+        || requestPinReadback?.action !== "pin-procurement-dispatch-precondition"
+        || approvalPinReadback?.action !== "pin-procurement-dispatch-precondition"
+        || JSON.stringify(requestPinReadback.checkpoint) !== JSON.stringify(checkpoint)
+        || JSON.stringify(approvalPinReadback.checkpoint) !== JSON.stringify(checkpoint)) return { status: "read-failure" as const, reason: "checkpoint-readback-failed" };
+      return { status: "ready" as const, checkpoint };
+    } catch { return { status: "write-failure" as const, reason: "checkpoint-write-failed" }; }
+  });
+}
+
+async function executeProjectApprovalCommand(command: ProjectApprovalCommand, getAuthority: () => ProjectTaskAuthority | null): Promise<ProjectApprovalMutationResult> {
+  return withProjectPurchaseRequestsWriteLock<ProjectApprovalMutationResult>({ status: "lock-unavailable", reason: "lock-unavailable" }, () => {
+    if (!projectApprovalCommandIsValid(command)) return { status: "schema-invalid", reason: "command-invalid" };
+    const authority = getAuthority();
+    if (!projectPurchaseRequestAuthorityIsValid(authority)) return { status: "read-failure", reason: "foundation-invalid" };
+    const current = readProjectApprovalMutationState(authority);
+    if (!current) return { status: "read-failure", reason: "approval-store-invalid" };
+    const payloadHash = projectApprovalValueHash(projectApprovalCommandPayload(command));
+    const existingReceipt = current.envelope.idempotencyReceipts.find((receipt) => receipt.key === command.idempotencyKey);
+    if (existingReceipt) {
+      const receiptMatches = existingReceipt.action === command.action
+        && existingReceipt.payloadHash === payloadHash
+        && existingReceipt.projectId === command.projectId
+        && existingReceipt.requestId === command.requestId
+        && existingReceipt.expectedRequestVersion === command.expectedRequestVersion
+        && (command.action === "create-content-approval"
+          ? existingReceipt.approvalId === projectApprovalIdForCreateKey(command.idempotencyKey) && existingReceipt.expectedApprovalVersion === null && existingReceipt.decision === null
+          : existingReceipt.approvalId === command.approvalId && existingReceipt.decision === command.decision && existingReceipt.expectedApprovalVersion === command.expectedApprovalVersion);
+      return receiptMatches
+        ? { status: existingReceipt.result, envelope: current.envelope, requests: current.requests, requestId: command.requestId, approvalId: existingReceipt.approvalId }
+        : { status: "idempotency-payload-mismatch", envelope: current.envelope, requests: current.requests, reason: "idempotency-key-reused" };
+    }
+    if (!authority.projectIds.includes(command.projectId)) return { status: "scope-mismatch", envelope: current.envelope, requests: current.requests, reason: "project-not-authorized" };
+    const request = current.requests.find((candidate) => candidate.id === command.requestId);
+    if (!request) return { status: "not-found", envelope: current.envelope, requests: current.requests, reason: "request-not-found" };
+    if (request.projectId !== command.projectId) return { status: "scope-mismatch", envelope: current.envelope, requests: current.requests, reason: "request-project-mismatch" };
+    if (request.version !== command.expectedRequestVersion) return { status: "version-conflict", envelope: current.envelope, requests: current.requests, reason: "request-version-stale" };
+    const authorizationContextHash = authority.authorizationHashes[command.projectId];
+    const timestamp = new Date(Math.max(Date.now(), Date.parse(current.envelope.updatedAt) + 1, Date.parse(request.updatedAt) + 1)).toISOString();
+
+    if (command.action === "create-content-approval") {
+      if (request.status !== "ready-for-review" || purchaseRequestMissingFields(request).length > 0) return { status: "unsupported-transition", envelope: current.envelope, requests: current.requests, requestId: request.id, reason: "request-not-ready" };
+      const reviewRevision = request.reviewRevisions.find((revision) => revision.requestVersion === request.version && revision.createdAt === request.updatedAt);
+      if (!reviewRevision) return { status: "read-failure", envelope: current.envelope, requests: current.requests, requestId: request.id, reason: "request-review-revision-missing" };
+      const dedupeKey = purchaseRequestApprovalDedupeKey(command.projectId, request.id, request.version);
+      const duplicate = current.envelope.records.find((approval) => approval.dedupeKey === dedupeKey);
+      if (duplicate) return { status: "unchanged", envelope: current.envelope, requests: current.requests, requestId: request.id, approvalId: duplicate.id };
+      if (current.envelope.storeVersion !== command.expectedStoreVersion) return { status: "version-conflict", envelope: current.envelope, requests: current.requests, reason: "approval-store-version-stale" };
+      const approvalId = projectApprovalIdForCreateKey(command.idempotencyKey);
+      const revision = finalizeProjectApprovalRevision({ id: projectApprovalRevisionId(approvalId, 1, command.idempotencyKey), version: 1, createdAt: timestamp, snapshot: projectApprovalRevisionSnapshot("pending", null) });
+      const event = finalizeProjectApprovalEvent({ id: projectApprovalEventId(approvalId, 1, command.idempotencyKey), type: "created", actor: "شما", actorPrincipalId: "local-builder-account", at: timestamp, version: 1, revisionId: revision.id, authorizationContextHash, idempotencyKey: command.idempotencyKey, commandPayloadHash: payloadHash });
+      const record = finalizeProjectApprovalRecord({
+        schemaVersion: 3, objectType: "request-content-approval", id: approvalId, projectId: command.projectId, ownerPrincipalType: "account", ownerPrincipalId: "local-builder-account", accountSide: "builder", scopeType: "project_private", scopeId: command.projectId, custodianService: "Approval Domain Service", sensitivity: "private",
+        purpose: "review-purchase-request-version", target: { type: "purchase-request", id: request.id, version: request.version, updatedAt: reviewRevision.createdAt, revisionId: reviewRevision.id, revisionFingerprint: reviewRevision.fingerprint }, dedupeKey,
+        snapshot: structuredClone(reviewRevision.snapshot), privacySnapshot: { shareableFields: [...reviewRevision.shareableFields], projectNameShared: false, exactAddressShared: false, budgetShared: false, filesShared: false, memoryShared: false }, externalEffect: "none", destination: null, sendAuthorized: false,
+        status: "pending", visibility: "خصوصی پروژه", localStatus: "ثبت محلی", requestedBy: "شما", decidedBy: null, requestedAt: timestamp, updatedAt: timestamp, decidedAt: null, version: 1, authorizationContextHash, currentRevisionId: revision.id, revisions: [revision], history: [event], legacyEvidence: null,
+      });
+      const receipt = finalizeProjectApprovalReceipt({ schemaVersion: 1, key: command.idempotencyKey, action: command.action, payloadHash, projectId: command.projectId, requestId: request.id, approvalId, requestMutationReceiptKey: null, decision: null, expectedStoreVersion: command.expectedStoreVersion, expectedApprovalVersion: null, expectedRequestVersion: command.expectedRequestVersion, result: "created", resultingStoreVersion: command.expectedStoreVersion + 1, resultingApprovalVersion: 1, eventIds: [event.id], revisionIds: [revision.id], authorizationContextHash, recordedAt: timestamp });
+      const candidate = finalizeProjectApprovalEnvelope({ ...current.envelope, storeVersion: current.envelope.storeVersion + 1, records: [...current.envelope.records, record], idempotencyReceipts: [...current.envelope.idempotencyReceipts, receipt], updatedAt: timestamp });
+      const committed = commitProjectApprovalEnvelope(current, candidate, authority, getAuthority);
+      return { ...committed, status: committed.status === "updated" ? "created" : committed.status, requestId: request.id, approvalId };
+    }
+
+    if (current.envelope.storeVersion !== command.expectedStoreVersion) return { status: "version-conflict", envelope: current.envelope, requests: current.requests, reason: "approval-store-version-stale" };
+    const approval = current.envelope.records.find((candidate) => candidate.id === command.approvalId);
+    if (!approval) return { status: "not-found", envelope: current.envelope, requests: current.requests, requestId: request.id, reason: "approval-not-found" };
+    if (approval.projectId !== command.projectId || approval.target.id !== request.id) return { status: "scope-mismatch", envelope: current.envelope, requests: current.requests, requestId: request.id, approvalId: approval.id, reason: "approval-scope-mismatch" };
+    if (approval.version !== command.expectedApprovalVersion || approval.status !== "pending") return { status: "version-conflict", envelope: current.envelope, requests: current.requests, requestId: request.id, approvalId: approval.id, reason: "approval-version-stale" };
+    if (request.status !== "ready-for-review" || !approvalSnapshotMatchesRevision(approval, request)) return { status: "unsupported-transition", envelope: current.envelope, requests: current.requests, requestId: request.id, approvalId: approval.id, reason: "approval-dependency-stale" };
+    const decisionAt = new Date(Math.max(Date.parse(timestamp), Date.parse(approval.updatedAt) + 1)).toISOString();
+    const nextVersion = approval.version + 1;
+    const revision = finalizeProjectApprovalRevision({ id: projectApprovalRevisionId(approval.id, nextVersion, command.idempotencyKey), version: nextVersion, createdAt: decisionAt, snapshot: projectApprovalRevisionSnapshot(command.decision, decisionAt) });
+    const event = finalizeProjectApprovalEvent({ id: projectApprovalEventId(approval.id, nextVersion, command.idempotencyKey), type: command.decision, actor: "شما", actorPrincipalId: "local-builder-account", at: decisionAt, version: nextVersion, revisionId: revision.id, authorizationContextHash, idempotencyKey: command.idempotencyKey, commandPayloadHash: payloadHash });
+    const decided = finalizeProjectApprovalRecord({ ...approval, status: command.decision, decidedBy: "شما", decidedAt: decisionAt, updatedAt: decisionAt, version: nextVersion, currentRevisionId: revision.id, revisions: [...approval.revisions, revision], history: [...approval.history, event] });
+    const receipt = finalizeProjectApprovalReceipt({ schemaVersion: 1, key: command.idempotencyKey, action: command.action, payloadHash, projectId: command.projectId, requestId: request.id, approvalId: approval.id, requestMutationReceiptKey: null, decision: command.decision, expectedStoreVersion: command.expectedStoreVersion, expectedApprovalVersion: command.expectedApprovalVersion, expectedRequestVersion: command.expectedRequestVersion, result: "updated", resultingStoreVersion: command.expectedStoreVersion + 1, resultingApprovalVersion: nextVersion, eventIds: [event.id], revisionIds: [revision.id], authorizationContextHash, recordedAt: decisionAt });
+    const candidate = finalizeProjectApprovalEnvelope({ ...current.envelope, storeVersion: current.envelope.storeVersion + 1, records: current.envelope.records.map((record) => record.id === approval.id ? decided : record), idempotencyReceipts: [...current.envelope.idempotencyReceipts, receipt], updatedAt: decisionAt });
+    const committed = commitProjectApprovalEnvelope(current, candidate, authority, getAuthority);
+    return { ...committed, requestId: request.id, approvalId: approval.id };
+  });
+}
+
+async function executeProjectPurchaseRequestConfirmation(
+  command: { inputSchemaVersion: 1; action: "confirm-for-recipients"; projectId: string; requestId: string; expectedRequestVersion: number; idempotencyKey: string },
+  getAuthority: () => ProjectTaskAuthority | null,
+): Promise<ProjectPurchaseRequestMutationResult & { approvalEnvelope?: ProjectApprovalEnvelope }> {
+  return withProjectPurchaseRequestsWriteLock<ProjectPurchaseRequestMutationResult & { approvalEnvelope?: ProjectApprovalEnvelope }>({ status: "lock-unavailable", reason: "lock-unavailable" }, () => {
+    if (!hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "requestId", "expectedRequestVersion", "idempotencyKey"]) || command.inputSchemaVersion !== 1 || command.action !== "confirm-for-recipients" || typeof command.projectId !== "string" || !command.projectId || command.projectId.trim() !== command.projectId || typeof command.requestId !== "string" || !command.requestId || command.requestId.trim() !== command.requestId || !Number.isSafeInteger(command.expectedRequestVersion) || command.expectedRequestVersion < 1 || typeof command.idempotencyKey !== "string" || !command.idempotencyKey || command.idempotencyKey.trim() !== command.idempotencyKey || command.idempotencyKey.length > 200) return { status: "schema-invalid", reason: "command-invalid" };
+    const authority = getAuthority();
+    if (!projectPurchaseRequestAuthorityIsValid(authority)) return { status: "read-failure", reason: "foundation-invalid" };
+    if (window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) return { status: "read-failure", reason: "dispatch-precondition-intent-pending" };
+    const pendingConfirmationIntentRaw = window.localStorage.getItem(projectApprovalConfirmationIntentKey);
+    if (pendingConfirmationIntentRaw !== null && !resumeProjectApprovalConfirmationIntent(pendingConfirmationIntentRaw, getAuthority)) return { status: "read-failure", reason: "confirmation-intent-pending" };
+    const current = readProjectApprovalMutationState(authority);
+    if (!current) return { status: "read-failure", reason: "approval-store-invalid" };
+    const requestPayloadHash = purchaseRequestCommandPayloadHash(command);
+    const approvalPayloadHash = projectApprovalValueHash(projectApprovalCommandPayload({ ...command, expectedStoreVersion: current.envelope.storeVersion }));
+    const existingRequestReceipt = current.requests.flatMap((request) => request.mutationReceipts).find((receipt) => receipt.key === command.idempotencyKey);
+    const existingApprovalReceipt = current.envelope.idempotencyReceipts.find((receipt) => receipt.key === command.idempotencyKey);
+    if (existingRequestReceipt || existingApprovalReceipt) {
+      if (existingRequestReceipt && !existingApprovalReceipt) {
+        const migratedApproval = current.envelope.records.find((record) => record.id === existingRequestReceipt.relatedApprovalId
+          && record.projectId === command.projectId
+          && record.target.id === command.requestId
+          && record.legacyEvidence?.receiptCoverage === "request-confirmation");
+        if (migratedApproval
+          && existingRequestReceipt.action === command.action
+          && existingRequestReceipt.payloadHash === requestPayloadHash
+          && existingRequestReceipt.projectId === command.projectId
+          && existingRequestReceipt.requestId === command.requestId
+          && existingRequestReceipt.expectedRequestVersion === command.expectedRequestVersion
+          && projectApprovalRequestConfirmationReceiptMatchesRecord(existingRequestReceipt, migratedApproval)) return { status: "updated", records: current.requests, requestId: command.requestId, approvalId: migratedApproval.id, approvalEnvelope: current.envelope };
+      }
+      if (!existingRequestReceipt || !existingApprovalReceipt || existingRequestReceipt.action !== command.action || existingRequestReceipt.payloadHash !== requestPayloadHash || existingRequestReceipt.projectId !== command.projectId || existingRequestReceipt.requestId !== command.requestId || existingRequestReceipt.expectedRequestVersion !== command.expectedRequestVersion || !existingRequestReceipt.relatedApprovalId || existingApprovalReceipt.action !== command.action || existingApprovalReceipt.payloadHash !== approvalPayloadHash || existingApprovalReceipt.projectId !== command.projectId || existingApprovalReceipt.requestId !== command.requestId || existingApprovalReceipt.expectedRequestVersion !== command.expectedRequestVersion || existingApprovalReceipt.approvalId !== existingRequestReceipt.relatedApprovalId) return { status: "idempotency-payload-mismatch", records: current.requests, reason: "idempotency-key-reused" };
+      const approval = current.envelope.records.find((record) => record.id === existingApprovalReceipt.approvalId);
+      return approval ? { status: "updated", records: current.requests, requestId: command.requestId, approvalId: approval.id, approvalEnvelope: current.envelope } : { status: "read-failure", records: current.requests, reason: "approval-replay-missing" };
+    }
+    if (!authority.projectIds.includes(command.projectId)) return { status: "scope-mismatch", records: current.requests, reason: "project-not-authorized" };
+    const request = current.requests.find((record) => record.id === command.requestId);
+    if (!request) return { status: "not-found", records: current.requests, reason: "request-not-found" };
+    if (request.projectId !== command.projectId) return { status: "scope-mismatch", records: current.requests, reason: "request-project-mismatch" };
+    if (request.version !== command.expectedRequestVersion) return { status: "version-conflict", records: current.requests, requestId: request.id, reason: "request-version-stale" };
+    const timestamp = new Date(Math.max(Date.now(), Date.parse(request.updatedAt) + 1, Date.parse(current.envelope.updatedAt) + 1)).toISOString();
+    let readyRequest = markProjectPurchaseRequestRecordReady(request, timestamp);
+    if (!readyRequest) return { status: "unsupported-transition", records: current.requests, requestId: request.id, reason: "request-not-ready" };
+    const reviewRevision = readyRequest.reviewRevisions.at(-1)!;
+    const dedupeKey = purchaseRequestApprovalDedupeKey(command.projectId, readyRequest.id, readyRequest.version);
+    if (current.envelope.records.some((approval) => approval.dedupeKey === dedupeKey)) return { status: "unsupported-transition", records: current.requests, requestId: request.id, reason: "approval-already-exists" };
+    const authorizationContextHash = authority.authorizationHashes[command.projectId];
+    const approvalId = purchaseRequestApprovalIdForConfirmationKey(command.idempotencyKey);
+    const createdRevision = finalizeProjectApprovalRevision({ id: projectApprovalRevisionId(approvalId, 1, command.idempotencyKey), version: 1, createdAt: timestamp, snapshot: projectApprovalRevisionSnapshot("pending", null) });
+    const decidedRevision = finalizeProjectApprovalRevision({ id: projectApprovalRevisionId(approvalId, 2, command.idempotencyKey), version: 2, createdAt: timestamp, snapshot: projectApprovalRevisionSnapshot("approved", timestamp) });
+    const createdEvent = finalizeProjectApprovalEvent({ id: projectApprovalEventId(approvalId, 1, command.idempotencyKey), type: "created", actor: "شما", actorPrincipalId: "local-builder-account", at: timestamp, version: 1, revisionId: createdRevision.id, authorizationContextHash, idempotencyKey: command.idempotencyKey, commandPayloadHash: approvalPayloadHash });
+    const decidedEvent = finalizeProjectApprovalEvent({ id: projectApprovalEventId(approvalId, 2, command.idempotencyKey), type: "approved", actor: "شما", actorPrincipalId: "local-builder-account", at: timestamp, version: 2, revisionId: decidedRevision.id, authorizationContextHash, idempotencyKey: command.idempotencyKey, commandPayloadHash: approvalPayloadHash });
+    const approval = finalizeProjectApprovalRecord({
+      schemaVersion: 3, objectType: "request-content-approval", id: approvalId, projectId: command.projectId, ownerPrincipalType: "account", ownerPrincipalId: "local-builder-account", accountSide: "builder", scopeType: "project_private", scopeId: command.projectId, custodianService: "Approval Domain Service", sensitivity: "private",
+      purpose: "review-purchase-request-version", target: { type: "purchase-request", id: readyRequest.id, version: readyRequest.version, updatedAt: reviewRevision.createdAt, revisionId: reviewRevision.id, revisionFingerprint: reviewRevision.fingerprint }, dedupeKey,
+      snapshot: structuredClone(reviewRevision.snapshot), privacySnapshot: { shareableFields: [...reviewRevision.shareableFields], projectNameShared: false, exactAddressShared: false, budgetShared: false, filesShared: false, memoryShared: false }, externalEffect: "none", destination: null, sendAuthorized: false,
+      status: "approved", visibility: "خصوصی پروژه", localStatus: "ثبت محلی", requestedBy: "شما", decidedBy: "شما", requestedAt: timestamp, updatedAt: timestamp, decidedAt: timestamp, version: 2, authorizationContextHash, currentRevisionId: decidedRevision.id, revisions: [createdRevision, decidedRevision], history: [createdEvent, decidedEvent], legacyEvidence: null,
+    });
+    const requestReceipt = finalizePurchaseRequestMutationReceipt({ schemaVersion: 1, key: command.idempotencyKey, action: command.action, payloadHash: requestPayloadHash, projectId: command.projectId, requestId: request.id, expectedRequestVersion: command.expectedRequestVersion, resultingRequestVersion: readyRequest.version, relatedApprovalId: approvalId, authorizationContextHash, recordedAt: timestamp });
+    readyRequest = { ...readyRequest, mutationReceipts: [...readyRequest.mutationReceipts, requestReceipt] };
+    const approvalReceipt = finalizeProjectApprovalReceipt({ schemaVersion: 1, key: command.idempotencyKey, action: command.action, payloadHash: approvalPayloadHash, projectId: command.projectId, requestId: request.id, approvalId, requestMutationReceiptKey: command.idempotencyKey, decision: "approved", expectedStoreVersion: current.envelope.storeVersion, expectedApprovalVersion: null, expectedRequestVersion: command.expectedRequestVersion, result: "updated", resultingStoreVersion: current.envelope.storeVersion + 1, resultingApprovalVersion: 2, eventIds: [createdEvent.id, decidedEvent.id], revisionIds: [createdRevision.id, decidedRevision.id], authorizationContextHash, recordedAt: timestamp });
+    const nextRequests = current.requests.map((record) => record.id === request.id ? readyRequest! : record);
+    const candidateRequestsRaw = JSON.stringify(nextRequests);
+    const candidateRequestsRead = parseStoredProjectPurchaseRequests(candidateRequestsRaw);
+    const candidateEnvelope = finalizeProjectApprovalEnvelope({ ...current.envelope, storeVersion: current.envelope.storeVersion + 1, records: [...current.envelope.records, approval], idempotencyReceipts: [...current.envelope.idempotencyReceipts, approvalReceipt], updatedAt: timestamp });
+    const candidateApprovalsRaw = JSON.stringify(candidateEnvelope);
+    const candidateApprovalsRead = parseProjectApprovalEnvelope(candidateApprovalsRaw, candidateRequestsRead, authority);
+    if (current.requestsRaw === null || candidateRequestsRead.readError || JSON.stringify(candidateRequestsRead.records) !== candidateRequestsRaw || !candidateApprovalsRead || candidateApprovalsRead.fingerprint !== candidateEnvelope.fingerprint) return { status: "schema-invalid", records: current.requests, reason: "candidate-invalid" };
+    const confirmationIntent = finalizeProjectApprovalConfirmationIntent({
+      schemaVersion: 1,
+      operation: "confirm-request-and-approval",
+      id: projectApprovalConfirmationIntentId(command.idempotencyKey),
+      projectId: command.projectId,
+      requestId: request.id,
+      approvalId,
+      idempotencyKey: command.idempotencyKey,
+      previousRequestsRaw: current.requestsRaw,
+      nextRequestsRaw: candidateRequestsRaw,
+      previousApprovalsRaw: current.canonicalRaw,
+      nextApprovalsRaw: candidateApprovalsRaw,
+      approvalMarkerRaw: current.markerRaw,
+      authoritySnapshotHash: authority.snapshotHash,
+      authorizationContextHash,
+      createdAt: timestamp,
+    });
+    const confirmationIntentRaw = JSON.stringify(confirmationIntent);
+    if (!parseProjectApprovalConfirmationIntent(confirmationIntentRaw) || !projectApprovalConfirmationIntentCandidates(confirmationIntent, authority)) return { status: "schema-invalid", records: current.requests, reason: "intent-candidate-invalid" };
+    try {
+      if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== current.requestsRaw
+        || window.localStorage.getItem(projectApprovalsStorageKey) !== current.canonicalRaw
+        || window.localStorage.getItem(projectApprovalsCutoverMarkerKey) !== current.markerRaw
+        || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null
+        || window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null
+        || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null
+        || getAuthority()?.snapshotHash !== authority.snapshotHash) return { status: "version-conflict", records: current.requests, reason: "preimage-changed" };
+      if (!writeExactLocalStorageValue(projectApprovalConfirmationIntentKey, confirmationIntentRaw)) return { status: "write-failure", records: current.requests, reason: "intent-write-failure" };
+      if (!resumeProjectApprovalConfirmationIntent(confirmationIntentRaw, getAuthority)
+        && !resumeProjectApprovalConfirmationIntent(confirmationIntentRaw, getAuthority)) return { status: "read-failure", reason: "confirmation-intent-pending" };
+      const committed = readProjectApprovalMutationState(authority);
+      const committedApproval = committed?.envelope.records.find((record) => record.id === approvalId);
+      const committedReceipt = committed?.envelope.idempotencyReceipts.find((receipt) => receipt.key === command.idempotencyKey && receipt.action === "confirm-for-recipients");
+      if (!committed || !committedApproval || !committedReceipt) return { status: "read-failure", reason: "confirmation-readback-failure" };
+      return { status: "updated", records: committed.requests, requestId: request.id, approvalId, approvalEnvelope: committed.envelope };
+    } catch {
+      return { status: "read-failure", reason: "confirmation-intent-uncertain" };
+    }
+  });
 }
 
 function hasExactObjectKeys(value: unknown, expectedKeys: readonly string[]) {
@@ -10063,405 +11990,6 @@ async function withBuiltArtifactInvalidationIntentsWriteLock(operation: () => Bu
   }
 }
 
-function parseSupplierContact(value: any): SupplierContactRecord | null {
-  const id = typeof value?.id === "string" ? value.id.trim() : "";
-  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
-  const displayName = typeof value?.displayName === "string" ? value.displayName.trim() : "";
-  const category = typeof value?.category === "string" ? value.category.trim() : "";
-  const tehranCoverage = typeof value?.tehranCoverage === "string" ? value.tehranCoverage.trim() : "";
-  const responseCapability = value?.responseCapability as SupplierContactResponseCapability;
-  const status = value?.status as SupplierContactStatus;
-  const version = value?.version;
-  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
-  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
-  const archivedAt = value?.archivedAt === null ? null : typeof value?.archivedAt === "string" ? value.archivedAt.trim() : "";
-  const eventIds = new Set<string>();
-  let derivedStatus: SupplierContactStatus = "active";
-  let transitionIsValid = true;
-  const history: SupplierContactEvent[] = Array.isArray(value?.history) ? value.history.flatMap((event: any, index: number): SupplierContactEvent[] => {
-    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
-    const at = typeof event?.at === "string" ? event.at.trim() : "";
-    const type = event?.type as SupplierContactEventType;
-    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || !["created", "archived", "restored"].includes(type) || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at)) return [];
-    if (index === 0) transitionIsValid = type === "created";
-    else if (type === "created" || type === "archived" && derivedStatus !== "active" || type === "restored" && derivedStatus !== "archived") transitionIsValid = false;
-    if (type === "archived") derivedStatus = "archived";
-    if (type === "restored") derivedStatus = "active";
-    eventIds.add(eventId);
-    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
-  }) : [];
-  const expectedArchivedAt = status === "archived" ? history[history.length - 1]?.type === "archived" ? history[history.length - 1].at : "" : null;
-  if (!hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "displayName", "category", "tehranCoverage", "responseCapability", "source", "networkStatus", "status", "visibility", "localStatus", "version", "createdAt", "updatedAt", "archivedAt", "history"]) || value?.schemaVersion !== 1 || !id || !projectId || !hasVisibleProjectTaskText(displayName) || displayName.length > 100 || !hasVisibleProjectTaskText(category) || category.length > 100 || !hasVisibleProjectTaskText(tehranCoverage) || tehranCoverage.length > 120 || !["product", "service", "both"].includes(responseCapability) || value?.source !== "ثبت مستقیم سازنده" || value?.networkStatus !== "خارج از شبکه چیدا" || (status !== "active" && status !== "archived") || value?.visibility !== "خصوصی پروژه" || value?.localStatus !== "ثبت محلی" || !Number.isInteger(version) || version < 1 || !Array.isArray(value?.history) || history.length !== value.history.length || history.length !== version || !transitionIsValid || derivedStatus !== status || !isValidProjectFileDate(createdAt) || !isValidProjectFileDate(updatedAt) || archivedAt !== null && !isValidProjectFileDate(archivedAt) || history[0]?.at !== createdAt || history[history.length - 1]?.at !== updatedAt || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime()) || archivedAt !== expectedArchivedAt) return null;
-  return { schemaVersion: 1, id, projectId, displayName, category, tehranCoverage, responseCapability, source: "ثبت مستقیم سازنده", networkStatus: "خارج از شبکه چیدا", status, visibility: "خصوصی پروژه", localStatus: "ثبت محلی", version, createdAt, updatedAt, archivedAt, history };
-}
-
-function readStoredProjectSupplierContacts(): LocalRecordsReadResult<SupplierContactRecord> {
-  try {
-    const raw = window.localStorage.getItem(projectSupplierContactsStorageKey);
-    if (raw === null) return { records: [], readError: false };
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
-    const ids = new Set<string>();
-    const projectCounts = new Map<string, number>();
-    let readError = false;
-    const records = parsed.flatMap((value): SupplierContactRecord[] => {
-      const record = parseSupplierContact(value);
-      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
-      if (!record || ids.has(record.id) || nextProjectCount > 100) {
-        readError = true;
-        return [];
-      }
-      ids.add(record.id);
-      projectCounts.set(record.projectId, nextProjectCount);
-      return [record];
-    });
-    return { records, readError };
-  } catch {
-    return { records: [], readError: true };
-  }
-}
-
-function parseDispatchDraft(value: any, purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>, approvals: LocalRecordsReadResult<ProjectApprovalRecord>, contacts: LocalRecordsReadResult<SupplierContactRecord>): DispatchDraftRecord | null {
-  const id = typeof value?.id === "string" ? value.id.trim() : "";
-  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
-  const requestId = typeof value?.target?.requestId === "string" ? value.target.requestId.trim() : "";
-  const requestVersion = value?.target?.requestVersion;
-  const revisionId = typeof value?.target?.revisionId === "string" ? value.target.revisionId.trim() : "";
-  const approvalId = typeof value?.target?.approvalId === "string" ? value.target.approvalId.trim() : "";
-  const dedupeKey = typeof value?.dedupeKey === "string" ? value.dedupeKey.trim() : "";
-  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
-  const version = value?.version;
-  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
-  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
-  const target = { requestId, requestVersion, revisionId, approvalId };
-  const request = purchaseRequests.records.find((item) => item.id === requestId && item.projectId === projectId);
-  const approval = approvals.records.find((item) => item.id === approvalId && item.projectId === projectId && item.status === "approved");
-  const reviewRevision = request?.reviewRevisions.find((item) => item.id === revisionId && item.requestVersion === requestVersion);
-  if (!request || !approval || approval.status !== "approved" || !reviewRevision || approval.target.id !== requestId || approval.target.version !== requestVersion || approval.target.revisionId !== revisionId || !approvalSnapshotMatchesRevision(approval, request)) return null;
-  const expectedPayload = dispatchPayloadFromSnapshot(reviewRevision.snapshot);
-  const expectedPrivacy = dispatchPrivacySnapshot(reviewRevision.shareableFields);
-  const eventIds = new Set<string>();
-  const history: DispatchDraftEvent[] = Array.isArray(value?.history) ? value.history.flatMap((event: any, index: number): DispatchDraftEvent[] => {
-    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
-    const at = typeof event?.at === "string" ? event.at.trim() : "";
-    const type = event?.type as DispatchDraftEvent["type"];
-    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || (type !== "created" && type !== "updated") || event?.actor !== "شما" || event?.version !== index + 1 || index === 0 && type !== "created" || index > 0 && type !== "updated" || !isValidProjectFileDate(at)) return [];
-    eventIds.add(eventId);
-    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
-  }) : [];
-  const revisionIds = new Set<string>();
-  const inviteIds = new Set<string>();
-  const revisions: DispatchDraftRevision[] = Array.isArray(value?.revisions) ? value.revisions.flatMap((revision: any, index: number): DispatchDraftRevision[] => {
-    const revisionRecordId = typeof revision?.id === "string" ? revision.id.trim() : "";
-    const revisionVersion = revision?.version;
-    const revisionCreatedAt = typeof revision?.createdAt === "string" ? revision.createdAt.trim() : "";
-    const recipientIds: string[] = Array.isArray(revision?.recipientIds) ? revision.recipientIds.map((recipientId: unknown) => typeof recipientId === "string" ? recipientId.trim() : "") : [];
-    const legacyCityPayload = expectedPayload.requestKind === "product" && expectedPayload.delivery ? { ...expectedPayload, delivery: { city: "تهران", ...expectedPayload.delivery } } : null;
-    const payloadIsCanonical = JSON.stringify(stablePurchaseRequestValue(revision?.payload)) === JSON.stringify(stablePurchaseRequestValue(expectedPayload));
-    const payloadIsLegacyCityEnvelope = Boolean(legacyCityPayload) && JSON.stringify(stablePurchaseRequestValue(revision?.payload)) === JSON.stringify(stablePurchaseRequestValue(legacyCityPayload));
-    if (!hasExactObjectKeys(revision, ["id", "version", "createdAt", "recipientIds", "inviteDrafts", "payload", "privacySnapshot", "fingerprint"]) || !revisionRecordId || revisionIds.has(revisionRecordId) || revisionVersion !== index + 1 || !isValidProjectFileDate(revisionCreatedAt) || history[index]?.at !== revisionCreatedAt || recipientIds.length < 1 || recipientIds.length > 50 || recipientIds.some((recipientId) => !recipientId) || new Set(recipientIds).size !== recipientIds.length || JSON.stringify(recipientIds) !== JSON.stringify([...recipientIds].sort()) || !Array.isArray(revision?.inviteDrafts) || revision.inviteDrafts.length !== recipientIds.length || !payloadIsCanonical && !payloadIsLegacyCityEnvelope || JSON.stringify(stablePurchaseRequestValue(revision?.privacySnapshot)) !== JSON.stringify(stablePurchaseRequestValue(expectedPrivacy))) return [];
-    const inviteDrafts: InviteDraft[] = revision.inviteDrafts.flatMap((invite: any, inviteIndex: number): InviteDraft[] => {
-      const inviteId = typeof invite?.id === "string" ? invite.id.trim() : "";
-      const supplierContactId = typeof invite?.supplierContactId === "string" ? invite.supplierContactId.trim() : "";
-      const inviteCreatedAt = typeof invite?.createdAt === "string" ? invite.createdAt.trim() : "";
-      const inviteUpdatedAt = typeof invite?.updatedAt === "string" ? invite.updatedAt.trim() : "";
-      const contact = contacts.records.find((item) => item.id === supplierContactId && item.projectId === projectId);
-      const expectedDestination = contact ? { displayName: contact.displayName, category: contact.category, tehranCoverage: contact.tehranCoverage, responseCapability: contact.responseCapability, networkStatus: "خارج از شبکه چیدا" as const } : null;
-      if (!hasExactObjectKeys(invite, ["schemaVersion", "id", "projectId", "supplierContactId", "destination", "target", "source", "continuation", "externalEffect", "sendAuthorized", "version", "createdAt", "updatedAt"]) || invite?.schemaVersion !== 1 || !inviteId || inviteIds.has(inviteId) || supplierContactId !== recipientIds[inviteIndex] || !contact || !supplierContactCapabilitySupports(contact, request.requestKind) || !expectedDestination || JSON.stringify(stablePurchaseRequestValue(invite?.destination)) !== JSON.stringify(stablePurchaseRequestValue(expectedDestination)) || JSON.stringify(stablePurchaseRequestValue(invite?.target)) !== JSON.stringify(stablePurchaseRequestValue(target)) || invite?.projectId !== projectId || invite?.source !== "ثبت مستقیم سازنده" || invite?.continuation !== "ادامهٔ احتمالی در فاز تأمین‌کننده" || invite?.externalEffect !== "none" || invite?.sendAuthorized !== false || invite?.version !== 1 || inviteCreatedAt !== revisionCreatedAt || inviteUpdatedAt !== revisionCreatedAt) return [];
-      inviteIds.add(inviteId);
-      return [{ schemaVersion: 1, id: inviteId, projectId, supplierContactId, destination: expectedDestination, target, source: "ثبت مستقیم سازنده", continuation: "ادامهٔ احتمالی در فاز تأمین‌کننده", externalEffect: "none", sendAuthorized: false, version: 1, createdAt: inviteCreatedAt, updatedAt: inviteUpdatedAt }];
-    });
-    const fingerprintPayload = payloadIsLegacyCityEnvelope ? legacyCityPayload! : expectedPayload;
-    if (inviteDrafts.length !== recipientIds.length || revision?.fingerprint !== dispatchRevisionFingerprint(target, recipientIds, inviteDrafts, fingerprintPayload as DispatchPayload, expectedPrivacy)) return [];
-    revisionIds.add(revisionRecordId);
-    return [{ id: revisionRecordId, version: revisionVersion, createdAt: revisionCreatedAt, recipientIds, inviteDrafts, payload: expectedPayload, privacySnapshot: expectedPrivacy, fingerprint: dispatchRevisionFingerprint(target, recipientIds, inviteDrafts, expectedPayload, expectedPrivacy) }];
-  }) : [];
-  if (!hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "target", "dedupeKey", "status", "currentRevisionId", "externalEffect", "sendAuthorized", "visibility", "localStatus", "version", "createdAt", "updatedAt", "history", "revisions"]) || !hasExactObjectKeys(value?.target, ["requestId", "requestVersion", "revisionId", "approvalId"]) || value?.schemaVersion !== 1 || !id || !projectId || !requestId || !Number.isInteger(requestVersion) || requestVersion < 1 || !revisionId || !approvalId || dedupeKey !== dispatchDraftDedupeKey(projectId, requestId, requestVersion, revisionId) || value?.status !== "draft" || value?.externalEffect !== "none" || value?.sendAuthorized !== false || value?.visibility !== "خصوصی پروژه" || value?.localStatus !== "ثبت محلی" || !Number.isInteger(version) || version < 1 || !Array.isArray(value?.history) || !Array.isArray(value?.revisions) || history.length !== value.history.length || revisions.length !== value.revisions.length || history.length !== version || revisions.length !== version || currentRevisionId !== revisions[revisions.length - 1]?.id || createdAt !== history[0]?.at || updatedAt !== history[history.length - 1]?.at || revisions[0]?.createdAt !== createdAt || revisions[revisions.length - 1]?.createdAt !== updatedAt || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())) return null;
-  return { schemaVersion: 1, id, projectId, target, dedupeKey, status: "draft", currentRevisionId, externalEffect: "none", sendAuthorized: false, visibility: "خصوصی پروژه", localStatus: "ثبت محلی", version, createdAt, updatedAt, history, revisions };
-}
-
-function readStoredProjectDispatchDrafts(purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>, approvals: LocalRecordsReadResult<ProjectApprovalRecord>, contacts: LocalRecordsReadResult<SupplierContactRecord>): LocalRecordsReadResult<DispatchDraftRecord> {
-  if (purchaseRequests.readError || approvals.readError || contacts.readError) return { records: [], readError: true };
-  try {
-    const raw = window.localStorage.getItem(projectDispatchDraftsStorageKey);
-    if (raw === null) return { records: [], readError: false };
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
-    const ids = new Set<string>();
-    const dedupeKeys = new Set<string>();
-    const globalInviteIds = new Set<string>();
-    const projectCounts = new Map<string, number>();
-    let readError = false;
-    const records = parsed.flatMap((value): DispatchDraftRecord[] => {
-      const record = parseDispatchDraft(value, purchaseRequests, approvals, contacts);
-      const inviteIds = record?.revisions.flatMap((revision) => revision.inviteDrafts.map((invite) => invite.id)) ?? [];
-      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
-      if (!record || ids.has(record.id) || dedupeKeys.has(record.dedupeKey) || nextProjectCount > 100 || inviteIds.some((inviteId) => globalInviteIds.has(inviteId))) {
-        readError = true;
-        return [];
-      }
-      ids.add(record.id);
-      dedupeKeys.add(record.dedupeKey);
-      projectCounts.set(record.projectId, nextProjectCount);
-      inviteIds.forEach((inviteId) => globalInviteIds.add(inviteId));
-      return [record];
-    });
-    return { records, readError };
-  } catch {
-    return { records: [], readError: true };
-  }
-}
-
-function parseDispatchPlanApproval(
-  value: any,
-  dispatchDrafts: LocalRecordsReadResult<DispatchDraftRecord>,
-  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
-  approvals: LocalRecordsReadResult<ProjectApprovalRecord>,
-  contacts: LocalRecordsReadResult<SupplierContactRecord>,
-): DispatchPlanApprovalRecord | null {
-  const id = typeof value?.id === "string" ? value.id.trim() : "";
-  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
-  const target = {
-    type: value?.target?.type,
-    dispatchDraftId: typeof value?.target?.dispatchDraftId === "string" ? value.target.dispatchDraftId.trim() : "",
-    dispatchDraftVersion: value?.target?.dispatchDraftVersion,
-    dispatchRevisionId: typeof value?.target?.dispatchRevisionId === "string" ? value.target.dispatchRevisionId.trim() : "",
-    dispatchRevisionFingerprint: typeof value?.target?.dispatchRevisionFingerprint === "string" ? value.target.dispatchRevisionFingerprint.trim() : "",
-    requestId: typeof value?.target?.requestId === "string" ? value.target.requestId.trim() : "",
-    requestVersion: value?.target?.requestVersion,
-    requestRevisionId: typeof value?.target?.requestRevisionId === "string" ? value.target.requestRevisionId.trim() : "",
-    contentApprovalId: typeof value?.target?.contentApprovalId === "string" ? value.target.contentApprovalId.trim() : "",
-  } as DispatchPlanApprovalRecord["target"];
-  const dispatchDraft = dispatchDrafts.records.find((item) => item.id === target.dispatchDraftId && item.projectId === projectId);
-  const revision = dispatchDraft?.revisions.find((item) => item.id === target.dispatchRevisionId && item.version === target.dispatchDraftVersion);
-  const request = purchaseRequests.records.find((item) => item.id === target.requestId && item.projectId === projectId);
-  const contentApproval = approvals.records.find((item) => item.id === target.contentApprovalId && item.projectId === projectId);
-  const recipientIds = new Set<string>();
-  const recipients: DispatchPlanApprovalRecord["snapshot"]["recipients"] = Array.isArray(value?.snapshot?.recipients) ? value.snapshot.recipients.flatMap((recipient: any, index: number) => {
-    const supplierContactId = typeof recipient?.supplierContactId === "string" ? recipient.supplierContactId.trim() : "";
-    const supplierContactVersion = recipient?.supplierContactVersion;
-    const contact = contacts.records.find((item) => item.id === supplierContactId && item.projectId === projectId);
-    const invite = revision?.inviteDrafts[index];
-    const destination = invite?.destination;
-    if (
-      !hasExactObjectKeys(recipient, ["supplierContactId", "supplierContactVersion", "destination"])
-      || !hasExactObjectKeys(recipient?.destination, ["displayName", "category", "tehranCoverage", "responseCapability", "networkStatus"])
-      || !supplierContactId
-      || recipientIds.has(supplierContactId)
-      || !Number.isInteger(supplierContactVersion)
-      || supplierContactVersion < 1
-      || !contact
-      || supplierContactVersion > contact.version
-      || !contact.history.some((event) => event.version === supplierContactVersion)
-      || !request
-      || !supplierContactCapabilitySupports(contact, request.requestKind)
-      || invite?.supplierContactId !== supplierContactId
-      || !destination
-      || JSON.stringify(stablePurchaseRequestValue(recipient?.destination)) !== JSON.stringify(stablePurchaseRequestValue(destination))
-    ) return [];
-    recipientIds.add(supplierContactId);
-    return [{ supplierContactId, supplierContactVersion, destination: structuredClone(destination) }];
-  }) : [];
-  const snapshot = revision ? {
-    recipients,
-    recipientCount: value?.snapshot?.recipientCount,
-    payload: structuredClone(revision.payload),
-    privacySnapshot: structuredClone(revision.privacySnapshot),
-    reviewAcknowledgement: {
-      destinationsReviewed: true as const,
-      payloadReviewed: true as const,
-      privacyAndLocationReviewed: true as const,
-    },
-  } : null;
-  let derivedStatus: DispatchPlanApprovalStatus = "pending";
-  let transitionIsValid = true;
-  const eventIds = new Set<string>();
-  const history: DispatchPlanApprovalEvent[] = Array.isArray(value?.history) ? value.history.flatMap((event: any, index: number): DispatchPlanApprovalEvent[] => {
-    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
-    const at = typeof event?.at === "string" ? event.at.trim() : "";
-    const type = event?.type as DispatchPlanApprovalEventType;
-    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || !["created", "approved", "withdrawn", "reopened"].includes(type) || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at)) return [];
-    if (index === 0) transitionIsValid = type === "created";
-    else if (derivedStatus === "pending" && type === "approved") derivedStatus = "approved";
-    else if (derivedStatus === "pending" && type === "withdrawn") derivedStatus = "withdrawn";
-    else if (derivedStatus === "withdrawn" && type === "reopened") derivedStatus = "pending";
-    else transitionIsValid = false;
-    eventIds.add(eventId);
-    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
-  }) : [];
-  const requestedAt = typeof value?.requestedAt === "string" ? value.requestedAt.trim() : "";
-  const decidedAt = value?.decidedAt === null ? null : typeof value?.decidedAt === "string" ? value.decidedAt.trim() : "";
-  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
-  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
-  const planFingerprint = typeof value?.planFingerprint === "string" ? value.planFingerprint.trim() : "";
-  const dedupeKey = typeof value?.dedupeKey === "string" ? value.dedupeKey.trim() : "";
-  const idempotencyKey = typeof value?.idempotencyKey === "string" ? value.idempotencyKey.trim() : "";
-  const expectedFingerprint = snapshot ? dispatchPlanFingerprint(target, snapshot) : "";
-  const expectedDedupeKey = dispatchPlanApprovalDedupeKey(projectId, target, expectedFingerprint);
-  const status = value?.status as DispatchPlanApprovalStatus;
-  const version = value?.version;
-  const approvedEvent = history.find((event) => event.type === "approved") ?? null;
-  const actionRecordIsValid = status === "approved"
-    ? hasExactObjectKeys(value?.actionRecord, ["kind", "result", "label", "error", "recordedAt"])
-      && value.actionRecord.kind === "record-local-dispatch-plan-approval"
-      && value.actionRecord.result === "local-dispatch-plan-approved"
-      && value.actionRecord.label === "تأیید محلی برنامهٔ ارسال"
-      && value.actionRecord.error === null
-      && value.actionRecord.recordedAt === decidedAt
-      && decidedAt === approvedEvent?.at
-      && value?.decidedBy === "شما"
-    : value?.actionRecord === null && decidedAt === null && value?.decidedBy === null;
-  const targetRelationIsValid = Boolean(dispatchDraft && revision && request && contentApproval)
-    && dispatchDraft!.target.requestId === target.requestId
-    && dispatchDraft!.target.requestVersion === target.requestVersion
-    && dispatchDraft!.target.revisionId === target.requestRevisionId
-    && dispatchDraft!.target.approvalId === target.contentApprovalId
-    && revision!.fingerprint === target.dispatchRevisionFingerprint
-    && contentApproval!.status === "approved"
-    && contentApproval!.target.id === target.requestId
-    && contentApproval!.target.version === target.requestVersion
-    && contentApproval!.target.revisionId === target.requestRevisionId
-    && approvalSnapshotMatchesRevision(contentApproval!, request!);
-  const requestedAtTime = new Date(requestedAt).getTime();
-  const requestRevision = request?.reviewRevisions.find((item) => item.id === target.requestRevisionId && item.requestVersion === target.requestVersion);
-  const dependencyChronologyIsValid = Number.isFinite(requestedAtTime)
-    && Boolean(revision && requestRevision && contentApproval)
-    && new Date(revision!.createdAt).getTime() <= requestedAtTime
-    && new Date(requestRevision!.createdAt).getTime() <= requestedAtTime
-    && new Date(contentApproval!.updatedAt).getTime() <= requestedAtTime
-    && recipients.every((recipient) => {
-      const contact = contacts.records.find((item) => item.id === recipient.supplierContactId && item.projectId === projectId);
-      const latestEventAtRequest = contact?.history.filter((event) => new Date(event.at).getTime() <= requestedAtTime).at(-1);
-      return latestEventAtRequest?.version === recipient.supplierContactVersion;
-    });
-
-  if (
-    !hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "purpose", "target", "snapshot", "planFingerprint", "dedupeKey", "idempotencyKey", "status", "simulationOnly", "externalEffect", "sendAuthorized", "externalActionAttempted", "actionRecord", "visibility", "localStatus", "requestedBy", "decidedBy", "requestedAt", "decidedAt", "createdAt", "updatedAt", "version", "history"])
-    || !hasExactObjectKeys(value?.target, ["type", "dispatchDraftId", "dispatchDraftVersion", "dispatchRevisionId", "dispatchRevisionFingerprint", "requestId", "requestVersion", "requestRevisionId", "contentApprovalId"])
-    || !hasExactObjectKeys(value?.snapshot, ["recipients", "recipientCount", "payload", "privacySnapshot", "reviewAcknowledgement"])
-    || !hasExactObjectKeys(value?.snapshot?.reviewAcknowledgement, ["destinationsReviewed", "payloadReviewed", "privacyAndLocationReviewed"])
-    || value?.schemaVersion !== 1
-    || !id
-    || !projectId
-    || value?.purpose !== "approve-local-dispatch-plan-simulation"
-    || target.type !== "dispatch-draft-revision"
-    || !target.dispatchDraftId
-    || !Number.isInteger(target.dispatchDraftVersion)
-    || target.dispatchDraftVersion < 1
-    || !target.dispatchRevisionId
-    || !target.dispatchRevisionFingerprint
-    || !target.requestId
-    || !Number.isInteger(target.requestVersion)
-    || target.requestVersion < 1
-    || !target.requestRevisionId
-    || !target.contentApprovalId
-    || !snapshot
-    || recipients.length < 1
-    || recipients.length !== value?.snapshot?.recipients?.length
-    || recipients.length !== revision?.recipientIds.length
-    || JSON.stringify(recipients.map((recipient) => recipient.supplierContactId)) !== JSON.stringify(revision?.recipientIds)
-    || snapshot.recipientCount !== recipients.length
-    || value?.snapshot?.reviewAcknowledgement?.destinationsReviewed !== true
-    || value?.snapshot?.reviewAcknowledgement?.payloadReviewed !== true
-    || value?.snapshot?.reviewAcknowledgement?.privacyAndLocationReviewed !== true
-    || JSON.stringify(stablePurchaseRequestValue(value?.snapshot?.payload)) !== JSON.stringify(stablePurchaseRequestValue(revision?.payload))
-    || JSON.stringify(stablePurchaseRequestValue(value?.snapshot?.privacySnapshot)) !== JSON.stringify(stablePurchaseRequestValue(revision?.privacySnapshot))
-    || planFingerprint !== expectedFingerprint
-    || dedupeKey !== expectedDedupeKey
-    || idempotencyKey !== `${expectedDedupeKey}:simulation-v1`
-    || (status !== "pending" && status !== "approved" && status !== "withdrawn")
-    || derivedStatus !== status
-    || value?.simulationOnly !== true
-    || value?.externalEffect !== "none"
-    || value?.sendAuthorized !== false
-    || value?.externalActionAttempted !== false
-    || !actionRecordIsValid
-    || value?.visibility !== "خصوصی پروژه"
-    || value?.localStatus !== "ثبت محلی"
-    || value?.requestedBy !== "شما"
-    || !isValidProjectFileDate(requestedAt)
-    || requestedAt !== createdAt
-    || !isValidProjectFileDate(createdAt)
-    || !isValidProjectFileDate(updatedAt)
-    || !Number.isInteger(version)
-    || version < 1
-    || !Array.isArray(value?.history)
-    || history.length !== value.history.length
-    || history.length !== version
-    || !transitionIsValid
-    || history[0]?.type !== "created"
-    || history[0]?.at !== createdAt
-    || history[history.length - 1]?.at !== updatedAt
-    || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())
-    || !targetRelationIsValid
-    || !dependencyChronologyIsValid
-  ) return null;
-
-  return {
-    schemaVersion: 1,
-    id,
-    projectId,
-    purpose: "approve-local-dispatch-plan-simulation",
-    target,
-    snapshot,
-    planFingerprint,
-    dedupeKey,
-    idempotencyKey,
-    status,
-    simulationOnly: true,
-    externalEffect: "none",
-    sendAuthorized: false,
-    externalActionAttempted: false,
-    actionRecord: approvedEvent ? { kind: "record-local-dispatch-plan-approval", result: "local-dispatch-plan-approved", label: "تأیید محلی برنامهٔ ارسال", error: null, recordedAt: decidedAt! } : null,
-    visibility: "خصوصی پروژه",
-    localStatus: "ثبت محلی",
-    requestedBy: "شما",
-    decidedBy: approvedEvent ? "شما" : null,
-    requestedAt,
-    decidedAt,
-    createdAt,
-    updatedAt,
-    version,
-    history,
-  };
-}
-
-function readStoredProjectDispatchPlanApprovals(
-  dispatchDrafts: LocalRecordsReadResult<DispatchDraftRecord>,
-  purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
-  approvals: LocalRecordsReadResult<ProjectApprovalRecord>,
-  contacts: LocalRecordsReadResult<SupplierContactRecord>,
-): LocalRecordsReadResult<DispatchPlanApprovalRecord> {
-  if (dispatchDrafts.readError || purchaseRequests.readError || approvals.readError || contacts.readError) return { records: [], readError: true };
-  try {
-    const raw = window.localStorage.getItem(projectDispatchPlanApprovalsStorageKey);
-    if (raw === null) return { records: [], readError: false };
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
-    const ids = new Set<string>();
-    const dedupeKeys = new Set<string>();
-    const idempotencyKeys = new Set<string>();
-    const projectCounts = new Map<string, number>();
-    let readError = false;
-    const records = parsed.flatMap((value): DispatchPlanApprovalRecord[] => {
-      const record = parseDispatchPlanApproval(value, dispatchDrafts, purchaseRequests, approvals, contacts);
-      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
-      if (!record || ids.has(record.id) || dedupeKeys.has(record.dedupeKey) || idempotencyKeys.has(record.idempotencyKey) || nextProjectCount > 100) {
-        readError = true;
-        return [];
-      }
-      ids.add(record.id);
-      dedupeKeys.add(record.dedupeKey);
-      idempotencyKeys.add(record.idempotencyKey);
-      projectCounts.set(record.projectId, nextProjectCount);
-      return [record];
-    });
-    return { records, readError };
-  } catch {
-    return { records: [], readError: true };
-  }
-}
-
 function parseBuilderRecordedProposalLine(value: any, expected: { requestItemId: string | null; serviceSpecId: string | null; requestLabel: string }): BuilderRecordedProposalLine | null {
   const id = typeof value?.id === "string" ? value.id.trim() : "";
   const requestItemId = value?.requestItemId === null ? null : typeof value?.requestItemId === "string" ? value.requestItemId.trim() : "";
@@ -10537,7 +12065,8 @@ function parseBuilderRecordedProposal(
   const supplierContactId = typeof value?.supplierSnapshot?.supplierContactId === "string" ? value.supplierSnapshot.supplierContactId.trim() : "";
   const supplierContactVersion = value?.supplierSnapshot?.supplierContactVersion;
   const contact = contacts.records.find((item) => item.id === supplierContactId && item.projectId === projectId);
-  if (!contact || !Number.isInteger(supplierContactVersion) || supplierContactVersion < 1 || supplierContactVersion > contact.version || !contact.history.some((event) => event.version === supplierContactVersion) || !supplierContactCapabilitySupports(contact, target.requestKind)) return null;
+  const contactRevision = contact?.revisions.find((revision) => revision.version === supplierContactVersion) ?? null;
+  if (!contact || !Number.isInteger(supplierContactVersion) || supplierContactVersion < 1 || supplierContactVersion > contact.version || !contactRevision || contactRevision.snapshot.status !== "active" || !supplierContactCapabilitySupports(contactRevision.snapshot, target.requestKind)) return null;
   const supplierDisplayName = typeof value?.supplierSnapshot?.displayName === "string" ? value.supplierSnapshot.displayName.trim() : "";
   const supplierCategory = typeof value?.supplierSnapshot?.category === "string" ? value.supplierSnapshot.category.trim() : "";
   const supplierTehranCoverage = typeof value?.supplierSnapshot?.tehranCoverage === "string" ? value.supplierSnapshot.tehranCoverage.trim() : "";
@@ -10563,7 +12092,7 @@ function parseBuilderRecordedProposal(
     responseCapability: supplierResponseCapability,
     networkStatus: "خارج از شبکه چیدا",
   } satisfies BuilderRecordedProposalSupplierSnapshot;
-  if (JSON.stringify(stablePurchaseRequestValue(supplierSnapshot)) !== JSON.stringify(stablePurchaseRequestValue({ supplierContactId: contact.id, supplierContactVersion, displayName: contact.displayName, category: contact.category, tehranCoverage: contact.tehranCoverage, responseCapability: contact.responseCapability, networkStatus: "خارج از شبکه چیدا" }))) return null;
+  if (JSON.stringify(stablePurchaseRequestValue(supplierSnapshot)) !== JSON.stringify(stablePurchaseRequestValue({ supplierContactId: contact.id, supplierContactVersion, displayName: contactRevision.snapshot.displayName, category: contactRevision.snapshot.category, tehranCoverage: contactRevision.snapshot.tehranCoverage, responseCapability: contactRevision.snapshot.responseCapability, networkStatus: "خارج از شبکه چیدا" }))) return null;
 
   const referenceKind = value?.reference?.kind as BuilderRecordedProposalReference["kind"];
   const projectFileId = value?.reference?.projectFileId === null ? null : typeof value?.reference?.projectFileId === "string" ? value.reference.projectFileId.trim() : "";
@@ -10628,7 +12157,7 @@ function parseBuilderRecordedProposal(
   const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
   const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
   const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
-  const firstDependencyAt = Math.max(new Date(reviewRevision.createdAt).getTime(), new Date(contentApproval.updatedAt).getTime(), new Date(contact.history[supplierContactVersion - 1].at).getTime(), reference.fileSnapshot ? new Date(reference.fileSnapshot.createdAt).getTime() : 0);
+  const firstDependencyAt = Math.max(new Date(reviewRevision.createdAt).getTime(), new Date(contentApproval.updatedAt).getTime(), new Date(contactRevision.createdAt).getTime(), reference.fileSnapshot ? new Date(reference.fileSnapshot.createdAt).getTime() : 0);
   const createdAtTime = new Date(createdAt).getTime();
   const latestRequestEventAtCreation = request.history.filter((event) => new Date(event.at).getTime() <= createdAtTime).at(-1);
   const latestContactEventAtCreation = contact.history.filter((event) => new Date(event.at).getTime() <= createdAtTime).at(-1);
@@ -13330,10 +14859,20 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     return !artifact || !builtArtifactInvalidationIntentMatchesArtifact(intent, artifact) && !builtArtifactInvalidationHasPersistedBlock(intent, artifact);
   });
   const [initialProjectPurchaseRequests] = useState<LocalRecordsReadResult<ProjectPurchaseRequestRecord>>(readStoredProjectPurchaseRequests);
-  const [initialProjectApprovals] = useState<LocalRecordsReadResult<ProjectApprovalRecord>>(() => readStoredProjectApprovals(initialProjectPurchaseRequests));
-  const [initialProjectSupplierContacts] = useState<LocalRecordsReadResult<SupplierContactRecord>>(readStoredProjectSupplierContacts);
-  const [initialProjectDispatchDrafts] = useState<LocalRecordsReadResult<DispatchDraftRecord>>(() => readStoredProjectDispatchDrafts(initialProjectPurchaseRequests, initialProjectApprovals, initialProjectSupplierContacts));
-  const [initialProjectDispatchPlanApprovals] = useState<LocalRecordsReadResult<DispatchPlanApprovalRecord>>(() => readStoredProjectDispatchPlanApprovals(initialProjectDispatchDrafts, initialProjectPurchaseRequests, initialProjectApprovals, initialProjectSupplierContacts));
+  const [initialProjectApprovalState] = useState<ProjectApprovalState>(() => readProjectApprovalState(initialProjectPurchaseRequests, projectTaskAuthoritySnapshot()));
+  const initialProjectApprovals: LocalRecordsReadResult<ProjectApprovalRecord> = { records: initialProjectApprovalState.envelope?.records ?? [], readError: initialProjectApprovalState.status !== "ready" };
+  const [initialProcurementDispatchState] = useState<ProcurementDispatchState>(() => {
+    const dependencies = procurementDispatchDependenciesSnapshot();
+    const authority = projectTaskAuthoritySnapshot();
+    const snapshot = readProcurementDispatchState(dependencies, authority);
+    if (initialProjectApprovalState.status === "ready") return snapshot;
+    return {
+      contacts: snapshot.contacts,
+      drafts: { status: "loading", envelope: null, reason: "approval-loading" },
+      plans: { status: "loading", envelope: null, reason: "approval-loading" },
+    };
+  });
+  const initialProjectSupplierContacts: LocalRecordsReadResult<SupplierContactRecord> = { records: initialProcurementDispatchState.contacts.envelope?.records ?? [], readError: initialProcurementDispatchState.contacts.status !== "ready" };
   const [initialBuilderRecordedProposals] = useState<LocalRecordsReadResult<BuilderRecordedProposalRecord>>(() => readStoredBuilderRecordedProposals(initialProjectPurchaseRequests, initialProjectApprovals, initialProjectSupplierContacts, initialProjectFiles));
   const [initialBuilderProposalComparisons] = useState<LocalRecordsReadResult<BuilderProposalComparisonRecord>>(() => readStoredBuilderProposalComparisons(initialBuilderRecordedProposals));
   const [initialBuilderProposalComparisonDecisions] = useState<LocalRecordsReadResult<BuilderProposalComparisonDecisionRecord>>(() => readStoredBuilderProposalComparisonDecisions(initialBuilderProposalComparisons));
@@ -13353,9 +14892,10 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const [builtArtifactEnvelope, setBuiltArtifactEnvelope] = useState<BuiltArtifactEnvelope>(initialBuiltArtifacts.envelope);
   const [projectPurchaseRequests, setProjectPurchaseRequests] = useState<ProjectPurchaseRequestRecord[]>(initialProjectPurchaseRequests.records);
   const [projectApprovals, setProjectApprovals] = useState<ProjectApprovalRecord[]>(initialProjectApprovals.records);
-  const [projectSupplierContacts, setProjectSupplierContacts] = useState<SupplierContactRecord[]>(initialProjectSupplierContacts.records);
-  const [projectDispatchDrafts, setProjectDispatchDrafts] = useState<DispatchDraftRecord[]>(initialProjectDispatchDrafts.records);
-  const [projectDispatchPlanApprovals, setProjectDispatchPlanApprovals] = useState<DispatchPlanApprovalRecord[]>(initialProjectDispatchPlanApprovals.records);
+  const [procurementDispatchState, setProcurementDispatchState] = useState<ProcurementDispatchState>(initialProcurementDispatchState);
+  const projectSupplierContacts = procurementDispatchState.contacts.envelope?.records ?? [];
+  const projectDispatchDrafts = procurementDispatchState.drafts.envelope?.records ?? [];
+  const projectDispatchPlanApprovals = procurementDispatchState.plans.envelope?.records ?? [];
   const [builderRecordedProposals, setBuilderRecordedProposals] = useState<BuilderRecordedProposalRecord[]>(initialBuilderRecordedProposals.records);
   const [builderProposalComparisons, setBuilderProposalComparisons] = useState<BuilderProposalComparisonRecord[]>(initialBuilderProposalComparisons.records);
   const [builderProposalComparisonDecisions, setBuilderProposalComparisonDecisions] = useState<BuilderProposalComparisonDecisionRecord[]>(initialBuilderProposalComparisonDecisions.records);
@@ -13391,19 +14931,27 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   });
   const builtArtifactInvalidationInFlightRef = useRef(new Set<string>());
   const [projectPurchaseRequestsReadError, setProjectPurchaseRequestsReadError] = useState(initialProjectPurchaseRequests.readError);
-  const [projectApprovalsReadError, setProjectApprovalsReadError] = useState(initialProjectApprovals.readError);
-  const [projectSupplierContactsReadError] = useState(initialProjectSupplierContacts.readError);
-  const [projectDispatchDraftsReadError] = useState(initialProjectDispatchDrafts.readError);
-  const [projectDispatchPlanApprovalsReadError] = useState(initialProjectDispatchPlanApprovals.readError);
-  const [builderRecordedProposalsReadError] = useState(initialBuilderRecordedProposals.readError);
-  const [builderProposalComparisonsReadError] = useState(initialBuilderProposalComparisons.readError);
-  const [builderProposalComparisonDecisionsReadError] = useState(initialBuilderProposalComparisonDecisions.readError);
-  const [builderServiceProposalComparisonsReadError] = useState(initialBuilderServiceProposalComparisons.readError);
-  const [builderServiceProposalComparisonDecisionsReadError] = useState(initialBuilderServiceProposalComparisonDecisions.readError);
-  const [builderNegotiationDraftsReadError] = useState(initialBuilderNegotiationDrafts.readError);
-  const [builderManualNegotiationResponsesReadError] = useState(initialBuilderManualNegotiationResponses.readError);
-  const [builderManualNegotiationResponseReviewsReadError] = useState(initialBuilderManualNegotiationResponseReviews.readError);
-  const [builderManualNegotiationConditionImpactsReadError] = useState(initialBuilderManualNegotiationConditionImpacts.readError);
+  const [projectApprovalsReadError, setProjectApprovalsReadError] = useState(initialProjectApprovalState.status === "read-error");
+  const [projectApprovalsLoading, setProjectApprovalsLoading] = useState(initialProjectApprovalState.status === "loading");
+  const projectApprovalsStorageLocked = projectApprovalsReadError || projectApprovalsLoading;
+  const projectSupplierContactsReadError = procurementDispatchState.contacts.status === "read-error";
+  const projectDispatchDraftsReadError = procurementDispatchState.drafts.status === "read-error";
+  const projectDispatchPlanApprovalsReadError = procurementDispatchState.plans.status === "read-error";
+  const projectSupplierContactsLoading = procurementDispatchState.contacts.status === "loading";
+  const projectDispatchDraftsLoading = procurementDispatchState.drafts.status === "loading";
+  const projectDispatchPlanApprovalsLoading = procurementDispatchState.plans.status === "loading";
+  const projectSupplierContactsStorageLocked = procurementDispatchState.contacts.status !== "ready";
+  const projectDispatchDraftsStorageLocked = procurementDispatchState.drafts.status !== "ready" || projectSupplierContactsStorageLocked || projectPurchaseRequestsReadError || projectApprovalsStorageLocked;
+  const projectDispatchPlanApprovalsStorageLocked = procurementDispatchState.plans.status !== "ready" || projectDispatchDraftsStorageLocked;
+  const [builderRecordedProposalsReadError, setBuilderRecordedProposalsReadError] = useState(initialBuilderRecordedProposals.readError);
+  const [builderProposalComparisonsReadError, setBuilderProposalComparisonsReadError] = useState(initialBuilderProposalComparisons.readError);
+  const [builderProposalComparisonDecisionsReadError, setBuilderProposalComparisonDecisionsReadError] = useState(initialBuilderProposalComparisonDecisions.readError);
+  const [builderServiceProposalComparisonsReadError, setBuilderServiceProposalComparisonsReadError] = useState(initialBuilderServiceProposalComparisons.readError);
+  const [builderServiceProposalComparisonDecisionsReadError, setBuilderServiceProposalComparisonDecisionsReadError] = useState(initialBuilderServiceProposalComparisonDecisions.readError);
+  const [builderNegotiationDraftsReadError, setBuilderNegotiationDraftsReadError] = useState(initialBuilderNegotiationDrafts.readError);
+  const [builderManualNegotiationResponsesReadError, setBuilderManualNegotiationResponsesReadError] = useState(initialBuilderManualNegotiationResponses.readError);
+  const [builderManualNegotiationResponseReviewsReadError, setBuilderManualNegotiationResponseReviewsReadError] = useState(initialBuilderManualNegotiationResponseReviews.readError);
+  const [builderManualNegotiationConditionImpactsReadError, setBuilderManualNegotiationConditionImpactsReadError] = useState(initialBuilderManualNegotiationConditionImpacts.readError);
   const [selectedBuiltArtifactId, setSelectedBuiltArtifactId] = useState<string | null>(null);
   const [legacyBuiltArtifactDetected] = useState(() => readLocalStorageValue(legacyInstalledToolStorageKey) !== null);
   const [briefSchedule, setBriefSchedule] = useState<BriefSchedule | null>(() => {
@@ -13503,23 +15051,135 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
 
   useEffect(() => {
     let disposed = false;
-    const reconcile = () => {
+    let reconcileVersion = 0;
+    const refreshProcurementDependencies = (requestRead: LocalRecordsReadResult<ProjectPurchaseRequestRecord>, approvalRead: LocalRecordsReadResult<ProjectApprovalRecord>, procurementRead: ProcurementDispatchState) => {
+      const contactsRead: LocalRecordsReadResult<SupplierContactRecord> = { records: procurementRead.contacts.envelope?.records ?? [], readError: procurementRead.contacts.status !== "ready" };
+      const filesRead = readStoredProjectFiles();
+      const proposalsRead = readStoredBuilderRecordedProposals(requestRead, approvalRead, contactsRead, filesRead);
+      const comparisonsRead = readStoredBuilderProposalComparisons(proposalsRead);
+      const comparisonDecisionsRead = readStoredBuilderProposalComparisonDecisions(comparisonsRead);
+      const serviceComparisonsRead = readStoredBuilderServiceProposalComparisons(proposalsRead, requestRead);
+      const serviceComparisonDecisionsRead = readStoredBuilderServiceProposalComparisonDecisions(serviceComparisonsRead);
+      const negotiationDraftsRead = readStoredBuilderNegotiationDrafts(comparisonsRead, serviceComparisonsRead);
+      const manualResponsesRead = readStoredBuilderManualNegotiationResponses(negotiationDraftsRead);
+      const responseReviewsRead = readStoredBuilderManualNegotiationResponseReviews(manualResponsesRead);
+      const conditionImpactsRead = readStoredBuilderManualNegotiationConditionImpacts(manualResponsesRead);
+      setProcurementDispatchState(procurementRead);
+      setBuilderRecordedProposals(proposalsRead.records);
+      setBuilderRecordedProposalsReadError(proposalsRead.readError);
+      setBuilderProposalComparisons(comparisonsRead.records);
+      setBuilderProposalComparisonsReadError(comparisonsRead.readError);
+      setBuilderProposalComparisonDecisions(comparisonDecisionsRead.records);
+      setBuilderProposalComparisonDecisionsReadError(comparisonDecisionsRead.readError);
+      setBuilderServiceProposalComparisons(serviceComparisonsRead.records);
+      setBuilderServiceProposalComparisonsReadError(serviceComparisonsRead.readError);
+      setBuilderServiceProposalComparisonDecisions(serviceComparisonDecisionsRead.records);
+      setBuilderServiceProposalComparisonDecisionsReadError(serviceComparisonDecisionsRead.readError);
+      setBuilderNegotiationDrafts(negotiationDraftsRead.records);
+      setBuilderNegotiationDraftsReadError(negotiationDraftsRead.readError);
+      setBuilderManualNegotiationResponses(manualResponsesRead.records);
+      setBuilderManualNegotiationResponsesReadError(manualResponsesRead.readError);
+      setBuilderManualNegotiationResponseReviews(responseReviewsRead.records);
+      setBuilderManualNegotiationResponseReviewsReadError(responseReviewsRead.readError);
+      setBuilderManualNegotiationConditionImpacts(conditionImpactsRead.records);
+      setBuilderManualNegotiationConditionImpactsReadError(conditionImpactsRead.readError);
+    };
+    const reconcile = async () => {
+      const requestedVersion = ++reconcileVersion;
+      try {
+        if (window.localStorage.getItem(projectApprovalConfirmationIntentKey) !== null || window.localStorage.getItem(procurementDispatchPreconditionIntentKey) !== null) await initializeProjectApprovals(projectTaskAuthoritySnapshot);
+      } catch {
+        // The guarded reads below expose the pending transaction as an explicit fail-close state.
+      }
+      const requestSnapshot = readStoredProjectPurchaseRequests();
+      if (disposed || requestedVersion !== reconcileVersion) return;
+      setProjectPurchaseRequests(requestSnapshot.records);
+      setProjectPurchaseRequestsReadError(requestSnapshot.readError);
+      if (requestSnapshot.readError) {
+        setProjectApprovals([]);
+        setProjectApprovalsLoading(false);
+        setProjectApprovalsReadError(true);
+        const authority = projectTaskAuthoritySnapshot();
+        const contactSnapshot = readSupplierContactState(authority);
+        const nextContact = contactSnapshot.status === "loading" ? await initializeSupplierContacts(projectTaskAuthoritySnapshot) : contactSnapshot;
+        if (disposed || requestedVersion !== reconcileVersion) return;
+        const latestContact = readSupplierContactState(projectTaskAuthoritySnapshot());
+        const contacts = latestContact.status === "loading" && nextContact.status === "read-error" ? nextContact : latestContact;
+        refreshProcurementDependencies(requestSnapshot, { records: [], readError: true }, {
+          contacts,
+          drafts: { status: "read-error", envelope: null, reason: "request-read-error" },
+          plans: { status: "read-error", envelope: null, reason: "request-read-error" },
+        });
+        return;
+      }
+      const snapshot = readProjectApprovalState(requestSnapshot, projectTaskAuthoritySnapshot());
+      setProjectApprovalsLoading(snapshot.status === "loading");
+      setProjectApprovalsReadError(snapshot.status === "read-error");
+      if (snapshot.status === "loading") setProjectApprovals([]);
+      const next = snapshot.status === "loading" ? await initializeProjectApprovals(projectTaskAuthoritySnapshot) : snapshot;
+      if (disposed || requestedVersion !== reconcileVersion) return;
       const requestRead = readStoredProjectPurchaseRequests();
-      if (disposed) return;
+      const latest = readProjectApprovalState(requestRead, projectTaskAuthoritySnapshot());
+      const effective = latest.status === "loading" && next.status === "read-error" ? next : latest;
       setProjectPurchaseRequests(requestRead.records);
       setProjectPurchaseRequestsReadError(requestRead.readError);
-      if (requestRead.readError) return;
-      const approvalRead = readStoredProjectApprovals(requestRead);
-      if (disposed) return;
-      setProjectApprovals(approvalRead.records);
-      setProjectApprovalsReadError(approvalRead.readError);
+      setProjectApprovals(effective.envelope?.records ?? []);
+      setProjectApprovalsLoading(effective.status === "loading");
+      setProjectApprovalsReadError(effective.status === "read-error");
+      const approvalRead = { records: effective.envelope?.records ?? [], readError: effective.status !== "ready" } satisfies LocalRecordsReadResult<ProjectApprovalRecord>;
+      if (effective.status !== "ready" || requestRead.readError) {
+        const authority = projectTaskAuthoritySnapshot();
+        const contacts = readSupplierContactState(authority);
+        refreshProcurementDependencies(requestRead, approvalRead, {
+          contacts,
+          drafts: { status: effective.status === "loading" ? "loading" : "read-error", envelope: null, reason: "approval-unavailable" },
+          plans: { status: effective.status === "loading" ? "loading" : "read-error", envelope: null, reason: "approval-unavailable" },
+        });
+        return;
+      }
+      const dependencies = procurementDispatchDependenciesSnapshot();
+      const authority = projectTaskAuthoritySnapshot();
+      const procurementSnapshot = readProcurementDispatchState(dependencies, authority);
+      let queueIntentPresent = false;
+      try { queueIntentPresent = window.localStorage.getItem(procurementDispatchQueueIntentKey) !== null; } catch { queueIntentPresent = true; }
+      const procurementNext = procurementSnapshot.contacts.status === "loading" || procurementSnapshot.drafts.status === "loading" || procurementSnapshot.plans.status === "loading" || queueIntentPresent
+        ? await initializeProcurementDispatch(procurementDispatchDependenciesSnapshot, projectTaskAuthoritySnapshot)
+        : procurementSnapshot;
+      if (disposed || requestedVersion !== reconcileVersion) return;
+      const latestDependencies = procurementDispatchDependenciesSnapshot();
+      const procurementLatest = readProcurementDispatchState(latestDependencies, projectTaskAuthoritySnapshot());
+      const procurementEffective = queueIntentPresent || procurementLatest.contacts.status === "loading" || procurementLatest.drafts.status === "loading" || procurementLatest.plans.status === "loading"
+        ? procurementNext
+        : procurementLatest;
+      refreshProcurementDependencies(requestRead, approvalRead, procurementEffective);
     };
     const handleStorage = (event: StorageEvent) => {
       if (event.storageArea && event.storageArea !== window.localStorage) return;
-      if (event.key !== null && event.key !== projectPurchaseRequestsStorageKey && event.key !== projectPurchaseRequestsRecoveryIntentKey && event.key !== projectApprovalsStorageKey) return;
-      reconcile();
+      if (event.key !== null
+        && event.key !== projectPurchaseRequestsStorageKey
+        && event.key !== projectPurchaseRequestsRecoveryIntentKey
+        && event.key !== projectApprovalsStorageKey
+        && event.key !== legacyProjectApprovalsStorageKey
+        && event.key !== projectApprovalsCutoverMarkerKey
+        && event.key !== projectApprovalConfirmationIntentKey
+        && event.key !== procurementDispatchPreconditionIntentKey
+        && event.key !== projectSupplierContactsStorageKey
+        && event.key !== legacyProjectSupplierContactsStorageKey
+        && event.key !== projectSupplierContactsCutoverMarkerKey
+        && event.key !== projectDispatchDraftsStorageKey
+        && event.key !== legacyProjectDispatchDraftsStorageKey
+        && event.key !== projectDispatchDraftsCutoverMarkerKey
+        && event.key !== projectDispatchPlanApprovalsStorageKey
+        && event.key !== legacyProjectDispatchPlanApprovalsStorageKey
+        && event.key !== projectDispatchPlanApprovalsCutoverMarkerKey
+        && event.key !== procurementDispatchQueueIntentKey
+        && event.key !== projectsStorageKey
+        && event.key !== projectFoundationCutoverMarkerKey
+        && event.key !== projectFoundationIdentityFixtureKey) return;
+      void reconcile();
     };
-    const handleVisibility = () => { if (document.visibilityState === "visible") reconcile(); };
+    const handleVisibility = () => { if (document.visibilityState === "visible") void reconcile(); };
+    void reconcile();
     window.addEventListener("focus", reconcile);
     window.addEventListener("storage", handleStorage);
     document.addEventListener("visibilitychange", handleVisibility);
@@ -13824,6 +15484,13 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     () => projectDispatchPlanApprovals.filter((approval) => approval.projectId === activeProject.id),
     [activeProject.id, projectDispatchPlanApprovals],
   );
+  const dispatchPlanApprovalStatus = (record: DispatchPlanApprovalRecord, draft: DispatchDraftRecord | null): DispatchPlanApprovalEffectiveStatus => {
+    const dependencies = procurementDispatchDependenciesSnapshot();
+    const contactsEnvelope = procurementDispatchState.contacts.envelope;
+    return dependencies && contactsEnvelope && procurementDispatchState.contacts.status === "ready"
+      ? canonicalDispatchPlanApprovalEffectiveStatus(record, draft, dependencies, contactsEnvelope)
+      : "invalidated";
+  };
   const activeBuilderRecordedProposals = useMemo(
     () => builderRecordedProposals.filter((proposal) => proposal.projectId === activeProject.id),
     [activeProject.id, builderRecordedProposals],
@@ -13867,7 +15534,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       ? `روزانه · ${briefSchedule.time}`
       : `هفتگی · ${briefSchedule.weekday} · ${briefSchedule.time}`
     : "تنظیم نشده";
-  const localRecordCountPending = sourceRecoveryPending || sourceAssetValidationPending || projectMemoriesLoading || projectTaskState.status === "loading";
+  const localRecordCountPending = sourceRecoveryPending || sourceAssetValidationPending || projectMemoriesLoading || projectApprovalsLoading || projectTaskState.status === "loading" || projectSupplierContactsLoading || projectDispatchDraftsLoading || projectDispatchPlanApprovalsLoading;
   const localRecordCountReadError = projectFilesReadError || projectSourcesReadError || sourceRecoveryBlocked || projectMemoriesReadError || projectTasksReadError || projectBackboneReadError || projectTaskMonitorsReadError || builtArtifactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError || builderManualNegotiationConditionImpactsReadError;
   const localRecordCount = localRecordCountPending || localRecordCountReadError
     ? null
@@ -15730,487 +17397,276 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     return refreshProjectPurchaseRequestsFromMutation(result);
   };
 
-  const createProjectApproval = async (projectId: string, requestId: string, expectedRequestVersion: number): Promise<ProjectPurchaseRequestMutationResult> => {
-    const result = await withProjectPurchaseRequestsWriteLock<ProjectPurchaseRequestMutationResult>({ status: "lock-unavailable", reason: "lock-unavailable" }, () => {
-      if (projectApprovalsReadError || projectPurchaseRequestsReadError) return { status: "read-failure", reason: "dependent-store-locked" };
-      const authority = projectTaskAuthoritySnapshot();
-      if (!projectPurchaseRequestAuthorityIsValid(authority)) return { status: "read-failure", reason: "foundation-invalid" };
-      const current = readProjectPurchaseRequestsForMutation(authority);
-      if (!current) return { status: "read-failure", reason: "request-store-invalid" };
-      if (!authority.projectIds.includes(projectId)) return { status: "scope-mismatch", records: current.records, reason: "project-not-authorized" };
-      const request = current.records.find((item) => item.id === requestId);
-      if (!request) return { status: "not-found", records: current.records, reason: "request-not-found" };
-      if (request.projectId !== projectId) return { status: "scope-mismatch", records: current.records, reason: "request-project-mismatch" };
-      if (request.version !== expectedRequestVersion) return { status: "version-conflict", records: current.records, requestId, reason: "request-version-stale" };
-      if (request.status !== "ready-for-review" || purchaseRequestMissingFields(request).length > 0) return { status: "unsupported-transition", records: current.records, requestId, reason: "request-not-ready" };
-
-      let previousApprovalsRaw: string | null;
-      try {
-        previousApprovalsRaw = window.localStorage.getItem(projectApprovalsStorageKey);
-      } catch {
-        return { status: "read-failure", records: current.records, requestId, reason: "approval-read-failure" };
-      }
-      const approvalRead = parseStoredProjectApprovals(previousApprovalsRaw, { records: current.records, readError: false });
-      if (approvalRead.readError) return { status: "read-failure", records: current.records, requestId, reason: "approval-store-invalid" };
-      const dedupeKey = purchaseRequestApprovalDedupeKey(projectId, request.id, request.version);
-      const existingApproval = approvalRead.records.find((approval) => approval.dedupeKey === dedupeKey);
-      if (existingApproval) return { status: "unchanged", records: current.records, requestId, approvalId: existingApproval.id };
-      const revision = request.reviewRevisions.find((item) => item.requestVersion === request.version && item.createdAt === request.updatedAt);
-      if (!revision) return { status: "schema-invalid", records: current.records, requestId, reason: "review-revision-missing" };
-      const timestamp = new Date(Math.max(Date.now(), Date.parse(request.updatedAt) + 1)).toISOString();
-      const approvalId = `approval-${window.crypto.randomUUID()}`;
-      const record = {
-        schemaVersion: 2,
-        id: approvalId,
-        projectId,
-        purpose: "review-purchase-request-version",
-        target: { type: "purchase-request", id: request.id, version: request.version, updatedAt: request.updatedAt, revisionId: revision.id },
-        dedupeKey,
-        snapshot: structuredClone(revision.snapshot),
-        privacySnapshot: { shareableFields: [...revision.shareableFields], projectNameShared: false, exactAddressShared: false, budgetShared: false, filesShared: false, memoryShared: false },
-        externalEffect: "none",
-        destination: null,
-        sendAuthorized: false,
-        status: "pending",
-        visibility: "خصوصی پروژه",
-        localStatus: "ثبت محلی",
-        requestedBy: "شما",
-        decidedBy: null,
-        requestedAt: timestamp,
-        updatedAt: timestamp,
-        decidedAt: null,
-        version: 1,
-        history: [{ id: `approval-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-      } satisfies ProjectApprovalRecord;
-      const nextApprovals = [...approvalRead.records, record];
-      const candidateRaw = JSON.stringify(nextApprovals);
-      const candidateRead = parseStoredProjectApprovals(candidateRaw, { records: current.records, readError: false });
-      if (candidateRead.readError || JSON.stringify(candidateRead.records) !== candidateRaw) return { status: "schema-invalid", records: current.records, requestId, reason: "approval-candidate-invalid" };
-      try {
-        if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== current.raw || window.localStorage.getItem(projectApprovalsStorageKey) !== previousApprovalsRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || projectTaskAuthoritySnapshot()?.snapshotHash !== authority.snapshotHash) return { status: "version-conflict", records: current.records, requestId, reason: "preimage-changed" };
-        window.localStorage.setItem(projectApprovalsStorageKey, candidateRaw);
-        const readbackRaw = window.localStorage.getItem(projectApprovalsStorageKey);
-        const readback = parseStoredProjectApprovals(readbackRaw, { records: current.records, readError: false });
-        if (readbackRaw === candidateRaw && !readback.readError && window.localStorage.getItem(projectPurchaseRequestsStorageKey) === current.raw && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null && projectTaskAuthoritySnapshot()?.snapshotHash === authority.snapshotHash) return { status: "created", records: current.records, requestId, approvalId };
-        return restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateRaw)
-          ? { status: "write-failure", records: current.records, requestId, reason: "approval-readback-failure" }
-          : { status: "read-failure", records: current.records, requestId, reason: "approval-rollback-failure" };
-      } catch {
-        return restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateRaw)
-          ? { status: "write-failure", records: current.records, requestId, reason: "approval-persistence-failure" }
-          : { status: "read-failure", records: current.records, requestId, reason: "approval-rollback-failure" };
-      }
-    });
-    if (result.records) {
-      setProjectPurchaseRequests(result.records);
+  const applyProjectApprovalMutation = (result: ProjectApprovalMutationResult | (ProjectPurchaseRequestMutationResult & { approvalEnvelope?: ProjectApprovalEnvelope })) => {
+    const approvalResult = result as ProjectApprovalMutationResult;
+    const requestResult = result as ProjectPurchaseRequestMutationResult & { approvalEnvelope?: ProjectApprovalEnvelope };
+    const requests = requestResult.records ?? approvalResult.requests;
+    const envelope = requestResult.approvalEnvelope ?? approvalResult.envelope;
+    if (requests) {
+      setProjectPurchaseRequests(requests);
       setProjectPurchaseRequestsReadError(false);
-      const approvalsRead = readStoredProjectApprovals({ records: result.records, readError: false });
-      setProjectApprovals(approvalsRead.records);
-      setProjectApprovalsReadError(approvalsRead.readError);
     }
-    return result;
+    if (envelope) {
+      setProjectApprovals(envelope.records);
+      setProjectApprovalsReadError(false);
+      setProjectApprovalsLoading(false);
+    } else if (result.status === "read-failure") {
+      setProjectApprovalsReadError(true);
+      setProjectApprovalsLoading(false);
+    }
+  };
+
+  const createProjectApproval = async (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string): Promise<ProjectPurchaseRequestMutationResult> => {
+    const authority = projectTaskAuthoritySnapshot();
+    const requestRead = readStoredProjectPurchaseRequests();
+    const approvalState = readProjectApprovalState(requestRead, authority);
+    if (approvalState.status !== "ready" || !approvalState.envelope) return { status: "read-failure", records: requestRead.records, requestId, reason: "approval-store-not-ready" };
+    const result = await executeProjectApprovalCommand({ inputSchemaVersion: 1, action: "create-content-approval", projectId, requestId, expectedStoreVersion: approvalState.envelope.storeVersion, expectedRequestVersion, idempotencyKey }, projectTaskAuthoritySnapshot);
+    applyProjectApprovalMutation(result);
+    return { status: result.status, records: result.requests, requestId: result.requestId, approvalId: result.approvalId, reason: result.reason };
   };
 
   const confirmProjectPurchaseRequestForRecipients = async (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string): Promise<ProjectPurchaseRequestMutationResult> => {
-    const result = await withProjectPurchaseRequestsWriteLock<ProjectPurchaseRequestMutationResult>({ status: "lock-unavailable", reason: "lock-unavailable" }, () => {
-      const command = { inputSchemaVersion: 1, action: "confirm-for-recipients", projectId, requestId, expectedRequestVersion, idempotencyKey } as const;
-      if (!hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "requestId", "expectedRequestVersion", "idempotencyKey"]) || !projectId || projectId.trim() !== projectId || !requestId || requestId.trim() !== requestId || !Number.isInteger(expectedRequestVersion) || expectedRequestVersion < 1 || !idempotencyKey || idempotencyKey.trim() !== idempotencyKey || idempotencyKey.length > 200) return { status: "schema-invalid", reason: "command-invalid" };
-      const authority = projectTaskAuthoritySnapshot();
-      if (!projectPurchaseRequestAuthorityIsValid(authority)) return { status: "read-failure", reason: "foundation-invalid" };
-      const current = readProjectPurchaseRequestsForMutation(authority);
-      if (!current) return { status: "read-failure", reason: "request-store-invalid" };
-      const payloadHash = purchaseRequestCommandPayloadHash(command);
-      const existingReceipt = current.records.flatMap((request) => request.mutationReceipts).find((receipt) => receipt.key === idempotencyKey);
-      if (existingReceipt) {
-        if (existingReceipt.action !== command.action || existingReceipt.payloadHash !== payloadHash || existingReceipt.projectId !== projectId || existingReceipt.requestId !== requestId || existingReceipt.expectedRequestVersion !== expectedRequestVersion || !existingReceipt.relatedApprovalId) return { status: "idempotency-payload-mismatch", records: current.records, reason: "idempotency-key-reused" };
-        const replayApprovals = readStoredProjectApprovals({ records: current.records, readError: false });
-        return !replayApprovals.readError && replayApprovals.records.some((approval) => approval.id === existingReceipt.relatedApprovalId)
-          ? { status: "updated", records: current.records, requestId, approvalId: existingReceipt.relatedApprovalId }
-          : { status: "read-failure", records: current.records, reason: "approval-replay-missing" };
-      }
-      if (!authority.projectIds.includes(projectId)) return { status: "scope-mismatch", records: current.records, reason: "project-not-authorized" };
-      const request = current.records.find((item) => item.id === requestId);
-      if (!request) return { status: "not-found", records: current.records, reason: "request-not-found" };
-      if (request.projectId !== projectId) return { status: "scope-mismatch", records: current.records, reason: "request-project-mismatch" };
-      if (request.version !== expectedRequestVersion) return { status: "version-conflict", records: current.records, requestId, reason: "request-version-stale" };
-
-      let previousApprovalsRaw: string | null;
-      try {
-        previousApprovalsRaw = window.localStorage.getItem(projectApprovalsStorageKey);
-      } catch {
-        return { status: "read-failure", records: current.records, reason: "approval-read-failure" };
-      }
-      const approvalRead = parseStoredProjectApprovals(previousApprovalsRaw, { records: current.records, readError: false });
-      if (approvalRead.readError) return { status: "read-failure", records: current.records, reason: "approval-store-invalid" };
-      const timestamp = new Date(Math.max(Date.now(), Date.parse(request.updatedAt) + 1)).toISOString();
-      let readyRequest = markProjectPurchaseRequestRecordReady(request, timestamp);
-      if (!readyRequest) return { status: "unsupported-transition", records: current.records, requestId, reason: "request-not-ready" };
-      const reviewRevision = readyRequest.reviewRevisions.at(-1)!;
-      const approvalId = purchaseRequestApprovalIdForConfirmationKey(idempotencyKey);
-      const approvalRecord = {
-        schemaVersion: 2,
-        id: approvalId,
-        projectId,
-        purpose: "review-purchase-request-version",
-        target: { type: "purchase-request", id: readyRequest.id, version: readyRequest.version, updatedAt: readyRequest.updatedAt, revisionId: reviewRevision.id },
-        dedupeKey: purchaseRequestApprovalDedupeKey(projectId, readyRequest.id, readyRequest.version),
-        snapshot: structuredClone(reviewRevision.snapshot),
-        privacySnapshot: { shareableFields: [...reviewRevision.shareableFields], projectNameShared: false, exactAddressShared: false, budgetShared: false, filesShared: false, memoryShared: false },
-        externalEffect: "none",
-        destination: null,
-        sendAuthorized: false,
-        status: "approved",
-        visibility: "خصوصی پروژه",
-        localStatus: "ثبت محلی",
-        requestedBy: "شما",
-        decidedBy: "شما",
-        requestedAt: timestamp,
-        updatedAt: timestamp,
-        decidedAt: timestamp,
-        version: 2,
-        history: [
-          { id: `approval-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 },
-          { id: `approval-event-${window.crypto.randomUUID()}`, type: "approved", actor: "شما", at: timestamp, version: 2 },
-        ],
-      } satisfies ProjectApprovalRecord;
-      const receipt = finalizePurchaseRequestMutationReceipt({ schemaVersion: 1, key: idempotencyKey, action: "confirm-for-recipients", payloadHash, projectId, requestId, expectedRequestVersion, resultingRequestVersion: readyRequest.version, relatedApprovalId: approvalId, authorizationContextHash: authority.authorizationHashes[projectId], recordedAt: timestamp });
-      readyRequest = { ...readyRequest, mutationReceipts: [...readyRequest.mutationReceipts, receipt] };
-      const nextRequests = current.records.map((item) => item.id === requestId ? readyRequest! : item);
-      const candidateRequestsRaw = JSON.stringify(nextRequests);
-      const candidateRequestsRead = parseStoredProjectPurchaseRequests(candidateRequestsRaw);
-      const nextApprovals = [...approvalRead.records, approvalRecord];
-      const candidateApprovalsRaw = JSON.stringify(nextApprovals);
-      const candidateApprovalsRead = parseStoredProjectApprovals(candidateApprovalsRaw, candidateRequestsRead);
-      if (candidateRequestsRead.readError || candidateApprovalsRead.readError || JSON.stringify(candidateRequestsRead.records) !== candidateRequestsRaw || JSON.stringify(candidateApprovalsRead.records) !== candidateApprovalsRaw) return { status: "schema-invalid", records: current.records, reason: "candidate-invalid" };
-      try {
-        if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== current.raw || window.localStorage.getItem(projectApprovalsStorageKey) !== previousApprovalsRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || projectTaskAuthoritySnapshot()?.snapshotHash !== authority.snapshotHash) return { status: "version-conflict", records: current.records, reason: "preimage-changed" };
-        window.localStorage.setItem(projectPurchaseRequestsStorageKey, candidateRequestsRaw);
-        window.localStorage.setItem(projectApprovalsStorageKey, candidateApprovalsRaw);
-        const readbackRequestsRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
-        const readbackApprovalsRaw = window.localStorage.getItem(projectApprovalsStorageKey);
-        const readbackRequests = parseStoredProjectPurchaseRequests(readbackRequestsRaw);
-        const readbackApprovals = parseStoredProjectApprovals(readbackApprovalsRaw, readbackRequests);
-        if (readbackRequestsRaw === candidateRequestsRaw && readbackApprovalsRaw === candidateApprovalsRaw && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null && projectTaskAuthoritySnapshot()?.snapshotHash === authority.snapshotHash && !readbackRequests.readError && !readbackApprovals.readError) return { status: "updated", records: readbackRequests.records, requestId, approvalId };
-        const approvalRolledBack = restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateApprovalsRaw);
-        const requestRolledBack = restoreOwnedProjectPurchaseRequestBytes(projectPurchaseRequestsStorageKey, current.raw, candidateRequestsRaw);
-        return approvalRolledBack && requestRolledBack ? { status: "write-failure", reason: "readback-failure" } : { status: "read-failure", reason: "rollback-failure" };
-      } catch {
-        const approvalRolledBack = restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateApprovalsRaw);
-        const requestRolledBack = restoreOwnedProjectPurchaseRequestBytes(projectPurchaseRequestsStorageKey, current.raw, candidateRequestsRaw);
-        return approvalRolledBack && requestRolledBack ? { status: "write-failure", reason: "persistence-failure" } : { status: "read-failure", reason: "rollback-failure" };
-      }
-    });
-    if (result.records) {
-      setProjectPurchaseRequests(result.records);
-      setProjectPurchaseRequestsReadError(false);
-      const approvalsRead = readStoredProjectApprovals({ records: result.records, readError: false });
-      setProjectApprovals(approvalsRead.records);
-      setProjectApprovalsReadError(approvalsRead.readError);
-    } else if (result.status === "read-failure") {
-      setProjectPurchaseRequestsReadError(true);
-    }
+    const result = await executeProjectPurchaseRequestConfirmation({ inputSchemaVersion: 1, action: "confirm-for-recipients", projectId, requestId, expectedRequestVersion, idempotencyKey }, projectTaskAuthoritySnapshot);
+    applyProjectApprovalMutation(result);
     return result;
   };
 
-  const decideProjectApproval = async (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">): Promise<boolean> => {
-    type DecisionResult = { ok: boolean; requests?: ProjectPurchaseRequestRecord[]; approvals?: ProjectApprovalRecord[]; approvalReadError?: boolean };
-    const result = await withProjectPurchaseRequestsWriteLock<DecisionResult>({ ok: false }, () => {
-      if (projectApprovalsReadError || projectPurchaseRequestsReadError) return { ok: false };
-      const authority = projectTaskAuthoritySnapshot();
-      if (!projectPurchaseRequestAuthorityIsValid(authority)) return { ok: false };
-      const current = readProjectPurchaseRequestsForMutation(authority);
-      if (!current) return { ok: false };
-      let previousApprovalsRaw: string | null;
-      try {
-        previousApprovalsRaw = window.localStorage.getItem(projectApprovalsStorageKey);
-      } catch {
-        return { ok: false };
-      }
-      const approvalRead = parseStoredProjectApprovals(previousApprovalsRaw, { records: current.records, readError: false });
-      if (approvalRead.readError) return { ok: false };
-      const approval = approvalRead.records.find((item) => item.id === approvalId && item.projectId === activeProject.id);
-      if (!approval || approval.status !== "pending") return { ok: false, requests: current.records, approvals: approvalRead.records };
-      const targetRequest = current.records.find((request) => request.id === approval.target.id && request.projectId === activeProject.id);
-      if (!targetRequest || targetRequest.status !== "ready-for-review" || targetRequest.version !== approval.target.version || !approvalSnapshotMatchesRevision(approval, targetRequest)) return { ok: false, requests: current.records, approvals: approvalRead.records };
-      const timestamp = new Date(Math.max(Date.now(), Date.parse(approval.updatedAt) + 1)).toISOString();
-      const version = approval.version + 1;
-      const decided = {
-        ...approval,
-        status: decision,
-        decidedBy: "شما",
-        decidedAt: timestamp,
-        updatedAt: timestamp,
-        version,
-        history: [...approval.history, { id: `approval-event-${window.crypto.randomUUID()}`, type: decision, actor: "شما", at: timestamp, version }],
-      } satisfies ProjectApprovalRecord;
-      const nextApprovals = approvalRead.records.map((item) => item.id === approval.id ? decided : item);
-      const candidateRaw = JSON.stringify(nextApprovals);
-      const candidateRead = parseStoredProjectApprovals(candidateRaw, { records: current.records, readError: false });
-      if (candidateRead.readError || JSON.stringify(candidateRead.records) !== candidateRaw) return { ok: false, requests: current.records, approvals: approvalRead.records };
-      try {
-        if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== current.raw || window.localStorage.getItem(projectApprovalsStorageKey) !== previousApprovalsRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || projectTaskAuthoritySnapshot()?.snapshotHash !== authority.snapshotHash) return { ok: false, requests: current.records, approvals: approvalRead.records };
-        window.localStorage.setItem(projectApprovalsStorageKey, candidateRaw);
-        const readbackRaw = window.localStorage.getItem(projectApprovalsStorageKey);
-        const readback = parseStoredProjectApprovals(readbackRaw, { records: current.records, readError: false });
-        if (readbackRaw === candidateRaw && !readback.readError && window.localStorage.getItem(projectPurchaseRequestsStorageKey) === current.raw && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null && projectTaskAuthoritySnapshot()?.snapshotHash === authority.snapshotHash) return { ok: true, requests: current.records, approvals: readback.records };
-        const rolledBack = restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateRaw);
-        return rolledBack ? { ok: false, requests: current.records, approvals: approvalRead.records } : { ok: false, approvalReadError: true };
-      } catch {
-        const rolledBack = restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateRaw);
-        return rolledBack ? { ok: false, requests: current.records, approvals: approvalRead.records } : { ok: false, approvalReadError: true };
-      }
-    });
-    if (result.requests && result.approvals) {
-      setProjectPurchaseRequests(result.requests);
-      setProjectPurchaseRequestsReadError(false);
-      setProjectApprovals(result.approvals);
-      setProjectApprovalsReadError(false);
-    } else if (result.approvalReadError) {
-      setProjectApprovalsReadError(true);
-    }
-    return result.ok;
+  const decideProjectApproval = async (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">, expectedApprovalVersion: number, expectedRequestVersion: number, idempotencyKey: string): Promise<boolean> => {
+    const authority = projectTaskAuthoritySnapshot();
+    const requestRead = readStoredProjectPurchaseRequests();
+    const approvalState = readProjectApprovalState(requestRead, authority);
+    const approval = approvalState.envelope?.records.find((record) => record.id === approvalId && record.projectId === activeProject.id);
+    if (approvalState.status !== "ready" || !approvalState.envelope || !approval) return false;
+    const result = await executeProjectApprovalCommand({ inputSchemaVersion: 1, action: "decide-content-approval", projectId: approval.projectId, requestId: approval.target.id, approvalId, decision, expectedStoreVersion: approvalState.envelope.storeVersion, expectedApprovalVersion, expectedRequestVersion, idempotencyKey }, projectTaskAuthoritySnapshot);
+    applyProjectApprovalMutation(result);
+    return result.status === "updated";
   };
 
-  const persistProjectSupplierContacts = (nextContacts: SupplierContactRecord[]) => {
-    if (projectSupplierContactsReadError) return false;
-    try {
-      if (nextContacts.length === 0) window.localStorage.removeItem(projectSupplierContactsStorageKey);
-      else window.localStorage.setItem(projectSupplierContactsStorageKey, JSON.stringify(nextContacts));
-    } catch {
-      return false;
-    }
-    setProjectSupplierContacts(nextContacts);
-    return true;
+  const refreshProcurementDispatchFromStorage = () => {
+    const next = readProcurementDispatchState(procurementDispatchDependenciesSnapshot(), projectTaskAuthoritySnapshot());
+    setProcurementDispatchState(next);
+    return next;
   };
 
-  const createProjectSupplierContact = (draft: SupplierContactDraft) => {
-    if (projectSupplierContactsReadError || projectSupplierContacts.filter((contact) => contact.projectId === activeProject.id).length >= 100) return null;
-    const displayName = draft.displayName.trim();
-    const category = draft.category.trim();
-    const tehranCoverage = draft.tehranCoverage.trim();
-    if (!hasVisibleProjectTaskText(displayName) || displayName.length > 100 || !hasVisibleProjectTaskText(category) || category.length > 100 || !hasVisibleProjectTaskText(tehranCoverage) || tehranCoverage.length > 120 || !["product", "service", "both"].includes(draft.responseCapability)) return null;
-    const timestamp = new Date().toISOString();
-    const contactId = `supplier-contact-${window.crypto.randomUUID()}`;
-    const record = {
-      schemaVersion: 1,
-      id: contactId,
-      projectId: activeProject.id,
-      displayName,
-      category,
-      tehranCoverage,
+  const createProjectSupplierContact = async (draft: SupplierContactDraft): Promise<ProcurementMutationResult<SupplierContactEnvelope>> => {
+    const envelope = procurementDispatchState.contacts.envelope;
+    if (procurementDispatchState.contacts.status !== "ready" || !envelope) return { status: "read-failure", reason: "contact-store-not-ready" };
+    const normalizedDraft = {
+      displayName: draft.displayName.trim(),
+      category: draft.category.trim(),
+      tehranCoverage: draft.tehranCoverage.trim(),
       responseCapability: draft.responseCapability,
-      source: "ثبت مستقیم سازنده",
-      networkStatus: "خارج از شبکه چیدا",
-      status: "active",
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      archivedAt: null,
-      history: [{ id: `supplier-contact-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-    } satisfies SupplierContactRecord;
-    return persistProjectSupplierContacts([...projectSupplierContacts, record]) ? contactId : null;
+    } satisfies SupplierContactDraft;
+    const idempotencyKey = `supplier-contact-create:${procurementDispatchHash({ projectId: activeProject.id, draft: normalizedDraft, expectedStoreVersion: envelope.storeVersion })}`;
+    const command = {
+      inputSchemaVersion: 1,
+      action: "create-contact",
+      projectId: activeProject.id,
+      contactId: supplierContactIdForIdempotencyKey(idempotencyKey),
+      draft: normalizedDraft,
+      expectedStoreVersion: envelope.storeVersion,
+      idempotencyKey,
+    } satisfies SupplierContactCommand;
+    const result = await executeSupplierContactCommand(command, projectTaskAuthoritySnapshot);
+    refreshProcurementDispatchFromStorage();
+    return result;
   };
 
-  const changeProjectSupplierContactStatus = (contactId: string, nextStatus: SupplierContactStatus) => {
-    if (projectSupplierContactsReadError) return false;
-    const timestamp = new Date().toISOString();
-    let updated = false;
-    const nextContacts = projectSupplierContacts.map((contact) => {
-      if (contact.id !== contactId || contact.projectId !== activeProject.id || contact.status === nextStatus) return contact;
-      updated = true;
-      const version = contact.version + 1;
-      const eventType = nextStatus === "archived" ? "archived" : "restored";
-      return { ...contact, status: nextStatus, version, updatedAt: timestamp, archivedAt: nextStatus === "archived" ? timestamp : null, history: [...contact.history, { id: `supplier-contact-event-${window.crypto.randomUUID()}`, type: eventType, actor: "شما", at: timestamp, version }] } satisfies SupplierContactRecord;
-    });
-    return updated && persistProjectSupplierContacts(nextContacts);
+  const changeProjectSupplierContactStatus = async (contactId: string, nextStatus: SupplierContactStatus): Promise<ProcurementMutationResult<SupplierContactEnvelope>> => {
+    const envelope = procurementDispatchState.contacts.envelope;
+    const contact = envelope?.records.find((item) => item.id === contactId && item.projectId === activeProject.id);
+    if (procurementDispatchState.contacts.status !== "ready" || !envelope || !contact) return { status: "read-failure", reason: "contact-store-not-ready" };
+    const action = nextStatus === "archived" ? "archive-contact" : "restore-contact";
+    const idempotencyKey = `supplier-contact-status:${procurementDispatchHash({ action, projectId: activeProject.id, contactId, expectedStoreVersion: envelope.storeVersion, expectedContactVersion: contact.version })}`;
+    const command = {
+      inputSchemaVersion: 1,
+      action,
+      projectId: activeProject.id,
+      contactId,
+      expectedStoreVersion: envelope.storeVersion,
+      expectedContactVersion: contact.version,
+      idempotencyKey,
+    } satisfies SupplierContactCommand;
+    const result = await executeSupplierContactCommand(command, projectTaskAuthoritySnapshot);
+    refreshProcurementDispatchFromStorage();
+    return result;
   };
 
-  const persistProjectDispatchDrafts = (nextDrafts: DispatchDraftRecord[]) => {
-    if (projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError) return false;
-    try {
-      if (nextDrafts.length === 0) window.localStorage.removeItem(projectDispatchDraftsStorageKey);
-      else window.localStorage.setItem(projectDispatchDraftsStorageKey, JSON.stringify(nextDrafts));
-    } catch {
-      return false;
-    }
-    setProjectDispatchDrafts(nextDrafts);
-    return true;
-  };
-
-  const upsertProjectDispatchDraft = (requestId: string, approvalId: string, requestedRecipientIds: string[]) => {
-    if (projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError) return null;
+  const projectDispatchDraftCommandBase = (requestId: string, approvalId: string, requestedRecipientIds: string[]): Omit<DispatchDraftUpsertCommand, "precondition" | "idempotencyKey"> | null => {
+    const contactsEnvelope = procurementDispatchState.contacts.envelope;
+    const draftsEnvelope = procurementDispatchState.drafts.envelope;
+    if (procurementDispatchState.contacts.status !== "ready" || procurementDispatchState.drafts.status !== "ready" || !contactsEnvelope || !draftsEnvelope) return null;
     const request = projectPurchaseRequests.find((item) => item.id === requestId && item.projectId === activeProject.id);
     const approval = projectApprovals.find((item) => item.id === approvalId && item.projectId === activeProject.id);
-    if (!request || !isApprovalEligibleForDispatch(approval, request, activeProject.id)) return null;
-    const reviewRevision = request.reviewRevisions.find((item) => item.id === approval!.target.revisionId && item.requestVersion === approval!.target.version);
-    if (!reviewRevision) return null;
+    if (!request || !approval || !isApprovalEligibleForDispatch(approval, request, activeProject.id)) return null;
+    const reviewRevision = request.reviewRevisions.find((item) => item.id === approval.target.revisionId && item.requestVersion === approval.target.version);
+    const approvalRevision = approval.revisions.find((item) => item.id === approval.currentRevisionId);
+    if (!reviewRevision || !approvalRevision) return null;
     const recipientIds = [...new Set(requestedRecipientIds)].sort();
     if (recipientIds.length < 1 || recipientIds.length > 50) return null;
-    const selectedContacts = recipientIds.map((recipientId) => projectSupplierContacts.find((contact) => contact.id === recipientId && contact.projectId === activeProject.id));
-    if (selectedContacts.some((contact) => !contact || !supplierContactCanRespond(contact, request.requestKind))) return null;
-    const target = { requestId: request.id, requestVersion: request.version, revisionId: reviewRevision.id, approvalId: approval!.id };
-    const dedupeKey = dispatchDraftDedupeKey(activeProject.id, request.id, request.version, reviewRevision.id);
-    const existing = projectDispatchDrafts.find((item) => item.dedupeKey === dedupeKey);
-    if (!existing && projectDispatchDrafts.filter((item) => item.projectId === activeProject.id).length >= 100) return null;
-    const currentRevision = existing?.revisions.find((revision) => revision.id === existing.currentRevisionId);
-    if (currentRevision && JSON.stringify(currentRevision.recipientIds) === JSON.stringify(recipientIds)) return existing!.id;
-    const timestamp = new Date().toISOString();
-    const dispatchId = existing?.id ?? `dispatch-draft-${window.crypto.randomUUID()}`;
-    const nextVersion = existing ? existing.version + 1 : 1;
-    const inviteDrafts: InviteDraft[] = selectedContacts.map((contact) => ({
-      schemaVersion: 1,
-      id: `invite-draft-${window.crypto.randomUUID()}`,
-      projectId: activeProject.id,
-      supplierContactId: contact!.id,
-      destination: { displayName: contact!.displayName, category: contact!.category, tehranCoverage: contact!.tehranCoverage, responseCapability: contact!.responseCapability, networkStatus: "خارج از شبکه چیدا" },
-      target,
-      source: "ثبت مستقیم سازنده",
-      continuation: "ادامهٔ احتمالی در فاز تأمین‌کننده",
-      externalEffect: "none",
-      sendAuthorized: false,
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }));
-    const payload = dispatchPayloadFromSnapshot(reviewRevision.snapshot);
-    const privacySnapshot = dispatchPrivacySnapshot(reviewRevision.shareableFields);
-    const revisionId = `dispatch-revision-${window.crypto.randomUUID()}`;
-    const revision = { id: revisionId, version: nextVersion, createdAt: timestamp, recipientIds, inviteDrafts, payload, privacySnapshot, fingerprint: dispatchRevisionFingerprint(target, recipientIds, inviteDrafts, payload, privacySnapshot) } satisfies DispatchDraftRevision;
-    const record = existing ? {
-      ...existing,
-      currentRevisionId: revisionId,
-      version: nextVersion,
-      updatedAt: timestamp,
-      history: [...existing.history, { id: `dispatch-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version: nextVersion }],
-      revisions: [...existing.revisions, revision],
-    } satisfies DispatchDraftRecord : {
-      schemaVersion: 1,
-      id: dispatchId,
-      projectId: activeProject.id,
-      target,
-      dedupeKey,
-      status: "draft",
-      currentRevisionId: revisionId,
-      externalEffect: "none",
-      sendAuthorized: false,
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      history: [{ id: `dispatch-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-      revisions: [revision],
-    } satisfies DispatchDraftRecord;
-    const nextDrafts = existing ? projectDispatchDrafts.map((item) => item.id === existing.id ? record : item) : [...projectDispatchDrafts, record];
-    return persistProjectDispatchDrafts(nextDrafts) ? dispatchId : null;
-  };
-
-  const persistProjectDispatchPlanApprovals = (nextApprovals: DispatchPlanApprovalRecord[]) => {
-    if (projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError) return false;
-    try {
-      if (nextApprovals.length === 0) window.localStorage.removeItem(projectDispatchPlanApprovalsStorageKey);
-      else window.localStorage.setItem(projectDispatchPlanApprovalsStorageKey, JSON.stringify(nextApprovals));
-    } catch {
-      return false;
-    }
-    setProjectDispatchPlanApprovals(nextApprovals);
-    return true;
-  };
-
-  const createProjectDispatchPlanApproval = (dispatchDraftId: string) => {
-    if (projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError) return null;
-    const dispatchDraft = projectDispatchDrafts.find((item) => item.id === dispatchDraftId && item.projectId === activeProject.id);
-    const revision = dispatchDraft?.revisions.find((item) => item.id === dispatchDraft.currentRevisionId);
-    const request = dispatchDraft ? projectPurchaseRequests.find((item) => item.id === dispatchDraft.target.requestId && item.projectId === activeProject.id) : null;
-    const contentApproval = dispatchDraft ? projectApprovals.find((item) => item.id === dispatchDraft.target.approvalId && item.projectId === activeProject.id) : null;
-    if (!dispatchDraft || !revision || !request || !isApprovalEligibleForDispatch(contentApproval ?? undefined, request, activeProject.id) || dispatchDraft.version !== revision.version) return null;
-    const recipients = revision.inviteDrafts.map((invite) => {
-      const contact = projectSupplierContacts.find((item) => item.id === invite.supplierContactId && item.projectId === activeProject.id);
-      return contact && supplierContactCanRespond(contact, request.requestKind)
-        ? { supplierContactId: contact.id, supplierContactVersion: contact.version, destination: structuredClone(invite.destination) }
+    const recipients = recipientIds.map((recipientId) => {
+      const contact = contactsEnvelope.records.find((item) => item.id === recipientId && item.projectId === activeProject.id);
+      const revision = contact?.revisions.find((item) => item.id === contact.currentRevisionId && item.version === contact.version);
+      return contact && revision && supplierContactCanRespond(contact, request.requestKind)
+        ? { supplierContactId: contact.id, expectedContactVersion: contact.version, expectedContactRevisionId: revision.id, expectedContactRevisionFingerprint: revision.fingerprint }
         : null;
     });
-    if (recipients.some((recipient) => !recipient)) return null;
-    const target = dispatchPlanApprovalTarget(dispatchDraft, revision);
-    const snapshot = {
-      recipients: recipients as DispatchPlanApprovalRecord["snapshot"]["recipients"],
-      recipientCount: recipients.length,
-      payload: structuredClone(revision.payload),
-      privacySnapshot: structuredClone(revision.privacySnapshot),
-      reviewAcknowledgement: { destinationsReviewed: true, payloadReviewed: true, privacyAndLocationReviewed: true },
-    } satisfies DispatchPlanApprovalRecord["snapshot"];
-    const planFingerprint = dispatchPlanFingerprint(target, snapshot);
-    const dedupeKey = dispatchPlanApprovalDedupeKey(activeProject.id, target, planFingerprint);
-    const existing = projectDispatchPlanApprovals.find((item) => item.dedupeKey === dedupeKey);
-    if (existing) return existing.id;
-    if (projectDispatchPlanApprovals.filter((item) => item.projectId === activeProject.id).length >= 100) return null;
-    const timestamp = new Date().toISOString();
-    const approvalId = `dispatch-plan-approval-${window.crypto.randomUUID()}`;
-    const record = {
-      schemaVersion: 1,
-      id: approvalId,
+    if (recipients.some((recipient) => recipient === null)) return null;
+    const dedupeKey = dispatchDraftDedupeKey(activeProject.id, request.id, request.version, reviewRevision.id);
+    const existing = draftsEnvelope.records.find((item) => item.dedupeKey === dedupeKey) ?? null;
+    const dispatchDraftId = existing?.id ?? dispatchDraftIdForTarget(activeProject.id, request.id, request.version, reviewRevision.id);
+    const base = {
+      inputSchemaVersion: 1,
+      action: "upsert-dispatch-draft",
       projectId: activeProject.id,
-      purpose: "approve-local-dispatch-plan-simulation",
-      target,
-      snapshot,
-      planFingerprint,
-      dedupeKey,
-      idempotencyKey: `${dedupeKey}:simulation-v1`,
-      status: "pending",
-      simulationOnly: true,
-      externalEffect: "none",
-      sendAuthorized: false,
-      externalActionAttempted: false,
-      actionRecord: null,
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
-      requestedBy: "شما",
-      decidedBy: null,
-      requestedAt: timestamp,
-      decidedAt: null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      version: 1,
-      history: [{ id: `dispatch-plan-approval-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-    } satisfies DispatchPlanApprovalRecord;
-    return persistProjectDispatchPlanApprovals([...projectDispatchPlanApprovals, record]) ? approvalId : null;
+      dispatchDraftId,
+      requestId: request.id,
+      expectedRequestVersion: request.version,
+      expectedRequestRevisionId: reviewRevision.id,
+      expectedRequestRevisionFingerprint: reviewRevision.fingerprint,
+      approvalId: approval.id,
+      expectedApprovalVersion: approval.version,
+      expectedApprovalRevisionId: approvalRevision.id,
+      expectedApprovalFingerprint: approvalRevision.fingerprint,
+      recipients: recipients as DispatchDraftUpsertCommand["recipients"],
+      expectedContactStoreVersion: contactsEnvelope.storeVersion,
+      expectedDraftStoreVersion: draftsEnvelope.storeVersion,
+      expectedDraftVersion: existing?.version ?? null,
+    } as const;
+    return base;
   };
 
-  const changeProjectDispatchPlanApproval = (approvalId: string, action: "approve" | "withdraw" | "reopen") => {
-    if (projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError) return false;
-    const current = projectDispatchPlanApprovals.find((item) => item.id === approvalId && item.projectId === activeProject.id);
-    if (!current) return false;
-    const dispatchDraft = projectDispatchDrafts.find((item) => item.id === current.target.dispatchDraftId && item.projectId === activeProject.id) ?? null;
-    const request = projectPurchaseRequests.find((item) => item.id === current.target.requestId && item.projectId === activeProject.id);
-    const contentApproval = projectApprovals.find((item) => item.id === current.target.contentApprovalId && item.projectId === activeProject.id);
-    if (!request || !contentApproval || dispatchPlanApprovalEffectiveStatus(current, dispatchDraft, request, contentApproval, projectSupplierContacts) === "invalidated") return false;
-    if (action === "approve" && current.status === "approved") return true;
-    const transitionIsValid = action === "approve" && current.status === "pending"
-      || action === "withdraw" && current.status === "pending"
-      || action === "reopen" && current.status === "withdrawn";
-    if (!transitionIsValid) return false;
-    const timestamp = new Date().toISOString();
-    const version = current.version + 1;
-    const status: DispatchPlanApprovalStatus = action === "approve" ? "approved" : action === "withdraw" ? "withdrawn" : "pending";
-    const eventType: DispatchPlanApprovalEventType = action === "approve" ? "approved" : action === "withdraw" ? "withdrawn" : "reopened";
-    const updated = {
-      ...current,
-      status,
-      actionRecord: action === "approve" ? { kind: "record-local-dispatch-plan-approval", result: "local-dispatch-plan-approved", label: "تأیید محلی برنامهٔ ارسال", error: null, recordedAt: timestamp } : null,
-      decidedBy: action === "approve" ? "شما" : null,
-      decidedAt: action === "approve" ? timestamp : null,
-      updatedAt: timestamp,
-      version,
-      history: [...current.history, { id: `dispatch-plan-approval-event-${window.crypto.randomUUID()}`, type: eventType, actor: "شما", at: timestamp, version }],
-    } satisfies DispatchPlanApprovalRecord;
-    const nextApprovals = projectDispatchPlanApprovals.map((item) => item.id === current.id ? updated : item);
-    return persistProjectDispatchPlanApprovals(nextApprovals);
+  const upsertProjectDispatchDraft = async (requestId: string, approvalId: string, requestedRecipientIds: string[]): Promise<ProcurementMutationResult<DispatchDraftEnvelope>> => {
+    const base = projectDispatchDraftCommandBase(requestId, approvalId, requestedRecipientIds);
+    if (!base) return { status: "dependency-invalid", reason: "dispatch-command-unavailable" };
+    const idempotencyKey = `dispatch-draft-upsert:${procurementDispatchHash(base)}`;
+    const checkpointResult = await ensureProcurementDispatchPreconditionCheckpoint({
+      operation: "dispatch-draft",
+      commandKey: idempotencyKey,
+      commandPayloadHash: procurementDispatchHash(base),
+      projectId: base.projectId,
+      target: { requestId: base.requestId, requestVersion: base.expectedRequestVersion, revisionId: base.expectedRequestRevisionId, revisionFingerprint: base.expectedRequestRevisionFingerprint, approvalId: base.approvalId, approvalVersion: base.expectedApprovalVersion, approvalRevisionId: base.expectedApprovalRevisionId, approvalFingerprint: base.expectedApprovalFingerprint },
+    }, projectTaskAuthoritySnapshot);
+    if (checkpointResult.status !== "ready") return checkpointResult;
+    const command: DispatchDraftUpsertCommand = { ...base, precondition: procurementDispatchPreconditionReference(checkpointResult.checkpoint), idempotencyKey };
+    const result = await executeDispatchDraftCommand(command, procurementDispatchDependenciesSnapshot);
+    refreshProcurementDispatchFromStorage();
+    return result;
+  };
+
+  const createProjectDispatchPlanApproval = async (dispatchDraftId: string): Promise<ProcurementMutationResult<DispatchPlanApprovalEnvelope>> => {
+    const contactsEnvelope = procurementDispatchState.contacts.envelope;
+    const draftsEnvelope = procurementDispatchState.drafts.envelope;
+    const plansEnvelope = procurementDispatchState.plans.envelope;
+    const dispatchDraft = draftsEnvelope?.records.find((item) => item.id === dispatchDraftId && item.projectId === activeProject.id);
+    const revision = dispatchDraft?.revisions.find((item) => item.id === dispatchDraft.currentRevisionId && item.version === dispatchDraft.version);
+    if (procurementDispatchState.contacts.status !== "ready" || procurementDispatchState.drafts.status !== "ready" || procurementDispatchState.plans.status !== "ready" || !contactsEnvelope || !draftsEnvelope || !plansEnvelope || !dispatchDraft || !revision) return { status: "dependency-invalid", reason: "plan-command-unavailable" };
+    const existing = plansEnvelope.records.find((item) => item.projectId === activeProject.id && item.target.dispatchDraftId === dispatchDraft.id && item.target.dispatchRevisionId === revision.id && item.target.dispatchRevisionFingerprint === revision.fingerprint);
+    if (existing && dispatchPlanApprovalStatus(existing, dispatchDraft) !== "invalidated") return { status: "unchanged", envelope: plansEnvelope, recordId: existing.id };
+    const seed = {
+      action: "create-dispatch-plan",
+      projectId: activeProject.id,
+      dispatchDraftId,
+      expectedContactStoreVersion: contactsEnvelope.storeVersion,
+      expectedDraftStoreVersion: draftsEnvelope.storeVersion,
+      expectedDraftVersion: dispatchDraft.version,
+      expectedDispatchRevisionId: revision.id,
+      expectedDispatchRevisionFingerprint: revision.fingerprint,
+      expectedPlanStoreVersion: plansEnvelope.storeVersion,
+    } as const;
+    const idempotencyKey = `dispatch-plan-create:${procurementDispatchHash(seed)}`;
+    const base = {
+      inputSchemaVersion: 1,
+      action: "create-dispatch-plan",
+      projectId: activeProject.id,
+      planApprovalId: dispatchPlanApprovalIdForIdempotencyKey(idempotencyKey),
+      dispatchDraftId,
+      expectedContactStoreVersion: contactsEnvelope.storeVersion,
+      expectedDraftStoreVersion: draftsEnvelope.storeVersion,
+      expectedDraftVersion: dispatchDraft.version,
+      expectedDispatchRevisionId: revision.id,
+      expectedDispatchRevisionFingerprint: revision.fingerprint,
+      expectedPlanStoreVersion: plansEnvelope.storeVersion,
+      acknowledgement: { destinationsReviewed: true, payloadReviewed: true, privacyAndLocationReviewed: true },
+    } as const;
+    const checkpointResult = await ensureProcurementDispatchPreconditionCheckpoint({
+      operation: "dispatch-plan",
+      commandKey: idempotencyKey,
+      commandPayloadHash: procurementDispatchHash(base),
+      projectId: activeProject.id,
+      target: structuredClone(dispatchDraft.target),
+    }, projectTaskAuthoritySnapshot);
+    if (checkpointResult.status !== "ready") return checkpointResult;
+    const result = await executeDispatchPlanApprovalCommand({ ...base, precondition: procurementDispatchPreconditionReference(checkpointResult.checkpoint), idempotencyKey }, procurementDispatchDependenciesSnapshot);
+    refreshProcurementDispatchFromStorage();
+    return result;
+  };
+
+  const queueProjectDispatchPlanApproval = async (requestId: string, approvalId: string, recipientIds: string[]): Promise<ProcurementDispatchQueueResult> => {
+    const draftBase = projectDispatchDraftCommandBase(requestId, approvalId, recipientIds);
+    const contactsEnvelope = procurementDispatchState.contacts.envelope;
+    const plansEnvelope = procurementDispatchState.plans.envelope;
+    if (!draftBase || procurementDispatchState.contacts.status !== "ready" || procurementDispatchState.plans.status !== "ready" || !contactsEnvelope || !plansEnvelope) return { status: "dependency-invalid", reason: "queue-command-unavailable" };
+    const draftIdempotencyKey = `dispatch-draft-upsert:${procurementDispatchHash(draftBase)}`;
+    const planSeed = { action: "create-dispatch-plan", projectId: activeProject.id, draftIdempotencyKey, expectedContactStoreVersion: contactsEnvelope.storeVersion, expectedPlanStoreVersion: plansEnvelope.storeVersion } as const;
+    const planIdempotencyKey = `dispatch-plan-queue-create:${procurementDispatchHash(planSeed)}`;
+    const planBase = {
+      inputSchemaVersion: 1,
+      action: "create-dispatch-plan",
+      projectId: activeProject.id,
+      planApprovalId: dispatchPlanApprovalIdForIdempotencyKey(planIdempotencyKey),
+      expectedContactStoreVersion: contactsEnvelope.storeVersion,
+      expectedPlanStoreVersion: plansEnvelope.storeVersion,
+      acknowledgement: { destinationsReviewed: true, payloadReviewed: true, privacyAndLocationReviewed: true },
+    } as const;
+    const queueIdempotencyKey = `dispatch-plan-queue:${procurementDispatchHash({ draft: draftIdempotencyKey, plan: planIdempotencyKey })}`;
+    const checkpointResult = await ensureProcurementDispatchPreconditionCheckpoint({
+      operation: "dispatch-queue",
+      commandKey: queueIdempotencyKey,
+      commandPayloadHash: procurementDispatchHash({ inputSchemaVersion: 1, action: "queue-dispatch-plan", draft: draftBase, plan: planBase }),
+      projectId: draftBase.projectId,
+      target: { requestId: draftBase.requestId, requestVersion: draftBase.expectedRequestVersion, revisionId: draftBase.expectedRequestRevisionId, revisionFingerprint: draftBase.expectedRequestRevisionFingerprint, approvalId: draftBase.approvalId, approvalVersion: draftBase.expectedApprovalVersion, approvalRevisionId: draftBase.expectedApprovalRevisionId, approvalFingerprint: draftBase.expectedApprovalFingerprint },
+    }, projectTaskAuthoritySnapshot);
+    if (checkpointResult.status !== "ready") return checkpointResult;
+    const precondition = procurementDispatchPreconditionReference(checkpointResult.checkpoint);
+    const command = {
+      inputSchemaVersion: 1,
+      action: "queue-dispatch-plan",
+      draft: { ...draftBase, precondition, idempotencyKey: draftIdempotencyKey },
+      plan: { ...planBase, precondition, idempotencyKey: planIdempotencyKey },
+      queueIdempotencyKey,
+    } satisfies ProcurementDispatchQueueCommand;
+    const result = await executeProcurementDispatchQueue(command, procurementDispatchDependenciesSnapshot);
+    refreshProcurementDispatchFromStorage();
+    return result;
+  };
+
+  const changeProjectDispatchPlanApproval = async (approvalId: string, action: "approve" | "withdraw" | "reopen"): Promise<ProcurementMutationResult<DispatchPlanApprovalEnvelope>> => {
+    const contactsEnvelope = procurementDispatchState.contacts.envelope;
+    const draftsEnvelope = procurementDispatchState.drafts.envelope;
+    const plansEnvelope = procurementDispatchState.plans.envelope;
+    const current = plansEnvelope?.records.find((item) => item.id === approvalId && item.projectId === activeProject.id);
+    if (procurementDispatchState.contacts.status !== "ready" || procurementDispatchState.drafts.status !== "ready" || procurementDispatchState.plans.status !== "ready" || !contactsEnvelope || !draftsEnvelope || !plansEnvelope || !current) return { status: "dependency-invalid", reason: "plan-command-unavailable" };
+    const commandAction = action === "approve" ? "approve-dispatch-plan" : action === "withdraw" ? "withdraw-dispatch-plan" : "reopen-dispatch-plan";
+    const seed = { action: commandAction, projectId: activeProject.id, planApprovalId: approvalId, expectedContactStoreVersion: contactsEnvelope.storeVersion, expectedDraftStoreVersion: draftsEnvelope.storeVersion, expectedPlanStoreVersion: plansEnvelope.storeVersion, expectedPlanVersion: current.version } as const;
+    const idempotencyKey = `dispatch-plan-decision:${procurementDispatchHash(seed)}`;
+    const base = { inputSchemaVersion: 1, ...seed } as const;
+    const checkpointResult = await ensureProcurementDispatchPreconditionCheckpoint({
+      operation: "dispatch-plan",
+      commandKey: idempotencyKey,
+      commandPayloadHash: procurementDispatchHash(base),
+      projectId: activeProject.id,
+      target: { requestId: current.target.requestId, requestVersion: current.target.requestVersion, revisionId: current.target.requestRevisionId, revisionFingerprint: current.target.requestRevisionFingerprint, approvalId: current.target.contentApprovalId, approvalVersion: current.target.contentApprovalVersion, approvalRevisionId: current.target.contentApprovalRevisionId, approvalFingerprint: current.target.contentApprovalFingerprint },
+    }, projectTaskAuthoritySnapshot);
+    if (checkpointResult.status !== "ready") return checkpointResult;
+    const result = await executeDispatchPlanApprovalCommand({ ...base, precondition: procurementDispatchPreconditionReference(checkpointResult.checkpoint), idempotencyKey }, procurementDispatchDependenciesSnapshot);
+    refreshProcurementDispatchFromStorage();
+    return result;
   };
 
   const persistBuilderRecordedProposals = (nextProposals: BuilderRecordedProposalRecord[]) => {
-    if (builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError) return false;
+    if (builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError || projectFilesReadError) return false;
     try {
       if (nextProposals.length === 0) window.localStorage.removeItem(projectBuilderRecordedProposalsStorageKey);
       else window.localStorage.setItem(projectBuilderRecordedProposalsStorageKey, JSON.stringify(nextProposals));
@@ -16222,7 +17678,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   };
 
   const createBuilderRecordedProposal = (draft: BuilderRecordedProposalDraft) => {
-    if (builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError) return null;
+    if (builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError || projectFilesReadError) return null;
     if (builderRecordedProposals.length >= 1000 || builderRecordedProposals.filter((proposal) => proposal.projectId === activeProject.id).length >= 100) return null;
     const request = projectPurchaseRequests.find((item) => item.id === draft.requestId && item.projectId === activeProject.id);
     const approval = request ? projectApprovals.find((item) => item.projectId === activeProject.id && item.target.id === request.id && item.target.version === request.version && item.status === "approved" && isApprovalEligibleForDispatch(item, request, activeProject.id)) : null;
@@ -16307,7 +17763,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   };
 
   const updateBuilderRecordedProposal = (proposalId: string, draft: BuilderRecordedProposalDraft) => {
-    if (builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError) return false;
+    if (builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError || projectFilesReadError) return false;
     const current = builderRecordedProposals.find((item) => item.id === proposalId && item.projectId === activeProject.id);
     const currentRevision = current?.revisions.find((item) => item.id === current.currentRevisionId);
     if (
@@ -16356,7 +17812,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   };
 
   const createBuilderProposalComparison = (draft: BuilderProposalComparisonDraft) => {
-    if (builderProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError) return null;
+    if (builderProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError) return null;
     if (builderProposalComparisons.length >= 1000 || activeBuilderProposalComparisons.length >= 100) return null;
     const inputs = normalizeBuilderProposalComparisonInputs(draft, activeBuilderRecordedProposals);
     if (!inputs) return null;
@@ -16395,7 +17851,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   };
 
   const updateBuilderProposalComparison = (comparisonId: string, draft: BuilderProposalComparisonDraft) => {
-    if (builderProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError) return false;
+    if (builderProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError) return false;
     const current = builderProposalComparisons.find((comparison) => comparison.id === comparisonId && comparison.projectId === activeProject.id);
     const currentRevision = current?.revisions.find((revision) => revision.id === current.currentRevisionId);
     const targetKey = current ? [current.target.requestId, current.target.requestVersion, current.target.reviewRevisionId, current.target.reviewRevisionFingerprint].join(":") : "";
@@ -16490,7 +17946,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   };
 
   const createBuilderServiceProposalComparison = (draft: BuilderServiceProposalComparisonDraft) => {
-    if (builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError) return null;
+    if (builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError) return null;
     if (builderServiceProposalComparisons.length >= 1000 || activeBuilderServiceProposalComparisons.length >= 100) return null;
     const selectedDraft = draft.proposals.find((item) => item.selected);
     const firstProposal = selectedDraft ? activeBuilderRecordedProposals.find((proposal) => proposal.id === selectedDraft.proposalId && proposal.target.requestKind === "service") : null;
@@ -16534,7 +17990,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   };
 
   const updateBuilderServiceProposalComparison = (comparisonId: string, draft: BuilderServiceProposalComparisonDraft) => {
-    if (builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError) return false;
+    if (builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError) return false;
     const current = builderServiceProposalComparisons.find((comparison) => comparison.id === comparisonId && comparison.projectId === activeProject.id);
     const currentRevision = current?.revisions.find((revision) => revision.id === current.currentRevisionId);
     const targetKey = current ? [current.target.requestId, current.target.requestVersion, current.target.reviewRevisionId, current.target.reviewRevisionFingerprint].join(":") : "";
@@ -16621,7 +18077,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     || builderServiceProposalComparisonsReadError
     || builderRecordedProposalsReadError
     || projectPurchaseRequestsReadError
-    || projectApprovalsReadError
+    || projectApprovalsStorageLocked
     || projectSupplierContactsReadError;
 
   const persistBuilderNegotiationDrafts = (nextDrafts: BuilderNegotiationDraftRecord[]) => {
@@ -16728,7 +18184,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     || builderServiceProposalComparisonsReadError
     || builderRecordedProposalsReadError
     || projectPurchaseRequestsReadError
-    || projectApprovalsReadError
+    || projectApprovalsStorageLocked
     || projectSupplierContactsReadError;
 
   const persistBuilderManualNegotiationResponses = (nextResponses: BuilderManualNegotiationResponseRecord[]) => {
@@ -17106,7 +18562,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         memoriesReadError={projectMemoriesReadError}
         backboneReadError={projectBackboneReadError}
         purchaseRequestsReadError={projectPurchaseRequestsReadError}
-        proposalsReadError={builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError}
+        proposalsReadError={builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError || projectFilesReadError}
         initialScrollTop={projectWorkspaceScrollPositions.current.get(activeProject.id) ?? 0}
         onBack={leaveProjectWorkspace}
         onContinue={leaveProjectWorkspace}
@@ -17233,8 +18689,8 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         tasksStorageLoading={projectTaskState.status === "loading"}
         backboneStorageLocked={projectBackboneReadError}
         monitorsStorageLocked={projectTaskMonitorsReadError}
-        approvalsStorageLocked={projectApprovalsReadError || projectPurchaseRequestsReadError}
-        dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError}
+        approvalsStorageLocked={projectApprovalsStorageLocked || projectPurchaseRequestsReadError}
+        dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsStorageLocked}
         backLabel={projectTasksLaunch.returnView === "project" ? "بازگشت به فضای پروژه" : "بازگشت به گفت‌وگو"}
         onBack={() => { keyboard.hide(); setView(projectTasksLaunch.returnView); }}
         onOpenBackbone={() => openProjectBackbone("tasks")}
@@ -17248,6 +18704,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         onRetryMonitor={retryProjectTaskMonitor}
         onApprovalDecision={decideProjectApproval}
         onDispatchPlanApprovalDecision={changeProjectDispatchPlanApproval}
+        getDispatchPlanApprovalEffectiveStatus={dispatchPlanApprovalStatus}
       />
     );
   }
@@ -17278,10 +18735,10 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         dispatchDrafts={activeProjectDispatchDrafts}
         dispatchPlanApprovals={activeProjectDispatchPlanApprovals}
         storageLocked={projectPurchaseRequestsReadError}
-        approvalsStorageLocked={projectApprovalsReadError || projectPurchaseRequestsReadError}
-        contactsStorageLocked={projectSupplierContactsReadError}
-        dispatchStorageLocked={projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError}
-        dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsReadError || projectDispatchDraftsReadError || projectSupplierContactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError}
+        approvalsStorageLocked={projectApprovalsStorageLocked || projectPurchaseRequestsReadError}
+        contactsStorageLocked={projectSupplierContactsStorageLocked}
+        dispatchStorageLocked={projectDispatchDraftsStorageLocked}
+        dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsStorageLocked}
         initialSelectedId={initialPurchaseRequestId}
         startWithEditor={startPurchaseRequestEditor}
         backLabel={purchaseRequestsReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
@@ -17298,7 +18755,9 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         onContactStatusChange={changeProjectSupplierContactStatus}
         onUpsertDispatchDraft={upsertProjectDispatchDraft}
         onCreateDispatchPlanApproval={createProjectDispatchPlanApproval}
+        onQueueDispatchPlanApproval={queueProjectDispatchPlanApproval}
         onChangeDispatchPlanApproval={changeProjectDispatchPlanApproval}
+        getDispatchPlanApprovalEffectiveStatus={dispatchPlanApprovalStatus}
         onOpenDispatchPlanApproval={openProjectDispatchPlanApproval}
       />
     );
@@ -17321,10 +18780,10 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         approvals={activeProjectApprovals}
         contacts={activeProjectSupplierContacts}
         files={activeProjectDocuments.filter((file) => hasVisibleProjectTaskText(file.displayName.trim()) && file.displayName.trim().length <= 140)}
-        storageLocked={builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectFilesReadError}
-        comparisonsStorageLocked={builderProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError}
+        storageLocked={builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError || projectFilesReadError}
+        comparisonsStorageLocked={builderProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError}
         decisionsStorageLocked={builderProposalComparisonDecisionsReadError || builderProposalComparisonsReadError}
-        serviceComparisonsStorageLocked={builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError}
+        serviceComparisonsStorageLocked={builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError}
         serviceDecisionsStorageLocked={builderServiceProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError}
         negotiationDraftsStorageLocked={negotiationDraftsStorageLocked}
         manualNegotiationResponsesStorageLocked={manualNegotiationResponsesStorageLocked}
@@ -19370,7 +20829,7 @@ function PurchaseRequestModeSwitch({ mode, onChange, testIdPrefix, label }: { mo
   );
 }
 
-function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, dispatchDrafts, dispatchPlanApprovals, storageLocked, approvalsStorageLocked, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, initialSelectedId, startWithEditor, backLabel, onBack, onRecoverStorage, onCreate, onUpdate, onMarkReady, onConfirmForRecipients, onReturnToDraft, onCreateApproval, onOpenApproval, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval, onOpenDispatchPlanApproval }: {
+function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, dispatchDrafts, dispatchPlanApprovals, storageLocked, approvalsStorageLocked, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, initialSelectedId, startWithEditor, backLabel, onBack, onRecoverStorage, onCreate, onUpdate, onMarkReady, onConfirmForRecipients, onReturnToDraft, onCreateApproval, onOpenApproval, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onQueueDispatchPlanApproval, onChangeDispatchPlanApproval, getDispatchPlanApprovalEffectiveStatus, onOpenDispatchPlanApproval }: {
   project: BuilderProject;
   requests: ProjectPurchaseRequestRecord[];
   approvals: ProjectApprovalRecord[];
@@ -19392,20 +20851,24 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   onMarkReady: (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string) => Promise<ProjectPurchaseRequestMutationResult>;
   onConfirmForRecipients: (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string) => Promise<ProjectPurchaseRequestMutationResult>;
   onReturnToDraft: (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string) => Promise<ProjectPurchaseRequestMutationResult>;
-  onCreateApproval: (projectId: string, requestId: string, expectedRequestVersion: number) => Promise<ProjectPurchaseRequestMutationResult>;
+  onCreateApproval: (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string) => Promise<ProjectPurchaseRequestMutationResult>;
   onOpenApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void;
-  onCreateContact: (draft: SupplierContactDraft) => string | null;
-  onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean;
-  onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null;
-  onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null;
-  onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean;
+  onCreateContact: (draft: SupplierContactDraft) => Promise<ProcurementMutationResult<SupplierContactEnvelope>>;
+  onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => Promise<ProcurementMutationResult<SupplierContactEnvelope>>;
+  onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => Promise<ProcurementMutationResult<DispatchDraftEnvelope>>;
+  onCreateDispatchPlanApproval: (dispatchDraftId: string) => Promise<ProcurementMutationResult<DispatchPlanApprovalEnvelope>>;
+  onQueueDispatchPlanApproval: (requestId: string, approvalId: string, recipientIds: string[]) => Promise<ProcurementDispatchQueueResult>;
+  onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => Promise<ProcurementMutationResult<DispatchPlanApprovalEnvelope>>;
+  getDispatchPlanApprovalEffectiveStatus: (record: DispatchPlanApprovalRecord, draft: DispatchDraftRecord | null) => DispatchPlanApprovalEffectiveStatus;
   onOpenDispatchPlanApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void;
 }) {
   const keyboard = useKeyboard();
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
   const approvalButtonRef = useRef<HTMLButtonElement>(null);
+  const approvalIdempotencyKeyRef = useRef<{ requestId: string; requestVersion: number; key: string } | null>(null);
   const detailHeadingRef = useRef<HTMLElement>(null);
+  const pendingSavedRequestFocusRef = useRef(false);
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [editorOpen, setEditorOpen] = useState(() => startWithEditor && !storageLocked);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -19453,6 +20916,14 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   useEffect(() => {
     if (dispatchPlannerRequestId && (!dispatchPlannerRequest || !dispatchPlannerApproval)) setDispatchPlannerRequestId(null);
   }, [dispatchPlannerApproval, dispatchPlannerRequest, dispatchPlannerRequestId]);
+
+  useEffect(() => {
+    if (!pendingSavedRequestFocusRef.current || editorOpen || !selectedRequest) return;
+    const heading = detailHeadingRef.current;
+    if (!heading) return;
+    pendingSavedRequestFocusRef.current = false;
+    heading.focus();
+  }, [editorOpen, selectedRequest?.id, selectedRequest?.version]);
 
   useLayoutEffect(() => {
     if (!initialSelectedId || selectedRequest?.id !== initialSelectedId) return;
@@ -19592,6 +21063,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
       return;
     }
     const requestId = result.requestId ?? editingId;
+    pendingSavedRequestFocusRef.current = Boolean(requestId);
     if (requestId) setSelectedId(requestId);
     setDetailMode("simple");
     setEditorOpen(false);
@@ -19599,7 +21071,6 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
     setEditingId(null);
     setEditingRequestVersion(null);
     saveIdempotencyKeyRef.current = null;
-    window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
   };
 
   const transitionIdempotencyKey = (request: ProjectPurchaseRequestRecord, action: PurchaseRequestMutationAction) => {
@@ -19668,11 +21139,17 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   const requestApproval = async () => {
     if (!selectedRequest || selectedRequest.status !== "ready-for-review" || mutationPending) return;
     if (selectedRequestApproval) {
+      approvalIdempotencyKeyRef.current = null;
       onOpenApproval(selectedRequestApproval.id, selectedRequest.id);
       return;
     }
+    const pendingKey = approvalIdempotencyKeyRef.current;
+    const idempotencyKey = pendingKey?.requestId === selectedRequest.id && pendingKey.requestVersion === selectedRequest.version
+      ? pendingKey.key
+      : `request-content-approval-create:${window.crypto.randomUUID()}`;
+    approvalIdempotencyKeyRef.current = { requestId: selectedRequest.id, requestVersion: selectedRequest.version, key: idempotencyKey };
     setMutationPending(true);
-    const result = await onCreateApproval(selectedRequest.projectId, selectedRequest.id, selectedRequest.version);
+    const result = await onCreateApproval(selectedRequest.projectId, selectedRequest.id, selectedRequest.version, idempotencyKey);
     setMutationPending(false);
     if (!result.approvalId || result.status !== "created" && result.status !== "unchanged") {
       setStorageError(result.status === "version-conflict"
@@ -19680,6 +21157,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
         : "ثبت در صف تأیید انجام نشد. هیچ وضعیت یا مجوزی تغییر نکرد.");
       return;
     }
+    approvalIdempotencyKeyRef.current = null;
     setStorageError("");
     onOpenApproval(result.approvalId, null);
   };
@@ -19829,7 +21307,9 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
         onContactStatusChange={onContactStatusChange}
         onUpsertDispatchDraft={onUpsertDispatchDraft}
         onCreateDispatchPlanApproval={onCreateDispatchPlanApproval}
+        onQueueDispatchPlanApproval={onQueueDispatchPlanApproval}
         onChangeDispatchPlanApproval={onChangeDispatchPlanApproval}
+        getDispatchPlanApprovalEffectiveStatus={getDispatchPlanApprovalEffectiveStatus}
         onOpenDispatchPlanApproval={(approvalId) => onOpenDispatchPlanApproval(approvalId, dispatchPlannerRequest.id)}
       />
     );
@@ -19951,10 +21431,11 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   );
 }
 
-function ProjectDispatchPlannerView({ project, request, approval, contacts, dispatchDraft, dispatchPlanApprovals, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval, onOpenDispatchPlanApproval }: { project: BuilderProject; request: ProjectPurchaseRequestRecord; approval: ProjectApprovalRecord; contacts: SupplierContactRecord[]; dispatchDraft: DispatchDraftRecord | null; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; onBack: () => void; onCreateContact: (draft: SupplierContactDraft) => string | null; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null; onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean; onOpenDispatchPlanApproval: (approvalId: string) => void }) {
+function ProjectDispatchPlannerView({ project, request, approval, contacts, dispatchDraft, dispatchPlanApprovals, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, onBack, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onQueueDispatchPlanApproval, onChangeDispatchPlanApproval, getDispatchPlanApprovalEffectiveStatus, onOpenDispatchPlanApproval }: { project: BuilderProject; request: ProjectPurchaseRequestRecord; approval: ProjectApprovalRecord; contacts: SupplierContactRecord[]; dispatchDraft: DispatchDraftRecord | null; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; onBack: () => void; onCreateContact: (draft: SupplierContactDraft) => Promise<ProcurementMutationResult<SupplierContactEnvelope>>; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => Promise<ProcurementMutationResult<SupplierContactEnvelope>>; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => Promise<ProcurementMutationResult<DispatchDraftEnvelope>>; onCreateDispatchPlanApproval: (dispatchDraftId: string) => Promise<ProcurementMutationResult<DispatchPlanApprovalEnvelope>>; onQueueDispatchPlanApproval: (requestId: string, approvalId: string, recipientIds: string[]) => Promise<ProcurementDispatchQueueResult>; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => Promise<ProcurementMutationResult<DispatchPlanApprovalEnvelope>>; getDispatchPlanApprovalEffectiveStatus: (record: DispatchPlanApprovalRecord, draft: DispatchDraftRecord | null) => DispatchPlanApprovalEffectiveStatus; onOpenDispatchPlanApproval: (approvalId: string) => void }) {
   const keyboard = useKeyboard();
   const addContactButtonRef = useRef<HTMLButtonElement>(null);
   const dispatchPlanStatusRef = useRef<HTMLElement>(null);
+  const pendingDispatchPlanStatusFocusRef = useRef(false);
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [contactDraft, setContactDraft] = useState<SupplierContactDraft>({ ...emptySupplierContactDraft });
   const [contactErrors, setContactErrors] = useState({ displayName: "", category: "", tehranCoverage: "" });
@@ -19963,14 +21444,17 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
   const [dispatchPlanReviewOpen, setDispatchPlanReviewOpen] = useState(false);
   const [dispatchPlanAcknowledged, setDispatchPlanAcknowledged] = useState(false);
   const [dispatchPlanStorageError, setDispatchPlanStorageError] = useState("");
-  const [queueForTasks, setQueueForTasks] = useState(false);
+  const [procurementMutationPending, setProcurementMutationPending] = useState(false);
   const currentRevision = dispatchDraft?.revisions.find((revision) => revision.id === dispatchDraft.currentRevisionId) ?? null;
   const [previewRevisionId, setPreviewRevisionId] = useState<string | null>(currentRevision?.id ?? null);
   const previewRevision = dispatchDraft?.revisions.find((revision) => revision.id === previewRevisionId) ?? currentRevision;
-  const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>(() => currentRevision?.recipientIds.filter((recipientId) => {
+  const currentSelectableRecipientIds = currentRevision?.recipientIds.filter((recipientId) => {
     const contact = contacts.find((item) => item.id === recipientId);
     return Boolean(contact && supplierContactCanRespond(contact, request.requestKind));
-  }) ?? []);
+  }) ?? [];
+  const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>(() => currentSelectableRecipientIds);
+  const lastSyncedRecipientIdsRef = useRef(currentSelectableRecipientIds);
+  const lastSyncedRequestIdRef = useRef(request.id);
   const orderedContacts = useMemo(
     () => [...contacts].sort((first, second) => {
       if (first.status !== second.status) return first.status === "active" ? -1 : 1;
@@ -19985,35 +21469,50 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
   const exactDispatchPlanApproval = currentRevision ? orderedDispatchPlanApprovals.find((item) => item.target.dispatchRevisionId === currentRevision.id && item.target.dispatchRevisionFingerprint === currentRevision.fingerprint) ?? null : null;
   const displayedDispatchPlanApproval = exactDispatchPlanApproval ?? orderedDispatchPlanApprovals[0] ?? null;
   const displayedDispatchPlanStatus = displayedDispatchPlanApproval
-    ? dispatchPlanApprovalEffectiveStatus(displayedDispatchPlanApproval, dispatchDraft, request, approval, contacts)
+    ? getDispatchPlanApprovalEffectiveStatus(displayedDispatchPlanApproval, dispatchDraft)
     : null;
-  const selectionMatchesCurrentRevision = Boolean(currentRevision) && JSON.stringify([...selectedRecipientIds].sort()) === JSON.stringify(currentRevision!.recipientIds);
+  const selectionMatchesCurrentRevision = Boolean(currentRevision)
+    && JSON.stringify([...selectedRecipientIds].sort()) === JSON.stringify(currentRevision!.recipientIds)
+    && currentRevision!.inviteDrafts.every((invite) => {
+      const contact = contacts.find((item) => item.id === invite.supplierContactId);
+      const revision = contact?.revisions.find((item) => item.id === contact.currentRevisionId);
+      return Boolean(contact
+        && revision
+        && supplierContactCanRespond(contact, request.requestKind)
+        && contact.version === invite.supplierContactVersion
+        && revision.version === invite.supplierContactVersion
+        && revision.id === invite.supplierContactRevisionId
+        && revision.fingerprint === invite.supplierContactRevisionFingerprint);
+    });
 
   useEffect(() => {
     setPreviewRevisionId(currentRevision?.id ?? null);
-    setSelectedRecipientIds(currentRevision?.recipientIds.filter((recipientId) => {
-      const contact = contacts.find((item) => item.id === recipientId);
-      return Boolean(contact && supplierContactCanRespond(contact, request.requestKind));
-    }) ?? []);
+    const requestChanged = lastSyncedRequestIdRef.current !== request.id;
+    setSelectedRecipientIds((current) => {
+      const wasClean = JSON.stringify([...current].sort()) === JSON.stringify([...lastSyncedRecipientIdsRef.current].sort());
+      return requestChanged || wasClean ? currentSelectableRecipientIds : current;
+    });
+    lastSyncedRecipientIdsRef.current = currentSelectableRecipientIds;
+    lastSyncedRequestIdRef.current = request.id;
     setDispatchPlanReviewOpen(false);
     setDispatchPlanAcknowledged(false);
-    setDispatchPlanStorageError("");
   }, [currentRevision?.id, request.id]);
 
   useEffect(() => {
-    if (!queueForTasks || !dispatchDraft || !currentRevision || !selectionMatchesCurrentRevision) return;
-    const approvalId = onCreateDispatchPlanApproval(dispatchDraft.id);
-    if (!approvalId) {
-      setQueueForTasks(false);
-      setDispatchPlanStorageError("ثبت در کارها انجام نشد. هیچ مرحله‌ای جلو نرفت؛ دوباره تلاش کن.");
-      return;
-    }
-    setQueueForTasks(false);
     setDispatchPlanStorageError("");
-    onOpenDispatchPlanApproval(approvalId);
-  }, [currentRevision?.id, dispatchDraft?.id, queueForTasks, selectionMatchesCurrentRevision]);
+  }, [request.id]);
+
+  useEffect(() => {
+    if (!pendingDispatchPlanStatusFocusRef.current || procurementMutationPending || !displayedDispatchPlanApproval) return;
+    const frame = window.requestAnimationFrame(() => {
+      dispatchPlanStatusRef.current?.focus();
+      pendingDispatchPlanStatusFocusRef.current = false;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [displayedDispatchPlanApproval?.id, displayedDispatchPlanApproval?.version, displayedDispatchPlanStatus, procurementMutationPending]);
 
   const closeContactSheet = () => {
+    if (procurementMutationPending) return;
     keyboard.hide();
     setContactSheetOpen(false);
     setContactDraft({ ...emptySupplierContactDraft });
@@ -20022,12 +21521,14 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
   };
 
   const changeContactDraft = (field: keyof SupplierContactDraft, value: string) => {
+    if (procurementMutationPending) return;
     setContactDraft((current) => ({ ...current, [field]: value }));
     if (field !== "responseCapability") setContactErrors((current) => current[field] ? { ...current, [field]: "" } : current);
     setStorageError("");
   };
 
-  const saveContact = () => {
+  const saveContact = async () => {
+    if (procurementMutationPending) return;
     const normalizedDraft = {
       ...contactDraft,
       displayName: contactDraft.displayName.trim(),
@@ -20045,29 +21546,42 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
       window.requestAnimationFrame(() => document.getElementById(`supplier-contact-${firstInvalidField}`)?.focus());
       return;
     }
-    const contactId = onCreateContact(normalizedDraft);
-    if (!contactId) {
-      setStorageError("رکورد گیرنده ذخیره نشد. دادهٔ قبلی دست‌نخورده باقی ماند.");
+    setProcurementMutationPending(true);
+    const result = await onCreateContact(normalizedDraft);
+    setProcurementMutationPending(false);
+    if ((result.status !== "created" && result.status !== "unchanged") || !result.recordId) {
+      setStorageError(result.status === "lock-unavailable"
+        ? "قفل امن مرورگر در دسترس نیست؛ چیزی ذخیره نشد و پیش‌نویس حفظ شد."
+        : result.status === "version-conflict"
+          ? "فهرست گیرنده‌ها در جای دیگری تغییر کرده است؛ پیش‌نویس حفظ شد. دوباره تلاش کن."
+          : "رکورد گیرنده ذخیره نشد. دادهٔ قبلی دست‌نخورده باقی ماند.");
       return;
     }
     if (normalizedDraft.responseCapability === "both" || normalizedDraft.responseCapability === request.requestKind) {
-      setSelectedRecipientIds((current) => [...new Set([...current, contactId])].sort());
+      setSelectedRecipientIds((current) => [...new Set([...current, result.recordId!])].sort());
     }
     setSaveAnnouncement("گیرنده به‌صورت محلی ثبت و برای این پیش‌نویس انتخاب شد.");
     closeContactSheet();
   };
 
   const toggleRecipient = (contact: SupplierContactRecord) => {
-    if (!supplierContactCanRespond(contact, request.requestKind)) return;
+    if (procurementMutationPending) return;
     setStorageError("");
     setSaveAnnouncement("");
-    setSelectedRecipientIds((current) => current.includes(contact.id) ? current.filter((id) => id !== contact.id) : [...current, contact.id].sort());
+    setSelectedRecipientIds((current) => {
+      if (current.includes(contact.id)) return current.filter((id) => id !== contact.id);
+      return supplierContactCanRespond(contact, request.requestKind) ? [...current, contact.id].sort() : current;
+    });
   };
 
-  const changeContactStatus = (contact: SupplierContactRecord) => {
+  const changeContactStatus = async (contact: SupplierContactRecord) => {
+    if (procurementMutationPending) return;
     const nextStatus: SupplierContactStatus = contact.status === "active" ? "archived" : "active";
-    if (!onContactStatusChange(contact.id, nextStatus)) {
-      setStorageError("تغییر وضعیت گیرنده ذخیره نشد. دوباره تلاش کن.");
+    setProcurementMutationPending(true);
+    const result = await onContactStatusChange(contact.id, nextStatus);
+    setProcurementMutationPending(false);
+    if (result.status !== "updated" && result.status !== "unchanged") {
+      setStorageError(result.status === "version-conflict" ? "وضعیت گیرنده در جای دیگری تغییر کرده است؛ نسخهٔ تازه بارگذاری شد. دوباره تلاش کن." : "تغییر وضعیت گیرنده ذخیره نشد. دوباره تلاش کن.");
       return;
     }
     if (nextStatus === "archived") setSelectedRecipientIds((current) => current.filter((id) => id !== contact.id));
@@ -20075,73 +21589,87 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
     setSaveAnnouncement(nextStatus === "archived" ? "گیرنده آرشیو شد؛ نسخه‌های قبلی Draft برای سابقه باقی ماندند." : "گیرنده به فهرست فعال بازگشت.");
   };
 
-  const saveDispatchDraft = () => {
-    if (dispatchStorageLocked || selectedRecipientIds.length === 0) return;
-    const selectionMatchesCurrent = Boolean(currentRevision) && JSON.stringify(currentRevision!.recipientIds) === JSON.stringify([...selectedRecipientIds].sort());
-    const dispatchId = onUpsertDispatchDraft(request.id, approval.id, selectedRecipientIds);
-    if (!dispatchId) {
-      setStorageError("Draft اشتراک ذخیره نشد. هیچ مجوز یا اثر بیرونی ایجاد نشد.");
+  const saveDispatchDraft = async () => {
+    if (procurementMutationPending || dispatchStorageLocked || selectedRecipientIds.length === 0) return;
+    const selectionMatchesCurrent = selectionMatchesCurrentRevision;
+    setProcurementMutationPending(true);
+    const result = await onUpsertDispatchDraft(request.id, approval.id, selectedRecipientIds);
+    setProcurementMutationPending(false);
+    if (result.status !== "created" && result.status !== "updated" && result.status !== "unchanged") {
+      setStorageError(result.status === "version-conflict" ? "Draft در جای دیگری تغییر کرده است؛ نسخهٔ تازه بارگذاری شد و انتخاب شما حفظ ماند. دوباره تلاش کن." : "Draft اشتراک ذخیره نشد. هیچ مجوز یا اثر بیرونی ایجاد نشد.");
       return;
     }
     setStorageError("");
     setSaveAnnouncement(selectionMatchesCurrent ? "همین انتخاب از قبل در Draft جاری ثبت بود؛ نسخهٔ اضافه‌ای ساخته نشد." : "نسخهٔ جدید Draft محلی ذخیره شد؛ هیچ اثر بیرونی ندارد.");
   };
 
-  const submitDispatchPlanToTasks = () => {
-    if (dispatchStorageLocked || dispatchPlanApprovalsStorageLocked || selectedRecipientIds.length === 0) return;
+  const submitDispatchPlanToTasks = async () => {
+    if (procurementMutationPending || dispatchStorageLocked || dispatchPlanApprovalsStorageLocked || selectedRecipientIds.length === 0) return;
+    setProcurementMutationPending(true);
     if (currentRevision && selectionMatchesCurrentRevision) {
-      const approvalId = onCreateDispatchPlanApproval(dispatchDraft!.id);
-      if (!approvalId) {
+      const result = await onCreateDispatchPlanApproval(dispatchDraft!.id);
+      setProcurementMutationPending(false);
+      if ((result.status !== "created" && result.status !== "unchanged") || !result.recordId) {
         setDispatchPlanStorageError("ثبت در کارها انجام نشد. هیچ مرحله‌ای جلو نرفت؛ دوباره تلاش کن.");
         return;
       }
-      onOpenDispatchPlanApproval(approvalId);
+      onOpenDispatchPlanApproval(result.recordId);
       return;
     }
-    const dispatchId = onUpsertDispatchDraft(request.id, approval.id, selectedRecipientIds);
-    if (!dispatchId) {
-      setStorageError("انتخاب تأمین‌کننده‌ها ذخیره نشد. دوباره تلاش کن.");
+    const result = await onQueueDispatchPlanApproval(request.id, approval.id, selectedRecipientIds);
+    setProcurementMutationPending(false);
+    if ((result.status !== "created" && result.status !== "updated" && result.status !== "unchanged") || !result.planApprovalId) {
+      setDispatchPlanStorageError(result.status === "write-failure"
+        ? "ثبت اتمیک Draft و تأیید برنامه کامل نشد؛ وضعیت امن برای ادامه نگه‌داری شد و دوباره قابل تلاش است."
+        : result.status === "version-conflict"
+          ? "یکی از وابستگی‌ها در جای دیگری تغییر کرده است؛ نسخهٔ تازه بارگذاری شد و انتخاب شما حفظ ماند."
+          : "ثبت در کارها انجام نشد. هیچ مرحلهٔ بیرونی جلو نرفت؛ دوباره تلاش کن.");
       return;
     }
     setStorageError("");
     setDispatchPlanStorageError("");
-    setQueueForTasks(true);
+    onOpenDispatchPlanApproval(result.planApprovalId);
   };
 
-  const createDispatchPlanApproval = () => {
-    if (!dispatchDraft || !currentRevision || !selectionMatchesCurrentRevision || !dispatchPlanAcknowledged || dispatchPlanApprovalsStorageLocked) return;
-    const approvalId = onCreateDispatchPlanApproval(dispatchDraft.id);
-    if (!approvalId) {
+  const createDispatchPlanApproval = async () => {
+    if (procurementMutationPending || !dispatchDraft || !currentRevision || !selectionMatchesCurrentRevision || !dispatchPlanAcknowledged || dispatchPlanApprovalsStorageLocked) return;
+    setProcurementMutationPending(true);
+    const result = await onCreateDispatchPlanApproval(dispatchDraft.id);
+    setProcurementMutationPending(false);
+    if ((result.status !== "created" && result.status !== "unchanged") || !result.recordId) {
       setDispatchPlanStorageError("درخواست تأیید محلی ذخیره نشد. هیچ وضعیت، مجوز یا اثر بیرونی تغییر نکرد.");
       return;
     }
     setDispatchPlanStorageError("");
     setDispatchPlanAcknowledged(false);
-    window.requestAnimationFrame(() => dispatchPlanStatusRef.current?.focus());
+    pendingDispatchPlanStatusFocusRef.current = true;
   };
 
-  const changeDispatchPlanApproval = (action: "approve" | "withdraw" | "reopen") => {
-    if (!displayedDispatchPlanApproval || displayedDispatchPlanStatus === "invalidated") return;
-    if (!onChangeDispatchPlanApproval(displayedDispatchPlanApproval.id, action)) {
-      setDispatchPlanStorageError("تغییر وضعیت تأیید محلی ذخیره نشد. رکورد قبلی دست‌نخورده باقی ماند.");
+  const changeDispatchPlanApproval = async (action: "approve" | "withdraw" | "reopen") => {
+    if (procurementMutationPending || !displayedDispatchPlanApproval || displayedDispatchPlanStatus === "invalidated") return;
+    setProcurementMutationPending(true);
+    const result = await onChangeDispatchPlanApproval(displayedDispatchPlanApproval.id, action);
+    setProcurementMutationPending(false);
+    if (result.status !== "updated" && result.status !== "unchanged") {
+      setDispatchPlanStorageError(result.status === "version-conflict" ? "این تصمیم در صفحهٔ دیگری تغییر کرده بود؛ رکورد تازه بارگذاری شد. دوباره بررسی کن." : "تغییر وضعیت تأیید محلی ذخیره نشد. رکورد قبلی دست‌نخورده باقی ماند.");
       return;
     }
     setDispatchPlanStorageError("");
-    window.requestAnimationFrame(() => dispatchPlanStatusRef.current?.focus());
+    pendingDispatchPlanStatusFocusRef.current = true;
   };
 
   const contactSheet = (
-    <BottomSheet open={contactSheetOpen} onOpenChange={(open) => { if (!open) closeContactSheet(); }} title="افزودن تأمین‌کننده" description="نام، دسته و محدودهٔ فعالیت را ثبت کن." snap={0.92}>
+    <BottomSheet open={contactSheetOpen} onOpenChange={(open) => { if (!open && !procurementMutationPending) closeContactSheet(); }} title="افزودن تأمین‌کننده" description="نام، دسته و محدودهٔ فعالیت را ثبت کن." snap={0.92}>
       <form className="supplier-contact-editor-sheet" dir="rtl" data-testid="supplier-contact-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveContact(); }}>
-        <label className="field-control" htmlFor="supplier-contact-displayName"><span>نام یا عنوان گیرنده</span><KeyboardInput id="supplier-contact-displayName" data-testid="supplier-contact-name-input" value={contactDraft.displayName} maxLength={100} placeholder="مثلاً مصالح نمونهٔ تهران" onChange={(event) => changeContactDraft("displayName", event.target.value)} aria-invalid={Boolean(contactErrors.displayName)} aria-describedby={contactErrors.displayName ? "supplier-contact-displayName-error" : undefined} />{contactErrors.displayName ? <small className="field-error" id="supplier-contact-displayName-error">{contactErrors.displayName}</small> : null}</label>
-        <label className="field-control" htmlFor="supplier-contact-category"><span>دسته</span><KeyboardInput id="supplier-contact-category" data-testid="supplier-contact-category-input" value={contactDraft.category} maxLength={100} placeholder="مثلاً سیمان و مصالح پایه" onChange={(event) => changeContactDraft("category", event.target.value)} aria-invalid={Boolean(contactErrors.category)} aria-describedby={contactErrors.category ? "supplier-contact-category-error" : undefined} />{contactErrors.category ? <small className="field-error" id="supplier-contact-category-error">{contactErrors.category}</small> : null}</label>
-        <label className="field-control" htmlFor="supplier-contact-tehranCoverage"><span>پوشش تهران</span><KeyboardInput id="supplier-contact-tehranCoverage" data-testid="supplier-contact-coverage-input" value={contactDraft.tehranCoverage} maxLength={120} placeholder="مثلاً مناطق ۱ تا ۵ و شمیرانات" onChange={(event) => changeContactDraft("tehranCoverage", event.target.value)} aria-invalid={Boolean(contactErrors.tehranCoverage)} aria-describedby={contactErrors.tehranCoverage ? "supplier-contact-tehranCoverage-error" : undefined} />{contactErrors.tehranCoverage ? <small className="field-error" id="supplier-contact-tehranCoverage-error">{contactErrors.tehranCoverage}</small> : null}</label>
+        <label className="field-control" htmlFor="supplier-contact-displayName"><span>نام یا عنوان گیرنده</span><KeyboardInput id="supplier-contact-displayName" data-testid="supplier-contact-name-input" value={contactDraft.displayName} maxLength={100} placeholder="مثلاً مصالح نمونهٔ تهران" onChange={(event) => changeContactDraft("displayName", event.target.value)} disabled={procurementMutationPending} aria-invalid={Boolean(contactErrors.displayName)} aria-describedby={contactErrors.displayName ? "supplier-contact-displayName-error" : undefined} />{contactErrors.displayName ? <small className="field-error" id="supplier-contact-displayName-error">{contactErrors.displayName}</small> : null}</label>
+        <label className="field-control" htmlFor="supplier-contact-category"><span>دسته</span><KeyboardInput id="supplier-contact-category" data-testid="supplier-contact-category-input" value={contactDraft.category} maxLength={100} placeholder="مثلاً سیمان و مصالح پایه" onChange={(event) => changeContactDraft("category", event.target.value)} disabled={procurementMutationPending} aria-invalid={Boolean(contactErrors.category)} aria-describedby={contactErrors.category ? "supplier-contact-category-error" : undefined} />{contactErrors.category ? <small className="field-error" id="supplier-contact-category-error">{contactErrors.category}</small> : null}</label>
+        <label className="field-control" htmlFor="supplier-contact-tehranCoverage"><span>پوشش تهران</span><KeyboardInput id="supplier-contact-tehranCoverage" data-testid="supplier-contact-coverage-input" value={contactDraft.tehranCoverage} maxLength={120} placeholder="مثلاً مناطق ۱ تا ۵ و شمیرانات" onChange={(event) => changeContactDraft("tehranCoverage", event.target.value)} disabled={procurementMutationPending} aria-invalid={Boolean(contactErrors.tehranCoverage)} aria-describedby={contactErrors.tehranCoverage ? "supplier-contact-tehranCoverage-error" : undefined} />{contactErrors.tehranCoverage ? <small className="field-error" id="supplier-contact-tehranCoverage-error">{contactErrors.tehranCoverage}</small> : null}</label>
         <fieldset className="supplier-contact-capability-picker">
           <legend>نوع همکاری</legend>
-          {supplierContactResponseCapabilities.map((capability) => <button type="button" key={capability.id} aria-pressed={contactDraft.responseCapability === capability.id} onClick={() => changeContactDraft("responseCapability", capability.id)} data-testid={`supplier-contact-capability-${capability.id}`}>{capability.label}</button>)}
+          {supplierContactResponseCapabilities.map((capability) => <button type="button" key={capability.id} aria-pressed={contactDraft.responseCapability === capability.id} onClick={() => changeContactDraft("responseCapability", capability.id)} disabled={procurementMutationPending} data-testid={`supplier-contact-capability-${capability.id}`}>{capability.label}</button>)}
         </fieldset>
         {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="supplier-contact-storage-error">{storageError}</p> : null}
-        <button className="primary-button" type="submit" disabled={contactsStorageLocked} data-testid="supplier-contact-save"><UserPlus size={18} /> ذخیره</button>
+        <button className="primary-button" type="submit" disabled={contactsStorageLocked || procurementMutationPending} data-testid="supplier-contact-save"><UserPlus size={18} /> {procurementMutationPending ? "در حال ثبت امن…" : "ذخیره"}</button>
       </form>
     </BottomSheet>
   );
@@ -20149,7 +21677,7 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
   return (
     <div className="chida-app project-dispatch-planner-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-dispatch-planner-view">
       <header className="project-workspace-header">
-        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label="بازگشت به جزئیات درخواست" data-testid="dispatch-planner-back"><ArrowRight size={21} /></button>
+        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} disabled={procurementMutationPending} aria-label="بازگشت به جزئیات درخواست" data-testid="dispatch-planner-back"><ArrowRight size={21} /></button>
         <span className="project-workspace-title"><small>انتخاب تأمین‌کننده‌ها</small><strong>{project.name}</strong></span>
         <span className="project-workspace-header-spacer" aria-hidden="true" />
       </header>
@@ -20168,7 +21696,7 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
 
           <section className="supplier-contact-section" aria-labelledby="supplier-contact-title">
             <div className="dispatch-section-heading"><span><strong id="supplier-contact-title">تأمین‌کننده‌ها</strong><small>برای ادامه یک یا چند مورد را انتخاب کن.</small></span><em>{orderedContacts.filter((contact) => contact.status === "active").length.toLocaleString("fa-IR")}</em></div>
-            <button ref={addContactButtonRef} className="supplier-contact-add" type="button" onClick={() => { setStorageError(""); setContactSheetOpen(true); }} disabled={contactsStorageLocked} data-testid="supplier-contact-add"><UserPlus size={18} /> افزودن تأمین‌کننده</button>
+            <button ref={addContactButtonRef} className="supplier-contact-add" type="button" onClick={() => { setStorageError(""); setContactSheetOpen(true); }} disabled={contactsStorageLocked || procurementMutationPending} data-testid="supplier-contact-add"><UserPlus size={18} /> افزودن تأمین‌کننده</button>
             {!contactsStorageLocked && orderedContacts.length === 0 ? <div className="supplier-contact-empty" data-testid="supplier-contact-empty"><Store size={23} /><strong>هنوز تأمین‌کننده‌ای ثبت نشده</strong><p>اولین مورد را اضافه کن.</p></div> : null}
             <div className="supplier-contact-list">
               {orderedContacts.map((contact) => {
@@ -20176,9 +21704,9 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
                 const selected = selectedRecipientIds.includes(contact.id);
                 return (
                   <article className={`supplier-contact-card ${contact.status === "archived" ? "is-archived" : ""} ${selected ? "is-selected" : ""}`} key={contact.id} data-testid="supplier-contact-card">
-                    <button className="supplier-contact-select" type="button" aria-pressed={selected} aria-label={`${selected ? "حذف" : "انتخاب"} گیرنده ${contact.displayName}`} onClick={() => toggleRecipient(contact)} disabled={!selectable || contactsStorageLocked} data-testid="supplier-contact-select"><span className="supplier-contact-check"><Check size={15} /></span><span><strong>{contact.displayName}</strong><small>{contact.category} · {contact.tehranCoverage}</small></span></button>
+                    <button className="supplier-contact-select" type="button" aria-pressed={selected} aria-label={`${selected ? "حذف" : "انتخاب"} گیرنده ${contact.displayName}`} onClick={() => toggleRecipient(contact)} disabled={!selected && !selectable || contactsStorageLocked || procurementMutationPending} data-testid="supplier-contact-select"><span className="supplier-contact-check"><Check size={15} /></span><span><strong>{contact.displayName}</strong><small>{contact.category} · {contact.tehranCoverage}</small></span></button>
                     {!selectable ? <p className="is-incompatible">برای این نوع درخواست قابل انتخاب نیست.</p> : null}
-                    <details className="supplier-contact-more"><summary>بیشتر</summary><div><span>{supplierContactResponseCapabilityLabel(contact.responseCapability)}</span><button className="supplier-contact-status" type="button" onClick={() => changeContactStatus(contact)} disabled={contactsStorageLocked} aria-label={`${contact.status === "active" ? "آرشیو" : "بازگرداندن"} ${contact.displayName}`} data-testid="supplier-contact-status">{contact.status === "active" ? <Archive size={16} /> : <RotateCcw size={16} />}{contact.status === "active" ? "آرشیو" : "بازگرداندن"}</button></div></details>
+                    <details className="supplier-contact-more"><summary aria-disabled={procurementMutationPending} onClick={(event) => { if (procurementMutationPending) event.preventDefault(); }}>بیشتر</summary><div><span>{supplierContactResponseCapabilityLabel(contact.responseCapability)}</span><button className="supplier-contact-status" type="button" onClick={() => changeContactStatus(contact)} disabled={contactsStorageLocked || procurementMutationPending} aria-label={`${contact.status === "active" ? "آرشیو" : "بازگرداندن"} ${contact.displayName}`} data-testid="supplier-contact-status">{contact.status === "active" ? <Archive size={16} /> : <RotateCcw size={16} />}{contact.status === "active" ? "آرشیو" : "بازگرداندن"}</button></div></details>
                   </article>
                 );
               })}
@@ -20196,7 +21724,7 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
 
           {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="dispatch-storage-error">{storageError}</p> : null}
           {dispatchPlanStorageError ? <p className="purchase-request-storage-error" role="alert" data-testid="dispatch-plan-approval-storage-error">{dispatchPlanStorageError}</p> : null}
-          <button className="primary-button dispatch-submit-to-tasks" type="button" onClick={submitDispatchPlanToTasks} disabled={dispatchStorageLocked || dispatchPlanApprovalsStorageLocked || selectedRecipientIds.length === 0 || queueForTasks} data-testid="dispatch-submit-to-tasks"><ClipboardCheck size={18} /> ثبت در کارها برای تأیید نهایی</button>
+          <button className="primary-button dispatch-submit-to-tasks" type="button" onClick={submitDispatchPlanToTasks} disabled={dispatchStorageLocked || dispatchPlanApprovalsStorageLocked || selectedRecipientIds.length === 0 || procurementMutationPending} data-testid="dispatch-submit-to-tasks"><ClipboardCheck size={18} /> {procurementMutationPending ? "در حال ثبت امن…" : "ثبت در کارها برای تأیید نهایی"}</button>
 
           <details className="dispatch-technical-details" data-testid="dispatch-technical-details">
             <summary>جزئیات بیشتر</summary>
@@ -20210,7 +21738,7 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
           {currentRevision && previewRevision ? (
             <section className="dispatch-draft-preview" data-testid="dispatch-draft-preview" aria-labelledby="dispatch-draft-preview-title">
               <div className="dispatch-section-heading"><span><strong id="dispatch-draft-preview-title">Draft اشتراک ثبت‌شده</strong><small>نسخهٔ {previewRevision.version.toLocaleString("fa-IR")} از {dispatchDraft!.version.toLocaleString("fa-IR")} · {formatProjectFileDate(previewRevision.createdAt)}</small></span><em>{previewRevision.id === currentRevision.id ? "نسخهٔ جاری" : "تاریخی · فقط‌خواندنی"}</em></div>
-              {dispatchDraft!.revisions.length > 1 ? <nav className="dispatch-revision-picker" aria-label="نسخه‌های Draft اشتراک" data-testid="dispatch-revision-picker">{[...dispatchDraft!.revisions].reverse().map((revision) => <button type="button" key={revision.id} aria-pressed={previewRevision.id === revision.id} onClick={() => setPreviewRevisionId(revision.id)} data-testid="dispatch-revision-option">نسخهٔ {revision.version.toLocaleString("fa-IR")}<small>{revision.recipientIds.length.toLocaleString("fa-IR")} گیرنده</small></button>)}</nav> : null}
+              {dispatchDraft!.revisions.length > 1 ? <nav className="dispatch-revision-picker" aria-label="نسخه‌های Draft اشتراک" data-testid="dispatch-revision-picker">{[...dispatchDraft!.revisions].reverse().map((revision) => <button type="button" key={revision.id} aria-pressed={previewRevision.id === revision.id} onClick={() => setPreviewRevisionId(revision.id)} disabled={procurementMutationPending} data-testid="dispatch-revision-option">نسخهٔ {revision.version.toLocaleString("fa-IR")}<small>{revision.recipientIds.length.toLocaleString("fa-IR")} گیرنده</small></button>)}</nav> : null}
               <dl className="dispatch-draft-contract"><div><dt>وضعیت</dt><dd>پیش‌نویس</dd></div><div><dt>اثر بیرونی</dt><dd><code>none</code></dd></div><div><dt>مجوز ارسال</dt><dd><code>false</code></dd></div><div><dt>تعداد مقصد</dt><dd>{previewRevision.inviteDrafts.length.toLocaleString("fa-IR")}</dd></div></dl>
               <div className="invite-draft-list">{previewRevision.inviteDrafts.map((invite) => {
                 const currentContact = contacts.find((contact) => contact.id === invite.supplierContactId);
@@ -20220,19 +21748,19 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
           ) : <p className="dispatch-draft-empty" data-testid="dispatch-draft-empty"><FileText size={17} /><span><strong>هنوز Draft اشتراکی ثبت نشده.</strong> انتخاب‌ها را بازبینی و فقط پیش‌نویس محلی را ذخیره کن.</span></p>}
 
           {saveAnnouncement ? <p className="dispatch-save-announcement" role="status" data-testid="dispatch-save-announcement"><CheckCircle2 size={17} />{saveAnnouncement}</p> : null}
-          <button className="primary-button dispatch-draft-save" type="button" onClick={saveDispatchDraft} disabled={dispatchStorageLocked || selectedRecipientIds.length === 0} data-testid="dispatch-draft-save"><FileText size={18} /> ذخیرهٔ Draft اشتراک محلی</button>
+          <button className="primary-button dispatch-draft-save" type="button" onClick={saveDispatchDraft} disabled={dispatchStorageLocked || selectedRecipientIds.length === 0 || procurementMutationPending} data-testid="dispatch-draft-save"><FileText size={18} /> ذخیرهٔ Draft اشتراک محلی</button>
 
           {dispatchPlanApprovalsStorageLocked ? <p className="project-storage-recovery-alert" role="alert" data-testid="dispatch-plan-approval-read-error"><ShieldCheck size={17} /><span><strong>تأییدهای برنامهٔ ارسال کامل خوانده نشدند.</strong> فقط mutation همین تأیید قفل است؛ Draft و پیش‌نمایش سالم همچنان قابل مشاهده‌اند.</span></p> : null}
           {currentRevision ? (
             <section className="dispatch-plan-approval-entry" aria-labelledby="dispatch-plan-approval-entry-title">
               <div className="dispatch-section-heading"><span><strong id="dispatch-plan-approval-entry-title">تأیید مستقل برنامهٔ ارسال</strong><small>جدا از تأیید محتوای درخواست؛ فقط برای revision جاری Draft</small></span><em>{exactDispatchPlanApproval ? "رکورد دارد" : "ثبت نشده"}</em></div>
               {!selectionMatchesCurrentRevision ? <p className="dispatch-plan-save-first"><CircleHelp size={16} /><span>انتخاب‌های روی صفحه با Draft ذخیره‌شده یکی نیست؛ اول نسخهٔ تازهٔ Draft را ذخیره کن.</span></p> : null}
-              <button className="dispatch-plan-review-button" type="button" onClick={() => { setDispatchPlanReviewOpen(true); setDispatchPlanStorageError(""); }} disabled={!selectionMatchesCurrentRevision} data-testid="dispatch-plan-review"><ClipboardCheck size={18} /> بررسی نهایی برنامهٔ ارسال</button>
+              <button className="dispatch-plan-review-button" type="button" onClick={() => { setDispatchPlanReviewOpen(true); setDispatchPlanStorageError(""); }} disabled={!selectionMatchesCurrentRevision || procurementMutationPending} data-testid="dispatch-plan-review"><ClipboardCheck size={18} /> بررسی نهایی برنامهٔ ارسال</button>
               {displayedDispatchPlanApproval && displayedDispatchPlanStatus === "invalidated" && !dispatchPlanReviewOpen ? <p className="dispatch-plan-invalidated" role="status" data-testid="dispatch-plan-approval-invalidated"><CircleHelp size={17} /><span><strong>تأیید نسخهٔ قبلی دیگر معتبر نیست.</strong><small>رکورد قبلی بدون تغییر و فقط برای تاریخچه باقی مانده است.</small></span></p> : null}
 
               {dispatchPlanReviewOpen ? (
                 <div className="dispatch-plan-approval-detail" data-testid="dispatch-plan-approval-detail">
-                  <div className="dispatch-plan-review-heading"><span><small>شبیه‌سازی محلی</small><strong>تأیید محلی برنامهٔ ارسال</strong></span><button type="button" onClick={() => setDispatchPlanReviewOpen(false)} data-testid="dispatch-plan-approval-back">بستن</button></div>
+                  <div className="dispatch-plan-review-heading"><span><small>شبیه‌سازی محلی</small><strong>تأیید محلی برنامهٔ ارسال</strong></span><button type="button" onClick={() => setDispatchPlanReviewOpen(false)} disabled={procurementMutationPending} data-testid="dispatch-plan-approval-back">بستن</button></div>
                   <aside className="dispatch-plan-simulation-banner"><ShieldCheck size={18} /><span><strong>هیچ استعلامی ارسال نمی‌شود.</strong><small><code>simulationOnly=true</code> · <code>externalEffect=none</code> · <code>sendAuthorized=false</code></small></span></aside>
                   <dl className="dispatch-plan-summary"><div><dt>نسخهٔ درخواست</dt><dd>{request.version.toLocaleString("fa-IR")}</dd></div><div><dt>نسخهٔ Draft</dt><dd>{currentRevision.version.toLocaleString("fa-IR")}</dd></div><div><dt>گیرندگان</dt><dd>{currentRevision.recipientIds.length.toLocaleString("fa-IR")}</dd></div><div><dt>فیلدهای payload</dt><dd>{dispatchPayloadRows(currentRevision.payload).length.toLocaleString("fa-IR")}</dd></div></dl>
                   <section className="dispatch-plan-target" data-testid="dispatch-plan-approval-target"><strong>هدف دقیق و نسخه‌دار · نسخهٔ {currentRevision.version.toLocaleString("fa-IR")}</strong><p>{currentRevision.inviteDrafts.map((invite) => invite.destination.displayName).join("، ")}</p><dl><div><dt>Dispatch revision</dt><dd dir="ltr">{currentRevision.id}</dd></div><div><dt>Request revision</dt><dd dir="ltr">{dispatchDraft!.target.revisionId}</dd></div><div><dt>Content approval</dt><dd dir="ltr">{dispatchDraft!.target.approvalId}</dd></div></dl></section>
@@ -20245,21 +21773,21 @@ function ProjectDispatchPlannerView({ project, request, approval, contacts, disp
                       <dl className="dispatch-plan-contract"><div><dt>اثر بیرونی</dt><dd><code>{displayedDispatchPlanApproval.externalEffect}</code></dd></div><div><dt>مجوز ارسال</dt><dd><code>{String(displayedDispatchPlanApproval.sendAuthorized)}</code></dd></div><div><dt>تلاش بیرونی</dt><dd><code>{String(displayedDispatchPlanApproval.externalActionAttempted)}</code></dd></div><div><dt>idempotency</dt><dd dir="ltr">{displayedDispatchPlanApproval.idempotencyKey}</dd></div></dl>
                       {displayedDispatchPlanApproval.actionRecord ? <p className="dispatch-plan-action-record" data-testid="dispatch-plan-approval-action-record"><CheckCircle2 size={18} /><span><strong>{displayedDispatchPlanApproval.actionRecord.label}</strong><small>فقط نتیجهٔ ثبت محلی · بدون ارسال، رسید یا تحویل</small></span></p> : null}
                       <ol className="dispatch-plan-history" data-testid="dispatch-plan-approval-events">{displayedDispatchPlanApproval.history.map((event) => <li key={event.id}><span><Check size={13} /></span><div><strong>{event.type === "created" ? "درخواست تأیید ساخته شد" : event.type === "withdrawn" ? "درخواست پس گرفته شد" : event.type === "reopened" ? "درخواست دوباره باز شد" : "برنامه محلی تأیید شد"}</strong><small>نسخهٔ {event.version.toLocaleString("fa-IR")} · {formatProjectFileDate(event.at)}</small></div></li>)}</ol>
-                      {displayedDispatchPlanStatus === "pending" ? <div className="dispatch-plan-actions"><button type="button" onClick={() => changeDispatchPlanApproval("withdraw")} disabled={dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-withdraw">پس‌گرفتن درخواست تأیید</button><button className="primary-button" type="button" onClick={() => changeDispatchPlanApproval("approve")} disabled={dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-approve">تأیید محلی برنامهٔ ارسال</button></div> : null}
-                      {displayedDispatchPlanStatus === "withdrawn" ? <button className="primary-button" type="button" onClick={() => changeDispatchPlanApproval("reopen")} disabled={dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-reopen">درخواست دوبارهٔ تأیید</button> : null}
+                      {displayedDispatchPlanStatus === "pending" ? <div className="dispatch-plan-actions"><button type="button" onClick={() => changeDispatchPlanApproval("withdraw")} disabled={dispatchPlanApprovalsStorageLocked || procurementMutationPending} data-testid="dispatch-plan-approval-withdraw">پس‌گرفتن درخواست تأیید</button><button className="primary-button" type="button" onClick={() => changeDispatchPlanApproval("approve")} disabled={dispatchPlanApprovalsStorageLocked || procurementMutationPending} data-testid="dispatch-plan-approval-approve">تأیید محلی برنامهٔ ارسال</button></div> : null}
+                      {displayedDispatchPlanStatus === "withdrawn" ? <button className="primary-button" type="button" onClick={() => changeDispatchPlanApproval("reopen")} disabled={dispatchPlanApprovalsStorageLocked || procurementMutationPending} data-testid="dispatch-plan-approval-reopen">درخواست دوبارهٔ تأیید</button> : null}
                       {displayedDispatchPlanStatus === "approved" ? <p className="dispatch-plan-read-only" data-testid="dispatch-plan-approval-readonly"><ShieldCheck size={16} /> تصمیم نهایی و فقط‌خواندنی است؛ دکمهٔ ارسال وجود ندارد.</p> : null}
                     </section>
                   ) : null}
 
                   {orderedDispatchPlanApprovals.length > 0 ? <section className="dispatch-plan-record-history" data-testid="dispatch-plan-approval-history"><strong>سابقهٔ تأییدهای این Draft</strong>{orderedDispatchPlanApprovals.map((record) => {
-                    const recordStatus = dispatchPlanApprovalEffectiveStatus(record, dispatchDraft, request, approval, contacts);
+                    const recordStatus = getDispatchPlanApprovalEffectiveStatus(record, dispatchDraft);
                     return <article key={record.id}><div><span><strong>نسخهٔ {record.target.dispatchDraftVersion.toLocaleString("fa-IR")}</strong><small>{recordStatus === "invalidated" ? "نامعتبر · نسخهٔ قدیمی" : recordStatus === "approved" ? "تأییدشده" : recordStatus === "withdrawn" ? "پس‌گرفته‌شده" : "در انتظار تأیید"}</small></span><em>{record.snapshot.recipientCount.toLocaleString("fa-IR")} گیرنده</em></div>{recordStatus === "invalidated" ? <p data-testid="dispatch-plan-approval-readonly"><ShieldCheck size={15} /> فقط‌خواندنی؛ مقصد یا نسخهٔ وابسته تغییر کرده است.</p> : null}</article>;
                   })}</section> : null}
 
                   {!exactDispatchPlanApproval || displayedDispatchPlanStatus === "invalidated" ? (
                     <div className="dispatch-plan-create-block">
-                      <label><input type="checkbox" checked={dispatchPlanAcknowledged} onChange={(event) => setDispatchPlanAcknowledged(event.target.checked)} data-testid="dispatch-plan-acknowledgement" /><span>گیرنده‌ها، محتوای دقیق و مقدار آزاد مکان را بازبینی کردم.</span></label>
-                      <button className="primary-button" type="button" onClick={createDispatchPlanApproval} disabled={!dispatchPlanAcknowledged || dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-create">ساخت درخواست تأیید محلی</button>
+                      <label><input type="checkbox" checked={dispatchPlanAcknowledged} onChange={(event) => setDispatchPlanAcknowledged(event.target.checked)} disabled={procurementMutationPending} data-testid="dispatch-plan-acknowledgement" /><span>گیرنده‌ها، محتوای دقیق و مقدار آزاد مکان را بازبینی کردم.</span></label>
+                      <button className="primary-button" type="button" onClick={createDispatchPlanApproval} disabled={!dispatchPlanAcknowledged || dispatchPlanApprovalsStorageLocked || procurementMutationPending} data-testid="dispatch-plan-approval-create">ساخت درخواست تأیید محلی</button>
                     </div>
                   ) : null}
                 </div>
@@ -20334,11 +21862,12 @@ type ProjectTasksViewProps = {
   onRunMonitors: (monitorId: string | null, force: boolean, expectedVersion?: number | null, automaticRunStillAllowed?: (() => boolean) | null) => Promise<ProjectTaskMonitorMutationResult>;
   onToggleMonitor: (monitorId: string, enabled: boolean, expectedVersion: number) => Promise<ProjectTaskMonitorMutationResult>;
   onRetryMonitor: (monitorId: string, expectedVersion: number) => Promise<ProjectTaskMonitorMutationResult>;
-  onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => Promise<boolean>;
-  onDispatchPlanApprovalDecision: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean;
+  onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">, expectedApprovalVersion: number, expectedRequestVersion: number, idempotencyKey: string) => Promise<boolean>;
+  onDispatchPlanApprovalDecision: (approvalId: string, action: "approve" | "withdraw" | "reopen") => Promise<ProcurementMutationResult<DispatchPlanApprovalEnvelope>>;
+  getDispatchPlanApprovalEffectiveStatus: (record: DispatchPlanApprovalRecord, draft: DispatchDraftRecord | null) => DispatchPlanApprovalEffectiveStatus;
 };
 
-function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, tasksStorageLoading, backboneStorageLocked, monitorsStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, backLabel, onBack, onOpenBackbone, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onCreateMonitor, onRunMonitors, onToggleMonitor, onRetryMonitor, onApprovalDecision, onDispatchPlanApprovalDecision }: ProjectTasksViewProps) {
+function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, tasksStorageLoading, backboneStorageLocked, monitorsStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, backLabel, onBack, onOpenBackbone, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onCreateMonitor, onRunMonitors, onToggleMonitor, onRetryMonitor, onApprovalDecision, onDispatchPlanApprovalDecision, getDispatchPlanApprovalEffectiveStatus }: ProjectTasksViewProps) {
   const keyboard = useKeyboard();
   const taskAddButtonRef = useRef<HTMLButtonElement>(null);
   const taskEditButtonRef = useRef<HTMLButtonElement>(null);
@@ -20366,6 +21895,8 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
   const [monitorMessage, setMonitorMessage] = useState("");
   const [monitorMutationPending, setMonitorMutationPending] = useState(false);
   const [approvalMutationPending, setApprovalMutationPending] = useState(false);
+  const [dispatchPlanMutationPending, setDispatchPlanMutationPending] = useState(false);
+  const approvalDecisionIdempotencyKeyRef = useRef<{ approvalId: string; approvalVersion: number; decision: Exclude<ProjectApprovalStatus, "pending">; key: string } | null>(null);
   const selectedTask = selectedId ? tasks.find((task) => task.id === selectedId) ?? null : null;
   const selectedMonitor = selectedMonitorId ? monitors.find((monitor) => monitor.id === selectedMonitorId) ?? null : null;
   const selectedMonitorSnapshot = selectedMonitor ? projectTaskMonitorCurrentSnapshot(selectedMonitor) : null;
@@ -20377,7 +21908,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
   const selectedDispatchRequest = selectedDispatchPlanApproval ? requests.find((request) => request.id === selectedDispatchPlanApproval.target.requestId) ?? null : null;
   const selectedDispatchContentApproval = selectedDispatchPlanApproval ? approvals.find((approval) => approval.id === selectedDispatchPlanApproval.target.contentApprovalId) ?? null : null;
   const selectedDispatchEffectiveStatus = selectedDispatchPlanApproval && selectedDispatchRequest && selectedDispatchContentApproval
-    ? dispatchPlanApprovalEffectiveStatus(selectedDispatchPlanApproval, selectedDispatchDraft, selectedDispatchRequest, selectedDispatchContentApproval, contacts)
+    ? getDispatchPlanApprovalEffectiveStatus(selectedDispatchPlanApproval, selectedDispatchDraft)
     : selectedDispatchPlanApproval ? "invalidated" as const : null;
   const orderedTasks = useMemo(
     () => [...tasks].sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()),
@@ -20402,7 +21933,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
     const draft = dispatchDrafts.find((item) => item.id === record.target.dispatchDraftId) ?? null;
     const request = requests.find((item) => item.id === record.target.requestId);
     const contentApproval = approvals.find((item) => item.id === record.target.contentApprovalId);
-    return request && contentApproval ? dispatchPlanApprovalEffectiveStatus(record, draft, request, contentApproval, contacts) : "invalidated";
+    return request && contentApproval ? getDispatchPlanApprovalEffectiveStatus(record, draft) : "invalidated";
   };
   const pendingApprovalCount = approvals.filter((approval) => approval.status === "pending").length + dispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) === "pending").length;
   const decidedApprovalCount = approvals.filter((approval) => approval.status !== "pending").length + dispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) !== "pending").length;
@@ -20694,21 +22225,30 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
 
   const decideApproval = async (decision: Exclude<ProjectApprovalStatus, "pending">) => {
     if (!selectedApproval || approvalMutationPending) return;
+    const pendingKey = approvalDecisionIdempotencyKeyRef.current;
+    const idempotencyKey = pendingKey?.approvalId === selectedApproval.id && pendingKey.approvalVersion === selectedApproval.version && pendingKey.decision === decision
+      ? pendingKey.key
+      : `request-content-approval-decision:${window.crypto.randomUUID()}`;
+    approvalDecisionIdempotencyKeyRef.current = { approvalId: selectedApproval.id, approvalVersion: selectedApproval.version, decision, key: idempotencyKey };
     setApprovalMutationPending(true);
-    const saved = await onApprovalDecision(selectedApproval.id, decision);
+    const saved = await onApprovalDecision(selectedApproval.id, decision, selectedApproval.version, selectedApproval.target.version, idempotencyKey);
     setApprovalMutationPending(false);
     if (!saved) {
       setStorageError("تصمیم ذخیره نشد؛ هیچ وضعیتی تغییر نکرد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
       return;
     }
+    approvalDecisionIdempotencyKeyRef.current = null;
     setStorageError("");
     window.requestAnimationFrame(() => approvalHeadingRef.current?.focus());
   };
 
-  const approveDispatchPlan = () => {
-    if (!selectedDispatchPlanApproval || selectedDispatchEffectiveStatus !== "pending") return;
-    if (!onDispatchPlanApprovalDecision(selectedDispatchPlanApproval.id, "approve")) {
-      setStorageError("تأیید نهایی ذخیره نشد؛ دوباره تلاش کن.");
+  const approveDispatchPlan = async () => {
+    if (dispatchPlanMutationPending || !selectedDispatchPlanApproval || selectedDispatchEffectiveStatus !== "pending") return;
+    setDispatchPlanMutationPending(true);
+    const result = await onDispatchPlanApprovalDecision(selectedDispatchPlanApproval.id, "approve");
+    setDispatchPlanMutationPending(false);
+    if (result.status !== "updated" && result.status !== "unchanged") {
+      setStorageError(result.status === "version-conflict" ? "این تصمیم در صفحهٔ دیگری ثبت شده بود؛ نسخهٔ تازه بارگذاری شد و تصمیم شما اعمال نشد." : "تأیید نهایی ذخیره نشد؛ دوباره تلاش کن.");
       return;
     }
     setStorageError("");
@@ -20823,7 +22363,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
             </details>
 
             {storageError ? <p className="project-task-storage-error" role="alert" data-testid="dispatch-plan-approval-storage-error">{storageError}</p> : null}
-            {selectedDispatchEffectiveStatus === "pending" ? <div className="project-dispatch-plan-actions"><button type="button" onClick={editDispatchPlanRequest} data-testid="project-dispatch-plan-edit"><PencilLine size={17} /> اصلاح</button><button className="primary-button" type="button" onClick={approveDispatchPlan} disabled={dispatchPlanApprovalsStorageLocked} data-testid="dispatch-plan-approval-approve"><ClipboardCheck size={18} /> تأیید نهایی</button></div> : null}
+            {selectedDispatchEffectiveStatus === "pending" ? <div className="project-dispatch-plan-actions"><button type="button" onClick={editDispatchPlanRequest} disabled={dispatchPlanMutationPending} data-testid="project-dispatch-plan-edit"><PencilLine size={17} /> اصلاح</button><button className="primary-button" type="button" onClick={approveDispatchPlan} disabled={dispatchPlanApprovalsStorageLocked || dispatchPlanMutationPending} data-testid="dispatch-plan-approval-approve"><ClipboardCheck size={18} /> {dispatchPlanMutationPending ? "در حال ثبت…" : "تأیید نهایی"}</button></div> : null}
           </main>
         </MobileScroll>
       </div>

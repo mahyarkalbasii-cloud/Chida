@@ -1,10 +1,10 @@
 # ماتریس پذیرش Builder Prototype Architecture Gate
 
 **تاریخ ارزیابی:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
-**وضعیت:** ارزیابی تاریخی `FAIL`؛ BG-F1 در baseline و remediationهای BG-F2/BG-F3 همراه برش‌های قابل‌دیدن BUX-1 تا BUX-3 در candidate مجاز انتشار انجام شده‌اند، اما rerun ماتریس Gate انجام نشده است
+**وضعیت:** ارزیابی تاریخی `FAIL`؛ remediationهای BG-F1 تا BG-F5 و برش‌های قابل‌دیدن BUX-1 تا BUX-3 انجام شده‌اند، اما rerun ماتریس Gate انجام نشده است
 **دامنه:** پروتوتایپ موبایل سازنده، Dark/RTL، browser-local
 **snapshot کدِ ممیزی‌شده:** شاخهٔ `main` روی `29fb52e6bdfb69b6e4773a68b28b5fc891f42f27` همراه تغییرهای محلی `REL-1/BL-1`
-**candidate جاری:** baseline هم‌تراز local/GitHub `main` روی `8196357339bf80c6532f8443a1baa957b6904af3` همراه candidate ترکیبی `BG-F2/BUX-1/BUX-2/BUX-3/BG-F3` که انتشار exact آن در ۲۰۲۶/۰۹/۰۱ مجاز شده است
+**candidate جاری:** baseline هم‌تراز local/GitHub `main` روی `69aaddfb867ec98a5d0ff2f06e367577392c0fc6` همراه candidate محلی `BG-F4/BG-F5` که تا receipt terminal local/uncommitted/unpublished است؛ انتشار exact آن صریحاً مجاز شده اما rerun ماتریس Gate مجاز نشده است
 
 این فایل artifact اجراییِ پذیرش است، نه جایگزین `CHIDA-Product-Definition-FA.md` و نه اصلاح خاموش سند مادر. معیارها از بستهٔ چهار سند معماریِ تأییدشده و نگاشت تاریخی T13 گرفته شده‌اند. عبارت `PASS` در این فایل فقط به ردیف یا زیرقرارداد نام‌برده مربوط است و به معنی production-ready بودن محصول نیست.
 
@@ -172,6 +172,29 @@ Task/Request/Approval/Dispatch mutation service مشترک، `case_private`، UI
 - نخستین release-gate attempt روی ۳۵۵ سناریو ۳۵۰ پاس و پنج شکست test-contract داشت: سه تست T6-B2 bytes پیش از پایان mutation ناهم‌زمان Web Lock را می‌خواندند و دو تست قدیمی BUX-3 پس از بازگشت عمدی Search→Tools بدون بستن overlay روی کنترل خانه کلیک می‌کردند. هیچ semantic محصول تغییر نکرد؛ تست‌ها به completion مرئی mutation، focus بازگشت و حذف overlay bind شدند و بازاجرای متمرکز همان پنج سناریو ۵/۵ پاس شد. این شواهد candidate انتشار است و وضعیت تاریخی Builder Gate را تغییر نمی‌دهد.
 - دومین release-gate attempt روی همان ۳۵۵ سناریو ۳۵۴ پاس داشت و فقط oracle قدیمی scroll بازگشت از Files شکست خورد: تست مقدار `scrollTop` را پیش از `locator.click()` ذخیره می‌کرد، اما Playwright می‌توانست برای رساندن entry به viewport پیش از dispatch کلیک اسکرول کند و محصول همان origin واقعی تازه را درست ذخیره/بازیابی می‌کرد. expectation به scroll لحظهٔ کلیک bind شد و ۱۰/۱۰ اجرای متمرکز پاس کرد؛ هیچ کد محصول تغییر نکرد و receipt شکست‌خورده برای انتشار معتبر نیست.
 - سومین release-gate attempt نیز ۳۵۴/۳۵۵ پاس داشت و فقط race قدیمی fault-injection بازیابی Request را آشکار کرد: تست prototypeهای Storage را بلافاصله پس از `click()` restore می‌کرد، در حالی که handler بازیابی fire-and-forget و mutation پشت Web Lock ناهم‌زمان است. انتظار نتیجهٔ terminal پیش از cleanup probe قرار گرفت، پنج probe هم‌خانواده نیز با همین قرارداد سخت‌گیرانه شدند و گروه recovery در سه تکرار کامل ۲۷/۲۷ پاس کرد؛ کد محصول تغییر نکرد و این attempt نیز receipt انتشار نیست.
+
+## افزودهٔ پس از ارزیابی — نتیجهٔ محلی BG-F4
+
+ماهیار پس از انتشار baseline قبلی فقط `BG-F4 — Request Content Approval Foundation` را مجاز کرد. این افزوده نتیجهٔ remediation محدود Content Approval را ثبت می‌کند و جدول تاریخی بالا را به rerun تازه یا PASS کل Gate تبدیل نمی‌کند:
+
+- Content Approval فقط در envelope canonical `chida-prototype-project-approvals:v2` با owner/scope/authority، revision/history/fingerprint، receiptهای command-bound و migration report نگه‌داری می‌شود. v1 فقط ورودی cutover سه‌مرحله‌ای است و canonical/marker خراب fallback یا overwrite ندارد.
+- مرز Request+Approval intent ماندگار با phaseهای تولیدپذیر دارد؛ orphan تاریخی فقط وقتی tail یگانه و قابل‌معکوس‌سازی باشد rollback می‌شود و Approval یا receipt گمشده جعل نمی‌شود.
+- regressionهای BG-F4 برابر ۱۸/۱۸، سازگاری BG-F3/BG-F4 برابر ۲۰/۲۰ و `gate:release` کامل برابر ۳۷۳/۳۷۳ سناریوی Playwright و Sites برابر ۴/۴ پاس شدند. این release gate شاهد candidate فنی بود، نه rerun ماتریس Builder Gate و نه مجوز انتشار.
+- ماهیار با پیام تازهٔ «تسک بعدی رو شروع کن» از نقطهٔ مشاهدهٔ BG-F4 عبور کرد و فقط BG-F5 را مجاز کرد. BG-F4 همراه candidate بعدی local/uncommitted/unpublished ماند و نتیجهٔ تاریخی Gate همچنان `FAIL` است.
+
+## افزودهٔ پس از ارزیابی — نتیجهٔ محلی BG-F5
+
+این افزوده وضعیت جاری `BG-F5 — Supplier Contact & Dispatch Foundation` را ثبت می‌کند؛ matrix، count تاریخی سه PASS/نه FAIL و findingهای snapshot اصلی بالا عمداً بازنویسی نشده‌اند:
+
+- Contact، Draft و Plan سه authority مستقل در `chida-prototype-project-supplier-contacts:v2`، `chida-prototype-project-dispatch-drafts:v2` و `chida-prototype-project-dispatch-plan-approvals:v2` هستند. envelopeهای exact، owner/scope/authority، revision/history، SHA-256، command receipt، migration report و cutover `pending/verified/committed` دارند؛ v1 فقط migration input است و canonical/marker خراب fail-close می‌شود.
+- writerها با lock namespace مشترک procurement، commit-time reread، expected store/record/dependency version، idempotency validation، write/readback و candidate-owned rollback اجرا می‌شوند. Draft reference دقیق version/revision/fingerprint Contact را pin و Plan همان referenceها را از Draft کپی می‌کند؛ Plan در Draft ادغام یا با Content Approval یکی نمی‌شود.
+- هر mutation Draft/Plan یک checkpoint علّی اتمیک در هر دو ledger Request و Content Approval ثبت می‌کند که command/target/authorization، موقعیت دقیق receipt در Request و expected/resulting storeVersion در Approval را bind می‌کند. parser این شاهد را از prefix واقعی ledgerها replay می‌کند و timestamp را authority علّی نمی‌داند؛ intent upstream نیز فقط previous bytes دقیق به‌علاوهٔ همان یک append در هر ledger را می‌پذیرد.
+- فرمان Draft→Plan از intent ماندگار `chida-prototype-project-dispatch-drafts:v2:plan-queue-intent:v1` با سه phase بایتی تولیدپذیر `previous/previous → next/previous → next/next` و aggregate receipt دوطرفه استفاده می‌کند. previous/next bytes و current head دوباره سنجیده می‌شوند؛ interruption میانی قابل resume و phase ناممکن fail-close است. Draft مستقیمِ بدون queue receipt از Plan مستقل است، اما Draft صف‌شده فقط با Plan committed و receiptهای معکوسِ دقیق معتبر می‌ماند؛ Plan گمشده/خراب یا حذف intent پس از half-commit fail-close است.
+- read-error Contact وابستگی Draft/Plan و read-error Draft وابستگی Plan را قفل می‌کند، اما read-error مستقل Plan mutation سالم Contact/Draft مستقیم را قفل نمی‌کند. این مرز یک مسیر محلی سازنده است؛ SupplierContact حساب/عضویت/احراز طرف دوم نیست و Plan همیشه بدون send/network/external effect می‌ماند.
+- regressionهای اختصاصی BG-F5 برابر ۳۷/۳۷ و بستهٔ مرتبط T6-C/T6-D/T7-A/T7-B/خرید سریع برابر ۳۵/۳۵ پاس‌اند. build/runtime integrity و QA واقعی `390 × 844` روی مسیر نیاز→تماس محلی→Draft/Plan→تأیید نهایی با overflow افقی صفر و console warning/error صفر پاس شدند؛ بازبینی مستقل finding باز P0/P1 ندارد. ماهیار انتشار exact candidate تا BG-F5 را پیش از آغاز تسک بعدی صریحاً مجاز کرد؛ `gate:release` نهایی فقط یک بار پس از freeze همین اسناد اجرا و receiptهای terminal در پیام تحویل گزارش می‌شوند.
+- نخستین اجرای release-gate این candidate با build/integrity موفق و Playwright برابر ۴۰۹/۴۱۰ روی race واقعی focus پس از ذخیرهٔ Request متوقف شد؛ مراحل باقی‌مانده و fingerprint نهایی receipt محسوب نمی‌شوند. heading render می‌شد، اما one-shot rAF در run شکست‌خورده پیش از attach ref هیچ `focus()` فراخوانی نمی‌کرد. focus به passive effect پس از commit/editor-close منتقل شد؛ همان مسیر ۱۰/۱۰، بستهٔ مجاور ۴/۴، build/integrity و review مستقل بدون finding باز پاس‌اند. چون bytes تغییر کرده‌اند، candidate تازه پس از freeze اسناد یک release-gate کامل تازه می‌گیرد.
+- این remediation فقط سهم Contact/Dispatch از P1-03 و بخشی از شواهد G3/G5/G6 را در دامنهٔ نام‌برده تقویت می‌کند. Proposal/Comparison/Negotiation، `case_private`، File/Photo، پنج تصمیم Gate-or-defer و evidence سراسری همچنان بازند؛ بنابراین Builder Gate rerun نشده، نتیجهٔ تاریخی `FAIL` و M1a نامجاز است.
+- candidate ترکیبی BG-F4/BG-F5 تا پیش از اجرای گیت و انتشار local/uncommitted/unpublished است. هیچ byte مربوط به BG-F6 داخل این candidate نیست. فقط پس از موفقیت همان SHA در GitHub، Cloudflare Pages و ChatGPT Sites، آغاز محلی و تست‌محور `BG-F6 — Proposal Authority & Concurrency Foundation` مجاز است؛ این ترتیب نتیجهٔ تاریخی Gate را تغییر نمی‌دهد و سند مادر، مدل، backend، شبکه/ارسال یا supplier path را مجاز نمی‌کند.
 
 ## مرز تاریخی پیام BG-GATE-1 پیش از مجوز BG-F1
 
