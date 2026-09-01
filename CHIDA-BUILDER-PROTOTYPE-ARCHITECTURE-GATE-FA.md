@@ -1,9 +1,10 @@
 # ماتریس پذیرش Builder Prototype Architecture Gate
 
 **تاریخ ارزیابی:** ۱۴۰۵/۰۶/۰۹ — ۲۰۲۶/۰۸/۳۱
-**وضعیت:** ارزیابی تاریخی `FAIL`؛ remediation محلی BG-F1 انجام شده، rerun کامل Gate انجام نشده است
+**وضعیت:** ارزیابی تاریخی `FAIL`؛ BG-F1 در baseline و remediationهای BG-F2/BG-F3 همراه برش‌های قابل‌دیدن BUX-1 تا BUX-3 در candidate مجاز انتشار انجام شده‌اند، اما rerun ماتریس Gate انجام نشده است
 **دامنه:** پروتوتایپ موبایل سازنده، Dark/RTL، browser-local
 **snapshot کدِ ممیزی‌شده:** شاخهٔ `main` روی `29fb52e6bdfb69b6e4773a68b28b5fc891f42f27` همراه تغییرهای محلی `REL-1/BL-1`
+**candidate جاری:** baseline هم‌تراز local/GitHub `main` روی `8196357339bf80c6532f8443a1baa957b6904af3` همراه candidate ترکیبی `BG-F2/BUX-1/BUX-2/BUX-3/BG-F3` که انتشار exact آن در ۲۰۲۶/۰۹/۰۱ مجاز شده است
 
 این فایل artifact اجراییِ پذیرش است، نه جایگزین `CHIDA-Product-Definition-FA.md` و نه اصلاح خاموش سند مادر. معیارها از بستهٔ چهار سند معماریِ تأییدشده و نگاشت تاریخی T13 گرفته شده‌اند. عبارت `PASS` در این فایل فقط به ردیف یا زیرقرارداد نام‌برده مربوط است و به معنی production-ready بودن محصول نیست.
 
@@ -147,6 +148,30 @@ Task/Request/Approval/Dispatch mutation service مشترک، `case_private`، UI
 - P1-03 برای Task/Request/Approval/Dispatch و سایر ردیف‌های FAIL هنوز باز است. `case_private`، UI debt و تصمیم‌های Gate-or-defer نیز تغییر نکرده‌اند؛ بنابراین Builder Prototype Architecture Gate همچنان `FAIL` است و M1a مجاز نیست.
 
 نامزد کوچک بعد `BG-F2 — Manual Task Concurrency Foundation` است؛ Gate rerun فقط پس از remediationهای بعدی و با پیام جدا انجام می‌شود.
+
+## افزودهٔ پس از ارزیابی — نتیجهٔ محلی BG-F2
+
+ماهیار در ۲۰۲۶/۰۹/۰۱ با پیام «شروع کن» اجرای BG-F2 را صریحاً مجاز کرد. این افزوده نتیجهٔ همان remediation محدود را ثبت می‌کند و جدول تاریخی بالا را به rerun تازه یا PASS کل Gate تبدیل نمی‌کند:
+
+- Task دستی اکنون فقط در envelope دقیق `chida-prototype-project-tasks:v2` با owner/scope/custodian، revision/history/SHA-256 fingerprint، migration report و receiptهای command-bound نگه‌داری می‌شود. projection مستقیم باید با revision جاری برابر باشد و parser فقط state قابل‌بازتولید writer را می‌پذیرد.
+- آرایهٔ v1 فقط migration input است. pending همراه candidate exact قابل-resume است؛ آخرین بازسنجی exact authority/source/candidate نقطهٔ cutover و marker committed انتشار ماندگار آن است. source پیش از آن تغییر کند fail-close می‌شود و v1 پس از آن غیرمرجع می‌ماند. legacy evidence منبع را بدون ساختن revisionهای جعلی حفظ می‌کند.
+- create/edit/status زیر Web Lock مشترک با commit-time reread، expectedVersion، deterministic create id، idempotency receipt replay، write-before-state/readback و candidate-owned rollback اجرا می‌شوند. no-op bytes/version را ثابت نگه می‌دارد و stale editor overwrite نمی‌کند.
+- draft ساخت/ویرایش به projectId زمان بازشدن bind است؛ تعویض پروژه در تب دیگر آن را به پروژهٔ تازه منتقل نمی‌کند. هنگام انتظار lock یا loading/read-error فیلدها و submit قفل‌اند و شکست/تعارض draft را حفظ می‌کند. Task دستی همچنان Monitor producer نیست و موعد آن فقط label محلی است.
+- شواهد پیش از candidate نهایی: regressionهای اختصاصی BG-F2 برابر ۱۷/۱۷، regressionهای قدیمی Task برابر ۸/۸، سه regression وابستگی BuiltArtifact برابر ۳/۳، build/TypeScript و integrity هر ۲۸ فایل، QA مرورگر واقعی `390 × 844` و بازبینی مستقل بدون finding باز پاس شدند. `gate:release` فقط یک بار پس از نهایی‌شدن همین اسناد روی candidate منجمد اجرا می‌شود و receipt آن بیرون worktree می‌ماند.
+- P1-03 فقط برای Task دستی در دامنهٔ این برش بسته شد. Request/Approval/Dispatch و storeهای دیگر همان finding، `case_private`، UI debt و تصمیم‌های Gate-or-defer در آن نقطه باز بودند؛ در نتیجه Gate تاریخی همچنان `FAIL` و M1a نامجاز است. BG-F2 هنگام تحویل اولیه local/uncommitted/unpublished و تجربهٔ آن تأییدنشده بود؛ اکنون داخل candidate ترکیبی مجاز انتشار قرار دارد، اما remediation بعدی همچنان انتخاب نشده است.
+
+## افزودهٔ پس از ارزیابی — نتیجهٔ محلی BG-F3
+
+ماهیار پس از تأیید BUX-3 با پیام «بریم تسک بعدی» اجرای BG-F3 را صریحاً مجاز کرد. این افزوده نتیجهٔ remediation محدود Request را ثبت می‌کند و جدول تاریخی بالا را به rerun تازه یا PASS کل Gate تبدیل نمی‌کند:
+
+- سهم Request از P1-03 در مسیرهای create/edit/ready/return و recovery بسته شد: commandهای exact با expectedVersion/idempotency receipt، deterministic create id، authority binding و parser محدود به chronology/ordering قابل‌تولید writer زیر Web Lock مشترک اجرا می‌شوند.
+- همهٔ mutationهای Request و recovery commit-time reread، exact preimage، write/readback و candidate-owned rollback دارند. no-op bytes/version را ثابت نگه می‌دارد؛ stale editor overwrite نمی‌کند و recovery queued منبع تعمیرشده یا تازه را حذف نمی‌کند.
+- مرز مستقیم Request↔Approval برای این برش بسته شد: confirm ترکیبی هر دو store را با snapshot/revision دقیق و rollback دوطرفه می‌نویسد؛ create Approval و decision Approval نیز زیر همان Request lock قرار دارند. confirm receipt و Approval باید دوطرفه exact باشند و rollback نامطمئن Approval store را fail-close قفل می‌کند.
+- شواهد candidate نهایی: BG-F3 برابر ۱۷/۱۷، Request/Approval برابر ۴۱/۴۱ و سازگاری service/T6-C/T6-D برابر ۱۸/۱۸؛ build/TypeScript/runtime integrity، `git diff --check`، QA واقعی `390 × 844` و بازبینی مستقل بدون finding باز پاس شدند.
+- legacy v2 بدون receipt فعلاً compatibility input خواندنی است؛ بنابراین completeness تاریخی receipt تا migration/cutover صریح اثبات نمی‌شود. envelope/schema/migration/idempotency کامل Approval و writerهای Contact/Dispatch، `case_private` و تصمیم‌های Gate-or-defer بازند. Builder Gate تاریخی همچنان `FAIL` و M1a نامجاز است. ماهیار در ۲۰۲۶/۰۹/۰۱ با پیام «همه جا منتشر کن» گیت کامل انتشار و commit/push/deploy دقیق candidate ترکیبی `BG-F2/BUX-1/BUX-2/BUX-3/BG-F3` را مجاز کرد؛ این اجرای release gate، rerun ماتریس Builder Gate یا PASS آن نیست و هیچ remediation بعدی را آغاز نمی‌کند.
+- نخستین release-gate attempt روی ۳۵۵ سناریو ۳۵۰ پاس و پنج شکست test-contract داشت: سه تست T6-B2 bytes پیش از پایان mutation ناهم‌زمان Web Lock را می‌خواندند و دو تست قدیمی BUX-3 پس از بازگشت عمدی Search→Tools بدون بستن overlay روی کنترل خانه کلیک می‌کردند. هیچ semantic محصول تغییر نکرد؛ تست‌ها به completion مرئی mutation، focus بازگشت و حذف overlay bind شدند و بازاجرای متمرکز همان پنج سناریو ۵/۵ پاس شد. این شواهد candidate انتشار است و وضعیت تاریخی Builder Gate را تغییر نمی‌دهد.
+- دومین release-gate attempt روی همان ۳۵۵ سناریو ۳۵۴ پاس داشت و فقط oracle قدیمی scroll بازگشت از Files شکست خورد: تست مقدار `scrollTop` را پیش از `locator.click()` ذخیره می‌کرد، اما Playwright می‌توانست برای رساندن entry به viewport پیش از dispatch کلیک اسکرول کند و محصول همان origin واقعی تازه را درست ذخیره/بازیابی می‌کرد. expectation به scroll لحظهٔ کلیک bind شد و ۱۰/۱۰ اجرای متمرکز پاس کرد؛ هیچ کد محصول تغییر نکرد و receipt شکست‌خورده برای انتشار معتبر نیست.
+- سومین release-gate attempt نیز ۳۵۴/۳۵۵ پاس داشت و فقط race قدیمی fault-injection بازیابی Request را آشکار کرد: تست prototypeهای Storage را بلافاصله پس از `click()` restore می‌کرد، در حالی که handler بازیابی fire-and-forget و mutation پشت Web Lock ناهم‌زمان است. انتظار نتیجهٔ terminal پیش از cleanup probe قرار گرفت، پنج probe هم‌خانواده نیز با همین قرارداد سخت‌گیرانه شدند و گروه recovery در سه تکرار کامل ۲۷/۲۷ پاس کرد؛ کد محصول تغییر نکرد و این attempt نیز receipt انتشار نیست.
 
 ## مرز تاریخی پیام BG-GATE-1 پیش از مجوز BG-F1
 

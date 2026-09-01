@@ -33,7 +33,6 @@ import {
   PencilLine,
   Pin,
   Plus,
-  Puzzle,
   RotateCcw,
   Search,
   Settings,
@@ -61,12 +60,38 @@ import {
   useKeyboard,
   useKeyboardInsets,
 } from "./mobile";
+import {
+  executeProjectTaskCommand,
+  initializeProjectTasks,
+  legacyProjectTasksStorageKey,
+  projectTaskIdForIdempotencyKey,
+  projectTasksCutoverMarkerKey,
+  projectTasksStorageKey,
+  readProjectTaskState,
+  type ProjectTaskAuthority,
+  type ProjectTaskDraft,
+  type ProjectTaskEnvelope,
+  type ProjectTaskEventType,
+  type ProjectTaskMutationResult,
+  type ProjectTaskRecord,
+  type ProjectTaskState,
+  type ProjectTaskStatus,
+} from "./projectTasks";
 
 type Screen = "role" | "invite" | "phone" | "otp" | "success" | "home";
 type SheetName = "supplier" | "models" | "attach" | "tools" | "build" | "brief" | "projects" | "new-project" | "settings" | null;
 type ModelMode = "خودکار" | "سریع" | "عمیق";
 type ChatMessage = { id: string; role: "user" | "assistant"; text: string; sourceIds: string[] };
-type BuildStep = "define" | "preview" | "detail" | "history" | "remove";
+type BuildStep = "define" | "catalog" | "preview" | "detail" | "history" | "remove";
+type BuiltArtifactViewFilter = "all" | ProjectTaskStatus;
+type BuiltArtifactViewItem = {
+  id: string;
+  title: string;
+  nextStep: string;
+  dueLabel: string | null;
+  status: ProjectTaskStatus;
+  source: "برنامهٔ فعلی" | "کار دستی";
+};
 type BuiltArtifactLifecycleState = "draft" | "preview_ready" | "active" | "disabled" | "blocked";
 type BuiltArtifactEventType = "created" | "previewed" | "activated" | "disabled" | "blocked" | "reactivated" | "revision-created" | "rolled-back" | "removed";
 type BuiltArtifactManifest = {
@@ -706,32 +731,6 @@ type ProjectMemoryHardDeleteIntent = {
 type ProjectMemoryReadResult = { envelope: ProjectMemoryEnvelope; readError: boolean; migrationBlocked: boolean };
 type ProjectMemoryMutationResult = "created" | "updated" | "unchanged" | "deleted" | "version-conflict" | "read-failure" | "write-failure" | "lock-unavailable" | "invalid";
 type ProjectMemoryDraft = Pick<ProjectMemoryRevisionSnapshot, "title" | "content" | "kind"> & { scopeType: ProjectMemoryScopeType };
-type ProjectTaskStatus = "in-progress" | "completed";
-type ProjectTaskEventType = "created" | "updated" | "completed" | "reopened";
-type ProjectTaskEvent = {
-  id: string;
-  type: ProjectTaskEventType;
-  actor: "شما";
-  at: string;
-  version: number;
-};
-type ProjectTaskRecord = {
-  id: string;
-  projectId: string;
-  title: string;
-  currentStep: string;
-  dueDate: string | null;
-  status: ProjectTaskStatus;
-  source: "ثبت مستقیم شما";
-  visibility: "خصوصی پروژه";
-  localStatus: "ثبت محلی";
-  version: number;
-  createdAt: string;
-  updatedAt: string;
-  completedAt: string | null;
-  history: ProjectTaskEvent[];
-};
-type ProjectTaskDraft = Pick<ProjectTaskRecord, "title" | "currentStep"> & { dueDate: string };
 type ProjectTaskFilter = "active" | "approval" | "completed" | "failed" | "monitor";
 type ProjectBackboneObjectType = "milestone" | "decision" | "task";
 type ProjectBackboneEventType = "created" | "updated" | "rolled-back";
@@ -996,6 +995,21 @@ type PurchaseRequestReviewRevision = {
   shareableFields: PurchaseRequestApprovalShareableField[];
   fingerprint: string;
 };
+type PurchaseRequestMutationAction = "create-request" | "update-request" | "mark-ready" | "confirm-for-recipients" | "return-to-draft";
+type PurchaseRequestMutationReceipt = {
+  schemaVersion: 1;
+  key: string;
+  action: PurchaseRequestMutationAction;
+  payloadHash: string;
+  projectId: string;
+  requestId: string;
+  expectedRequestVersion: number | null;
+  resultingRequestVersion: number;
+  relatedApprovalId: string | null;
+  authorizationContextHash: string;
+  recordedAt: string;
+  fingerprint: string;
+};
 type ProjectPurchaseRequestRecord = {
   schemaVersion: 2;
   id: string;
@@ -1020,6 +1034,7 @@ type ProjectPurchaseRequestRecord = {
   updatedAt: string;
   readyAt: string | null;
   history: PurchaseRequestEvent[];
+  mutationReceipts: PurchaseRequestMutationReceipt[];
 };
 type ProductRequestItemDraft = {
   id: string;
@@ -1049,6 +1064,18 @@ type PurchaseRequestDraft = {
   transport: string;
   tax: string;
   paymentTerms: string;
+};
+type ProjectPurchaseRequestCommand =
+  | { inputSchemaVersion: 1; action: "create-request"; projectId: string; requestId: string; draft: PurchaseRequestDraft; idempotencyKey: string }
+  | { inputSchemaVersion: 1; action: "update-request"; projectId: string; requestId: string; draft: PurchaseRequestDraft; expectedRequestVersion: number; idempotencyKey: string }
+  | { inputSchemaVersion: 1; action: "mark-ready" | "return-to-draft"; projectId: string; requestId: string; expectedRequestVersion: number; idempotencyKey: string };
+type ProjectPurchaseRequestMutationStatus = "created" | "updated" | "unchanged" | "not-found" | "scope-mismatch" | "read-failure" | "schema-invalid" | "version-conflict" | "idempotency-payload-mismatch" | "write-failure" | "lock-unavailable" | "unsupported-transition";
+type ProjectPurchaseRequestMutationResult = {
+  status: ProjectPurchaseRequestMutationStatus;
+  records?: ProjectPurchaseRequestRecord[];
+  requestId?: string;
+  approvalId?: string;
+  reason?: string;
 };
 type PurchaseRequestFieldErrors = { rawNeed: string; quantity: string; quantityIndex: number | null; serviceScope: string; serviceLocation: string };
 type ProjectApprovalStatus = "pending" | "approved" | "changes-requested";
@@ -1935,12 +1962,16 @@ type MockSourceAnswerDemo = {
   sources: readonly MockSourceRecord[];
 };
 type HomeView = "chat" | "project" | "files" | "gallery" | "memory" | "search" | "tasks" | "project-backbone" | "source-demo" | "purchase-requests" | "proposals";
-type FilesReturnView = "chat" | "project" | "search";
+type FilesReturnView = "chat" | "project" | "search" | "tools";
 type GalleryReturnView = "chat" | "project";
 type MemoryReturnView = "chat" | "project" | "search";
 type PurchaseRequestsReturnView = "chat" | "project";
 type ProposalsReturnView = "chat" | "project";
 type ProjectTasksReturnView = "chat" | "project";
+type ProjectSearchReturnView = "chat" | "tools";
+type SourceAnswerReturnView = "chat" | "tools";
+type PendingBuilderFocus = { view: HomeView; sheet: SheetName; selector: string };
+type BuildReturnFocus = { kind: "chat"; selector: string } | { kind: "tools"; selector: string };
 type ProjectTasksLaunch = { filter: ProjectTaskFilter; approvalId: string | null; dispatchPlanApprovalId: string | null; returnToPurchaseRequestId: string | null; returnView: ProjectTasksReturnView };
 type StoredProjectImage = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
 type StoredProjectFile = { id: string; projectId: string; originalName: string; mimeType: string; blob: Blob };
@@ -1979,7 +2010,6 @@ const projectMemoryPriorIntentBridgeKey = `${projectMemoriesStorageKey}:prior-in
 const projectMemoryMigrationJournalKey = `${projectMemoriesStorageKey}:migration-journal:v1`;
 const projectMemoriesWriteLockName = `${priorProjectMemoriesStorageKey}:write`;
 const localBuilderAccountId = "local-builder-account" as const;
-const projectTasksStorageKey = "chida-prototype-project-tasks:v1";
 const projectBackboneStorageKey = "chida-prototype-project-backbone:v1";
 const projectBackboneWriteLockName = `${projectBackboneStorageKey}:write`;
 const projectTaskMonitorsStorageKey = "chida-prototype-project-task-monitors:v1";
@@ -1987,6 +2017,7 @@ const projectTaskMonitorsWriteLockName = `${projectTaskMonitorsStorageKey}:write
 const projectPurchaseRequestsStorageKey = "chida-prototype-project-purchase-requests:v1";
 const projectPurchaseRequestsRecoveryBackupPrefix = `${projectPurchaseRequestsStorageKey}:recovery-backup:`;
 const projectPurchaseRequestsRecoveryIntentKey = `${projectPurchaseRequestsStorageKey}:recovery-intent:v1`;
+const projectPurchaseRequestsWriteLockName = `${projectPurchaseRequestsStorageKey}:write`;
 const projectApprovalsStorageKey = "chida-prototype-project-approvals:v1";
 const projectSupplierContactsStorageKey = "chida-prototype-project-supplier-contacts:v1";
 const projectDispatchDraftsStorageKey = "chida-prototype-project-dispatch-drafts:v1";
@@ -4450,6 +4481,18 @@ function resolveProjectFoundationAuthorization(projectId: string): ProjectFounda
 
 function projectFoundationAuthorizationHash(projectId: string) {
   return resolveProjectFoundationAuthorization(projectId).fingerprint;
+}
+
+function projectTaskAuthoritySnapshot(): ProjectTaskAuthority | null {
+  const foundation = readProjectFoundationForMutation();
+  if (!foundation) return null;
+  const projectIds = foundation.envelope.projects.map((project) => project.id).sort();
+  return {
+    identityBindingHash: projectFoundationFixture().fixtureFingerprint,
+    snapshotHash: projectFoundationHash({ markerRaw: foundation.markerRaw, canonicalRaw: foundation.canonicalRaw, identityRaw: projectFoundationFixtureRaw() }),
+    projectIds,
+    authorizationHashes: Object.fromEntries(projectIds.map((projectId) => [projectId, projectFoundationAuthorizationHash(projectId)])),
+  };
 }
 
 function exactProjectFoundationString(value: unknown, maximumLength = 240) {
@@ -7694,125 +7737,9 @@ function hasVisibleProjectBackboneText(value: string) {
   return /[\p{L}\p{N}\p{P}\p{S}]/u.test(value.normalize("NFKC"));
 }
 
-function projectTaskHistoryReachesStatus(history: ProjectTaskEvent[], status: ProjectTaskStatus) {
-  let reachableStatus: ProjectTaskStatus = "in-progress";
-  for (const [index, event] of history.entries()) {
-    if (index === 0) {
-      if (event.type !== "created") return false;
-      continue;
-    }
-    if (event.type === "updated") continue;
-    if (event.type === "completed" && reachableStatus === "in-progress") {
-      reachableStatus = "completed";
-      continue;
-    }
-    if (event.type === "reopened" && reachableStatus === "completed") {
-      reachableStatus = "in-progress";
-      continue;
-    }
-    return false;
-  }
-  return reachableStatus === status;
-}
-
 function readStoredProjectTasks(): LocalRecordsReadResult<ProjectTaskRecord> {
-  try {
-    const rawTasks = window.localStorage.getItem(projectTasksStorageKey);
-    if (rawTasks === null) return { records: [], readError: false };
-    const parsed = JSON.parse(rawTasks);
-    if (!Array.isArray(parsed)) return { records: [], readError: true };
-
-    const seenTaskIds = new Set<string>();
-    let readError = false;
-    const records = parsed.flatMap((task): ProjectTaskRecord[] => {
-      const id = typeof task?.id === "string" ? task.id.trim() : "";
-      const projectId = typeof task?.projectId === "string" ? task.projectId.trim() : "";
-      const title = typeof task?.title === "string" ? task.title.trim() : "";
-      const currentStep = typeof task?.currentStep === "string" ? task.currentStep.trim() : "";
-      const dueDate = task?.dueDate === undefined || task?.dueDate === null
-        ? null
-        : typeof task.dueDate === "string"
-          ? task.dueDate.trim()
-          : "";
-      const createdAt = typeof task?.createdAt === "string" ? task.createdAt.trim() : "";
-      const updatedAt = typeof task?.updatedAt === "string" ? task.updatedAt.trim() : "";
-      const completedAt = task?.completedAt === null ? null : typeof task?.completedAt === "string" ? task.completedAt.trim() : "";
-      const version = task?.version;
-      const eventIds = new Set<string>();
-      const history: ProjectTaskEvent[] = Array.isArray(task?.history) ? task.history.flatMap((event: any): ProjectTaskEvent[] => {
-        const eventId = typeof event?.id === "string" ? event.id.trim() : "";
-        const at = typeof event?.at === "string" ? event.at.trim() : "";
-        if (
-          !eventId
-          || eventIds.has(eventId)
-          || (event?.type !== "created" && event?.type !== "updated" && event?.type !== "completed" && event?.type !== "reopened")
-          || event?.actor !== "شما"
-          || !Number.isInteger(event?.version)
-          || event.version < 1
-          || !isValidProjectFileDate(at)
-        ) return [];
-        eventIds.add(eventId);
-        return [{ id: eventId, type: event.type as ProjectTaskEventType, actor: "شما", at, version: event.version }];
-      }) : [];
-      const historyIsValid = Array.isArray(task?.history)
-        && history.length === task.history.length
-        && Number.isInteger(version)
-        && version >= 1
-        && history.length === version
-        && history.every((event, index) => event.version === index + 1)
-        && history.every((event, index) => index === 0 || new Date(event.at).getTime() >= new Date(history[index - 1].at).getTime())
-        && history[0]?.at === createdAt
-        && history[history.length - 1]?.at === updatedAt
-        && projectTaskHistoryReachesStatus(history, task?.status);
-      const lastCompletedEvent = [...history].reverse().find((event) => event.type === "completed") ?? null;
-      const completedStateIsValid = task?.status === "completed"
-        ? typeof completedAt === "string" && completedAt === lastCompletedEvent?.at && isValidProjectFileDate(completedAt)
-        : task?.status === "in-progress" && completedAt === null;
-
-      if (
-        !id
-        || seenTaskIds.has(id)
-        || !projectId
-        || !hasVisibleProjectTaskText(title)
-        || title.length > 80
-        || !hasVisibleProjectTaskText(currentStep)
-        || currentStep.length > 300
-        || dueDate !== null && (!hasVisibleProjectTaskText(dueDate) || dueDate.length > 40)
-        || task?.source !== "ثبت مستقیم شما"
-        || task?.visibility !== "خصوصی پروژه"
-        || task?.localStatus !== "ثبت محلی"
-        || !isValidProjectFileDate(createdAt)
-        || !isValidProjectFileDate(updatedAt)
-        || new Date(updatedAt).getTime() < new Date(createdAt).getTime()
-        || !historyIsValid
-        || !completedStateIsValid
-      ) {
-        readError = true;
-        return [];
-      }
-
-      seenTaskIds.add(id);
-      return [{
-        id,
-        projectId,
-        title,
-        currentStep,
-        dueDate,
-        status: task.status as ProjectTaskStatus,
-        source: "ثبت مستقیم شما",
-        visibility: "خصوصی پروژه",
-        localStatus: "ثبت محلی",
-        version,
-        createdAt,
-        updatedAt,
-        completedAt,
-        history,
-      }];
-    });
-    return { records, readError };
-  } catch {
-    return { records: [], readError: true };
-  }
+  const state = readProjectTaskState(projectTaskAuthoritySnapshot());
+  return { records: state.envelope?.records ?? [], readError: state.status === "read-error" };
 }
 
 const projectBackboneRecordKeys = [
@@ -8444,6 +8371,38 @@ function createProjectTaskMonitorRecord(task: ProjectBackboneTaskRecord, project
   };
 }
 
+function purchaseRequestMutationReceiptFingerprint(receipt: Omit<PurchaseRequestMutationReceipt, "fingerprint"> | PurchaseRequestMutationReceipt) {
+  const { fingerprint: _fingerprint, ...payload } = receipt as PurchaseRequestMutationReceipt;
+  return projectFoundationHash(payload);
+}
+
+function parsePurchaseRequestMutationReceipt(value: any): PurchaseRequestMutationReceipt | null {
+  const keys = ["schemaVersion", "key", "action", "payloadHash", "projectId", "requestId", "expectedRequestVersion", "resultingRequestVersion", "relatedApprovalId", "authorizationContextHash", "recordedAt", "fingerprint"];
+  if (!hasExactObjectKeys(value, keys)) return null;
+  const key = typeof value.key === "string" ? value.key.trim() : "";
+  const projectId = typeof value.projectId === "string" ? value.projectId.trim() : "";
+  const requestId = typeof value.requestId === "string" ? value.requestId.trim() : "";
+  const relatedApprovalId = value.relatedApprovalId === null ? null : typeof value.relatedApprovalId === "string" ? value.relatedApprovalId.trim() : "";
+  const recordedAt = typeof value.recordedAt === "string" ? value.recordedAt.trim() : "";
+  const action = value.action as PurchaseRequestMutationAction;
+  const receipt = {
+    schemaVersion: 1,
+    key,
+    action,
+    payloadHash: value.payloadHash,
+    projectId,
+    requestId,
+    expectedRequestVersion: value.expectedRequestVersion,
+    resultingRequestVersion: value.resultingRequestVersion,
+    relatedApprovalId,
+    authorizationContextHash: value.authorizationContextHash,
+    recordedAt,
+    fingerprint: value.fingerprint,
+  } satisfies PurchaseRequestMutationReceipt;
+  if (value.schemaVersion !== 1 || key !== value.key || projectId !== value.projectId || requestId !== value.requestId || relatedApprovalId !== value.relatedApprovalId || recordedAt !== value.recordedAt || !key || key.length > 200 || !projectId || !requestId || !["create-request", "update-request", "mark-ready", "confirm-for-recipients", "return-to-draft"].includes(action) || !/^sha256-[0-9a-f]{64}$/.test(receipt.payloadHash) || !/^sha256-[0-9a-f]{64}$/.test(receipt.authorizationContextHash) || !Number.isInteger(receipt.resultingRequestVersion) || receipt.resultingRequestVersion < 1 || !isValidProjectFileDate(receipt.recordedAt) || (receipt.expectedRequestVersion !== null && (!Number.isInteger(receipt.expectedRequestVersion) || receipt.expectedRequestVersion < 1)) || (action === "create-request") !== (receipt.expectedRequestVersion === null) || (action === "create-request" && requestId !== purchaseRequestIdForIdempotencyKey(key)) || (action === "confirm-for-recipients" ? relatedApprovalId !== purchaseRequestApprovalIdForConfirmationKey(key) : relatedApprovalId !== null) || receipt.fingerprint !== purchaseRequestMutationReceiptFingerprint(receipt)) return null;
+  return receipt;
+}
+
 function appendProjectTaskMonitorRevision(record: ProjectTaskMonitorRecord, snapshot: ProjectTaskMonitorSnapshot, eventType: Exclude<ProjectTaskMonitorHistoryEventType, "created">, actor: ProjectTaskMonitorHistoryEvent["actor"], timestamp: string, runId: string | null) {
   const version = record.version + 1;
   const revisionId = `task-monitor-revision-${window.crypto.randomUUID()}`;
@@ -8540,6 +8499,25 @@ function parseV2ProjectPurchaseRequest(request: any): ProjectPurchaseRequestReco
     : request?.status === "draft" && readyAt === null && ["created", "updated", "returned-to-draft"].includes(history[history.length - 1]?.type ?? "");
   if (!historyIsValid || !readyStateIsValid || new Set(currentSnapshot.items.map((item) => item.id)).size !== currentSnapshot.items.length) return null;
 
+  const receiptKeys = new Set<string>();
+  const receiptVersions = new Set<number>();
+  let latestReceiptVersion = 0;
+  const mutationReceipts: PurchaseRequestMutationReceipt[] = request?.mutationReceipts === undefined
+    ? []
+    : Array.isArray(request.mutationReceipts)
+      ? request.mutationReceipts.flatMap((value: any): PurchaseRequestMutationReceipt[] => {
+        const receipt = parsePurchaseRequestMutationReceipt(value);
+        if (!receipt || receiptKeys.has(receipt.key) || receiptVersions.has(receipt.resultingRequestVersion) || receipt.resultingRequestVersion <= latestReceiptVersion || receipt.projectId !== projectId || receipt.requestId !== id || receipt.resultingRequestVersion > version || receipt.recordedAt !== history[receipt.resultingRequestVersion - 1]?.at || (receipt.expectedRequestVersion === null ? receipt.resultingRequestVersion !== 1 : receipt.expectedRequestVersion + 1 !== receipt.resultingRequestVersion)) return [];
+        const eventType = history[receipt.resultingRequestVersion - 1]?.type;
+        if (receipt.action === "create-request" && eventType !== "created" || receipt.action === "update-request" && eventType !== "updated" || (receipt.action === "mark-ready" || receipt.action === "confirm-for-recipients") && eventType !== "marked-ready-for-review" || receipt.action === "return-to-draft" && eventType !== "returned-to-draft") return [];
+        receiptKeys.add(receipt.key);
+        receiptVersions.add(receipt.resultingRequestVersion);
+        latestReceiptVersion = receipt.resultingRequestVersion;
+        return [receipt];
+      })
+      : [];
+  if (request?.mutationReceipts !== undefined && (!Array.isArray(request.mutationReceipts) || mutationReceipts.length !== request.mutationReceipts.length)) return null;
+
   const revisionIds = new Set<string>();
   const revisionVersions = new Set<number>();
   const reviewRevisions: PurchaseRequestReviewRevision[] = Array.isArray(request?.reviewRevisions) ? request.reviewRevisions.flatMap((revision: any): PurchaseRequestReviewRevision[] => {
@@ -8589,12 +8567,13 @@ function parseV2ProjectPurchaseRequest(request: any): ProjectPurchaseRequestReco
     updatedAt,
     readyAt,
     history,
+    mutationReceipts,
   } satisfies ProjectPurchaseRequestRecord;
   if (!purchaseRequestClarificationsMatchSpecs(record, record.clarificationAnswers)) return null;
   return record;
 }
 
-function upgradeLegacyProjectPurchaseRequest(legacy: Omit<ProjectPurchaseRequestRecord, "schemaVersion" | "items" | "service" | "clarificationAnswers" | "reviewRevisions" | "migration" | "item"> & { item: Omit<ProductRequestItem, "completionStatus" | "version" | "createdAt" | "updatedAt" | "history"> }): ProjectPurchaseRequestRecord {
+function upgradeLegacyProjectPurchaseRequest(legacy: Omit<ProjectPurchaseRequestRecord, "schemaVersion" | "items" | "service" | "clarificationAnswers" | "reviewRevisions" | "migration" | "mutationReceipts" | "item"> & { item: Omit<ProductRequestItem, "completionStatus" | "version" | "createdAt" | "updatedAt" | "history"> }): ProjectPurchaseRequestRecord {
   const migrationAt = legacy.updatedAt;
   const item: ProductRequestItem = {
     ...legacy.item,
@@ -8614,6 +8593,7 @@ function upgradeLegacyProjectPurchaseRequest(legacy: Omit<ProjectPurchaseRequest
     clarificationAnswers: [],
     reviewRevisions: [],
     migration: { sourceSchema: 1, unverifiedReadyVersions: legacy.history.filter((event) => event.type === "marked-ready-for-review").map((event) => event.version) },
+    mutationReceipts: [],
   };
   record.clarificationAnswers = reconcilePurchaseRequestClarifications(record, [], migrationAt, "مهاجرت محلی");
   if (record.status === "ready-for-review") {
@@ -8632,15 +8612,17 @@ function parseStoredProjectPurchaseRequests(rawRequests: string | null): LocalRe
     if (!Array.isArray(parsed)) return { records: [], readError: true };
 
     const seenRequestIds = new Set<string>();
+    const seenMutationReceiptKeys = new Set<string>();
     let readError = false;
     const records = parsed.flatMap((request): ProjectPurchaseRequestRecord[] => {
       if (request?.schemaVersion === 2) {
         const record = parseV2ProjectPurchaseRequest(request);
-        if (!record || seenRequestIds.has(record.id)) {
+        if (!record || seenRequestIds.has(record.id) || record.mutationReceipts.some((receipt) => seenMutationReceiptKeys.has(receipt.key))) {
           readError = true;
           return [];
         }
         seenRequestIds.add(record.id);
+        record.mutationReceipts.forEach((receipt) => seenMutationReceiptKeys.add(receipt.key));
         return [record];
       }
       const id = typeof request?.id === "string" ? request.id.trim() : "";
@@ -8754,7 +8736,7 @@ function parseStoredProjectPurchaseRequests(rawRequests: string | null): LocalRe
       }
 
       seenRequestIds.add(id);
-      return [upgradeLegacyProjectPurchaseRequest({
+      const upgraded = upgradeLegacyProjectPurchaseRequest({
         id,
         projectId,
         requestKind: "product",
@@ -8781,7 +8763,8 @@ function parseStoredProjectPurchaseRequests(rawRequests: string | null): LocalRe
         updatedAt,
         readyAt,
         history,
-      })];
+      });
+      return [upgraded];
     });
     return { records, readError };
   } catch {
@@ -8792,10 +8775,366 @@ function parseStoredProjectPurchaseRequests(rawRequests: string | null): LocalRe
 function readStoredProjectPurchaseRequests(): LocalRecordsReadResult<ProjectPurchaseRequestRecord> {
   try {
     if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) return { records: [], readError: true };
-    return parseStoredProjectPurchaseRequests(window.localStorage.getItem(projectPurchaseRequestsStorageKey));
+    const parsed = parseStoredProjectPurchaseRequests(window.localStorage.getItem(projectPurchaseRequestsStorageKey));
+    if (parsed.readError) return parsed;
+    const authority = projectTaskAuthoritySnapshot();
+    if (!projectPurchaseRequestAuthorityIsValid(authority) || parsed.records.some((request) => !authority.projectIds.includes(request.projectId) || request.mutationReceipts.some((receipt) => receipt.authorizationContextHash !== authority.authorizationHashes[request.projectId]))) return { records: [], readError: true };
+    return parsed;
   } catch {
     return { records: [], readError: true };
   }
+}
+
+function purchaseRequestIdForIdempotencyKey(idempotencyKey: string) {
+  const digest = memoryCoreSha256(`purchase-request-create:${idempotencyKey}`);
+  return `purchase-request-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+}
+
+function purchaseRequestApprovalIdForConfirmationKey(idempotencyKey: string) {
+  const digest = memoryCoreSha256(`purchase-request-confirm:${idempotencyKey}`);
+  return `approval-${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
+}
+
+function normalizedPurchaseRequestDraftForCommand(draft: PurchaseRequestDraft): PurchaseRequestDraft {
+  return {
+    requestKind: draft.requestKind,
+    rawNeed: draft.rawNeed.trim(),
+    items: draft.items.map((item) => ({
+      id: item.id.trim(),
+      itemName: item.itemName.trim(),
+      quantity: item.quantity.trim(),
+      unit: item.unit.trim(),
+      brandOrGrade: item.brandOrGrade.trim(),
+      specification: item.specification.trim(),
+      alternatives: item.alternatives.trim(),
+    })),
+    serviceScope: draft.serviceScope.trim(),
+    serviceLocation: draft.serviceLocation.trim(),
+    serviceSizeOrVolume: draft.serviceSizeOrVolume.trim(),
+    serviceQualification: draft.serviceQualification.trim(),
+    serviceTiming: draft.serviceTiming.trim(),
+    serviceMethod: draft.serviceMethod.trim(),
+    serviceInScope: draft.serviceInScope.trim(),
+    serviceOutOfScope: draft.serviceOutOfScope.trim(),
+    serviceWarranty: draft.serviceWarranty.trim(),
+    servicePaymentTerms: draft.servicePaymentTerms.trim(),
+    deliveryArea: draft.deliveryArea.trim(),
+    neededBy: draft.neededBy.trim(),
+    transport: draft.transport.trim(),
+    tax: draft.tax.trim(),
+    paymentTerms: draft.paymentTerms.trim(),
+  };
+}
+
+function purchaseRequestCommandPayload(command: ProjectPurchaseRequestCommand | { inputSchemaVersion: 1; action: "confirm-for-recipients"; projectId: string; requestId: string; expectedRequestVersion: number; idempotencyKey: string }) {
+  if (command.action === "create-request" || command.action === "update-request") return { inputSchemaVersion: command.inputSchemaVersion, action: command.action, projectId: command.projectId, requestId: command.requestId, draft: normalizedPurchaseRequestDraftForCommand(command.draft) };
+  return { inputSchemaVersion: command.inputSchemaVersion, action: command.action, projectId: command.projectId, requestId: command.requestId };
+}
+
+function purchaseRequestCommandPayloadHash(command: ProjectPurchaseRequestCommand | { inputSchemaVersion: 1; action: "confirm-for-recipients"; projectId: string; requestId: string; expectedRequestVersion: number; idempotencyKey: string }) {
+  return projectFoundationHash(purchaseRequestCommandPayload(command));
+}
+
+function purchaseRequestDraftCommandIsValid(draft: unknown): draft is PurchaseRequestDraft {
+  if (!hasExactObjectKeys(draft, ["requestKind", "rawNeed", "items", "serviceScope", "serviceLocation", "serviceSizeOrVolume", "serviceQualification", "serviceTiming", "serviceMethod", "serviceInScope", "serviceOutOfScope", "serviceWarranty", "servicePaymentTerms", "deliveryArea", "neededBy", "transport", "tax", "paymentTerms"])) return false;
+  const candidate = draft as PurchaseRequestDraft;
+  if ((candidate.requestKind !== "product" && candidate.requestKind !== "service") || !Array.isArray(candidate.items) || candidate.items.some((item) => !hasExactObjectKeys(item, ["id", "itemName", "quantity", "unit", "brandOrGrade", "specification", "alternatives"]))) return false;
+  const values = Object.entries(candidate).flatMap(([key, value]) => key === "items" ? candidate.items.flatMap((item) => Object.values(item)) : [value]);
+  return values.every((value) => typeof value === "string")
+    && JSON.stringify(normalizedPurchaseRequestDraftForCommand(candidate)) === JSON.stringify(candidate);
+}
+
+function projectPurchaseRequestCommandIsValid(command: ProjectPurchaseRequestCommand) {
+  if (!command || command.inputSchemaVersion !== 1 || typeof command.projectId !== "string" || command.projectId.trim() !== command.projectId || !command.projectId || typeof command.requestId !== "string" || command.requestId.trim() !== command.requestId || !command.requestId || typeof command.idempotencyKey !== "string" || command.idempotencyKey.trim() !== command.idempotencyKey || !command.idempotencyKey || command.idempotencyKey.length > 200) return false;
+  if (command.action === "create-request") return hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "requestId", "draft", "idempotencyKey"]) && command.requestId === purchaseRequestIdForIdempotencyKey(command.idempotencyKey) && purchaseRequestDraftCommandIsValid(command.draft);
+  if (command.action === "update-request") return hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "requestId", "draft", "expectedRequestVersion", "idempotencyKey"]) && Number.isInteger(command.expectedRequestVersion) && command.expectedRequestVersion >= 1 && purchaseRequestDraftCommandIsValid(command.draft);
+  return (command.action === "mark-ready" || command.action === "return-to-draft") && hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "requestId", "expectedRequestVersion", "idempotencyKey"]) && Number.isInteger(command.expectedRequestVersion) && command.expectedRequestVersion >= 1;
+}
+
+function projectPurchaseRequestAuthorityIsValid(authority: ProjectTaskAuthority | null): authority is ProjectTaskAuthority {
+  if (!authority || !/^sha256-[0-9a-f]{64}$/.test(authority.identityBindingHash) || !/^sha256-[0-9a-f]{64}$/.test(authority.snapshotHash) || !Array.isArray(authority.projectIds) || authority.projectIds.some((projectId) => typeof projectId !== "string" || !projectId || projectId.trim() !== projectId) || new Set(authority.projectIds).size !== authority.projectIds.length) return false;
+  const keys = Object.keys(authority.authorizationHashes).sort();
+  return keys.length === authority.projectIds.length && keys.every((key, index) => key === [...authority.projectIds].sort()[index] && /^sha256-[0-9a-f]{64}$/.test(authority.authorizationHashes[key]));
+}
+
+async function withProjectPurchaseRequestsWriteLock<Result>(fallback: Result, operation: () => Result | Promise<Result>): Promise<Result> {
+  try {
+    if (!window.navigator.locks?.request) return fallback;
+    return await window.navigator.locks.request(projectPurchaseRequestsWriteLockName, { mode: "exclusive" }, operation);
+  } catch {
+    return fallback;
+  }
+}
+
+function restoreOwnedProjectPurchaseRequestBytes(key: string, previousRaw: string | null, candidateRaw: string | null) {
+  try {
+    const currentRaw = window.localStorage.getItem(key);
+    if (currentRaw === previousRaw) return true;
+    if (currentRaw !== candidateRaw) return false;
+    if (previousRaw === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, previousRaw);
+    return window.localStorage.getItem(key) === previousRaw;
+  } catch {
+    return false;
+  }
+}
+
+function readProjectPurchaseRequestsForMutation(authority: ProjectTaskAuthority) {
+  try {
+    if (window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null) return null;
+    const raw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    const parsed = parseStoredProjectPurchaseRequests(raw);
+    if (parsed.readError || parsed.records.some((request) => !authority.projectIds.includes(request.projectId) || request.mutationReceipts.some((receipt) => receipt.authorizationContextHash !== authority.authorizationHashes[request.projectId]))) return null;
+    return { raw, records: parsed.records };
+  } catch {
+    return null;
+  }
+}
+
+function commitProjectPurchaseRequestRecords(previousRaw: string | null, records: ProjectPurchaseRequestRecord[], authority: ProjectTaskAuthority, getAuthority: () => ProjectTaskAuthority | null): ProjectPurchaseRequestMutationResult {
+  const candidateRaw = records.length === 0 ? null : JSON.stringify(records);
+  const candidate = parseStoredProjectPurchaseRequests(candidateRaw);
+  if (candidate.readError || JSON.stringify(candidate.records) !== JSON.stringify(records)) return { status: "schema-invalid", reason: "candidate-invalid" };
+  try {
+    if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== previousRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || getAuthority()?.snapshotHash !== authority.snapshotHash) return { status: "version-conflict", reason: "preimage-changed" };
+    if (candidateRaw === null) window.localStorage.removeItem(projectPurchaseRequestsStorageKey);
+    else window.localStorage.setItem(projectPurchaseRequestsStorageKey, candidateRaw);
+    const afterAuthority = getAuthority();
+    const readbackRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+    const readback = parseStoredProjectPurchaseRequests(readbackRaw);
+    if (readbackRaw === candidateRaw && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null && afterAuthority?.snapshotHash === authority.snapshotHash && !readback.readError && JSON.stringify(readback.records) === JSON.stringify(records)) return { status: "updated", records: readback.records };
+    return restoreOwnedProjectPurchaseRequestBytes(projectPurchaseRequestsStorageKey, previousRaw, candidateRaw) ? { status: "write-failure", reason: "readback-failure" } : { status: "read-failure", reason: "rollback-failure" };
+  } catch {
+    return restoreOwnedProjectPurchaseRequestBytes(projectPurchaseRequestsStorageKey, previousRaw, candidateRaw) ? { status: "write-failure", reason: "persistence-failure" } : { status: "read-failure", reason: "rollback-failure" };
+  }
+}
+
+function finalizePurchaseRequestMutationReceipt(receipt: Omit<PurchaseRequestMutationReceipt, "fingerprint">): PurchaseRequestMutationReceipt {
+  return { ...receipt, fingerprint: purchaseRequestMutationReceiptFingerprint(receipt) };
+}
+
+function buildProjectPurchaseRequestRecord(projectId: string, requestId: string, requestDraft: PurchaseRequestDraft, timestamp: string): ProjectPurchaseRequestRecord | null {
+  const rawNeed = requestDraft.rawNeed.trim();
+  if (!hasVisibleProjectTaskText(rawNeed) || requestDraft.requestKind === "product" && (requestDraft.items.length < 1 || requestDraft.items.length > 8)) return null;
+  const normalizedProductQuantities = requestDraft.requestKind === "product" ? requestDraft.items.map((draft) => draft.quantity ? normalizeProjectNumber(draft.quantity, false) : "") : [];
+  if (normalizedProductQuantities.some((quantity) => quantity === null || Boolean(quantity && Number(quantity) <= 0))) return null;
+  const items: ProductRequestItem[] = requestDraft.requestKind === "product" ? requestDraft.items.map((draft, index) => {
+    const normalizedQuantity = normalizedProductQuantities[index] ?? "";
+    const name = normalizeOptionalPurchaseRequestText(draft.itemName);
+    const unit = purchaseRequestUnits.includes(draft.unit as PurchaseRequestUnit) ? draft.unit as PurchaseRequestUnit : null;
+    return {
+      id: draft.id.startsWith("purchase-item-") ? draft.id : `purchase-item-${window.crypto.randomUUID()}`,
+      name,
+      quantity: normalizedQuantity || null,
+      unit,
+      brandOrGrade: normalizeOptionalPurchaseRequestText(draft.brandOrGrade),
+      specification: normalizeOptionalPurchaseRequestText(draft.specification),
+      alternatives: purchaseRequestAlternativesFromLabel(draft.alternatives),
+      source: "ثبت مستقیم شما",
+      confidence: null,
+      completionStatus: name && normalizedQuantity && unit ? "complete" : "incomplete",
+      version: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      history: [{ id: `purchase-item-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+    };
+  }) : [];
+  const serviceFields = {
+    scope: normalizeOptionalPurchaseRequestText(requestDraft.serviceScope),
+    location: normalizeOptionalPurchaseRequestText(requestDraft.serviceLocation),
+    sizeOrVolume: normalizeOptionalPurchaseRequestText(requestDraft.serviceSizeOrVolume),
+    qualification: normalizeOptionalPurchaseRequestText(requestDraft.serviceQualification),
+    timing: normalizeOptionalPurchaseRequestText(requestDraft.serviceTiming),
+    method: normalizeOptionalPurchaseRequestText(requestDraft.serviceMethod),
+    inScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceInScope),
+    outOfScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceOutOfScope),
+    warranty: normalizeOptionalPurchaseRequestText(requestDraft.serviceWarranty),
+    paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.servicePaymentTerms),
+  };
+  const service: ServiceRequestSpec | null = requestDraft.requestKind === "service" ? {
+    id: `purchase-service-${window.crypto.randomUUID()}`,
+    ...serviceFields,
+    locationPrecision: "area-or-project-section",
+    source: "ثبت مستقیم شما",
+    confidence: null,
+    completionStatus: serviceFields.scope && serviceFields.location ? "complete" : "incomplete",
+    version: 1,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    history: [{ id: `purchase-service-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+  } : null;
+  const record: ProjectPurchaseRequestRecord = {
+    schemaVersion: 2,
+    id: requestId,
+    projectId,
+    requestKind: requestDraft.requestKind,
+    rawNeed: { text: rawNeed, source: "ثبت مستقیم شما", capturedAt: timestamp },
+    items,
+    item: items[0] ?? null,
+    service,
+    delivery: { city: "تهران", area: normalizeOptionalPurchaseRequestText(requestDraft.deliveryArea) ?? "نامشخص", exactAddressShared: false, neededBy: normalizeOptionalPurchaseRequestText(requestDraft.neededBy) },
+    unresolvedTerms: { transport: normalizeOptionalPurchaseRequestText(requestDraft.transport) ?? "unknown", tax: normalizeOptionalPurchaseRequestText(requestDraft.tax) ?? "unknown", paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.paymentTerms) ?? "unknown" },
+    clarificationAnswers: [],
+    reviewRevisions: [],
+    migration: null,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    sharingStatus: "ارسال نشده",
+    status: "draft",
+    version: 1,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    readyAt: null,
+    history: [{ id: `purchase-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+    mutationReceipts: [],
+  };
+  record.clarificationAnswers = reconcilePurchaseRequestClarifications(record, [], timestamp);
+  return record;
+}
+
+function updateProjectPurchaseRequestRecord(request: ProjectPurchaseRequestRecord, requestDraft: PurchaseRequestDraft, timestamp: string): { status: "updated" | "unchanged" | "schema-invalid"; record: ProjectPurchaseRequestRecord } {
+  const rawNeed = requestDraft.rawNeed.trim();
+  if (!hasVisibleProjectTaskText(rawNeed) || request.status !== "draft" || request.requestKind !== requestDraft.requestKind) return { status: "schema-invalid", record: request };
+  const version = request.version + 1;
+  const items: ProductRequestItem[] = request.requestKind === "product" ? requestDraft.items.map((draft) => {
+    const normalizedQuantity = draft.quantity ? normalizeProjectNumber(draft.quantity, false) : "";
+    if (normalizedQuantity === null || normalizedQuantity && Number(normalizedQuantity) <= 0) return null;
+    const existing = request.items.find((item) => item.id === draft.id);
+    const name = normalizeOptionalPurchaseRequestText(draft.itemName);
+    const unit = purchaseRequestUnits.includes(draft.unit as PurchaseRequestUnit) ? draft.unit as PurchaseRequestUnit : null;
+    const nextValues = { name, quantity: normalizedQuantity || null, unit, brandOrGrade: normalizeOptionalPurchaseRequestText(draft.brandOrGrade), specification: normalizeOptionalPurchaseRequestText(draft.specification), alternatives: purchaseRequestAlternativesFromLabel(draft.alternatives) };
+    if (!existing) return { id: `purchase-item-${window.crypto.randomUUID()}`, ...nextValues, source: "ثبت مستقیم شما", confidence: null, completionStatus: name && normalizedQuantity && unit ? "complete" : "incomplete", version: 1, createdAt: timestamp, updatedAt: timestamp, history: [{ id: `purchase-item-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }] } satisfies ProductRequestItem;
+    const changed = JSON.stringify(nextValues) !== JSON.stringify({ name: existing.name, quantity: existing.quantity, unit: existing.unit, brandOrGrade: existing.brandOrGrade, specification: existing.specification, alternatives: existing.alternatives });
+    if (!changed) return existing;
+    const itemVersion = existing.version + 1;
+    return { ...existing, ...nextValues, source: "ثبت مستقیم شما", completionStatus: name && normalizedQuantity && unit ? "complete" : "incomplete", version: itemVersion, updatedAt: timestamp, history: [...existing.history, { id: `purchase-item-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version: itemVersion }] } satisfies ProductRequestItem;
+  }).filter((item): item is ProductRequestItem => item !== null) : [];
+  if (request.requestKind === "product" && items.length !== requestDraft.items.length) return { status: "schema-invalid", record: request };
+  const nextServiceValues = {
+    scope: normalizeOptionalPurchaseRequestText(requestDraft.serviceScope),
+    location: normalizeOptionalPurchaseRequestText(requestDraft.serviceLocation),
+    sizeOrVolume: normalizeOptionalPurchaseRequestText(requestDraft.serviceSizeOrVolume),
+    qualification: normalizeOptionalPurchaseRequestText(requestDraft.serviceQualification),
+    timing: normalizeOptionalPurchaseRequestText(requestDraft.serviceTiming),
+    method: normalizeOptionalPurchaseRequestText(requestDraft.serviceMethod),
+    inScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceInScope),
+    outOfScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceOutOfScope),
+    warranty: normalizeOptionalPurchaseRequestText(requestDraft.serviceWarranty),
+    paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.servicePaymentTerms),
+  };
+  let service = request.service;
+  if (request.requestKind === "service" && service) {
+    const changed = JSON.stringify(nextServiceValues) !== JSON.stringify({ scope: service.scope, location: service.location, sizeOrVolume: service.sizeOrVolume, qualification: service.qualification, timing: service.timing, method: service.method, inScope: service.inScope, outOfScope: service.outOfScope, warranty: service.warranty, paymentTerms: service.paymentTerms });
+    if (changed) {
+      const serviceVersion = service.version + 1;
+      service = { ...service, ...nextServiceValues, source: "ثبت مستقیم شما", completionStatus: nextServiceValues.scope && nextServiceValues.location ? "complete" : "incomplete", version: serviceVersion, updatedAt: timestamp, history: [...service.history, { id: `purchase-service-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version: serviceVersion }] };
+    }
+  }
+  const candidate: ProjectPurchaseRequestRecord = {
+    ...request,
+    rawNeed: { ...request.rawNeed, text: rawNeed },
+    items,
+    item: items[0] ?? null,
+    service,
+    delivery: { ...request.delivery, area: normalizeOptionalPurchaseRequestText(requestDraft.deliveryArea) ?? "نامشخص", neededBy: normalizeOptionalPurchaseRequestText(requestDraft.neededBy) },
+    unresolvedTerms: { transport: normalizeOptionalPurchaseRequestText(requestDraft.transport) ?? "unknown", tax: normalizeOptionalPurchaseRequestText(requestDraft.tax) ?? "unknown", paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.paymentTerms) ?? "unknown" },
+    version,
+    updatedAt: timestamp,
+    history: [...request.history, { id: `purchase-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }],
+  };
+  candidate.clarificationAnswers = reconcilePurchaseRequestClarifications(candidate, request.clarificationAnswers, timestamp);
+  const comparableBefore = { rawNeed: request.rawNeed.text, items: request.items, service: request.service, delivery: request.delivery, unresolvedTerms: request.unresolvedTerms };
+  const comparableAfter = { rawNeed, items: candidate.items, service: candidate.service, delivery: candidate.delivery, unresolvedTerms: candidate.unresolvedTerms };
+  return JSON.stringify(stablePurchaseRequestValue(comparableBefore)) === JSON.stringify(stablePurchaseRequestValue(comparableAfter)) ? { status: "unchanged", record: request } : { status: "updated", record: candidate };
+}
+
+function markProjectPurchaseRequestRecordReady(request: ProjectPurchaseRequestRecord, timestamp: string): ProjectPurchaseRequestRecord | null {
+  if (request.status !== "draft" || purchaseRequestMissingFields(request).length > 0) return null;
+  const version = request.version + 1;
+  const candidate: ProjectPurchaseRequestRecord = { ...request, status: "ready-for-review", version, updatedAt: timestamp, readyAt: timestamp, history: [...request.history, { id: `purchase-event-${window.crypto.randomUUID()}`, type: "marked-ready-for-review", actor: "شما", at: timestamp, version }] };
+  const snapshot = purchaseRequestApprovalSnapshot(candidate);
+  const shareableFields = purchaseRequestApprovalShareableFields(candidate);
+  candidate.reviewRevisions = [...request.reviewRevisions, { id: `purchase-review-${window.crypto.randomUUID()}`, requestVersion: version, createdAt: timestamp, snapshot, shareableFields, fingerprint: purchaseRequestRevisionFingerprint(snapshot, shareableFields) }];
+  return candidate;
+}
+
+function returnProjectPurchaseRequestRecordToDraft(request: ProjectPurchaseRequestRecord, timestamp: string): ProjectPurchaseRequestRecord | null {
+  if (request.status !== "ready-for-review") return null;
+  const version = request.version + 1;
+  return { ...request, status: "draft", version, updatedAt: timestamp, readyAt: null, history: [...request.history, { id: `purchase-event-${window.crypto.randomUUID()}`, type: "returned-to-draft", actor: "شما", at: timestamp, version }] };
+}
+
+async function executeProjectPurchaseRequestCommand(command: ProjectPurchaseRequestCommand, getAuthority: () => ProjectTaskAuthority | null): Promise<ProjectPurchaseRequestMutationResult> {
+  return withProjectPurchaseRequestsWriteLock<ProjectPurchaseRequestMutationResult>({ status: "lock-unavailable", reason: "lock-unavailable" }, () => {
+    if (!projectPurchaseRequestCommandIsValid(command)) return { status: "schema-invalid", reason: "command-invalid" };
+    const authority = getAuthority();
+    if (!projectPurchaseRequestAuthorityIsValid(authority)) return { status: "read-failure", reason: "foundation-invalid" };
+    const current = readProjectPurchaseRequestsForMutation(authority);
+    if (!current) return { status: "read-failure", reason: "request-store-invalid" };
+    const payloadHash = purchaseRequestCommandPayloadHash(command);
+    const existingReceipt = current.records.flatMap((request) => request.mutationReceipts).find((receipt) => receipt.key === command.idempotencyKey);
+    if (existingReceipt) {
+      if (existingReceipt.action !== command.action || existingReceipt.payloadHash !== payloadHash || existingReceipt.projectId !== command.projectId || existingReceipt.requestId !== command.requestId || existingReceipt.expectedRequestVersion !== (command.action === "create-request" ? null : command.expectedRequestVersion)) return { status: "idempotency-payload-mismatch", records: current.records, reason: "idempotency-key-reused" };
+      return { status: command.action === "create-request" ? "created" : "updated", records: current.records, requestId: existingReceipt.requestId, approvalId: existingReceipt.relatedApprovalId ?? undefined };
+    }
+    if (!authority.projectIds.includes(command.projectId)) return { status: "scope-mismatch", records: current.records, reason: "project-not-authorized" };
+
+    let nextRecord: ProjectPurchaseRequestRecord;
+    let result: "created" | "updated";
+    let expectedRequestVersion: number | null;
+    if (command.action === "create-request") {
+      if (current.records.some((request) => request.id === command.requestId)) return { status: "version-conflict", records: current.records, reason: "request-id-exists" };
+      const timestamp = new Date().toISOString();
+      const built = buildProjectPurchaseRequestRecord(command.projectId, command.requestId, command.draft, timestamp);
+      if (!built) return { status: "schema-invalid", records: current.records, reason: "draft-invalid" };
+      nextRecord = built;
+      expectedRequestVersion = null;
+      result = "created";
+    } else {
+      const existing = current.records.find((request) => request.id === command.requestId);
+      if (!existing) return { status: "not-found", records: current.records, reason: "request-not-found" };
+      if (existing.projectId !== command.projectId) return { status: "scope-mismatch", records: current.records, reason: "request-project-mismatch" };
+      if (existing.version !== command.expectedRequestVersion) return { status: "version-conflict", records: current.records, requestId: existing.id, reason: "request-version-stale" };
+      const timestamp = new Date(Math.max(Date.now(), Date.parse(existing.updatedAt) + 1)).toISOString();
+      expectedRequestVersion = command.expectedRequestVersion;
+      if (command.action === "update-request") {
+        const updated = updateProjectPurchaseRequestRecord(existing, command.draft, timestamp);
+        if (updated.status === "schema-invalid") return { status: "schema-invalid", records: current.records, requestId: existing.id, reason: "draft-invalid" };
+        if (updated.status === "unchanged") return { status: "unchanged", records: current.records, requestId: existing.id };
+        nextRecord = updated.record;
+      } else if (command.action === "mark-ready") {
+        const ready = markProjectPurchaseRequestRecordReady(existing, timestamp);
+        if (!ready) return { status: "unsupported-transition", records: current.records, requestId: existing.id, reason: "request-not-ready" };
+        nextRecord = ready;
+      } else {
+        const approvalsRead = readStoredProjectApprovals({ records: current.records, readError: false });
+        if (approvalsRead.readError) return { status: "read-failure", records: current.records, requestId: existing.id, reason: "approval-store-invalid" };
+        if (approvalsRead.records.some((approval) => approval.target.id === existing.id && approval.target.version === existing.version && approval.status === "pending")) return { status: "unsupported-transition", records: current.records, requestId: existing.id, reason: "approval-pending" };
+        const draft = returnProjectPurchaseRequestRecordToDraft(existing, timestamp);
+        if (!draft) return { status: "unsupported-transition", records: current.records, requestId: existing.id, reason: "request-not-ready" };
+        nextRecord = draft;
+      }
+      result = "updated";
+    }
+
+    const receipt = finalizePurchaseRequestMutationReceipt({
+      schemaVersion: 1,
+      key: command.idempotencyKey,
+      action: command.action,
+      payloadHash,
+      projectId: command.projectId,
+      requestId: command.requestId,
+      expectedRequestVersion,
+      resultingRequestVersion: nextRecord.version,
+      relatedApprovalId: null,
+      authorizationContextHash: authority.authorizationHashes[command.projectId],
+      recordedAt: nextRecord.updatedAt,
+    });
+    nextRecord = { ...nextRecord, mutationReceipts: [...nextRecord.mutationReceipts, receipt] };
+    const nextRecords = command.action === "create-request" ? [...current.records, nextRecord] : current.records.map((request) => request.id === nextRecord.id ? nextRecord : request);
+    const committed = commitProjectPurchaseRequestRecords(current.raw, nextRecords, authority, getAuthority);
+    return committed.records ? { status: result, records: committed.records, requestId: nextRecord.id } : committed;
+  });
 }
 
 function restoreProjectPurchaseRequestsAfterFailedReset(rawRequests: string) {
@@ -8819,7 +9158,7 @@ function preserveProjectPurchaseRequestsRecoveryIntent(recoveryKey: string) {
   }
 }
 
-function recoverStoredProjectPurchaseRequests(): ProjectPurchaseRequestsRecoveryResult {
+function recoverStoredProjectPurchaseRequestsUnlocked(): ProjectPurchaseRequestsRecoveryResult {
   let pendingRecoveryKey: string | null;
   try {
     pendingRecoveryKey = window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey);
@@ -8917,6 +9256,10 @@ function recoverStoredProjectPurchaseRequests(): ProjectPurchaseRequestsRecovery
   return { status: "reset", records: [] };
 }
 
+async function recoverStoredProjectPurchaseRequests(): Promise<ProjectPurchaseRequestsRecoveryResult> {
+  return withProjectPurchaseRequestsWriteLock<ProjectPurchaseRequestsRecoveryResult>({ status: "read-failure" }, recoverStoredProjectPurchaseRequestsUnlocked);
+}
+
 function parseV2ProjectApproval(approval: any, purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): ProjectApprovalRecord | null {
   const id = typeof approval?.id === "string" ? approval.id.trim() : "";
   const projectId = typeof approval?.projectId === "string" ? approval.projectId.trim() : "";
@@ -8971,10 +9314,10 @@ function parseV2ProjectApproval(approval: any, purchaseRequests: LocalRecordsRea
   };
 }
 
-function readStoredProjectApprovals(purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): LocalRecordsReadResult<ProjectApprovalRecord> {
+function parseStoredProjectApprovals(rawApprovals: string | null, purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): LocalRecordsReadResult<ProjectApprovalRecord> {
   try {
-    const rawApprovals = window.localStorage.getItem(projectApprovalsStorageKey);
-    if (rawApprovals === null) return { records: [], readError: false };
+    const confirmationReceipts = purchaseRequests.records.flatMap((request) => request.mutationReceipts.filter((receipt) => receipt.action === "confirm-for-recipients"));
+    if (rawApprovals === null) return { records: [], readError: purchaseRequests.readError || confirmationReceipts.length > 0 };
     const parsed = JSON.parse(rawApprovals);
     if (!Array.isArray(parsed)) return { records: [], readError: true };
 
@@ -9221,7 +9564,30 @@ function readStoredProjectApprovals(purchaseRequests: LocalRecordsReadResult<Pro
       seenDedupeKeys.add(dedupeKey);
       return [record];
     });
-    return { records, readError };
+    const confirmationDependenciesAreValid = confirmationReceipts.every((receipt) => {
+      const approval = records.find((record) => record.id === receipt.relatedApprovalId);
+      return Boolean(approval)
+        && approval!.projectId === receipt.projectId
+        && approval!.status === "approved"
+        && approval!.version === 2
+        && approval!.target.id === receipt.requestId
+        && approval!.target.version === receipt.resultingRequestVersion
+        && approval!.target.updatedAt === receipt.recordedAt
+        && approval!.requestedAt === receipt.recordedAt
+        && approval!.updatedAt === receipt.recordedAt
+        && approval!.decidedAt === receipt.recordedAt
+        && approval!.history[0]?.type === "created"
+        && approval!.history[1]?.type === "approved";
+    });
+    return { records, readError: readError || !confirmationDependenciesAreValid };
+  } catch {
+    return { records: [], readError: true };
+  }
+}
+
+function readStoredProjectApprovals(purchaseRequests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>): LocalRecordsReadResult<ProjectApprovalRecord> {
+  try {
+    return parseStoredProjectApprovals(window.localStorage.getItem(projectApprovalsStorageKey), purchaseRequests);
   } catch {
     return { records: [], readError: true };
   }
@@ -9674,7 +10040,7 @@ function readStoredBuiltArtifacts(): BuiltArtifactReadResult {
 }
 
 function builtArtifactDependenciesAreReadable() {
-  return !readStoredProjectBackbone().readError && !readStoredProjectTasks().readError;
+  return !readStoredProjectBackbone().readError && readProjectTaskState(projectTaskAuthoritySnapshot()).status === "ready";
 }
 
 async function withBuiltArtifactsWriteLock(operation: () => BuiltArtifactMutationResult | Promise<BuiltArtifactMutationResult>): Promise<BuiltArtifactMutationResult> {
@@ -12919,6 +13285,12 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const pendingProposalsReturnFocus = useRef<ProposalsReturnView | null>(null);
   const pendingHomeQuickActionFocus = useRef<QuickActionId | null>(null);
   const pendingProjectSearchInputFocus = useRef(false);
+  const pendingBuilderFocus = useRef<PendingBuilderFocus | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const drawerCloseRef = useRef<HTMLButtonElement | null>(null);
+  const toolsReturnFocus = useRef("capability-cluster");
+  const buildReturnFocus = useRef<BuildReturnFocus>({ kind: "chat", selector: '[data-testid="quick-action-build"]' });
+  const projectsReturnFocus = useRef("project-switcher");
   const [view, setView] = useState<HomeView>("chat");
   const [filesReturnView, setFilesReturnView] = useState<FilesReturnView>("project");
   const [galleryReturnView, setGalleryReturnView] = useState<GalleryReturnView>("project");
@@ -12933,6 +13305,8 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const [focusedFileId, setFocusedFileId] = useState<string | null>(null);
   const [focusedMemoryId, setFocusedMemoryId] = useState<string | null>(null);
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
+  const [projectSearchReturnView, setProjectSearchReturnView] = useState<ProjectSearchReturnView>("chat");
+  const [sourceAnswerReturnView, setSourceAnswerReturnView] = useState<SourceAnswerReturnView>("chat");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [draftsByProject, setDraftsByProject] = useState<Record<string, string>>({});
   const [attachmentsByProject, setAttachmentsByProject] = useState<Record<string, PendingProjectFile | null>>({});
@@ -12940,12 +13314,13 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const sourceDetailTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [composerError, setComposerError] = useState("");
+  const [composerActionStatus, setComposerActionStatus] = useState("");
   const [composerSending, setComposerSending] = useState(false);
   const composerSendingRef = useRef(false);
   const [initialProjectFiles] = useState<LocalRecordsReadResult<ProjectFileRecord>>(readStoredProjectFiles);
   const [initialProjectSources] = useState<ProjectSourceReadResult>(() => validateProjectSourceAggregate(readStoredProjectSources(), initialProjectFiles));
   const [initialProjectMemories] = useState<ProjectMemoryReadResult>(() => ({ envelope: emptyProjectMemoryEnvelope(), readError: true, migrationBlocked: false }));
-  const [initialProjectTasks] = useState<LocalRecordsReadResult<ProjectTaskRecord>>(readStoredProjectTasks);
+  const [initialProjectTasks] = useState<ProjectTaskState>(() => readProjectTaskState(projectTaskAuthoritySnapshot()));
   const [initialProjectBackbone] = useState<ProjectBackboneReadResult>(readStoredProjectBackbone);
   const [initialProjectTaskMonitors] = useState<ProjectTaskMonitorReadResult>(() => validateProjectTaskMonitorAggregate(readStoredProjectTaskMonitors(), initialProjectBackbone));
   const [initialBuiltArtifacts] = useState<BuiltArtifactReadResult>(readStoredBuiltArtifacts);
@@ -12971,7 +13346,8 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const [projectFiles, setProjectFiles] = useState<ProjectFileRecord[]>(initialProjectFiles.records);
   const [projectMemoryEnvelope, setProjectMemoryEnvelope] = useState<ProjectMemoryEnvelope>(initialProjectMemories.envelope);
   const projectMemories = projectMemoryEnvelope.records;
-  const [projectTasks, setProjectTasks] = useState<ProjectTaskRecord[]>(initialProjectTasks.records);
+  const [projectTaskState, setProjectTaskState] = useState<ProjectTaskState>(initialProjectTasks);
+  const projectTasks = projectTaskState.envelope?.records ?? [];
   const [projectBackbone, setProjectBackbone] = useState<ProjectBackboneEnvelope>(initialProjectBackbone.envelope);
   const [projectTaskMonitorEnvelope, setProjectTaskMonitorEnvelope] = useState<ProjectTaskMonitorEnvelope>(initialProjectTaskMonitors.envelope);
   const [builtArtifactEnvelope, setBuiltArtifactEnvelope] = useState<BuiltArtifactEnvelope>(initialBuiltArtifacts.envelope);
@@ -12998,7 +13374,9 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   });
   const [sourceRecoveryBlocked, setSourceRecoveryBlocked] = useState(false);
   const [projectMemoriesReadError, setProjectMemoriesReadError] = useState(initialProjectMemories.readError);
-  const [projectTasksReadError, setProjectTasksReadError] = useState(initialProjectTasks.readError);
+  const [projectMemoriesLoading, setProjectMemoriesLoading] = useState(true);
+  const projectTasksReadError = projectTaskState.status === "read-error";
+  const projectTasksStorageLocked = projectTaskState.status !== "ready";
   const [projectBackboneReadError, setProjectBackboneReadError] = useState(initialProjectBackbone.readError);
   const [projectTaskMonitorsReadError, setProjectTaskMonitorsReadError] = useState(initialProjectTaskMonitors.readError);
   const [builtArtifactsReadError, setBuiltArtifactsReadError] = useState(initialBuiltArtifacts.readError);
@@ -13013,7 +13391,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   });
   const builtArtifactInvalidationInFlightRef = useRef(new Set<string>());
   const [projectPurchaseRequestsReadError, setProjectPurchaseRequestsReadError] = useState(initialProjectPurchaseRequests.readError);
-  const [projectApprovalsReadError] = useState(initialProjectApprovals.readError);
+  const [projectApprovalsReadError, setProjectApprovalsReadError] = useState(initialProjectApprovals.readError);
   const [projectSupplierContactsReadError] = useState(initialProjectSupplierContacts.readError);
   const [projectDispatchDraftsReadError] = useState(initialProjectDispatchDrafts.readError);
   const [projectDispatchPlanApprovalsReadError] = useState(initialProjectDispatchPlanApprovals.readError);
@@ -13057,6 +13435,38 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     });
   };
 
+  const queueBuilderFocus = (selector: string, targetSheet: SheetName = null, targetView: HomeView = "chat") => {
+    pendingBuilderFocus.current = { view: targetView, sheet: targetSheet, selector };
+  };
+  const closeDrawerToMenu = () => {
+    queueBuilderFocus('[data-testid="menu-button"]');
+    setDrawerOpen(false);
+  };
+  const openTools = (returnFocusTestId: "capability-cluster" | "menu-button") => {
+    toolsReturnFocus.current = returnFocusTestId;
+    setDrawerOpen(false);
+    onOpenSheet("tools");
+  };
+  const closeTools = () => {
+    queueBuilderFocus(`[data-testid="${toolsReturnFocus.current}"]`);
+    onOpenSheet(null);
+  };
+  const openBuild = (returnFocus: BuildReturnFocus, artifactId: string | null = null) => {
+    buildReturnFocus.current = returnFocus;
+    setSelectedBuiltArtifactId(artifactId);
+    onOpenSheet("build");
+  };
+  const closeBuild = () => {
+    const target = buildReturnFocus.current;
+    if (target.kind === "tools") {
+      queueBuilderFocus(target.selector, "tools");
+      onOpenSheet("tools");
+      return;
+    }
+    queueBuilderFocus(target.selector);
+    onOpenSheet(null);
+  };
+
   const openNewProject = () => {
     keyboard.hide();
     setDrawerOpen(false);
@@ -13064,10 +13474,92 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   };
 
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setDrawerOpen(false); };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    let disposed = false;
+    let reconcileVersion = 0;
+    const reconcile = async () => {
+      const requestedVersion = ++reconcileVersion;
+      const snapshot = readProjectTaskState(projectTaskAuthoritySnapshot());
+      if (snapshot.status === "loading") setProjectTaskState(snapshot);
+      const next = snapshot.status === "loading" ? await initializeProjectTasks(projectTaskAuthoritySnapshot) : snapshot;
+      if (disposed || requestedVersion !== reconcileVersion) return;
+      const latest = readProjectTaskState(projectTaskAuthoritySnapshot());
+      setProjectTaskState(latest.status === "loading" && next.status === "read-error" ? next : latest);
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === projectTasksStorageKey || event.key === legacyProjectTasksStorageKey || event.key === projectTasksCutoverMarkerKey || event.key === projectsStorageKey || event.key === projectFoundationCutoverMarkerKey || event.key === projectFoundationIdentityFixtureKey) void reconcile();
+    };
+    const handleVisibility = () => { if (document.visibilityState === "visible") void reconcile(); };
+    void reconcile();
+    window.addEventListener("focus", reconcile);
+    window.addEventListener("storage", handleStorage);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", reconcile);
+      window.removeEventListener("storage", handleStorage);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const reconcile = () => {
+      const requestRead = readStoredProjectPurchaseRequests();
+      if (disposed) return;
+      setProjectPurchaseRequests(requestRead.records);
+      setProjectPurchaseRequestsReadError(requestRead.readError);
+      if (requestRead.readError) return;
+      const approvalRead = readStoredProjectApprovals(requestRead);
+      if (disposed) return;
+      setProjectApprovals(approvalRead.records);
+      setProjectApprovalsReadError(approvalRead.readError);
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea && event.storageArea !== window.localStorage) return;
+      if (event.key !== null && event.key !== projectPurchaseRequestsStorageKey && event.key !== projectPurchaseRequestsRecoveryIntentKey && event.key !== projectApprovalsStorageKey) return;
+      reconcile();
+    };
+    const handleVisibility = () => { if (document.visibilityState === "visible") reconcile(); };
+    window.addEventListener("focus", reconcile);
+    window.addEventListener("storage", handleStorage);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      disposed = true;
+      window.removeEventListener("focus", reconcile);
+      window.removeEventListener("storage", handleStorage);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const focusFrame = window.requestAnimationFrame(() => drawerCloseRef.current?.focus());
+    const handleDrawerKeyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        pendingBuilderFocus.current = { view: "chat", sheet: null, selector: '[data-testid="menu-button"]' };
+        setDrawerOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !drawerRef.current) return;
+      const focusable = Array.from(drawerRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleDrawerKeyboard);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      window.removeEventListener("keydown", handleDrawerKeyboard);
+    };
+  }, [drawerOpen]);
 
   useEffect(() => {
     attachmentsByProjectRef.current = attachmentsByProject;
@@ -13111,6 +13603,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     setSelectedSourceId(null);
     sourceDetailTriggerRef.current = null;
     setComposerError("");
+    setComposerActionStatus("");
   }, [activeProject.id]);
 
   useEffect(() => {
@@ -13213,6 +13706,18 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   }, [view]);
 
   useLayoutEffect(() => {
+    const target = pendingBuilderFocus.current;
+    if (!target || target.view !== view || target.sheet !== sheet || drawerOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.querySelector<HTMLElement>(target.selector);
+      if (!element) return;
+      pendingBuilderFocus.current = null;
+      element.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [drawerOpen, sheet, view]);
+
+  useLayoutEffect(() => {
     const returnView = pendingProposalsReturnFocus.current;
     if (!returnView || view !== returnView) return;
     pendingProposalsReturnFocus.current = null;
@@ -13297,7 +13802,8 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     [activeProject.id, builtArtifactEnvelope.records],
   );
   const builtArtifactStorageLocked = builtArtifactsReadError || builtArtifactInvalidationIntentsReadError;
-  const builtArtifactDependenciesLocked = projectBackboneReadError || projectTasksReadError;
+  const builtArtifactDependenciesLocked = projectBackboneReadError || projectTaskState.status !== "ready";
+  const builtArtifactDependenciesUnreadable = projectBackboneReadError || projectTasksReadError;
   const activeProjectPurchaseRequests = useMemo(
     () => projectPurchaseRequests.filter((request) => request.projectId === activeProject.id),
     [activeProject.id, projectPurchaseRequests],
@@ -13361,6 +13867,32 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       ? `روزانه · ${briefSchedule.time}`
       : `هفتگی · ${briefSchedule.weekday} · ${briefSchedule.time}`
     : "تنظیم نشده";
+  const localRecordCountPending = sourceRecoveryPending || sourceAssetValidationPending || projectMemoriesLoading || projectTaskState.status === "loading";
+  const localRecordCountReadError = projectFilesReadError || projectSourcesReadError || sourceRecoveryBlocked || projectMemoriesReadError || projectTasksReadError || projectBackboneReadError || projectTaskMonitorsReadError || builtArtifactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError || builderManualNegotiationConditionImpactsReadError;
+  const localRecordCount = localRecordCountPending || localRecordCountReadError
+    ? null
+    : activeProjectFiles.length
+      + activeProjectSources.length
+      + activeProjectMemories.length
+      + activeProjectTasks.length
+      + (activeProjectBackbone ? 3 : 0)
+      + activeProjectTaskMonitors.length
+      + activeProjectTaskMonitorRuns.length
+      + activeProjectBuiltArtifacts.length
+      + activeProjectPurchaseRequests.length
+      + activeProjectApprovals.length
+      + activeProjectSupplierContacts.length
+      + activeProjectDispatchDrafts.length
+      + activeProjectDispatchPlanApprovals.length
+      + activeBuilderRecordedProposals.length
+      + activeBuilderProposalComparisons.length
+      + activeBuilderProposalComparisonDecisions.length
+      + activeBuilderServiceProposalComparisons.length
+      + activeBuilderServiceProposalComparisonDecisions.length
+      + activeBuilderNegotiationDrafts.length
+      + activeBuilderManualNegotiationResponses.length
+      + activeBuilderManualNegotiationResponseReviews.length
+      + activeBuilderManualNegotiationConditionImpacts.length;
 
   const setBuiltArtifactEnvelopeIfChanged = (nextEnvelope: BuiltArtifactEnvelope) => {
     setBuiltArtifactEnvelope((currentEnvelope) => JSON.stringify(currentEnvelope) === JSON.stringify(nextEnvelope) ? currentEnvelope : nextEnvelope);
@@ -13726,17 +14258,16 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const activeBuiltArtifactInvalidationKey = activeProjectBuiltArtifacts.filter((artifact) => artifact.status === "active").map((artifact) => `${artifact.id}:${artifact.version}`).join("|");
   const refreshBuiltArtifactDependencies = () => {
     const backboneRead = readStoredProjectBackbone();
-    const tasksRead = readStoredProjectTasks();
+    const tasksState = readProjectTaskState(projectTaskAuthoritySnapshot());
     setProjectBackboneReadError(backboneRead.readError);
-    setProjectTasksReadError(tasksRead.readError);
     if (!backboneRead.readError) setProjectBackbone(backboneRead.envelope);
-    if (!tasksRead.readError) setProjectTasks(tasksRead.records);
+    setProjectTaskState(tasksState);
     setBuiltArtifactDependencyRefreshVersion((version) => version + 1);
   };
 
   useEffect(() => {
     const handleDependencyStorage = (event: StorageEvent) => {
-      if (event.key === null || event.key === projectBackboneStorageKey || event.key === projectTasksStorageKey) refreshBuiltArtifactDependencies();
+      if (event.key === null || event.key === projectBackboneStorageKey || event.key === projectTasksStorageKey || event.key === projectTasksCutoverMarkerKey || event.key === legacyProjectTasksStorageKey) refreshBuiltArtifactDependencies();
     };
     const handleVisibility = () => {
       if (document.visibilityState === "visible") refreshBuiltArtifactDependencies();
@@ -13760,13 +14291,13 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
           const key = `${artifact.id}:${artifact.version}`;
           if (!next.includes(key)) next.push(key);
         });
-      } else if (builtArtifactDependenciesLocked) {
+      } else if (builtArtifactDependenciesUnreadable) {
         activeKeys.forEach((key) => { if (!next.includes(key)) next.push(key); });
       }
       next.sort();
       return next.length === current.length && next.every((key, index) => key === current[index]) ? current : next;
     });
-  }, [activeBuiltArtifactInvalidationKey, activeProject.id, builtArtifactDependenciesLocked, builtArtifactEnvelope.records, builtArtifactInvalidationIntentsReadError]);
+  }, [activeBuiltArtifactInvalidationKey, activeProject.id, builtArtifactDependenciesUnreadable, builtArtifactEnvelope.records, builtArtifactInvalidationIntentsReadError]);
 
   const builtArtifactInvalidationIncidentKey = builtArtifactInvalidationIncidents.join("|");
   useEffect(() => {
@@ -13830,6 +14361,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       setComposerError(projectDocumentExtension(file.name) || projectImageExtension(file.name)
         ? "پسوند و نوع واقعی فایل با هم هم‌خوان نیستند."
         : "این فایل پشتیبانی نمی‌شود. عکس، PDF، صفحه‌گسترده یا سند متنی انتخاب کن.");
+      queueBuilderFocus('[data-testid="attach-button"]');
       onOpenSheet(null);
       return;
     }
@@ -13844,6 +14376,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       blob: file,
       previewUrl: isImage && isBrowserPreviewableProjectImage({ mimeType: file.type, originalName: file.name }) ? URL.createObjectURL(file) : null,
     });
+    queueBuilderFocus('[data-testid="attach-button"]');
     onOpenSheet(null);
   };
 
@@ -13860,6 +14393,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     composerSendingRef.current = true;
     setComposerSending(true);
     setComposerError("");
+    setComposerActionStatus("");
     const result = await commitProjectSourceIntake(submittedProject, submittedDraft, submittedAttachment, submittedEnvelopeVersion);
     if (result.status === "created") {
       setProjectSources(result.envelope);
@@ -13948,15 +14482,17 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     setView("memory");
   };
 
-  const openProjectSearch = () => {
+  const openProjectSearch = (returnView: ProjectSearchReturnView = "chat") => {
     keyboard.hide();
     onOpenSheet(null);
+    setProjectSearchReturnView(returnView);
     setView("search");
   };
 
-  const openSourceAnswerDemo = () => {
+  const openSourceAnswerDemo = (returnView: SourceAnswerReturnView = "chat") => {
     keyboard.hide();
     onOpenSheet(null);
+    setSourceAnswerReturnView(returnView);
     setView("source-demo");
   };
 
@@ -14025,7 +14561,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     setView("proposals");
   };
 
-  const handleQuickAction = (id: QuickActionId, label: string) => {
+  const handleQuickAction = (id: QuickActionId) => {
     if (id !== "meeting-notes" && id !== "build") pendingHomeQuickActionFocus.current = id;
     switch (id) {
       case "purchase-request": openProjectPurchaseRequests("chat", true); break;
@@ -14035,8 +14571,13 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       case "gallery": openProjectGallery("chat"); break;
       case "memory": openProjectMemory("chat"); break;
       case "search": openProjectSearch(); break;
-      case "build": keyboard.hide(); setSelectedBuiltArtifactId(null); onOpenSheet("build"); break;
-      default: setDraft(label);
+      case "build": keyboard.hide(); openBuild({ kind: "chat", selector: '[data-testid="quick-action-build"]' }); break;
+      default: {
+        const currentDraftExists = hasVisibleProjectTaskText(draft);
+        if (!currentDraftExists) setDraft("صورت‌جلسهٔ کارگاه امروز را با تصمیم‌ها و اقدام‌های بعدی آماده کن.");
+        setComposerActionStatus(currentDraftExists ? "پیش‌نویس فعلی حفظ شد؛ شروع‌کنندهٔ صورت‌جلسه جایگزینش نکرد." : "شروع‌کنندهٔ صورت‌جلسه در پیش‌نویس قرار گرفت.");
+        window.requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('[data-testid="composer-input"]')?.focus());
+      }
     }
   };
 
@@ -14363,8 +14904,17 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       const reconciliation = ++latestReconciliation;
       setProjectMemoryEnvelope(emptyProjectMemoryEnvelope());
       setProjectMemoriesReadError(true);
+      setProjectMemoriesLoading(true);
       void migrateStoredProjectMemoriesWithLock().then((result) => {
-        if (active && reconciliation === latestReconciliation) refreshProjectMemoryStateAfterConflict(result);
+        if (active && reconciliation === latestReconciliation) {
+          refreshProjectMemoryStateAfterConflict(result);
+          setProjectMemoriesLoading(false);
+        }
+      }).catch(() => {
+        if (active && reconciliation === latestReconciliation) {
+          setProjectMemoriesReadError(true);
+          setProjectMemoriesLoading(false);
+        }
       });
     };
     const handleProjectMemoryStorage = (event: StorageEvent) => {
@@ -14697,80 +15247,41 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     });
   };
 
-  const persistProjectTasks = (nextTasks: ProjectTaskRecord[]) => {
-    if (projectTasksReadError) return false;
-    try {
-      window.localStorage.setItem(projectTasksStorageKey, JSON.stringify(nextTasks));
-    } catch {
-      return false;
-    }
-    setProjectTasks(nextTasks);
-    return true;
+  const applyProjectTaskMutationResult = (result: ProjectTaskMutationResult) => {
+    const latest = readProjectTaskState(projectTaskAuthoritySnapshot());
+    setProjectTaskState(latest);
+    return latest.status === "ready" && latest.envelope
+      ? { ...result, envelope: latest.envelope }
+      : { status: "read-failure", reason: latest.reason || "post-command-state-not-ready" } as ProjectTaskMutationResult;
   };
 
-  const createProjectTask = (taskDraft: ProjectTaskDraft) => {
-    const timestamp = new Date().toISOString();
-    const taskId = `task-${window.crypto.randomUUID()}`;
-    const record = {
-      id: taskId,
-      projectId: activeProject.id,
-      title: taskDraft.title.trim(),
-      currentStep: taskDraft.currentStep.trim(),
-      dueDate: taskDraft.dueDate.trim() || null,
-      status: "in-progress",
-      source: "ثبت مستقیم شما",
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      completedAt: null,
-      history: [{ id: `task-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-    } satisfies ProjectTaskRecord;
-    return persistProjectTasks([...projectTasks, record]);
+  const createProjectTask = async (projectId: string, taskDraft: ProjectTaskDraft, idempotencyKey: string): Promise<ProjectTaskMutationResult> => {
+    if (projectTaskState.status !== "ready" || !projectTaskState.envelope) return { status: "read-failure", reason: "task-store-not-ready" };
+    const taskId = projectTaskIdForIdempotencyKey(idempotencyKey);
+    const command = { inputSchemaVersion: 1, action: "create-task", projectId, taskId, draft: taskDraft, expectedStoreVersion: projectTaskState.envelope.storeVersion, idempotencyKey } as const;
+    let result = await executeProjectTaskCommand(command, projectTaskAuthoritySnapshot);
+    if (result.status === "version-conflict" && result.envelope) result = await executeProjectTaskCommand({ ...command, expectedStoreVersion: result.envelope.storeVersion }, projectTaskAuthoritySnapshot);
+    return applyProjectTaskMutationResult(result);
   };
 
-  const updateProjectTask = (taskId: string, taskDraft: ProjectTaskDraft) => {
-    const title = taskDraft.title.trim();
-    const currentStep = taskDraft.currentStep.trim();
-    const dueDate = taskDraft.dueDate.trim() || null;
-    const timestamp = new Date().toISOString();
-    let changed = false;
-    const nextTasks = projectTasks.map((task) => {
-      if (task.id !== taskId || task.projectId !== activeProject.id) return task;
-      if (task.title === title && task.currentStep === currentStep && task.dueDate === dueDate) return task;
-      changed = true;
-      const version = task.version + 1;
-      return {
-        ...task,
-        title,
-        currentStep,
-        dueDate,
-        version,
-        updatedAt: timestamp,
-        history: [...task.history, { id: `task-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }],
-      } satisfies ProjectTaskRecord;
-    });
-    return changed ? persistProjectTasks(nextTasks) : true;
-  };
+  const updateProjectTask = async (projectId: string, taskId: string, taskDraft: ProjectTaskDraft, expectedTaskVersion: number, idempotencyKey: string): Promise<ProjectTaskMutationResult> => applyProjectTaskMutationResult(await executeProjectTaskCommand({
+    inputSchemaVersion: 1,
+    action: "update-task",
+    projectId,
+    taskId,
+    draft: taskDraft,
+    expectedTaskVersion,
+    idempotencyKey,
+  }, projectTaskAuthoritySnapshot));
 
-  const changeProjectTaskStatus = (taskId: string, nextStatus: ProjectTaskStatus) => {
-    const timestamp = new Date().toISOString();
-    const nextTasks = projectTasks.map((task) => {
-      if (task.id !== taskId || task.projectId !== activeProject.id || task.status === nextStatus) return task;
-      const version = task.version + 1;
-      const eventType = nextStatus === "completed" ? "completed" : "reopened";
-      return {
-        ...task,
-        status: nextStatus,
-        version,
-        updatedAt: timestamp,
-        completedAt: nextStatus === "completed" ? timestamp : null,
-        history: [...task.history, { id: `task-event-${window.crypto.randomUUID()}`, type: eventType, actor: "شما", at: timestamp, version }],
-      } satisfies ProjectTaskRecord;
-    });
-    return persistProjectTasks(nextTasks);
-  };
+  const changeProjectTaskStatus = async (projectId: string, taskId: string, nextStatus: ProjectTaskStatus, expectedTaskVersion: number, idempotencyKey: string): Promise<ProjectTaskMutationResult> => applyProjectTaskMutationResult(await executeProjectTaskCommand({
+    inputSchemaVersion: 1,
+    action: nextStatus === "completed" ? "complete-task" : "reopen-task",
+    projectId,
+    taskId,
+    expectedTaskVersion,
+    idempotencyKey,
+  }, projectTaskAuthoritySnapshot));
 
   const writeProjectBackbone = (nextEnvelope: ProjectBackboneEnvelope) => {
     try {
@@ -15177,21 +15688,9 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     return { status: "updated", monitorId };
   });
 
-  const persistProjectPurchaseRequests = (nextRequests: ProjectPurchaseRequestRecord[]) => {
-    if (projectPurchaseRequestsReadError) return false;
-    try {
-      if (nextRequests.length === 0) window.localStorage.removeItem(projectPurchaseRequestsStorageKey);
-      else window.localStorage.setItem(projectPurchaseRequestsStorageKey, JSON.stringify(nextRequests));
-    } catch {
-      return false;
-    }
-    setProjectPurchaseRequests(nextRequests);
-    return true;
-  };
-
-  const recoverProjectPurchaseRequests = (): ProjectPurchaseRequestsRecoveryResult => {
+  const recoverProjectPurchaseRequests = async (): Promise<ProjectPurchaseRequestsRecoveryResult> => {
     if (!projectPurchaseRequestsReadError) return { status: "not-needed" };
-    const result = recoverStoredProjectPurchaseRequests();
+    const result = await recoverStoredProjectPurchaseRequests();
     if (result.status === "reloaded" || result.status === "reset") {
       setProjectPurchaseRequests(result.records);
       setProjectPurchaseRequestsReadError(false);
@@ -15199,334 +15698,243 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     return result;
   };
 
-  const createProjectPurchaseRequest = (requestDraft: PurchaseRequestDraft) => {
-    const rawNeed = requestDraft.rawNeed.trim();
-    if (!hasVisibleProjectTaskText(rawNeed)) return null;
-    if (requestDraft.requestKind === "product" && (requestDraft.items.length < 1 || requestDraft.items.length > 8)) return null;
-    const normalizedProductQuantities = requestDraft.requestKind === "product"
-      ? requestDraft.items.map((draft) => draft.quantity ? normalizeProjectNumber(draft.quantity, false) : "")
-      : [];
-    if (normalizedProductQuantities.some((quantity) => quantity === null || Boolean(quantity && Number(quantity) <= 0))) return null;
-    const timestamp = new Date().toISOString();
-    const requestId = `purchase-request-${window.crypto.randomUUID()}`;
-    const items: ProductRequestItem[] = requestDraft.requestKind === "product" ? requestDraft.items.map((draft, index) => {
-      const normalizedQuantity = normalizedProductQuantities[index] ?? "";
-      const name = normalizeOptionalPurchaseRequestText(draft.itemName);
-      const unit = purchaseRequestUnits.includes(draft.unit as PurchaseRequestUnit) ? draft.unit as PurchaseRequestUnit : null;
-      return {
-        id: draft.id.startsWith("purchase-item-") ? draft.id : `purchase-item-${window.crypto.randomUUID()}`,
-        name,
-        quantity: normalizedQuantity || null,
-        unit,
-        brandOrGrade: normalizeOptionalPurchaseRequestText(draft.brandOrGrade),
-        specification: normalizeOptionalPurchaseRequestText(draft.specification),
-        alternatives: purchaseRequestAlternativesFromLabel(draft.alternatives),
-        source: "ثبت مستقیم شما",
-        confidence: null,
-        completionStatus: name && normalizedQuantity && unit ? "complete" : "incomplete",
-        version: 1,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        history: [{ id: `purchase-item-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-      };
-    }) : [];
-    const serviceFields = {
-      scope: normalizeOptionalPurchaseRequestText(requestDraft.serviceScope),
-      location: normalizeOptionalPurchaseRequestText(requestDraft.serviceLocation),
-      sizeOrVolume: normalizeOptionalPurchaseRequestText(requestDraft.serviceSizeOrVolume),
-      qualification: normalizeOptionalPurchaseRequestText(requestDraft.serviceQualification),
-      timing: normalizeOptionalPurchaseRequestText(requestDraft.serviceTiming),
-      method: normalizeOptionalPurchaseRequestText(requestDraft.serviceMethod),
-      inScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceInScope),
-      outOfScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceOutOfScope),
-      warranty: normalizeOptionalPurchaseRequestText(requestDraft.serviceWarranty),
-      paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.servicePaymentTerms),
-    };
-    const service: ServiceRequestSpec | null = requestDraft.requestKind === "service" ? {
-      id: `purchase-service-${window.crypto.randomUUID()}`,
-      ...serviceFields,
-      locationPrecision: "area-or-project-section",
-      source: "ثبت مستقیم شما",
-      confidence: null,
-      completionStatus: serviceFields.scope && serviceFields.location ? "complete" : "incomplete",
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      history: [{ id: `purchase-service-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-    } : null;
-    const record: ProjectPurchaseRequestRecord = {
-      schemaVersion: 2,
-      id: requestId,
-      projectId: activeProject.id,
-      requestKind: requestDraft.requestKind,
-      rawNeed: { text: rawNeed, source: "ثبت مستقیم شما", capturedAt: timestamp },
-      items,
-      item: items[0] ?? null,
-      service,
-      delivery: {
-        city: "تهران",
-        area: normalizeOptionalPurchaseRequestText(requestDraft.deliveryArea) ?? "نامشخص",
-        exactAddressShared: false,
-        neededBy: normalizeOptionalPurchaseRequestText(requestDraft.neededBy),
-      },
-      unresolvedTerms: {
-        transport: normalizeOptionalPurchaseRequestText(requestDraft.transport) ?? "unknown",
-        tax: normalizeOptionalPurchaseRequestText(requestDraft.tax) ?? "unknown",
-        paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.paymentTerms) ?? "unknown",
-      },
-      clarificationAnswers: [],
-      reviewRevisions: [],
-      migration: null,
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
-      sharingStatus: "ارسال نشده",
-      status: "draft",
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      readyAt: null,
-      history: [{ id: `purchase-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-    };
-    record.clarificationAnswers = reconcilePurchaseRequestClarifications(record, [], timestamp);
-    return persistProjectPurchaseRequests([...projectPurchaseRequests, record]) ? requestId : null;
-  };
-
-  const updateProjectPurchaseRequest = (requestId: string, requestDraft: PurchaseRequestDraft) => {
-    const rawNeed = requestDraft.rawNeed.trim();
-    if (!hasVisibleProjectTaskText(rawNeed)) return false;
-    const timestamp = new Date().toISOString();
-    let updated = false;
-    const nextRequests = projectPurchaseRequests.map((request) => {
-      if (request.id !== requestId || request.projectId !== activeProject.id || request.status !== "draft" || request.requestKind !== requestDraft.requestKind) return request;
-      const version = request.version + 1;
-      const items: ProductRequestItem[] = request.requestKind === "product" ? requestDraft.items.map((draft) => {
-        const normalizedQuantity = draft.quantity ? normalizeProjectNumber(draft.quantity, false) : "";
-        if (normalizedQuantity === null || (normalizedQuantity && Number(normalizedQuantity) <= 0)) return null;
-        const existing = request.items.find((item) => item.id === draft.id);
-        const name = normalizeOptionalPurchaseRequestText(draft.itemName);
-        const unit = purchaseRequestUnits.includes(draft.unit as PurchaseRequestUnit) ? draft.unit as PurchaseRequestUnit : null;
-        const nextValues = { name, quantity: normalizedQuantity || null, unit, brandOrGrade: normalizeOptionalPurchaseRequestText(draft.brandOrGrade), specification: normalizeOptionalPurchaseRequestText(draft.specification), alternatives: purchaseRequestAlternativesFromLabel(draft.alternatives) };
-        if (!existing) return { id: `purchase-item-${window.crypto.randomUUID()}`, ...nextValues, source: "ثبت مستقیم شما", confidence: null, completionStatus: name && normalizedQuantity && unit ? "complete" : "incomplete", version: 1, createdAt: timestamp, updatedAt: timestamp, history: [{ id: `purchase-item-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }] } satisfies ProductRequestItem;
-        const changed = JSON.stringify(nextValues) !== JSON.stringify({ name: existing.name, quantity: existing.quantity, unit: existing.unit, brandOrGrade: existing.brandOrGrade, specification: existing.specification, alternatives: existing.alternatives });
-        if (!changed) return existing;
-        const itemVersion = existing.version + 1;
-        return { ...existing, ...nextValues, source: "ثبت مستقیم شما", completionStatus: name && normalizedQuantity && unit ? "complete" : "incomplete", version: itemVersion, updatedAt: timestamp, history: [...existing.history, { id: `purchase-item-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version: itemVersion }] } satisfies ProductRequestItem;
-      }).filter((item): item is ProductRequestItem => item !== null) : [];
-      if (request.requestKind === "product" && items.length !== requestDraft.items.length) return request;
-      const nextServiceValues = {
-        scope: normalizeOptionalPurchaseRequestText(requestDraft.serviceScope),
-        location: normalizeOptionalPurchaseRequestText(requestDraft.serviceLocation),
-        sizeOrVolume: normalizeOptionalPurchaseRequestText(requestDraft.serviceSizeOrVolume),
-        qualification: normalizeOptionalPurchaseRequestText(requestDraft.serviceQualification),
-        timing: normalizeOptionalPurchaseRequestText(requestDraft.serviceTiming),
-        method: normalizeOptionalPurchaseRequestText(requestDraft.serviceMethod),
-        inScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceInScope),
-        outOfScope: normalizeOptionalPurchaseRequestText(requestDraft.serviceOutOfScope),
-        warranty: normalizeOptionalPurchaseRequestText(requestDraft.serviceWarranty),
-        paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.servicePaymentTerms),
-      };
-      let service = request.service;
-      if (request.requestKind === "service" && service) {
-        const changed = JSON.stringify(nextServiceValues) !== JSON.stringify({ scope: service.scope, location: service.location, sizeOrVolume: service.sizeOrVolume, qualification: service.qualification, timing: service.timing, method: service.method, inScope: service.inScope, outOfScope: service.outOfScope, warranty: service.warranty, paymentTerms: service.paymentTerms });
-        if (changed) {
-          const serviceVersion = service.version + 1;
-          service = { ...service, ...nextServiceValues, source: "ثبت مستقیم شما", completionStatus: nextServiceValues.scope && nextServiceValues.location ? "complete" : "incomplete", version: serviceVersion, updatedAt: timestamp, history: [...service.history, { id: `purchase-service-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version: serviceVersion }] };
-        }
-      }
-      const candidate: ProjectPurchaseRequestRecord = {
-        ...request,
-        rawNeed: { ...request.rawNeed, text: rawNeed },
-        items,
-        item: items[0] ?? null,
-        service,
-        delivery: { ...request.delivery, area: normalizeOptionalPurchaseRequestText(requestDraft.deliveryArea) ?? "نامشخص", neededBy: normalizeOptionalPurchaseRequestText(requestDraft.neededBy) },
-        unresolvedTerms: { transport: normalizeOptionalPurchaseRequestText(requestDraft.transport) ?? "unknown", tax: normalizeOptionalPurchaseRequestText(requestDraft.tax) ?? "unknown", paymentTerms: normalizeOptionalPurchaseRequestText(requestDraft.paymentTerms) ?? "unknown" },
-        version,
-        updatedAt: timestamp,
-        history: [...request.history, { id: `purchase-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }],
-      };
-      candidate.clarificationAnswers = reconcilePurchaseRequestClarifications(candidate, request.clarificationAnswers, timestamp);
-      const comparableBefore = { rawNeed: request.rawNeed.text, items: request.items, service: request.service, delivery: request.delivery, unresolvedTerms: request.unresolvedTerms };
-      const comparableAfter = { rawNeed, items: candidate.items, service: candidate.service, delivery: candidate.delivery, unresolvedTerms: candidate.unresolvedTerms };
-      if (JSON.stringify(stablePurchaseRequestValue(comparableBefore)) === JSON.stringify(stablePurchaseRequestValue(comparableAfter))) {
-        updated = true;
-        return request;
-      }
-      updated = true;
-      return candidate;
-    });
-    return updated && persistProjectPurchaseRequests(nextRequests);
-  };
-
-  const markProjectPurchaseRequestReady = (requestId: string) => {
-    const timestamp = new Date().toISOString();
-    let updated = false;
-    const nextRequests = projectPurchaseRequests.map((request) => {
-      if (request.id !== requestId || request.projectId !== activeProject.id || request.status !== "draft" || purchaseRequestMissingFields(request).length > 0) return request;
-      updated = true;
-      const version = request.version + 1;
-      const candidate: ProjectPurchaseRequestRecord = {
-        ...request,
-        status: "ready-for-review",
-        version,
-        updatedAt: timestamp,
-        readyAt: timestamp,
-        history: [...request.history, { id: `purchase-event-${window.crypto.randomUUID()}`, type: "marked-ready-for-review", actor: "شما", at: timestamp, version }],
-      };
-      const snapshot = purchaseRequestApprovalSnapshot(candidate);
-      const shareableFields = purchaseRequestApprovalShareableFields(candidate);
-      candidate.reviewRevisions = [...request.reviewRevisions, { id: `purchase-review-${window.crypto.randomUUID()}`, requestVersion: version, createdAt: timestamp, snapshot, shareableFields, fingerprint: purchaseRequestRevisionFingerprint(snapshot, shareableFields) }];
-      return candidate;
-    });
-    return updated && persistProjectPurchaseRequests(nextRequests);
-  };
-
-  const persistProjectApprovals = (nextApprovals: ProjectApprovalRecord[]) => {
-    if (projectApprovalsReadError || projectPurchaseRequestsReadError) return false;
-    try {
-      if (nextApprovals.length === 0) window.localStorage.removeItem(projectApprovalsStorageKey);
-      else window.localStorage.setItem(projectApprovalsStorageKey, JSON.stringify(nextApprovals));
-    } catch {
-      return false;
+  const refreshProjectPurchaseRequestsFromMutation = (result: ProjectPurchaseRequestMutationResult) => {
+    if (result.records) {
+      setProjectPurchaseRequests(result.records);
+      setProjectPurchaseRequestsReadError(false);
+    } else if (result.status === "read-failure") {
+      setProjectPurchaseRequestsReadError(true);
     }
-    setProjectApprovals(nextApprovals);
-    return true;
+    return result;
   };
 
-  const createProjectApproval = (requestId: string) => {
-    if (projectApprovalsReadError || projectPurchaseRequestsReadError) return null;
-    const request = projectPurchaseRequests.find((item) => item.id === requestId && item.projectId === activeProject.id);
-    if (!request || request.status !== "ready-for-review" || purchaseRequestMissingFields(request).length > 0) return null;
-    const dedupeKey = purchaseRequestApprovalDedupeKey(activeProject.id, request.id, request.version);
-    const existingApproval = projectApprovals.find((approval) => approval.dedupeKey === dedupeKey);
-    if (existingApproval) return existingApproval.id;
-    const revision = request.reviewRevisions.find((item) => item.requestVersion === request.version && item.createdAt === request.updatedAt);
-    if (!revision) return null;
-    const timestamp = new Date().toISOString();
-    const approvalId = `approval-${window.crypto.randomUUID()}`;
-    const record = {
-      schemaVersion: 2,
-      id: approvalId,
-      projectId: activeProject.id,
-      purpose: "review-purchase-request-version",
-      target: { type: "purchase-request", id: request.id, version: request.version, updatedAt: request.updatedAt, revisionId: revision.id },
-      dedupeKey,
-      snapshot: structuredClone(revision.snapshot),
-      privacySnapshot: {
-        shareableFields: [...revision.shareableFields],
-        projectNameShared: false,
-        exactAddressShared: false,
-        budgetShared: false,
-        filesShared: false,
-        memoryShared: false,
-      },
-      externalEffect: "none",
-      destination: null,
-      sendAuthorized: false,
-      status: "pending",
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
-      requestedBy: "شما",
-      decidedBy: null,
-      requestedAt: timestamp,
-      updatedAt: timestamp,
-      decidedAt: null,
-      version: 1,
-      history: [{ id: `approval-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-    } satisfies ProjectApprovalRecord;
-    return persistProjectApprovals([...projectApprovals, record]) ? approvalId : null;
+  const createProjectPurchaseRequest = async (projectId: string, requestDraft: PurchaseRequestDraft, idempotencyKey: string) => {
+    const normalizedDraft = normalizedPurchaseRequestDraftForCommand(requestDraft);
+    const result = await executeProjectPurchaseRequestCommand({ inputSchemaVersion: 1, action: "create-request", projectId, requestId: purchaseRequestIdForIdempotencyKey(idempotencyKey), draft: normalizedDraft, idempotencyKey }, projectTaskAuthoritySnapshot);
+    return refreshProjectPurchaseRequestsFromMutation(result);
   };
 
-  const confirmProjectPurchaseRequestForRecipients = (requestId: string) => {
-    if (projectApprovalsReadError || projectPurchaseRequestsReadError) return null;
-    const request = projectPurchaseRequests.find((item) => item.id === requestId && item.projectId === activeProject.id);
-    if (!request || request.status !== "draft" || purchaseRequestMissingFields(request).length > 0) return null;
-    const timestamp = new Date().toISOString();
-    const requestVersion = request.version + 1;
-    const readyRequest: ProjectPurchaseRequestRecord = {
-      ...request,
-      status: "ready-for-review",
-      version: requestVersion,
-      updatedAt: timestamp,
-      readyAt: timestamp,
-      history: [...request.history, { id: `purchase-event-${window.crypto.randomUUID()}`, type: "marked-ready-for-review", actor: "شما", at: timestamp, version: requestVersion }],
-    };
-    const snapshot = purchaseRequestApprovalSnapshot(readyRequest);
-    const shareableFields = purchaseRequestApprovalShareableFields(readyRequest);
-    const reviewRevision = { id: `purchase-review-${window.crypto.randomUUID()}`, requestVersion, createdAt: timestamp, snapshot, shareableFields, fingerprint: purchaseRequestRevisionFingerprint(snapshot, shareableFields) };
-    readyRequest.reviewRevisions = [...request.reviewRevisions, reviewRevision];
+  const updateProjectPurchaseRequest = async (projectId: string, requestId: string, requestDraft: PurchaseRequestDraft, expectedRequestVersion: number, idempotencyKey: string) => {
+    const normalizedDraft = normalizedPurchaseRequestDraftForCommand(requestDraft);
+    const result = await executeProjectPurchaseRequestCommand({ inputSchemaVersion: 1, action: "update-request", projectId, requestId, draft: normalizedDraft, expectedRequestVersion, idempotencyKey }, projectTaskAuthoritySnapshot);
+    return refreshProjectPurchaseRequestsFromMutation(result);
+  };
 
-    const approvalId = `approval-${window.crypto.randomUUID()}`;
-    const approvalRecord = {
-      schemaVersion: 2,
-      id: approvalId,
-      projectId: activeProject.id,
-      purpose: "review-purchase-request-version",
-      target: { type: "purchase-request", id: readyRequest.id, version: readyRequest.version, updatedAt: readyRequest.updatedAt, revisionId: reviewRevision.id },
-      dedupeKey: purchaseRequestApprovalDedupeKey(activeProject.id, readyRequest.id, readyRequest.version),
-      snapshot: structuredClone(reviewRevision.snapshot),
-      privacySnapshot: {
-        shareableFields: [...reviewRevision.shareableFields],
-        projectNameShared: false,
-        exactAddressShared: false,
-        budgetShared: false,
-        filesShared: false,
-        memoryShared: false,
-      },
-      externalEffect: "none",
-      destination: null,
-      sendAuthorized: false,
-      status: "approved",
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
-      requestedBy: "شما",
-      decidedBy: "شما",
-      requestedAt: timestamp,
-      updatedAt: timestamp,
-      decidedAt: timestamp,
-      version: 2,
-      history: [
-        { id: `approval-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 },
-        { id: `approval-event-${window.crypto.randomUUID()}`, type: "approved", actor: "شما", at: timestamp, version: 2 },
-      ],
-    } satisfies ProjectApprovalRecord;
+  const markProjectPurchaseRequestReady = async (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string) => {
+    const result = await executeProjectPurchaseRequestCommand({ inputSchemaVersion: 1, action: "mark-ready", projectId, requestId, expectedRequestVersion, idempotencyKey }, projectTaskAuthoritySnapshot);
+    return refreshProjectPurchaseRequestsFromMutation(result);
+  };
 
-    const nextRequests = projectPurchaseRequests.map((item) => item.id === readyRequest.id ? readyRequest : item);
-    const nextApprovals = [...projectApprovals, approvalRecord];
-    let previousRequests: string | null = null;
-    let previousApprovals: string | null = null;
-    try {
-      previousRequests = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
-      previousApprovals = window.localStorage.getItem(projectApprovalsStorageKey);
-      window.localStorage.setItem(projectPurchaseRequestsStorageKey, JSON.stringify(nextRequests));
-      window.localStorage.setItem(projectApprovalsStorageKey, JSON.stringify(nextApprovals));
-    } catch {
+  const returnProjectPurchaseRequestToDraft = async (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string) => {
+    const result = await executeProjectPurchaseRequestCommand({ inputSchemaVersion: 1, action: "return-to-draft", projectId, requestId, expectedRequestVersion, idempotencyKey }, projectTaskAuthoritySnapshot);
+    return refreshProjectPurchaseRequestsFromMutation(result);
+  };
+
+  const createProjectApproval = async (projectId: string, requestId: string, expectedRequestVersion: number): Promise<ProjectPurchaseRequestMutationResult> => {
+    const result = await withProjectPurchaseRequestsWriteLock<ProjectPurchaseRequestMutationResult>({ status: "lock-unavailable", reason: "lock-unavailable" }, () => {
+      if (projectApprovalsReadError || projectPurchaseRequestsReadError) return { status: "read-failure", reason: "dependent-store-locked" };
+      const authority = projectTaskAuthoritySnapshot();
+      if (!projectPurchaseRequestAuthorityIsValid(authority)) return { status: "read-failure", reason: "foundation-invalid" };
+      const current = readProjectPurchaseRequestsForMutation(authority);
+      if (!current) return { status: "read-failure", reason: "request-store-invalid" };
+      if (!authority.projectIds.includes(projectId)) return { status: "scope-mismatch", records: current.records, reason: "project-not-authorized" };
+      const request = current.records.find((item) => item.id === requestId);
+      if (!request) return { status: "not-found", records: current.records, reason: "request-not-found" };
+      if (request.projectId !== projectId) return { status: "scope-mismatch", records: current.records, reason: "request-project-mismatch" };
+      if (request.version !== expectedRequestVersion) return { status: "version-conflict", records: current.records, requestId, reason: "request-version-stale" };
+      if (request.status !== "ready-for-review" || purchaseRequestMissingFields(request).length > 0) return { status: "unsupported-transition", records: current.records, requestId, reason: "request-not-ready" };
+
+      let previousApprovalsRaw: string | null;
       try {
-        if (previousRequests === null) window.localStorage.removeItem(projectPurchaseRequestsStorageKey);
-        else window.localStorage.setItem(projectPurchaseRequestsStorageKey, previousRequests);
-        if (previousApprovals === null) window.localStorage.removeItem(projectApprovalsStorageKey);
-        else window.localStorage.setItem(projectApprovalsStorageKey, previousApprovals);
+        previousApprovalsRaw = window.localStorage.getItem(projectApprovalsStorageKey);
       } catch {
-        // In-memory state remains unchanged, so the UI never reports a successful confirmation.
+        return { status: "read-failure", records: current.records, requestId, reason: "approval-read-failure" };
       }
-      return null;
+      const approvalRead = parseStoredProjectApprovals(previousApprovalsRaw, { records: current.records, readError: false });
+      if (approvalRead.readError) return { status: "read-failure", records: current.records, requestId, reason: "approval-store-invalid" };
+      const dedupeKey = purchaseRequestApprovalDedupeKey(projectId, request.id, request.version);
+      const existingApproval = approvalRead.records.find((approval) => approval.dedupeKey === dedupeKey);
+      if (existingApproval) return { status: "unchanged", records: current.records, requestId, approvalId: existingApproval.id };
+      const revision = request.reviewRevisions.find((item) => item.requestVersion === request.version && item.createdAt === request.updatedAt);
+      if (!revision) return { status: "schema-invalid", records: current.records, requestId, reason: "review-revision-missing" };
+      const timestamp = new Date(Math.max(Date.now(), Date.parse(request.updatedAt) + 1)).toISOString();
+      const approvalId = `approval-${window.crypto.randomUUID()}`;
+      const record = {
+        schemaVersion: 2,
+        id: approvalId,
+        projectId,
+        purpose: "review-purchase-request-version",
+        target: { type: "purchase-request", id: request.id, version: request.version, updatedAt: request.updatedAt, revisionId: revision.id },
+        dedupeKey,
+        snapshot: structuredClone(revision.snapshot),
+        privacySnapshot: { shareableFields: [...revision.shareableFields], projectNameShared: false, exactAddressShared: false, budgetShared: false, filesShared: false, memoryShared: false },
+        externalEffect: "none",
+        destination: null,
+        sendAuthorized: false,
+        status: "pending",
+        visibility: "خصوصی پروژه",
+        localStatus: "ثبت محلی",
+        requestedBy: "شما",
+        decidedBy: null,
+        requestedAt: timestamp,
+        updatedAt: timestamp,
+        decidedAt: null,
+        version: 1,
+        history: [{ id: `approval-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
+      } satisfies ProjectApprovalRecord;
+      const nextApprovals = [...approvalRead.records, record];
+      const candidateRaw = JSON.stringify(nextApprovals);
+      const candidateRead = parseStoredProjectApprovals(candidateRaw, { records: current.records, readError: false });
+      if (candidateRead.readError || JSON.stringify(candidateRead.records) !== candidateRaw) return { status: "schema-invalid", records: current.records, requestId, reason: "approval-candidate-invalid" };
+      try {
+        if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== current.raw || window.localStorage.getItem(projectApprovalsStorageKey) !== previousApprovalsRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || projectTaskAuthoritySnapshot()?.snapshotHash !== authority.snapshotHash) return { status: "version-conflict", records: current.records, requestId, reason: "preimage-changed" };
+        window.localStorage.setItem(projectApprovalsStorageKey, candidateRaw);
+        const readbackRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+        const readback = parseStoredProjectApprovals(readbackRaw, { records: current.records, readError: false });
+        if (readbackRaw === candidateRaw && !readback.readError && window.localStorage.getItem(projectPurchaseRequestsStorageKey) === current.raw && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null && projectTaskAuthoritySnapshot()?.snapshotHash === authority.snapshotHash) return { status: "created", records: current.records, requestId, approvalId };
+        return restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateRaw)
+          ? { status: "write-failure", records: current.records, requestId, reason: "approval-readback-failure" }
+          : { status: "read-failure", records: current.records, requestId, reason: "approval-rollback-failure" };
+      } catch {
+        return restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateRaw)
+          ? { status: "write-failure", records: current.records, requestId, reason: "approval-persistence-failure" }
+          : { status: "read-failure", records: current.records, requestId, reason: "approval-rollback-failure" };
+      }
+    });
+    if (result.records) {
+      setProjectPurchaseRequests(result.records);
+      setProjectPurchaseRequestsReadError(false);
+      const approvalsRead = readStoredProjectApprovals({ records: result.records, readError: false });
+      setProjectApprovals(approvalsRead.records);
+      setProjectApprovalsReadError(approvalsRead.readError);
     }
-    setProjectPurchaseRequests(nextRequests);
-    setProjectApprovals(nextApprovals);
-    return approvalId;
+    return result;
   };
 
-  const decideProjectApproval = (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => {
-    if (projectApprovalsReadError || projectPurchaseRequestsReadError) return false;
-    const timestamp = new Date().toISOString();
-    let updated = false;
-    const nextApprovals = projectApprovals.map((approval) => {
-      if (approval.id !== approvalId || approval.projectId !== activeProject.id || approval.status !== "pending") return approval;
-      const targetRequest = projectPurchaseRequests.find((request) => request.id === approval.target.id && request.projectId === activeProject.id);
-      if (!targetRequest || targetRequest.status !== "ready-for-review" || targetRequest.version !== approval.target.version || !approvalSnapshotMatchesRevision(approval, targetRequest)) return approval;
-      updated = true;
+  const confirmProjectPurchaseRequestForRecipients = async (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string): Promise<ProjectPurchaseRequestMutationResult> => {
+    const result = await withProjectPurchaseRequestsWriteLock<ProjectPurchaseRequestMutationResult>({ status: "lock-unavailable", reason: "lock-unavailable" }, () => {
+      const command = { inputSchemaVersion: 1, action: "confirm-for-recipients", projectId, requestId, expectedRequestVersion, idempotencyKey } as const;
+      if (!hasExactObjectKeys(command, ["inputSchemaVersion", "action", "projectId", "requestId", "expectedRequestVersion", "idempotencyKey"]) || !projectId || projectId.trim() !== projectId || !requestId || requestId.trim() !== requestId || !Number.isInteger(expectedRequestVersion) || expectedRequestVersion < 1 || !idempotencyKey || idempotencyKey.trim() !== idempotencyKey || idempotencyKey.length > 200) return { status: "schema-invalid", reason: "command-invalid" };
+      const authority = projectTaskAuthoritySnapshot();
+      if (!projectPurchaseRequestAuthorityIsValid(authority)) return { status: "read-failure", reason: "foundation-invalid" };
+      const current = readProjectPurchaseRequestsForMutation(authority);
+      if (!current) return { status: "read-failure", reason: "request-store-invalid" };
+      const payloadHash = purchaseRequestCommandPayloadHash(command);
+      const existingReceipt = current.records.flatMap((request) => request.mutationReceipts).find((receipt) => receipt.key === idempotencyKey);
+      if (existingReceipt) {
+        if (existingReceipt.action !== command.action || existingReceipt.payloadHash !== payloadHash || existingReceipt.projectId !== projectId || existingReceipt.requestId !== requestId || existingReceipt.expectedRequestVersion !== expectedRequestVersion || !existingReceipt.relatedApprovalId) return { status: "idempotency-payload-mismatch", records: current.records, reason: "idempotency-key-reused" };
+        const replayApprovals = readStoredProjectApprovals({ records: current.records, readError: false });
+        return !replayApprovals.readError && replayApprovals.records.some((approval) => approval.id === existingReceipt.relatedApprovalId)
+          ? { status: "updated", records: current.records, requestId, approvalId: existingReceipt.relatedApprovalId }
+          : { status: "read-failure", records: current.records, reason: "approval-replay-missing" };
+      }
+      if (!authority.projectIds.includes(projectId)) return { status: "scope-mismatch", records: current.records, reason: "project-not-authorized" };
+      const request = current.records.find((item) => item.id === requestId);
+      if (!request) return { status: "not-found", records: current.records, reason: "request-not-found" };
+      if (request.projectId !== projectId) return { status: "scope-mismatch", records: current.records, reason: "request-project-mismatch" };
+      if (request.version !== expectedRequestVersion) return { status: "version-conflict", records: current.records, requestId, reason: "request-version-stale" };
+
+      let previousApprovalsRaw: string | null;
+      try {
+        previousApprovalsRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+      } catch {
+        return { status: "read-failure", records: current.records, reason: "approval-read-failure" };
+      }
+      const approvalRead = parseStoredProjectApprovals(previousApprovalsRaw, { records: current.records, readError: false });
+      if (approvalRead.readError) return { status: "read-failure", records: current.records, reason: "approval-store-invalid" };
+      const timestamp = new Date(Math.max(Date.now(), Date.parse(request.updatedAt) + 1)).toISOString();
+      let readyRequest = markProjectPurchaseRequestRecordReady(request, timestamp);
+      if (!readyRequest) return { status: "unsupported-transition", records: current.records, requestId, reason: "request-not-ready" };
+      const reviewRevision = readyRequest.reviewRevisions.at(-1)!;
+      const approvalId = purchaseRequestApprovalIdForConfirmationKey(idempotencyKey);
+      const approvalRecord = {
+        schemaVersion: 2,
+        id: approvalId,
+        projectId,
+        purpose: "review-purchase-request-version",
+        target: { type: "purchase-request", id: readyRequest.id, version: readyRequest.version, updatedAt: readyRequest.updatedAt, revisionId: reviewRevision.id },
+        dedupeKey: purchaseRequestApprovalDedupeKey(projectId, readyRequest.id, readyRequest.version),
+        snapshot: structuredClone(reviewRevision.snapshot),
+        privacySnapshot: { shareableFields: [...reviewRevision.shareableFields], projectNameShared: false, exactAddressShared: false, budgetShared: false, filesShared: false, memoryShared: false },
+        externalEffect: "none",
+        destination: null,
+        sendAuthorized: false,
+        status: "approved",
+        visibility: "خصوصی پروژه",
+        localStatus: "ثبت محلی",
+        requestedBy: "شما",
+        decidedBy: "شما",
+        requestedAt: timestamp,
+        updatedAt: timestamp,
+        decidedAt: timestamp,
+        version: 2,
+        history: [
+          { id: `approval-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 },
+          { id: `approval-event-${window.crypto.randomUUID()}`, type: "approved", actor: "شما", at: timestamp, version: 2 },
+        ],
+      } satisfies ProjectApprovalRecord;
+      const receipt = finalizePurchaseRequestMutationReceipt({ schemaVersion: 1, key: idempotencyKey, action: "confirm-for-recipients", payloadHash, projectId, requestId, expectedRequestVersion, resultingRequestVersion: readyRequest.version, relatedApprovalId: approvalId, authorizationContextHash: authority.authorizationHashes[projectId], recordedAt: timestamp });
+      readyRequest = { ...readyRequest, mutationReceipts: [...readyRequest.mutationReceipts, receipt] };
+      const nextRequests = current.records.map((item) => item.id === requestId ? readyRequest! : item);
+      const candidateRequestsRaw = JSON.stringify(nextRequests);
+      const candidateRequestsRead = parseStoredProjectPurchaseRequests(candidateRequestsRaw);
+      const nextApprovals = [...approvalRead.records, approvalRecord];
+      const candidateApprovalsRaw = JSON.stringify(nextApprovals);
+      const candidateApprovalsRead = parseStoredProjectApprovals(candidateApprovalsRaw, candidateRequestsRead);
+      if (candidateRequestsRead.readError || candidateApprovalsRead.readError || JSON.stringify(candidateRequestsRead.records) !== candidateRequestsRaw || JSON.stringify(candidateApprovalsRead.records) !== candidateApprovalsRaw) return { status: "schema-invalid", records: current.records, reason: "candidate-invalid" };
+      try {
+        if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== current.raw || window.localStorage.getItem(projectApprovalsStorageKey) !== previousApprovalsRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || projectTaskAuthoritySnapshot()?.snapshotHash !== authority.snapshotHash) return { status: "version-conflict", records: current.records, reason: "preimage-changed" };
+        window.localStorage.setItem(projectPurchaseRequestsStorageKey, candidateRequestsRaw);
+        window.localStorage.setItem(projectApprovalsStorageKey, candidateApprovalsRaw);
+        const readbackRequestsRaw = window.localStorage.getItem(projectPurchaseRequestsStorageKey);
+        const readbackApprovalsRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+        const readbackRequests = parseStoredProjectPurchaseRequests(readbackRequestsRaw);
+        const readbackApprovals = parseStoredProjectApprovals(readbackApprovalsRaw, readbackRequests);
+        if (readbackRequestsRaw === candidateRequestsRaw && readbackApprovalsRaw === candidateApprovalsRaw && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null && projectTaskAuthoritySnapshot()?.snapshotHash === authority.snapshotHash && !readbackRequests.readError && !readbackApprovals.readError) return { status: "updated", records: readbackRequests.records, requestId, approvalId };
+        const approvalRolledBack = restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateApprovalsRaw);
+        const requestRolledBack = restoreOwnedProjectPurchaseRequestBytes(projectPurchaseRequestsStorageKey, current.raw, candidateRequestsRaw);
+        return approvalRolledBack && requestRolledBack ? { status: "write-failure", reason: "readback-failure" } : { status: "read-failure", reason: "rollback-failure" };
+      } catch {
+        const approvalRolledBack = restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateApprovalsRaw);
+        const requestRolledBack = restoreOwnedProjectPurchaseRequestBytes(projectPurchaseRequestsStorageKey, current.raw, candidateRequestsRaw);
+        return approvalRolledBack && requestRolledBack ? { status: "write-failure", reason: "persistence-failure" } : { status: "read-failure", reason: "rollback-failure" };
+      }
+    });
+    if (result.records) {
+      setProjectPurchaseRequests(result.records);
+      setProjectPurchaseRequestsReadError(false);
+      const approvalsRead = readStoredProjectApprovals({ records: result.records, readError: false });
+      setProjectApprovals(approvalsRead.records);
+      setProjectApprovalsReadError(approvalsRead.readError);
+    } else if (result.status === "read-failure") {
+      setProjectPurchaseRequestsReadError(true);
+    }
+    return result;
+  };
+
+  const decideProjectApproval = async (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">): Promise<boolean> => {
+    type DecisionResult = { ok: boolean; requests?: ProjectPurchaseRequestRecord[]; approvals?: ProjectApprovalRecord[]; approvalReadError?: boolean };
+    const result = await withProjectPurchaseRequestsWriteLock<DecisionResult>({ ok: false }, () => {
+      if (projectApprovalsReadError || projectPurchaseRequestsReadError) return { ok: false };
+      const authority = projectTaskAuthoritySnapshot();
+      if (!projectPurchaseRequestAuthorityIsValid(authority)) return { ok: false };
+      const current = readProjectPurchaseRequestsForMutation(authority);
+      if (!current) return { ok: false };
+      let previousApprovalsRaw: string | null;
+      try {
+        previousApprovalsRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+      } catch {
+        return { ok: false };
+      }
+      const approvalRead = parseStoredProjectApprovals(previousApprovalsRaw, { records: current.records, readError: false });
+      if (approvalRead.readError) return { ok: false };
+      const approval = approvalRead.records.find((item) => item.id === approvalId && item.projectId === activeProject.id);
+      if (!approval || approval.status !== "pending") return { ok: false, requests: current.records, approvals: approvalRead.records };
+      const targetRequest = current.records.find((request) => request.id === approval.target.id && request.projectId === activeProject.id);
+      if (!targetRequest || targetRequest.status !== "ready-for-review" || targetRequest.version !== approval.target.version || !approvalSnapshotMatchesRevision(approval, targetRequest)) return { ok: false, requests: current.records, approvals: approvalRead.records };
+      const timestamp = new Date(Math.max(Date.now(), Date.parse(approval.updatedAt) + 1)).toISOString();
       const version = approval.version + 1;
-      return {
+      const decided = {
         ...approval,
         status: decision,
         decidedBy: "شما",
@@ -15535,28 +15943,32 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         version,
         history: [...approval.history, { id: `approval-event-${window.crypto.randomUUID()}`, type: decision, actor: "شما", at: timestamp, version }],
       } satisfies ProjectApprovalRecord;
+      const nextApprovals = approvalRead.records.map((item) => item.id === approval.id ? decided : item);
+      const candidateRaw = JSON.stringify(nextApprovals);
+      const candidateRead = parseStoredProjectApprovals(candidateRaw, { records: current.records, readError: false });
+      if (candidateRead.readError || JSON.stringify(candidateRead.records) !== candidateRaw) return { ok: false, requests: current.records, approvals: approvalRead.records };
+      try {
+        if (window.localStorage.getItem(projectPurchaseRequestsStorageKey) !== current.raw || window.localStorage.getItem(projectApprovalsStorageKey) !== previousApprovalsRaw || window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) !== null || projectTaskAuthoritySnapshot()?.snapshotHash !== authority.snapshotHash) return { ok: false, requests: current.records, approvals: approvalRead.records };
+        window.localStorage.setItem(projectApprovalsStorageKey, candidateRaw);
+        const readbackRaw = window.localStorage.getItem(projectApprovalsStorageKey);
+        const readback = parseStoredProjectApprovals(readbackRaw, { records: current.records, readError: false });
+        if (readbackRaw === candidateRaw && !readback.readError && window.localStorage.getItem(projectPurchaseRequestsStorageKey) === current.raw && window.localStorage.getItem(projectPurchaseRequestsRecoveryIntentKey) === null && projectTaskAuthoritySnapshot()?.snapshotHash === authority.snapshotHash) return { ok: true, requests: current.records, approvals: readback.records };
+        const rolledBack = restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateRaw);
+        return rolledBack ? { ok: false, requests: current.records, approvals: approvalRead.records } : { ok: false, approvalReadError: true };
+      } catch {
+        const rolledBack = restoreOwnedProjectPurchaseRequestBytes(projectApprovalsStorageKey, previousApprovalsRaw, candidateRaw);
+        return rolledBack ? { ok: false, requests: current.records, approvals: approvalRead.records } : { ok: false, approvalReadError: true };
+      }
     });
-    return updated && persistProjectApprovals(nextApprovals);
-  };
-
-  const returnProjectPurchaseRequestToDraft = (requestId: string) => {
-    const timestamp = new Date().toISOString();
-    let updated = false;
-    const nextRequests = projectPurchaseRequests.map((request) => {
-      if (request.id !== requestId || request.projectId !== activeProject.id || request.status !== "ready-for-review") return request;
-      if (projectApprovalsReadError || activeProjectApprovals.some((approval) => approval.target.id === request.id && approval.target.version === request.version && approval.status === "pending")) return request;
-      updated = true;
-      const version = request.version + 1;
-      return {
-        ...request,
-        status: "draft",
-        version,
-        updatedAt: timestamp,
-        readyAt: null,
-        history: [...request.history, { id: `purchase-event-${window.crypto.randomUUID()}`, type: "returned-to-draft", actor: "شما", at: timestamp, version }],
-      } satisfies ProjectPurchaseRequestRecord;
-    });
-    return updated && persistProjectPurchaseRequests(nextRequests);
+    if (result.requests && result.approvals) {
+      setProjectPurchaseRequests(result.requests);
+      setProjectPurchaseRequestsReadError(false);
+      setProjectApprovals(result.approvals);
+      setProjectApprovalsReadError(false);
+    } else if (result.approvalReadError) {
+      setProjectApprovalsReadError(true);
+    }
+    return result.ok;
   };
 
   const persistProjectSupplierContacts = (nextContacts: SupplierContactRecord[]) => {
@@ -16721,7 +17133,17 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         files={activeProjectDocuments}
         storageLocked={projectFilesReadError || sourceStorageLocked}
         initialSelectedId={focusedFileId}
-        onBack={() => { setFocusedFileId(null); setView(filesReturnView); }}
+        backLabel={filesReturnView === "tools" ? "بازگشت به ابزارهای پروژه" : filesReturnView === "search" ? "بازگشت به جست‌وجو" : filesReturnView === "project" ? "بازگشت به فضای پروژه" : "بازگشت به گفت‌وگو"}
+        onBack={() => {
+          setFocusedFileId(null);
+          if (filesReturnView === "tools") {
+            queueBuilderFocus('[data-testid="project-documents-tool"]', "tools");
+            setView("chat");
+            onOpenSheet("tools");
+          } else {
+            setView(filesReturnView);
+          }
+        }}
         onRegister={registerProjectFile}
         onRestoreContent={restoreProjectFileContent}
         onRename={renameProjectFile}
@@ -16772,8 +17194,18 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         files={activeProjectDocuments}
         query={projectSearchQuery}
         readError={projectFilesReadError || projectMemoriesReadError}
+        backLabel={projectSearchReturnView === "tools" ? "بازگشت به ابزارهای پروژه" : "بازگشت به گفت‌وگو"}
         onQueryChange={setProjectSearchQuery}
-        onBack={() => { keyboard.hide(); setView(projectTasksLaunch.returnView); }}
+        onBack={() => {
+          keyboard.hide();
+          if (projectSearchReturnView === "tools") {
+            queueBuilderFocus('[data-testid="source-search-tool"]', "tools");
+            setView("chat");
+            onOpenSheet("tools");
+          } else {
+            setView("chat");
+          }
+        }}
         onOpenMemory={(memoryId) => openProjectMemory("search", memoryId)}
         onOpenFile={(fileId) => openProjectFiles("search", fileId)}
       />
@@ -16797,7 +17229,8 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         initialApprovalId={projectTasksLaunch.approvalId}
         initialDispatchPlanApprovalId={projectTasksLaunch.dispatchPlanApprovalId}
         returnToPurchaseRequestId={projectTasksLaunch.returnToPurchaseRequestId}
-        tasksStorageLocked={projectTasksReadError}
+        tasksStorageLocked={projectTasksStorageLocked}
+        tasksStorageLoading={projectTaskState.status === "loading"}
         backboneStorageLocked={projectBackboneReadError}
         monitorsStorageLocked={projectTaskMonitorsReadError}
         approvalsStorageLocked={projectApprovalsReadError || projectPurchaseRequestsReadError}
@@ -16921,7 +17354,17 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     return (
       <ProjectSourceAnswerDemoView
         project={activeProject}
-        onBack={() => { keyboard.hide(); setView("chat"); }}
+        backLabel={sourceAnswerReturnView === "tools" ? "بازگشت به ابزارهای پروژه" : "بازگشت به گفت‌وگو"}
+        onBack={() => {
+          keyboard.hide();
+          if (sourceAnswerReturnView === "tools") {
+            queueBuilderFocus('[data-testid="source-answer-demo-tool"]', "tools");
+            setView("chat");
+            onOpenSheet("tools");
+          } else {
+            setView("chat");
+          }
+        }}
       />
     );
   }
@@ -16960,14 +17403,14 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       </MobileScroll>
 
       <header className="app-header">
-        <button className="icon-button header-button" type="button" onClick={() => { keyboard.hide(); setDrawerOpen(true); }} aria-label="بازکردن منو" data-testid="menu-button"><Menu size={22} /></button>
-        <button className="project-switcher" type="button" onClick={() => onOpenSheet("projects")} data-testid="project-switcher" aria-label={`انتخاب پروژه؛ پروژهٔ فعلی ${activeProject.name}`}><strong>{activeProject.name}</strong></button>
+        <button className="icon-button header-button" type="button" onClick={() => { keyboard.hide(); setDrawerOpen(true); }} aria-label="بازکردن منو" aria-expanded={drawerOpen} aria-controls="builder-drawer" data-testid="menu-button"><Menu size={22} /></button>
+        <button className="project-switcher" type="button" onClick={() => { projectsReturnFocus.current = "project-switcher"; onOpenSheet("projects"); }} data-testid="project-switcher" aria-label={`انتخاب پروژه؛ پروژهٔ فعلی ${activeProject.name}`}><strong>{activeProject.name}</strong></button>
       </header>
 
       <section className="composer-dock" style={{ bottom: bottomInset + 8 }} data-testid="composer-dock">
         <Carousel ariaLabel="اقدام‌های سریع" className="quick-actions" contentClassName="quick-actions-track">
           {quickActions.map(({ id, label, icon: Icon }) => (
-            <button className="quick-chip" type="button" key={id} onClick={() => handleQuickAction(id, label)} data-testid={`quick-action-${id}`}>
+            <button className="quick-chip" type="button" key={id} onClick={() => handleQuickAction(id)} data-testid={`quick-action-${id}`}>
               <Icon size={17} strokeWidth={1.8} /><span>{label}</span>
             </button>
           ))}
@@ -16981,26 +17424,26 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
                 <button type="button" onClick={() => { setComposerError(""); setPendingAttachment(null); }} aria-label={`حذف پیوست ${pendingAttachment.displayName}`} data-testid="composer-attachment-remove" disabled={composerSending}><X size={17} /></button>
               </div>
             ) : null}
-            <KeyboardTextarea data-testid="composer-input" value={draft} onChange={(event) => { setDraft(event.target.value); setComposerError(""); }} placeholder={`پیامت برای ${activeProject.name}...`} rows={2} maxLength={4000} aria-label="پیام به چیدا" disabled={composerSending} />
+            <KeyboardTextarea data-testid="composer-input" value={draft} onChange={(event) => { setDraft(event.target.value); setComposerError(""); setComposerActionStatus(""); }} placeholder={`پیامت برای ${activeProject.name}...`} rows={2} maxLength={4000} aria-label="پیام به چیدا" disabled={composerSending} />
             <div className="composer-actions">
               <div className="composer-action-group primary-tools">
                 <button className="composer-icon" type="button" onClick={() => onOpenSheet("attach")} aria-label="افزودن فایل یا تصویر" data-testid="attach-button" disabled={sourceStorageLocked || projectFilesReadError || composerSending}><Plus size={23} /></button>
                 <button className="composer-icon" type="button" onClick={() => onOpenSheet("models")} aria-label={`حالت پاسخ: ${modelMode}`} data-testid="model-button"><Gauge size={21} /></button>
               </div>
               <div className="composer-action-group send-tools">
-                <button className="composer-icon" type="button" aria-label="ورودی صوتی" data-testid="voice-button"><Mic size={21} /></button>
+                <button className="composer-icon" type="button" aria-label="ورودی صوتی — به‌زودی" title="ورودی صوتی به‌زودی" data-testid="voice-button" disabled><Mic size={21} /></button>
                 <button className="send-button" type="button" onClick={() => { void sendMessage(); }} aria-label="ارسال پیام" data-testid="send-button" data-ready={(hasVisibleProjectTaskText(draft) || pendingAttachment) && !sourceStorageLocked && !composerSending ? "true" : "false"} disabled={(!hasVisibleProjectTaskText(draft) && !pendingAttachment) || sourceStorageLocked || composerSending}><ArrowUp size={20} strokeWidth={2.1} /></button>
               </div>
             </div>
             <div className="composer-error-slot" aria-live="assertive">
-              {composerError ? <p role="alert" data-testid="composer-source-error">{composerError}</p> : sourceRecoveryPending ? <p role="status" data-testid="composer-source-recovery">در حال بررسی ثبت محلی قبلی…</p> : sourceAssetValidationPending ? <p role="status" data-testid="composer-source-asset-check">در حال بررسی اصل منابع محلی…</p> : sourceRecoveryBlocked || projectSourcesReadError || projectFilesReadError ? <p role="alert" data-testid="composer-source-read-error">منابع یا شناسنامهٔ فایل‌های محلی کامل خوانده نشدند؛ ارسال برای جلوگیری از بازنویسی قفل است.</p> : null}
+              {composerError ? <p role="alert" data-testid="composer-source-error">{composerError}</p> : sourceRecoveryPending ? <p role="status" data-testid="composer-source-recovery">در حال بررسی ثبت محلی قبلی…</p> : sourceAssetValidationPending ? <p role="status" data-testid="composer-source-asset-check">در حال بررسی اصل منابع محلی…</p> : sourceRecoveryBlocked || projectSourcesReadError || projectFilesReadError ? <p role="alert" data-testid="composer-source-read-error">منابع یا شناسنامهٔ فایل‌های محلی کامل خوانده نشدند؛ ارسال برای جلوگیری از بازنویسی قفل است.</p> : composerActionStatus ? <p role="status" data-testid="composer-action-status">{composerActionStatus}</p> : null}
             </div>
           </div>
           <div className="project-context" data-testid="project-context">
             <button className="active-project" type="button" onClick={() => { keyboard.hide(); onOpenSheet(null); setView("project"); }} data-testid="open-project-space" aria-label={`باز کردن فضای پروژهٔ ${activeProject.name}`}>
               <strong>{activeProject.name}</strong>
             </button>
-            <button className="tool-cluster" type="button" onClick={() => onOpenSheet("tools")} aria-label="نمایش ابزارهای فعال" data-testid="capability-cluster">
+            <button className="tool-cluster" type="button" onClick={() => openTools("capability-cluster")} aria-label="باز کردن ابزارهای پروژه" data-testid="capability-cluster">
               <span className="tool-cluster-label">ابزارها</span>
               <span className="tool-icons" aria-hidden="true"><span><Search size={13} /></span><span><FileText size={13} /></span><span><Wrench size={13} /></span>{activeProjectBuiltArtifacts.some((artifact) => builtArtifactEffectiveStatus(artifact, builtArtifactDependenciesLocked, builtArtifactInvalidationIncidents) === "active") ? <span><Hammer size={13} /></span> : null}</span>
               <ChevronDown size={13} aria-hidden="true" />
@@ -17012,23 +17455,21 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       <AnimatePresence>
         {drawerOpen ? (
           <>
-            <motion.button className="drawer-backdrop" type="button" aria-label="بستن منو" onClick={() => setDrawerOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
-            <motion.aside className="app-drawer" data-testid="nav-drawer" initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", stiffness: 420, damping: 42 }}>
-              <div className="drawer-top"><div className="brand-lockup"><span className="brand-mark"><HardHat size={19} /></span><strong>چیدا</strong></div><button className="icon-button" type="button" onClick={() => setDrawerOpen(false)} aria-label="بستن منو"><X size={20} /></button></div>
+            <motion.button className="drawer-backdrop" type="button" tabIndex={-1} aria-label="بستن منو" onClick={closeDrawerToMenu} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
+            <motion.aside ref={drawerRef} id="builder-drawer" className="app-drawer" role="dialog" aria-modal="true" aria-label="منوی چیدا" data-testid="nav-drawer" initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", stiffness: 420, damping: 42 }}>
+              <div className="drawer-top"><div className="brand-lockup"><span className="brand-mark"><HardHat size={19} /></span><strong>چیدا</strong></div><button ref={drawerCloseRef} className="icon-button" type="button" onClick={closeDrawerToMenu} aria-label="بستن منو" data-testid="drawer-close"><X size={20} /></button></div>
               <nav className="drawer-nav" aria-label="منوی چیدا">
-                <button type="button"><MessageSquare size={19} /><span>گفتگوی تازه</span><Plus size={17} /></button>
-                <button type="button" onClick={() => openProjectTasks()} data-testid="drawer-tasks-entry"><CheckCircle2 size={19} /><span>کارها</span><span className="nav-count" data-testid="drawer-task-count" aria-label={projectTasksReadError || projectBackboneReadError ? "بازیابی کارها کامل نشد" : `${activeProjectTaskCount.toLocaleString("fa-IR")} کار در حال انجام`}>{projectTasksReadError || projectBackboneReadError ? "!" : activeProjectTaskCount.toLocaleString("fa-IR")}</span></button>
-                <button type="button" onClick={() => { setDrawerOpen(false); onOpenSheet("projects"); }} data-testid="drawer-projects-entry"><Folder size={19} /><span>پروژه‌ها</span><span className="nav-count" data-testid="drawer-project-count">{projects.length.toLocaleString("fa-IR")}</span></button>
-                <button type="button"><Pin size={19} /><span>پین‌شده‌ها</span><span className="nav-count">۳</span></button>
+                <button type="button" onClick={() => { queueBuilderFocus('[data-testid="menu-button"]'); openProjectTasks(); }} data-testid="drawer-tasks-entry"><CheckCircle2 size={19} /><span>کارها</span><span className="nav-count" data-testid="drawer-task-count" aria-label={projectTasksReadError || projectBackboneReadError ? "بازیابی کارها کامل نشد" : projectTaskState.status === "loading" ? "در حال آماده‌سازی کارها" : `${activeProjectTaskCount.toLocaleString("fa-IR")} کار در حال انجام`}>{projectTasksReadError || projectBackboneReadError ? "!" : projectTaskState.status === "loading" ? "…" : activeProjectTaskCount.toLocaleString("fa-IR")}</span></button>
+                <button type="button" onClick={() => { projectsReturnFocus.current = "menu-button"; setDrawerOpen(false); onOpenSheet("projects"); }} data-testid="drawer-projects-entry"><Folder size={19} /><span>پروژه‌ها</span><span className="nav-count" data-testid="drawer-project-count">{projects.length.toLocaleString("fa-IR")}</span></button>
                 <button type="button" data-testid="drawer-brief-entry" onClick={() => { setDrawerOpen(false); onOpenSheet("brief"); }}>
                   <CalendarDays size={19} />
                   <span className="drawer-nav-copy"><strong>بریف</strong><small data-testid="drawer-brief-summary">{briefSummary}</small></span>
                   <ChevronDown size={17} />
                 </button>
-                <button type="button"><Wrench size={19} /><span>امکانات چیدا</span><ChevronDown size={17} /></button>
+                <button type="button" data-testid="drawer-capabilities-entry" onClick={() => openTools("menu-button")}><Wrench size={19} /><span>امکانات چیدا</span><ChevronDown size={17} /></button>
               </nav>
               <div className="drawer-section">
-                <div className="drawer-section-title"><span>گفتگوهای اخیر</span><button type="button" aria-label="جستجو"><Search size={17} /></button></div>
+                <div className="drawer-section-title"><span>گفتگوهای اخیر</span></div>
                 <p className="recent-chat-empty" data-testid="recent-chat-boundary">{messages.length > 0 ? `${(messages.length / 2).toLocaleString("fa-IR")} ورودی محلی برای ${activeProject.name} ثبت شده؛ فهرست گفت‌وگوهای جدا هنوز ساخته نشده است.` : `فهرست گفت‌وگوهای جدا برای ${activeProject.name} هنوز ساخته نشده است.`}</p>
               </div>
               <button className="drawer-profile" type="button" data-testid="drawer-profile" onClick={() => { setDrawerOpen(false); onOpenSheet("settings"); }}>
@@ -17039,8 +17480,8 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         ) : null}
       </AnimatePresence>
 
-      <ModelsSheet sheet={sheet} mode={modelMode} onClose={() => onOpenSheet(null)} onSelect={onModelChange} />
-      <AttachSheet sheet={sheet} disabled={sourceStorageLocked || projectFilesReadError} onClose={() => onOpenSheet(null)} onChoose={chooseComposerAttachment} />
+      <ModelsSheet sheet={sheet} mode={modelMode} onClose={() => { queueBuilderFocus('[data-testid="model-button"]'); onOpenSheet(null); }} onSelect={onModelChange} />
+      <AttachSheet sheet={sheet} disabled={sourceStorageLocked || projectFilesReadError} onClose={() => { queueBuilderFocus('[data-testid="attach-button"]'); onOpenSheet(null); }} onChoose={chooseComposerAttachment} />
       <ProjectSourceDetailSheet source={selectedSource} file={selectedSourceFile} project={activeProject} assetReadLocked={projectSourcesReadError || sourceRecoveryBlocked} onClose={closeSourceDetail} />
       <ToolsSheet
         sheet={sheet}
@@ -17049,18 +17490,20 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         dependenciesLocked={builtArtifactDependenciesLocked}
         invalidationError={builtArtifactInvalidationError}
         invalidationIncidents={builtArtifactInvalidationIncidents}
-        onBuild={() => { setSelectedBuiltArtifactId(null); onOpenSheet("build"); }}
-        onArtifact={(artifactId) => { setSelectedBuiltArtifactId(artifactId); onOpenSheet("build"); }}
+        onBuild={() => openBuild({ kind: "tools", selector: '[data-testid="build-tool-entry"]' })}
+        onArtifact={(artifactId) => openBuild({ kind: "tools", selector: `[data-testid="built-artifact-tool-row"][data-artifact-id="${artifactId}"]` }, artifactId)}
         onRetryRead={retryBuiltArtifactsRead}
         onRetryDependencies={refreshBuiltArtifactDependencies}
-        onSearch={openProjectSearch}
-        onSourceDemo={openSourceAnswerDemo}
-        onFiles={() => openProjectFiles("chat")}
-        onClose={() => onOpenSheet(null)}
+        onSearch={() => openProjectSearch("tools")}
+        onSourceDemo={() => openSourceAnswerDemo("tools")}
+        onFiles={() => openProjectFiles("tools")}
+        onClose={closeTools}
       />
       <BuildSheet
         sheet={sheet}
         activeProject={activeProject}
+        backbone={activeProjectBackbone}
+        tasks={activeProjectTasks}
         artifacts={activeProjectBuiltArtifacts}
         selectedArtifactId={selectedBuiltArtifactId}
         storageLocked={builtArtifactStorageLocked}
@@ -17068,47 +17511,26 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         invalidationError={builtArtifactInvalidationError}
         invalidationIncidents={builtArtifactInvalidationIncidents}
         legacyRecordDetected={legacyBuiltArtifactDetected}
-        onSelectArtifact={setSelectedBuiltArtifactId}
         onRetryRead={retryBuiltArtifactsRead}
         onRetryDependencies={refreshBuiltArtifactDependencies}
         onCreatePreview={createBuiltArtifactPreview}
         onMutate={mutateBuiltArtifact}
-        onClose={() => onOpenSheet(null)}
+        onOpenTasks={() => openProjectTasks("chat")}
+        onClose={closeBuild}
       />
-      <BriefSheet sheet={sheet} schedule={briefSchedule} onClose={() => onOpenSheet(null)} onSave={saveBrief} />
-      <ProjectsSheet sheet={sheet} projects={projects} activeProjectId={activeProject.id} onClose={() => onOpenSheet(null)} onSelect={openProjectSpace} onCreate={openNewProject} />
-      <ProjectCreateSheet sheet={sheet} onClose={() => onOpenSheet(null)} onSave={onProjectCreate} />
+      <BriefSheet sheet={sheet} schedule={briefSchedule} onClose={() => { queueBuilderFocus('[data-testid="menu-button"]'); onOpenSheet(null); }} onSave={saveBrief} />
+      <ProjectsSheet sheet={sheet} projects={projects} activeProjectId={activeProject.id} onClose={() => { queueBuilderFocus(`[data-testid="${projectsReturnFocus.current}"]`); onOpenSheet(null); }} onSelect={openProjectSpace} onCreate={openNewProject} />
+      <ProjectCreateSheet sheet={sheet} onClose={() => { queueBuilderFocus(`[data-testid="${projectsReturnFocus.current}"]`); onOpenSheet(null); }} onSave={onProjectCreate} />
       <SettingsSheet
         sheet={sheet}
         projectName={activeProject.name}
         projectCount={projects.length}
-        localRecordCount={projectFilesReadError || projectSourcesReadError || sourceRecoveryPending || sourceRecoveryBlocked || projectMemoriesReadError || projectTasksReadError || projectBackboneReadError || projectTaskMonitorsReadError || builtArtifactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError || builderManualNegotiationConditionImpactsReadError
-          ? null
-          : activeProjectFiles.length
-            + activeProjectSources.length
-            + activeProjectMemories.length
-            + activeProjectTasks.length
-            + (activeProjectBackbone ? 3 : 0)
-            + activeProjectTaskMonitors.length
-            + activeProjectTaskMonitorRuns.length
-            + activeProjectBuiltArtifacts.length
-            + activeProjectPurchaseRequests.length
-            + activeProjectApprovals.length
-            + activeProjectSupplierContacts.length
-            + activeProjectDispatchDrafts.length
-            + activeProjectDispatchPlanApprovals.length
-            + activeBuilderRecordedProposals.length
-            + activeBuilderProposalComparisons.length
-            + activeBuilderProposalComparisonDecisions.length
-            + activeBuilderServiceProposalComparisons.length
-            + activeBuilderServiceProposalComparisonDecisions.length
-            + activeBuilderNegotiationDrafts.length
-            + activeBuilderManualNegotiationResponses.length
-            + activeBuilderManualNegotiationResponseReviews.length
-            + activeBuilderManualNegotiationConditionImpacts.length}
+        localRecordCount={localRecordCount}
+        localRecordCountPending={localRecordCountPending}
+        localRecordCountReadError={localRecordCountReadError}
         briefSummary={briefSummary}
         modelMode={modelMode}
-        onClose={() => onOpenSheet(null)}
+        onClose={() => { queueBuilderFocus('[data-testid="menu-button"]'); onOpenSheet(null); }}
       />
       <span className="sr-only" aria-live="polite">{activeProjectMeta}</span>
     </div>
@@ -18948,7 +19370,37 @@ function PurchaseRequestModeSwitch({ mode, onChange, testIdPrefix, label }: { mo
   );
 }
 
-function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, dispatchDrafts, dispatchPlanApprovals, storageLocked, approvalsStorageLocked, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, initialSelectedId, startWithEditor, backLabel, onBack, onRecoverStorage, onCreate, onUpdate, onMarkReady, onConfirmForRecipients, onReturnToDraft, onCreateApproval, onOpenApproval, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval, onOpenDispatchPlanApproval }: { project: BuilderProject; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; dispatchDrafts: DispatchDraftRecord[]; dispatchPlanApprovals: DispatchPlanApprovalRecord[]; storageLocked: boolean; approvalsStorageLocked: boolean; contactsStorageLocked: boolean; dispatchStorageLocked: boolean; dispatchPlanApprovalsStorageLocked: boolean; initialSelectedId: string | null; startWithEditor: boolean; backLabel: string; onBack: () => void; onRecoverStorage: () => ProjectPurchaseRequestsRecoveryResult; onCreate: (draft: PurchaseRequestDraft) => string | null; onUpdate: (requestId: string, draft: PurchaseRequestDraft) => boolean; onMarkReady: (requestId: string) => boolean; onConfirmForRecipients: (requestId: string) => string | null; onReturnToDraft: (requestId: string) => boolean; onCreateApproval: (requestId: string) => string | null; onOpenApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void; onCreateContact: (draft: SupplierContactDraft) => string | null; onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean; onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null; onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null; onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean; onOpenDispatchPlanApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void }) {
+function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, dispatchDrafts, dispatchPlanApprovals, storageLocked, approvalsStorageLocked, contactsStorageLocked, dispatchStorageLocked, dispatchPlanApprovalsStorageLocked, initialSelectedId, startWithEditor, backLabel, onBack, onRecoverStorage, onCreate, onUpdate, onMarkReady, onConfirmForRecipients, onReturnToDraft, onCreateApproval, onOpenApproval, onCreateContact, onContactStatusChange, onUpsertDispatchDraft, onCreateDispatchPlanApproval, onChangeDispatchPlanApproval, onOpenDispatchPlanApproval }: {
+  project: BuilderProject;
+  requests: ProjectPurchaseRequestRecord[];
+  approvals: ProjectApprovalRecord[];
+  contacts: SupplierContactRecord[];
+  dispatchDrafts: DispatchDraftRecord[];
+  dispatchPlanApprovals: DispatchPlanApprovalRecord[];
+  storageLocked: boolean;
+  approvalsStorageLocked: boolean;
+  contactsStorageLocked: boolean;
+  dispatchStorageLocked: boolean;
+  dispatchPlanApprovalsStorageLocked: boolean;
+  initialSelectedId: string | null;
+  startWithEditor: boolean;
+  backLabel: string;
+  onBack: () => void;
+  onRecoverStorage: () => Promise<ProjectPurchaseRequestsRecoveryResult>;
+  onCreate: (projectId: string, draft: PurchaseRequestDraft, idempotencyKey: string) => Promise<ProjectPurchaseRequestMutationResult>;
+  onUpdate: (projectId: string, requestId: string, draft: PurchaseRequestDraft, expectedRequestVersion: number, idempotencyKey: string) => Promise<ProjectPurchaseRequestMutationResult>;
+  onMarkReady: (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string) => Promise<ProjectPurchaseRequestMutationResult>;
+  onConfirmForRecipients: (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string) => Promise<ProjectPurchaseRequestMutationResult>;
+  onReturnToDraft: (projectId: string, requestId: string, expectedRequestVersion: number, idempotencyKey: string) => Promise<ProjectPurchaseRequestMutationResult>;
+  onCreateApproval: (projectId: string, requestId: string, expectedRequestVersion: number) => Promise<ProjectPurchaseRequestMutationResult>;
+  onOpenApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void;
+  onCreateContact: (draft: SupplierContactDraft) => string | null;
+  onContactStatusChange: (contactId: string, nextStatus: SupplierContactStatus) => boolean;
+  onUpsertDispatchDraft: (requestId: string, approvalId: string, recipientIds: string[]) => string | null;
+  onCreateDispatchPlanApproval: (dispatchDraftId: string) => string | null;
+  onChangeDispatchPlanApproval: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean;
+  onOpenDispatchPlanApproval: (approvalId: string, returnToPurchaseRequestId: string | null) => void;
+}) {
   const keyboard = useKeyboard();
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
@@ -18957,6 +19409,12 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [editorOpen, setEditorOpen] = useState(() => startWithEditor && !storageLocked);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editorProjectId, setEditorProjectId] = useState<string | null>(() => startWithEditor && !storageLocked ? project.id : null);
+  const [editingRequestVersion, setEditingRequestVersion] = useState<number | null>(null);
+  const [mutationPending, setMutationPending] = useState(false);
+  const [recoveryPending, setRecoveryPending] = useState(false);
+  const saveIdempotencyKeyRef = useRef<string | null>(null);
+  const transitionIdempotencyKeyRef = useRef<{ requestId: string; action: PurchaseRequestMutationAction; key: string } | null>(null);
   const [editorMode, setEditorMode] = useState<PurchaseRequestDisclosureMode>("simple");
   const [detailMode, setDetailMode] = useState<PurchaseRequestDisclosureMode>("simple");
   const [requestDraft, setRequestDraft] = useState<PurchaseRequestDraft>(() => ({ ...emptyPurchaseRequestDraft, items: [emptyProductRequestItemDraft()] }));
@@ -18989,6 +19447,10 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   }, [selectedId, selectedRequest]);
 
   useEffect(() => {
+    if (editorOpen && editorProjectId && editorProjectId !== project.id) setStorageError("پروژهٔ فعال عوض شده است. این پیش‌نویس برای پروژهٔ قبلی حفظ شد؛ برای ذخیره به همان پروژه برگرد.");
+  }, [editorOpen, editorProjectId, project.id]);
+
+  useEffect(() => {
     if (dispatchPlannerRequestId && (!dispatchPlannerRequest || !dispatchPlannerApproval)) setDispatchPlannerRequestId(null);
   }, [dispatchPlannerApproval, dispatchPlannerRequest, dispatchPlannerRequestId]);
 
@@ -18998,31 +19460,42 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   }, [initialSelectedId, selectedRequest?.id]);
 
   const openCreateEditor = () => {
+    if (mutationPending) return;
     setEditingId(null);
+    setEditorProjectId(project.id);
+    setEditingRequestVersion(null);
     setRequestDraft({ ...emptyPurchaseRequestDraft, items: [emptyProductRequestItemDraft()] });
     setFieldErrors(emptyPurchaseRequestFieldErrors);
     setStorageError("");
     setEditorMode("simple");
+    saveIdempotencyKeyRef.current = null;
     setEditorOpen(true);
   };
 
   const openEditEditor = (request: ProjectPurchaseRequestRecord) => {
-    if (request.status !== "draft") return;
+    if (request.status !== "draft" || mutationPending) return;
     setEditingId(request.id);
+    setEditorProjectId(request.projectId);
+    setEditingRequestVersion(request.version);
     setRequestDraft(purchaseRequestDraftFromRecord(request));
     setFieldErrors(emptyPurchaseRequestFieldErrors);
     setStorageError("");
     setEditorMode("simple");
+    saveIdempotencyKeyRef.current = null;
     setEditorOpen(true);
   };
 
   const closeEditor = () => {
+    if (mutationPending) return;
     const focusTarget = editingId ? editButtonRef.current : addButtonRef.current;
     keyboard.hide();
     setEditorOpen(false);
+    setEditorProjectId(null);
     setEditingId(null);
+    setEditingRequestVersion(null);
     setFieldErrors(emptyPurchaseRequestFieldErrors);
     setStorageError("");
+    saveIdempotencyKeyRef.current = null;
     window.requestAnimationFrame(() => focusTarget?.focus());
   };
 
@@ -19033,31 +19506,45 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
       setFieldErrors((current) => current[errorField] ? { ...current, [errorField]: "" } : current);
     }
     setStorageError("");
+    saveIdempotencyKeyRef.current = null;
   };
 
   const changeRequestKind = (requestKind: PurchaseRequestKind) => {
     if (editingId) return;
     setRequestDraft((current) => ({ ...current, requestKind }));
     setStorageError("");
+    saveIdempotencyKeyRef.current = null;
   };
 
   const changeProductItemDraft = (index: number, field: Exclude<keyof ProductRequestItemDraft, "id">, value: string) => {
     setRequestDraft((current) => ({ ...current, items: current.items.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item) }));
     if (field === "quantity") setFieldErrors((current) => current.quantity ? { ...current, quantity: "", quantityIndex: null } : current);
     setStorageError("");
+    saveIdempotencyKeyRef.current = null;
   };
 
   const addProductItemDraft = () => {
     setRequestDraft((current) => current.items.length >= 8 ? current : { ...current, items: [...current.items, emptyProductRequestItemDraft(`draft-${window.crypto.randomUUID()}`)] });
     setStorageError("");
+    saveIdempotencyKeyRef.current = null;
   };
 
   const removeProductItemDraft = (index: number) => {
     setRequestDraft((current) => current.items.length <= 1 ? current : { ...current, items: current.items.filter((_, itemIndex) => itemIndex !== index) });
     setStorageError("");
+    saveIdempotencyKeyRef.current = null;
   };
 
-  const saveRequest = () => {
+  const saveRequest = async () => {
+    if (mutationPending) return;
+    if (storageLocked) {
+      setStorageError("درخواست‌های محلی هنوز خوانا نیستند؛ پیش‌نویس حفظ شد و چیزی ذخیره نشد.");
+      return;
+    }
+    if (!editorProjectId || editorProjectId !== project.id) {
+      setStorageError("پروژهٔ فعال عوض شده است. این پیش‌نویس برای پروژهٔ قبلی حفظ شد؛ برای ذخیره به همان پروژه برگرد.");
+      return;
+    }
     const explicitRawNeed = requestDraft.rawNeed.trim();
     const derivedRawNeed = requestDraft.requestKind === "product"
       ? requestDraft.items
@@ -19085,73 +19572,116 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
 
     const normalizedDraft = { ...requestDraft, rawNeed, items: requestDraft.items.map((item, index) => ({ ...item, quantity: normalizedQuantities[index] ?? "" })) };
     keyboard.hide();
-    if (editingId) {
-      if (!onUpdate(editingId, normalizedDraft)) {
-        setStorageError("ویرایش پیش‌نویس ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
-        return;
-      }
-      setEditorOpen(false);
-      setEditingId(null);
-      setDetailMode("simple");
+    const idempotencyKey = saveIdempotencyKeyRef.current ?? `purchase-request-save:${window.crypto.randomUUID()}`;
+    saveIdempotencyKeyRef.current = idempotencyKey;
+    setMutationPending(true);
+    const result = editingId && editingRequestVersion !== null
+      ? await onUpdate(editorProjectId, editingId, normalizedDraft, editingRequestVersion, idempotencyKey)
+      : await onCreate(editorProjectId, normalizedDraft, idempotencyKey);
+    setMutationPending(false);
+    if (result.status !== "created" && result.status !== "updated" && result.status !== "unchanged") {
+      if (result.status === "version-conflict") {
+        const latest = result.records?.find((request) => request.id === editingId);
+        if (latest) setEditingRequestVersion(latest.version);
+        setStorageError("این درخواست در جای دیگری تغییر کرده بود؛ نسخهٔ تازه بارگذاری شد. پیش‌نویس شما حفظ شده است؛ دوباره ذخیره کن.");
+      } else if (result.status === "lock-unavailable") setStorageError("قفل امن مرورگر در دسترس نیست؛ چیزی تغییر نکرد و پیش‌نویس حفظ شد.");
+      else if (result.status === "idempotency-payload-mismatch") {
+        saveIdempotencyKeyRef.current = null;
+        setStorageError("شناسهٔ تلاش با پیش‌نویس دیگری استفاده شده است؛ یک تغییر کوچک بده و دوباره ذخیره کن.");
+      } else setStorageError(editingId ? "ویرایش پیش‌نویس ذخیره نشد. نسخهٔ قبلی دست‌نخورده ماند؛ دوباره تلاش کن." : "پیش‌نویس ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
+      return;
+    }
+    const requestId = result.requestId ?? editingId;
+    if (requestId) setSelectedId(requestId);
+    setDetailMode("simple");
+    setEditorOpen(false);
+    setEditorProjectId(null);
+    setEditingId(null);
+    setEditingRequestVersion(null);
+    saveIdempotencyKeyRef.current = null;
+    window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+  };
+
+  const transitionIdempotencyKey = (request: ProjectPurchaseRequestRecord, action: PurchaseRequestMutationAction) => {
+    const pending = transitionIdempotencyKeyRef.current;
+    if (pending?.requestId === request.id && pending.action === action) return pending.key;
+    const key = `purchase-request-transition:${window.crypto.randomUUID()}`;
+    transitionIdempotencyKeyRef.current = { requestId: request.id, action, key };
+    return key;
+  };
+
+  const transitionFailureMessage = (result: ProjectPurchaseRequestMutationResult, fallback: string) => result.status === "version-conflict"
+    ? "این درخواست در جای دیگری تغییر کرده بود؛ نسخهٔ تازه بارگذاری شد. دوباره بررسی کن."
+    : result.status === "lock-unavailable"
+      ? "قفل امن مرورگر در دسترس نیست؛ چیزی تغییر نکرد."
+      : result.status === "read-failure"
+        ? "دادهٔ درخواست یا وابستگی آن کامل خوانده نشد؛ چیزی تغییر نکرد."
+        : result.status === "idempotency-payload-mismatch"
+          ? "این تلاش به اقدام دیگری مربوط بود؛ چیزی تغییر نکرد. دوباره اقدام کن."
+          : fallback;
+
+  const markReady = async () => {
+    if (!selectedRequest || missingFields.length > 0 || mutationPending) return;
+    const key = transitionIdempotencyKey(selectedRequest, "mark-ready");
+    setMutationPending(true);
+    const result = await onMarkReady(selectedRequest.projectId, selectedRequest.id, selectedRequest.version, key);
+    setMutationPending(false);
+    if (result.status === "updated" || result.status === "unchanged") {
+      transitionIdempotencyKeyRef.current = null;
+      setStorageError("");
       window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
       return;
     }
-
-    const requestId = onCreate(normalizedDraft);
-    if (!requestId) {
-      setStorageError("پیش‌نویس ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
-      return;
-    }
-    setSelectedId(requestId);
-    setDetailMode("simple");
-    setEditorOpen(false);
-    window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+    setStorageError(transitionFailureMessage(result, "تغییر وضعیت ذخیره نشد. دوباره تلاش کن."));
   };
 
-  const markReady = () => {
-    if (!selectedRequest || missingFields.length > 0) return;
-    if (!onMarkReady(selectedRequest.id)) {
-      setStorageError("تغییر وضعیت ذخیره نشد. دوباره تلاش کن.");
+  const confirmForRecipients = async () => {
+    if (!selectedRequest || missingFields.length > 0 || mutationPending) return;
+    const key = transitionIdempotencyKey(selectedRequest, "confirm-for-recipients");
+    setMutationPending(true);
+    const result = await onConfirmForRecipients(selectedRequest.projectId, selectedRequest.id, selectedRequest.version, key);
+    setMutationPending(false);
+    if (result.status !== "updated" || !result.approvalId) {
+      setStorageError(transitionFailureMessage(result, "تأیید اطلاعات ذخیره نشد. هیچ مرحله‌ای جلو نرفت؛ دوباره تلاش کن."));
       return;
     }
-    setStorageError("");
-    window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
-  };
-
-  const confirmForRecipients = () => {
-    if (!selectedRequest || missingFields.length > 0) return;
-    const approvalId = onConfirmForRecipients(selectedRequest.id);
-    if (!approvalId) {
-      setStorageError("تأیید اطلاعات ذخیره نشد. هیچ مرحله‌ای جلو نرفت؛ دوباره تلاش کن.");
-      return;
-    }
+    transitionIdempotencyKeyRef.current = null;
     setStorageError("");
     setDispatchPlannerRequestId(selectedRequest.id);
   };
 
-  const returnToDraft = () => {
-    if (!selectedRequest || selectedRequest.status !== "ready-for-review") return;
-    if (!onReturnToDraft(selectedRequest.id)) {
-      setStorageError("بازگشت به ویرایش ذخیره نشد. دوباره تلاش کن.");
+  const returnToDraft = async () => {
+    if (!selectedRequest || selectedRequest.status !== "ready-for-review" || mutationPending) return;
+    const key = transitionIdempotencyKey(selectedRequest, "return-to-draft");
+    setMutationPending(true);
+    const result = await onReturnToDraft(selectedRequest.projectId, selectedRequest.id, selectedRequest.version, key);
+    setMutationPending(false);
+    if (result.status !== "updated" && result.status !== "unchanged") {
+      setStorageError(transitionFailureMessage(result, "بازگشت به ویرایش ذخیره نشد. دوباره تلاش کن."));
       return;
     }
+    transitionIdempotencyKeyRef.current = null;
     setStorageError("");
     window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
   };
 
-  const requestApproval = () => {
-    if (!selectedRequest || selectedRequest.status !== "ready-for-review") return;
+  const requestApproval = async () => {
+    if (!selectedRequest || selectedRequest.status !== "ready-for-review" || mutationPending) return;
     if (selectedRequestApproval) {
       onOpenApproval(selectedRequestApproval.id, selectedRequest.id);
       return;
     }
-    const approvalId = onCreateApproval(selectedRequest.id);
-    if (!approvalId) {
-      setStorageError("ثبت در صف تأیید انجام نشد. هیچ وضعیت یا مجوزی تغییر نکرد.");
+    setMutationPending(true);
+    const result = await onCreateApproval(selectedRequest.projectId, selectedRequest.id, selectedRequest.version);
+    setMutationPending(false);
+    if (!result.approvalId || result.status !== "created" && result.status !== "unchanged") {
+      setStorageError(result.status === "version-conflict"
+        ? "این درخواست در جای دیگری تغییر کرده بود؛ نسخهٔ تازه بارگذاری شد و چیزی برای تأیید ثبت نشد."
+        : "ثبت در صف تأیید انجام نشد. هیچ وضعیت یا مجوزی تغییر نکرد.");
       return;
     }
     setStorageError("");
-    onOpenApproval(approvalId, null);
+    onOpenApproval(result.approvalId, null);
   };
 
   const returnToList = () => {
@@ -19166,8 +19696,11 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
     });
   };
 
-  const confirmStorageRecovery = () => {
-    const result = onRecoverStorage();
+  const confirmStorageRecovery = async () => {
+    if (recoveryPending) return;
+    setRecoveryPending(true);
+    const result = await onRecoverStorage();
+    setRecoveryPending(false);
     if (result.status === "reloaded" || result.status === "reset" || result.status === "not-needed") {
       setRecoveryError("");
       setRecoverySuccess(result.status === "reset" ? "نسخهٔ بازیابی محلی ساخته شد و ثبت درخواست دوباره فعال است." : "داده‌های درخواست دوباره با موفقیت خوانده شد.");
@@ -19185,8 +19718,9 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
   };
 
   const editorSheet = (
-    <BottomSheet key={editingId ? `purchase-editor-${editingId}` : "purchase-editor-create"} open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }} title={editingId ? "ویرایش درخواست" : "درخواست خرید"} description="نیاز و زمان تحویل را ثبت کن." snap={0.94}>
-      <form className="purchase-request-editor-sheet" dir="rtl" data-testid="purchase-request-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveRequest(); }}>
+    <BottomSheet key={editingId ? `purchase-editor-${editingId}` : "purchase-editor-create"} open={editorOpen} onOpenChange={(open) => { if (!open && !mutationPending) closeEditor(); }} title={editingId ? "ویرایش درخواست" : "درخواست خرید"} description="نیاز و زمان تحویل را ثبت کن." snap={0.94}>
+      <form className="purchase-request-editor-sheet" dir="rtl" aria-busy={mutationPending} data-testid="purchase-request-editor-sheet" onSubmit={(event) => { event.preventDefault(); void saveRequest(); }}>
+        <fieldset className="purchase-request-editor-controls" disabled={mutationPending}>
         <fieldset className="purchase-request-kind-picker" disabled={Boolean(editingId)}>
           <legend>نوع درخواست</legend>
           <button type="button" aria-pressed={requestDraft.requestKind === "product"} onClick={() => changeRequestKind("product")} data-testid="purchase-request-kind-product">محصول</button>
@@ -19258,20 +19792,21 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
         </label>
         {fieldErrors.rawNeed ? <p className="field-error purchase-request-main-error" id="purchase-request-raw-error" data-testid="purchase-request-raw-error">{fieldErrors.rawNeed}</p> : null}
         {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-storage-error">{storageError}</p> : null}
-        <button className="primary-button" type="submit" data-testid="purchase-request-save">{editingId ? "ذخیرهٔ تغییرات" : "ادامه"}</button>
+        <button className="primary-button" type="submit" disabled={storageLocked || mutationPending} data-testid="purchase-request-save">{mutationPending ? "در حال ثبت امن…" : editingId ? "ذخیرهٔ تغییرات" : "ادامه"}</button>
+        </fieldset>
       </form>
     </BottomSheet>
   );
 
   const recoverySheet = (
-    <BottomSheet open={recoverySheetOpen} onOpenChange={(open) => { setRecoverySheetOpen(open); if (!open) setRecoveryError(""); }} title="بازیابی درخواست‌ها" description="پس از پشتیبان دقیق، فهرست اصلی درخواست‌های خرید خالی می‌شود و ثبت از نو آغاز خواهد شد." snap={0.55}>
+    <BottomSheet open={recoverySheetOpen} onOpenChange={(open) => { if (recoveryPending) return; setRecoverySheetOpen(open); if (!open) setRecoveryError(""); }} title="بازیابی درخواست‌ها" description="پس از پشتیبان دقیق، فهرست اصلی درخواست‌های خرید خالی می‌شود و ثبت از نو آغاز خواهد شد." snap={0.55}>
       <section className="purchase-request-recovery-sheet" dir="rtl" data-testid="purchase-request-recovery-sheet">
         <div className="purchase-request-recovery-summary"><ShieldCheck size={20} /><span><strong>اول پشتیبان، بعد شروع تازه</strong><small>دادهٔ فعلی بدون تغییر در یک نسخهٔ بازیابیِ محلی و یکتا نگه‌داری و کنترل می‌شود.</small></span></div>
         <p id="purchase-request-recovery-consequence">اگر داده در بررسی دوباره سالم باشد، همان فهرست برمی‌گردد. اگر هنوز ناخوانا باشد، فقط پس از ساخت پشتیبان دقیق، فهرست اصلی درخواست‌های خرید خالی می‌شود و ثبت از نو آغاز خواهد شد؛ دادهٔ قبلی فقط در نسخهٔ بازیابی محلی می‌ماند. فایل‌ها، کارها، تأییدها و سایر داده‌های پروژه تغییر نمی‌کنند.</p>
         {recoveryError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-recovery-error">{recoveryError}</p> : null}
         <div className="purchase-request-recovery-actions">
-          <button type="button" onClick={() => { setRecoveryError(""); setRecoverySheetOpen(false); }} data-testid="purchase-request-recovery-cancel">انصراف</button>
-          <button className="primary-button" type="button" onClick={confirmStorageRecovery} aria-describedby="purchase-request-recovery-consequence" data-testid="purchase-request-recovery-confirm"><RotateCcw size={17} /> پشتیبان‌گیری و خالی‌کردن فهرست</button>
+          <button type="button" onClick={() => { setRecoveryError(""); setRecoverySheetOpen(false); }} disabled={recoveryPending} data-testid="purchase-request-recovery-cancel">انصراف</button>
+          <button className="primary-button" type="button" onClick={() => { void confirmStorageRecovery(); }} disabled={recoveryPending} aria-describedby="purchase-request-recovery-consequence" data-testid="purchase-request-recovery-confirm"><RotateCcw size={17} /> {recoveryPending ? "در حال بررسی امن…" : "پشتیبان‌گیری و خالی‌کردن فهرست"}</button>
         </div>
       </section>
     </BottomSheet>
@@ -19351,27 +19886,27 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
 
             {detailMode === "advanced" && selectedRequest.requestKind === "product" ? <section className="purchase-request-terms" aria-labelledby="purchase-request-terms-title" data-testid="purchase-request-terms"><div className="purchase-request-section-title"><strong id="purchase-request-terms-title">شرایط تجاری</strong><span>۳</span></div><dl><div><dt>حمل</dt><dd>{selectedRequest.unresolvedTerms.transport === "unknown" ? "نامشخص" : selectedRequest.unresolvedTerms.transport}</dd></div><div><dt>مالیات</dt><dd>{selectedRequest.unresolvedTerms.tax === "unknown" ? "نامشخص" : selectedRequest.unresolvedTerms.tax}</dd></div><div><dt>شرایط پرداخت</dt><dd>{selectedRequest.unresolvedTerms.paymentTerms === "unknown" ? "نامشخص" : selectedRequest.unresolvedTerms.paymentTerms}</dd></div></dl></section> : null}
 
-            {selectedRequest.status !== "draft" ? <section className="purchase-request-approval-status" id="purchase-request-approval-status" data-testid="purchase-request-approval-status" aria-live="polite">{approvalsStorageLocked ? <p role="alert"><ShieldCheck size={16} /><span><strong>وضعیت تأیید کامل خوانده نشد.</strong></span></p> : <div className={`purchase-request-approval-summary is-${selectedRequestApproval?.status ?? "pending"}`}><ClipboardCheck size={18} /><span><strong>{selectedRequestApproval?.status === "approved" ? "اطلاعات درخواست تأیید شده" : selectedRequestApproval?.status === "changes-requested" ? "نیاز به اصلاح" : "منتظر تأیید"}</strong><small>{selectedRequestApproval?.status === "approved" ? "حالا تأمین‌کننده‌های ثبت‌شده را انتخاب کن." : "این تصمیم در کارها انجام می‌شود."}</small></span></div>}</section> : null}
+            {approvalsStorageLocked || selectedRequest.status !== "draft" ? <section className="purchase-request-approval-status" id="purchase-request-approval-status" data-testid="purchase-request-approval-status" aria-live="polite">{approvalsStorageLocked ? <p role="alert"><ShieldCheck size={16} /><span><strong>وضعیت تأیید کامل خوانده نشد.</strong><small>برای جلوگیری از ثبت ناسازگار، ادامهٔ درخواست قفل شده است؛ ویرایش پیش‌نویس همچنان در دسترس می‌ماند.</small></span></p> : <div className={`purchase-request-approval-summary is-${selectedRequestApproval?.status ?? "pending"}`}><ClipboardCheck size={18} /><span><strong>{selectedRequestApproval?.status === "approved" ? "اطلاعات درخواست تأیید شده" : selectedRequestApproval?.status === "changes-requested" ? "نیاز به اصلاح" : "منتظر تأیید"}</strong><small>{selectedRequestApproval?.status === "approved" ? "حالا تأمین‌کننده‌های ثبت‌شده را انتخاب کن." : "این تصمیم در کارها انجام می‌شود."}</small></span></div>}</section> : null}
 
             {selectedRequestApproval?.status === "approved" && isApprovalEligibleForDispatch(selectedRequestApproval, selectedRequest, project.id) ? (
               <section className="purchase-request-dispatch-entry" data-testid="purchase-request-dispatch-entry">
                 <button className="primary-button" type="button" onClick={() => { setStorageError(""); setDispatchPlannerRequestId(selectedRequest.id); }} data-testid="purchase-request-open-dispatch"><Users size={17} /> انتخاب تأمین‌کننده‌ها</button>
               </section>
             ) : null}
-            {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-storage-error">{storageError}</p> : null}
+            {storageError ? <p className="purchase-request-storage-error" role="alert" data-testid="purchase-request-detail-storage-error">{storageError}</p> : null}
             <div className="purchase-request-detail-actions">
               {selectedRequest.status === "draft" ? (
-                <button ref={editButtonRef} type="button" onClick={() => openEditEditor(selectedRequest)} disabled={storageLocked} data-testid="purchase-request-edit"><PencilLine size={17} /> ویرایش پیش‌نویس</button>
+                <button ref={editButtonRef} type="button" onClick={() => openEditEditor(selectedRequest)} disabled={storageLocked || mutationPending} data-testid="purchase-request-edit"><PencilLine size={17} /> ویرایش پیش‌نویس</button>
               ) : (
-                <button type="button" onClick={returnToDraft} disabled={storageLocked || approvalsStorageLocked || selectedRequestApproval?.status === "pending"} aria-describedby="purchase-request-approval-status" data-testid="purchase-request-return-draft"><PencilLine size={17} /> بازگشت به ویرایش</button>
+                <button type="button" onClick={() => { void returnToDraft(); }} disabled={storageLocked || approvalsStorageLocked || mutationPending || selectedRequestApproval?.status === "pending"} aria-describedby="purchase-request-approval-status" data-testid="purchase-request-return-draft"><PencilLine size={17} /> بازگشت به ویرایش</button>
               )}
               {selectedRequest.status === "draft" ? (
-                <button className="primary-button" type="button" onClick={confirmForRecipients} disabled={storageLocked || approvalsStorageLocked || missingFields.length > 0} aria-describedby={missingFields.length > 0 ? "purchase-request-missing-fields" : undefined} data-testid="purchase-request-ready"><Users size={18} /> تأیید اطلاعات و انتخاب تأمین‌کننده‌ها</button>
+                <button className="primary-button" type="button" onClick={() => { void confirmForRecipients(); }} disabled={storageLocked || approvalsStorageLocked || mutationPending || missingFields.length > 0} aria-describedby={[missingFields.length > 0 ? "purchase-request-missing-fields" : "", approvalsStorageLocked ? "purchase-request-approval-status" : ""].filter(Boolean).join(" ") || undefined} data-testid="purchase-request-ready"><Users size={18} /> {mutationPending ? "در حال ثبت امن…" : "تأیید اطلاعات و انتخاب تأمین‌کننده‌ها"}</button>
               ) : (
-                selectedRequestApproval?.status === "approved" ? null : <button ref={approvalButtonRef} className="primary-button" type="button" onClick={requestApproval} disabled={storageLocked || approvalsStorageLocked} data-testid="purchase-request-request-approval"><ClipboardCheck size={18} /> مشاهده در کارها</button>
+                selectedRequestApproval?.status === "approved" ? null : <button ref={approvalButtonRef} className="primary-button" type="button" onClick={requestApproval} disabled={storageLocked || approvalsStorageLocked || mutationPending} data-testid="purchase-request-request-approval"><ClipboardCheck size={18} /> مشاهده در کارها</button>
               )}
             </div>
-            {selectedRequest.status === "draft" ? <details className="purchase-request-more-actions" data-testid="purchase-request-more-actions"><summary>گزینه‌های بیشتر</summary><button type="button" onClick={markReady} disabled={storageLocked || missingFields.length > 0} data-testid="purchase-request-mark-ready-legacy">بازبینی جداگانه در کارها</button></details> : null}
+            {selectedRequest.status === "draft" ? <details className="purchase-request-more-actions" data-testid="purchase-request-more-actions"><summary>گزینه‌های بیشتر</summary><button type="button" onClick={() => { void markReady(); }} disabled={storageLocked || mutationPending || missingFields.length > 0} data-testid="purchase-request-mark-ready-legacy">بازبینی جداگانه در کارها</button></details> : null}
           </main>
         </MobileScroll>
         {editorSheet}
@@ -19394,7 +19929,7 @@ function ProjectPurchaseRequestsView({ project, requests, approvals, contacts, d
             <div><span className="eyebrow">خرید پروژه</span><h1>درخواست‌های خرید</h1><p>نیازت را سریع ثبت و برای تأمین‌کننده‌ها آماده کن.</p></div>
           </section>
 
-          <button ref={addButtonRef} className="primary-button purchase-request-add" type="button" onClick={openCreateEditor} disabled={storageLocked} data-testid="purchase-request-add"><Plus size={18} /> درخواست جدید</button>
+          <button ref={addButtonRef} className="primary-button purchase-request-add" type="button" onClick={openCreateEditor} disabled={storageLocked || mutationPending} data-testid="purchase-request-add"><Plus size={18} /> درخواست جدید</button>
 
           {storageLocked ? <section className="project-storage-recovery-alert purchase-request-recovery-alert" role="alert" data-testid="purchase-request-read-error"><ShieldCheck size={17} /><div><span><strong>درخواست‌های محلی کامل خوانده نشد.</strong> ثبت و تغییر وضعیت برای جلوگیری از بازنویسی داده‌های قبلی قفل است.</span><button type="button" onClick={() => { setRecoveryError(""); setRecoverySuccess(""); setRecoverySheetOpen(true); }} data-testid="purchase-request-recovery-start"><RotateCcw size={15} /> بازیابی امن ثبت درخواست</button></div></section> : null}
 
@@ -19745,6 +20280,7 @@ function projectTaskStatusLabel(status: ProjectTaskStatus) {
 }
 
 function projectTaskEventLabel(type: ProjectTaskEventType) {
+  if (type === "migrated") return "کار قدیمی به مخزن امن منتقل شد";
   if (type === "updated") return "کار ویرایش شد";
   if (type === "completed") return "کار تمام شد";
   if (type === "reopened") return "کار بازگشایی شد";
@@ -19782,6 +20318,7 @@ type ProjectTasksViewProps = {
   initialDispatchPlanApprovalId: string | null;
   returnToPurchaseRequestId: string | null;
   tasksStorageLocked: boolean;
+  tasksStorageLoading: boolean;
   backboneStorageLocked: boolean;
   monitorsStorageLocked: boolean;
   approvalsStorageLocked: boolean;
@@ -19790,18 +20327,18 @@ type ProjectTasksViewProps = {
   onBack: () => void;
   onOpenBackbone: () => void;
   onReturnToPurchaseRequest: (requestId: string) => void;
-  onCreate: (draft: ProjectTaskDraft) => boolean;
-  onUpdate: (taskId: string, draft: ProjectTaskDraft) => boolean;
-  onStatusChange: (taskId: string, status: ProjectTaskStatus) => boolean;
+  onCreate: (projectId: string, draft: ProjectTaskDraft, idempotencyKey: string) => Promise<ProjectTaskMutationResult>;
+  onUpdate: (projectId: string, taskId: string, draft: ProjectTaskDraft, expectedTaskVersion: number, idempotencyKey: string) => Promise<ProjectTaskMutationResult>;
+  onStatusChange: (projectId: string, taskId: string, status: ProjectTaskStatus, expectedTaskVersion: number, idempotencyKey: string) => Promise<ProjectTaskMutationResult>;
   onCreateMonitor: () => Promise<ProjectTaskMonitorMutationResult>;
   onRunMonitors: (monitorId: string | null, force: boolean, expectedVersion?: number | null, automaticRunStillAllowed?: (() => boolean) | null) => Promise<ProjectTaskMonitorMutationResult>;
   onToggleMonitor: (monitorId: string, enabled: boolean, expectedVersion: number) => Promise<ProjectTaskMonitorMutationResult>;
   onRetryMonitor: (monitorId: string, expectedVersion: number) => Promise<ProjectTaskMonitorMutationResult>;
-  onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => boolean;
+  onApprovalDecision: (approvalId: string, decision: Exclude<ProjectApprovalStatus, "pending">) => Promise<boolean>;
   onDispatchPlanApprovalDecision: (approvalId: string, action: "approve" | "withdraw" | "reopen") => boolean;
 };
 
-function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, backboneStorageLocked, monitorsStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, backLabel, onBack, onOpenBackbone, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onCreateMonitor, onRunMonitors, onToggleMonitor, onRetryMonitor, onApprovalDecision, onDispatchPlanApprovalDecision }: ProjectTasksViewProps) {
+function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, approvals, dispatchPlanApprovals, dispatchDrafts, requests, contacts, initialFilter, initialApprovalId, initialDispatchPlanApprovalId, returnToPurchaseRequestId, tasksStorageLocked, tasksStorageLoading, backboneStorageLocked, monitorsStorageLocked, approvalsStorageLocked, dispatchPlanApprovalsStorageLocked, backLabel, onBack, onOpenBackbone, onReturnToPurchaseRequest, onCreate, onUpdate, onStatusChange, onCreateMonitor, onRunMonitors, onToggleMonitor, onRetryMonitor, onApprovalDecision, onDispatchPlanApprovalDecision }: ProjectTasksViewProps) {
   const keyboard = useKeyboard();
   const taskAddButtonRef = useRef<HTMLButtonElement>(null);
   const taskEditButtonRef = useRef<HTMLButtonElement>(null);
@@ -19817,12 +20354,18 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
   const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(initialApprovalId);
   const [selectedDispatchPlanApprovalId, setSelectedDispatchPlanApprovalId] = useState<string | null>(initialDispatchPlanApprovalId);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [editorProjectId, setEditorProjectId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTaskVersion, setEditingTaskVersion] = useState<number | null>(null);
   const [taskDraft, setTaskDraft] = useState<ProjectTaskDraft>({ title: "", currentStep: "", dueDate: "" });
   const [fieldErrors, setFieldErrors] = useState({ title: "", currentStep: "" });
   const [storageError, setStorageError] = useState("");
+  const [taskMutationPending, setTaskMutationPending] = useState(false);
+  const taskSaveIdempotencyKeyRef = useRef<string | null>(null);
+  const taskStatusIdempotencyKeyRef = useRef<{ taskId: string; action: "complete-task" | "reopen-task"; key: string } | null>(null);
   const [monitorMessage, setMonitorMessage] = useState("");
   const [monitorMutationPending, setMonitorMutationPending] = useState(false);
+  const [approvalMutationPending, setApprovalMutationPending] = useState(false);
   const selectedTask = selectedId ? tasks.find((task) => task.id === selectedId) ?? null : null;
   const selectedMonitor = selectedMonitorId ? monitors.find((monitor) => monitor.id === selectedMonitorId) ?? null : null;
   const selectedMonitorSnapshot = selectedMonitor ? projectTaskMonitorCurrentSnapshot(selectedMonitor) : null;
@@ -19910,6 +20453,10 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
   }, [selectedId, selectedTask]);
 
   useEffect(() => {
+    if (editorOpen && editorProjectId && editorProjectId !== project.id) setStorageError("پروژهٔ فعال عوض شده است. این پیش‌نویس برای پروژهٔ قبلی حفظ شد؛ برای ذخیره به همان پروژه برگرد.");
+  }, [editorOpen, editorProjectId, project.id]);
+
+  useEffect(() => {
     if (selectedMonitorId && !selectedMonitor) setSelectedMonitorId(null);
   }, [selectedMonitor, selectedMonitorId]);
 
@@ -19962,19 +20509,25 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
   }, [filter, selectedApprovalId]);
 
   const openEditor = () => {
+    setEditorProjectId(project.id);
     setEditingTaskId(null);
+    setEditingTaskVersion(null);
     setTaskDraft({ title: "", currentStep: "", dueDate: "" });
     setFieldErrors({ title: "", currentStep: "" });
     setStorageError("");
+    taskSaveIdempotencyKeyRef.current = null;
     setEditorOpen(true);
   };
 
   const openTaskEditor = () => {
     if (!selectedTask) return;
+    setEditorProjectId(selectedTask.projectId);
     setEditingTaskId(selectedTask.id);
+    setEditingTaskVersion(selectedTask.version);
     setTaskDraft({ title: selectedTask.title, currentStep: selectedTask.currentStep, dueDate: selectedTask.dueDate ?? "" });
     setFieldErrors({ title: "", currentStep: "" });
     setStorageError("");
+    taskSaveIdempotencyKeyRef.current = null;
     setEditorOpen(true);
   };
 
@@ -19982,8 +20535,11 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
     const shouldReturnToEdit = editingTaskId !== null;
     keyboard.hide();
     setEditorOpen(false);
+    setEditorProjectId(null);
     setEditingTaskId(null);
+    setEditingTaskVersion(null);
     setStorageError("");
+    taskSaveIdempotencyKeyRef.current = null;
     window.requestAnimationFrame(() => (shouldReturnToEdit ? taskEditButtonRef.current : taskAddButtonRef.current)?.focus());
   };
 
@@ -19991,9 +20547,19 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
     setTaskDraft((current) => ({ ...current, [field]: value }));
     if (field !== "dueDate") setFieldErrors((current) => current[field] ? { ...current, [field]: "" } : current);
     setStorageError("");
+    taskSaveIdempotencyKeyRef.current = null;
   };
 
-  const saveTask = () => {
+  const saveTask = async () => {
+    if (taskMutationPending) return;
+    if (tasksStorageLocked) {
+      setStorageError("کارهای محلی هنوز آماده یا خوانا نیستند؛ پیش‌نویس حفظ شد و چیزی ذخیره نشد.");
+      return;
+    }
+    if (!editorProjectId || editorProjectId !== project.id) {
+      setStorageError("پروژهٔ فعال عوض شده است. این پیش‌نویس برای پروژهٔ قبلی حفظ شد؛ برای ذخیره به همان پروژه برگرد.");
+      return;
+    }
     const title = taskDraft.title.trim();
     const currentStep = taskDraft.currentStep.trim();
     const nextErrors = {
@@ -20006,26 +20572,55 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
       window.requestAnimationFrame(() => document.getElementById(invalidId)?.focus());
       return;
     }
-    keyboard.hide();
-    const saved = editingTaskId
-      ? onUpdate(editingTaskId, { title, currentStep, dueDate: taskDraft.dueDate.trim() })
-      : onCreate({ title, currentStep, dueDate: taskDraft.dueDate.trim() });
-    if (!saved) {
-      setStorageError(editingTaskId ? "ویرایش ذخیره نشد. نسخهٔ قبلی دست‌نخورده ماند؛ دوباره تلاش کن." : "کار ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
+    const idempotencyKey = taskSaveIdempotencyKeyRef.current ?? `manual-task-save:${window.crypto.randomUUID()}`;
+    taskSaveIdempotencyKeyRef.current = idempotencyKey;
+    setTaskMutationPending(true);
+    const result = editingTaskId && editingTaskVersion !== null
+      ? await onUpdate(editorProjectId, editingTaskId, { title, currentStep, dueDate: taskDraft.dueDate.trim() }, editingTaskVersion, idempotencyKey)
+      : await onCreate(editorProjectId, { title, currentStep, dueDate: taskDraft.dueDate.trim() }, idempotencyKey);
+    setTaskMutationPending(false);
+    if (result.status === "created" || result.status === "updated" || result.status === "unchanged") {
+      keyboard.hide();
+      const wasCreating = editingTaskId === null;
+      closeEditor();
+      if (wasCreating) setFilter("active");
       return;
     }
-    closeEditor();
-    if (!editingTaskId) setFilter("active");
+    if (result.status === "version-conflict") {
+      const latest = result.envelope?.records.find((task) => task.id === editingTaskId);
+      if (latest) setEditingTaskVersion(latest.version);
+      setStorageError("این کار در جای دیگری تغییر کرده بود؛ نسخهٔ تازه بارگذاری شد. پیش‌نویس شما حفظ شده است؛ دوباره ذخیره کن.");
+      return;
+    }
+    if (result.status === "lock-unavailable") setStorageError("قفل امن مرورگر در دسترس نیست؛ چیزی تغییر نکرد و پیش‌نویس حفظ شد.");
+    else if (result.status === "idempotency-payload-mismatch") setStorageError("شناسهٔ تلاش با پیش‌نویس دیگری استفاده شده است؛ یک تغییر کوچک بده و دوباره ذخیره کن.");
+    else setStorageError(editingTaskId ? "ویرایش ذخیره نشد. نسخهٔ قبلی دست‌نخورده ماند؛ دوباره تلاش کن." : "کار ذخیره نشد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
   };
 
-  const toggleTaskStatus = () => {
-    if (!selectedTask) return;
+  const toggleTaskStatus = async () => {
+    if (!selectedTask || taskMutationPending) return;
     const nextStatus = selectedTask.status === "completed" ? "in-progress" : "completed";
-    if (!onStatusChange(selectedTask.id, nextStatus)) {
-      setStorageError("تغییر وضعیت ذخیره نشد. دوباره تلاش کن.");
+    const action = nextStatus === "completed" ? "complete-task" : "reopen-task";
+    const pendingAttempt = taskStatusIdempotencyKeyRef.current;
+    const idempotencyKey = pendingAttempt?.taskId === selectedTask.id && pendingAttempt.action === action
+      ? pendingAttempt.key
+      : `manual-task-status:${window.crypto.randomUUID()}`;
+    taskStatusIdempotencyKeyRef.current = { taskId: selectedTask.id, action, key: idempotencyKey };
+    setTaskMutationPending(true);
+    const result = await onStatusChange(selectedTask.projectId, selectedTask.id, nextStatus, selectedTask.version, idempotencyKey);
+    setTaskMutationPending(false);
+    if (result.status === "updated" || result.status === "unchanged") {
+      taskStatusIdempotencyKeyRef.current = null;
+      setStorageError("");
       return;
     }
-    setStorageError("");
+    if (result.status === "version-conflict") setStorageError("وضعیت این کار در جای دیگری تغییر کرده بود؛ نسخهٔ تازه بارگذاری شد. دوباره اقدام کن.");
+    else if (result.status === "lock-unavailable") setStorageError("قفل امن مرورگر در دسترس نیست؛ وضعیت تغییر نکرد.");
+    else if (result.status === "idempotency-payload-mismatch") {
+      taskStatusIdempotencyKeyRef.current = null;
+      setStorageError("تلاش قبلی به کار دیگری مربوط بود؛ چیزی تغییر نکرد. دوباره اقدام کن.");
+    }
+    else setStorageError("تغییر وضعیت ذخیره نشد. دوباره تلاش کن.");
   };
 
   const monitorMutationError = (status: ProjectTaskMonitorMutationStatus) => {
@@ -20097,9 +20692,12 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
     });
   };
 
-  const decideApproval = (decision: Exclude<ProjectApprovalStatus, "pending">) => {
-    if (!selectedApproval) return;
-    if (!onApprovalDecision(selectedApproval.id, decision)) {
+  const decideApproval = async (decision: Exclude<ProjectApprovalStatus, "pending">) => {
+    if (!selectedApproval || approvalMutationPending) return;
+    setApprovalMutationPending(true);
+    const saved = await onApprovalDecision(selectedApproval.id, decision);
+    setApprovalMutationPending(false);
+    if (!saved) {
       setStorageError("تصمیم ذخیره نشد؛ هیچ وضعیتی تغییر نکرد. فضای مرورگر را بررسی کن و دوباره تلاش کن.");
       return;
     }
@@ -20148,27 +20746,27 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
   };
 
   const taskEditorSheet = (
-    <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open) closeEditor(); }} title={editingTaskId ? "ویرایش کار" : "کار جدید"} description={editingTaskId ? `عنوان، گام و موعد این کار را برای ${project.name} اصلاح کن.` : `یک وظیفهٔ داخلی برای ${project.name} ثبت کن.`} snap={0.94}>
-      <form className="project-task-editor-sheet" dir="rtl" data-testid="project-task-editor-sheet" onSubmit={(event) => { event.preventDefault(); saveTask(); }}>
+    <BottomSheet open={editorOpen} onOpenChange={(open) => { if (!open && !taskMutationPending) closeEditor(); }} title={editingTaskId ? "ویرایش کار" : "کار جدید"} description={editingTaskId ? `عنوان، گام و موعد این کار را برای ${project.name} اصلاح کن.` : `یک وظیفهٔ داخلی برای ${project.name} ثبت کن.`} snap={0.94}>
+      <form className="project-task-editor-sheet" dir="rtl" data-testid="project-task-editor-sheet" aria-busy={taskMutationPending} onSubmit={(event) => { event.preventDefault(); void saveTask(); }}>
         <label className="field-control" htmlFor="project-task-title">
           <span>عنوان کار</span>
-          <KeyboardInput id="project-task-title" data-testid="project-task-title-input" value={taskDraft.title} maxLength={80} placeholder="مثلاً پیگیری تأیید نقشه سازه" onChange={(event) => changeDraft("title", event.target.value)} aria-invalid={Boolean(fieldErrors.title)} aria-describedby={fieldErrors.title ? "project-task-title-error" : undefined} />
+          <KeyboardInput id="project-task-title" data-testid="project-task-title-input" value={taskDraft.title} maxLength={80} placeholder="مثلاً پیگیری تأیید نقشه سازه" disabled={taskMutationPending || tasksStorageLocked} onChange={(event) => changeDraft("title", event.target.value)} aria-invalid={Boolean(fieldErrors.title)} aria-describedby={fieldErrors.title ? "project-task-title-error" : undefined} />
           {fieldErrors.title ? <small className="field-error" id="project-task-title-error" data-testid="project-task-title-error">{fieldErrors.title}</small> : null}
         </label>
 
         <label className="field-control" htmlFor="project-task-step">
           <span>گام بعدی</span>
-          <KeyboardTextarea id="project-task-step" data-testid="project-task-step-input" value={taskDraft.currentStep} maxLength={300} rows={4} placeholder="اقدام مشخص بعدی را بنویس..." onChange={(event) => changeDraft("currentStep", event.target.value)} aria-invalid={Boolean(fieldErrors.currentStep)} aria-describedby={fieldErrors.currentStep ? "project-task-step-error" : undefined} />
+          <KeyboardTextarea id="project-task-step" data-testid="project-task-step-input" value={taskDraft.currentStep} maxLength={300} rows={4} placeholder="اقدام مشخص بعدی را بنویس..." disabled={taskMutationPending || tasksStorageLocked} onChange={(event) => changeDraft("currentStep", event.target.value)} aria-invalid={Boolean(fieldErrors.currentStep)} aria-describedby={fieldErrors.currentStep ? "project-task-step-error" : undefined} />
           {fieldErrors.currentStep ? <small className="field-error" id="project-task-step-error" data-testid="project-task-step-error">{fieldErrors.currentStep}</small> : null}
         </label>
 
         <label className="field-control" htmlFor="project-task-due">
           <span>موعد اتمام <small>(اختیاری)</small></span>
-          <KeyboardInput id="project-task-due" data-testid="project-task-due-input" value={taskDraft.dueDate} maxLength={40} inputMode="numeric" dir="ltr" placeholder="مثلاً ۱۴۰۵/۰۶/۱۵" onChange={(event) => changeDraft("dueDate", event.target.value)} />
+          <KeyboardInput id="project-task-due" data-testid="project-task-due-input" value={taskDraft.dueDate} maxLength={40} inputMode="numeric" dir="ltr" placeholder="مثلاً ۱۴۰۵/۰۶/۱۵" disabled={taskMutationPending || tasksStorageLocked} onChange={(event) => changeDraft("dueDate", event.target.value)} />
         </label>
 
         {storageError ? <p className="project-task-storage-error" role="alert" data-testid="project-task-storage-error">{storageError}</p> : null}
-        <button className="primary-button" type="submit" data-testid="project-task-save">{editingTaskId ? "ذخیرهٔ ویرایش" : "ثبت در مرکز کارها"}</button>
+        <button className="primary-button" type="submit" disabled={taskMutationPending || tasksStorageLocked || !editorProjectId || editorProjectId !== project.id} data-testid="project-task-save">{taskMutationPending ? "در حال ذخیره…" : editingTaskId ? "ذخیرهٔ ویرایش" : "ثبت در مرکز کارها"}</button>
       </form>
     </BottomSheet>
   );
@@ -20287,8 +20885,8 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
             {storageError ? <p className="project-task-storage-error" role="alert" tabIndex={-1} data-testid="project-approval-storage-error">{storageError}</p> : null}
             {selectedApproval.status === "pending" ? (
               <div className="project-approval-actions">
-                <button type="button" onClick={() => decideApproval("changes-requested")} disabled={approvalsStorageLocked} aria-describedby="project-approval-boundary" data-testid="project-approval-needs-changes"><PencilLine size={17} /> نیاز به اصلاح</button>
-                <button className="primary-button" type="button" onClick={() => decideApproval("approved")} disabled={approvalsStorageLocked} aria-describedby="project-approval-boundary" data-testid="project-approval-approve"><ClipboardCheck size={18} /> تأیید و ادامه</button>
+                <button type="button" onClick={() => { void decideApproval("changes-requested"); }} disabled={approvalsStorageLocked || approvalMutationPending} aria-describedby="project-approval-boundary" data-testid="project-approval-needs-changes"><PencilLine size={17} /> {approvalMutationPending ? "در حال ذخیره…" : "نیاز به اصلاح"}</button>
+                <button className="primary-button" type="button" onClick={() => { void decideApproval("approved"); }} disabled={approvalsStorageLocked || approvalMutationPending} aria-describedby="project-approval-boundary" data-testid="project-approval-approve"><ClipboardCheck size={18} /> {approvalMutationPending ? "در حال ذخیره…" : "تأیید و ادامه"}</button>
               </div>
             ) : null}
           </main>
@@ -20352,7 +20950,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
     return (
       <div className="chida-app project-task-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-task-detail-view">
         <header className="project-workspace-header">
-          <button className="icon-button" type="button" onClick={() => { keyboard.hide(); setStorageError(""); setSelectedId(null); }} aria-label="بازگشت به مرکز کارها" data-testid="project-task-detail-back"><ArrowRight size={21} /></button>
+          <button className="icon-button" type="button" onClick={() => { keyboard.hide(); setStorageError(""); setSelectedId(null); }} disabled={taskMutationPending} aria-label="بازگشت به مرکز کارها" data-testid="project-task-detail-back"><ArrowRight size={21} /></button>
           <span className="project-workspace-title"><small>جزئیات کار</small><strong>{project.name}</strong></span>
           <span className="project-workspace-header-spacer" aria-hidden="true" />
         </header>
@@ -20382,8 +20980,8 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
 
             {storageError && !editorOpen ? <p className="project-task-storage-error" role="alert" data-testid="project-task-storage-error">{storageError}</p> : null}
             <div className="project-task-actions">
-              <button ref={taskEditButtonRef} className="project-task-edit-button" type="button" onClick={openTaskEditor} disabled={tasksStorageLocked} data-testid="project-task-edit"><PencilLine size={17} /> ویرایش کار</button>
-              <button className="primary-button project-task-status-button" type="button" onClick={toggleTaskStatus} disabled={tasksStorageLocked} data-testid="project-task-status-toggle">{selectedTask.status === "completed" ? "بازگشایی کار" : "علامت‌گذاری به‌عنوان تمام‌شده"}</button>
+              <button ref={taskEditButtonRef} className="project-task-edit-button" type="button" onClick={openTaskEditor} disabled={tasksStorageLocked || taskMutationPending} data-testid="project-task-edit"><PencilLine size={17} /> ویرایش کار</button>
+              <button className="primary-button project-task-status-button" type="button" onClick={() => { void toggleTaskStatus(); }} disabled={tasksStorageLocked || taskMutationPending} data-testid="project-task-status-toggle">{taskMutationPending ? "در حال ذخیره…" : selectedTask.status === "completed" ? "بازگشایی کار" : "علامت‌گذاری به‌عنوان تمام‌شده"}</button>
             </div>
           </main>
         </MobileScroll>
@@ -20417,7 +21015,9 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
             </button>
           ) : null}
 
-          {tasksStorageLocked && (filter === "active" || filter === "completed") ? (
+          {tasksStorageLoading && (filter === "active" || filter === "completed") ? (
+            <p className="project-storage-recovery-alert" role="status" data-testid="project-task-loading"><LoaderCircle size={17} className="spin" /><span><strong>در حال آماده‌سازی کارهای محلی</strong>نسخه و مالکیت رکوردها پیش از نمایش بررسی می‌شود.</span></p>
+          ) : tasksStorageLocked && (filter === "active" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-task-read-error"><ShieldCheck size={17} /><span><strong>کارهای محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، ثبت و تغییر وضعیت تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
           {backboneStorageLocked && (filter === "active" || filter === "completed") ? (
@@ -20506,7 +21106,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
   );
 }
 
-function ProjectSourceSearchView({ project, memories, files, query, readError, onQueryChange, onBack, onOpenMemory, onOpenFile }: { project: BuilderProject; memories: ProjectMemoryRecord[]; files: ProjectFileRecord[]; query: string; readError: boolean; onQueryChange: (query: string) => void; onBack: () => void; onOpenMemory: (memoryId: string) => void; onOpenFile: (fileId: string) => void }) {
+function ProjectSourceSearchView({ project, memories, files, query, readError, backLabel, onQueryChange, onBack, onOpenMemory, onOpenFile }: { project: BuilderProject; memories: ProjectMemoryRecord[]; files: ProjectFileRecord[]; query: string; readError: boolean; backLabel: string; onQueryChange: (query: string) => void; onBack: () => void; onOpenMemory: (memoryId: string) => void; onOpenFile: (fileId: string) => void }) {
   const keyboard = useKeyboard();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const focusedMemoryResultIdRef = useRef<string | null>(null);
@@ -20536,7 +21136,7 @@ function ProjectSourceSearchView({ project, memories, files, query, readError, o
   return (
     <div className="chida-app project-source-search-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-source-search-view">
       <header className="project-workspace-header">
-        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label="بازگشت به گفت‌وگو" data-testid="project-source-search-back"><ArrowRight size={21} /></button>
+        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label={backLabel} data-testid="project-source-search-back"><ArrowRight size={21} /></button>
         <span className="project-workspace-title"><small>جست‌وجوی محلی پروژه</small><strong>{project.name}</strong></span>
         <span className="project-workspace-header-spacer" aria-hidden="true" />
       </header>
@@ -20640,7 +21240,7 @@ function ProjectSourceSearchView({ project, memories, files, query, readError, o
   );
 }
 
-function ProjectSourceAnswerDemoView({ project, onBack }: { project: BuilderProject; onBack: () => void }) {
+function ProjectSourceAnswerDemoView({ project, backLabel, onBack }: { project: BuilderProject; backLabel: string; onBack: () => void }) {
   const keyboard = useKeyboard();
   const sourceTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
@@ -20657,7 +21257,7 @@ function ProjectSourceAnswerDemoView({ project, onBack }: { project: BuilderProj
   return (
     <div className="chida-app project-source-answer-demo-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-source-answer-demo-view">
       <header className="project-workspace-header">
-        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label="بازگشت به گفت‌وگو" data-testid="source-answer-demo-back"><ArrowRight size={21} /></button>
+        <button className="icon-button" type="button" onClick={() => { keyboard.hide(); onBack(); }} aria-label={backLabel} data-testid="source-answer-demo-back"><ArrowRight size={21} /></button>
         <span className="project-workspace-title"><small>پاسخ منبع‌دار · نمونه</small><strong>{project.name}</strong></span>
         <span className="project-workspace-header-spacer" aria-hidden="true" />
       </header>
@@ -21415,7 +22015,7 @@ function ProjectGalleryDetailSheet({ file, imageUrl, project, onClose }: { file:
   );
 }
 
-function ProjectFilesView({ project, files, storageLocked, initialSelectedId = null, onBack, onRegister, onRestoreContent, onRename }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; initialSelectedId?: string | null; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean> }) {
+function ProjectFilesView({ project, files, storageLocked, initialSelectedId = null, backLabel, onBack, onRegister, onRestoreContent, onRename }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; initialSelectedId?: string | null; backLabel: string; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean> }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<PendingProjectFile | null>(null);
@@ -21498,7 +22098,7 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
   return (
     <div className="chida-app project-files-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="project-files-view">
       <header className="project-workspace-header">
-        <button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت" data-testid="project-files-back"><ArrowRight size={21} /></button>
+        <button className="icon-button" type="button" onClick={onBack} aria-label={backLabel} data-testid="project-files-back"><ArrowRight size={21} /></button>
         <span className="project-workspace-title"><small>فایل‌ها و اسناد</small><strong>{project.name}</strong></span>
         <span className="project-workspace-header-spacer" aria-hidden="true" />
       </header>
@@ -21684,16 +22284,16 @@ function ProjectFileDetailSheet({ file, project, storageLocked, onClose, onRenam
 }
 
 function SheetRow({ icon, title, description, selected, disabled, testId, onClick }: { icon: ReactNode; title: string; description: string; selected?: boolean; disabled?: boolean; testId?: string; onClick: () => void }) {
-  return <button className="sheet-row" type="button" onClick={onClick} disabled={disabled} data-testid={testId} data-selected={selected ? "true" : "false"}><span className="sheet-row-icon">{icon}</span><span className="sheet-row-copy"><strong>{title}</strong><small>{description}</small></span>{selected ? <Check size={18} /> : null}</button>;
+  return <button className="sheet-row" type="button" onClick={onClick} disabled={disabled} aria-pressed={selected === undefined ? undefined : selected} data-testid={testId} data-selected={selected ? "true" : "false"}><span className="sheet-row-icon">{icon}</span><span className="sheet-row-copy"><strong>{title}</strong><small>{description}</small></span>{selected ? <Check size={18} /> : null}</button>;
 }
 
 function ModelsSheet({ sheet, mode, onClose, onSelect }: { sheet: SheetName; mode: ModelMode; onClose: () => void; onSelect: (mode: ModelMode) => void }) {
   const options: { name: ModelMode; description: string; icon: ReactNode }[] = [
-    { name: "خودکار", description: "بهترین حالت را بر اساس درخواست انتخاب می‌کند", icon: <Sparkles size={20} /> },
-    { name: "سریع", description: "پاسخ کوتاه‌تر برای کارهای روزمره", icon: <Zap size={20} /> },
-    { name: "عمیق", description: "تحلیل کامل‌تر برای تصمیم‌های مهم", icon: <BrainCircuit size={20} /> },
+    { name: "خودکار", description: "ترجیح پیش‌فرض برای اتصال آزمایشی آینده", icon: <Sparkles size={20} /> },
+    { name: "سریع", description: "ترجیح پاسخ کوتاه‌تر؛ مدل متصل نیست", icon: <Zap size={20} /> },
+    { name: "عمیق", description: "ترجیح بررسی کامل‌تر؛ مدل متصل نیست", icon: <BrainCircuit size={20} /> },
   ];
-  return <BottomSheet open={sheet === "models"} onOpenChange={(open) => !open && onClose()} title="حالت پاسخ" description="چیدا مدل مناسب را پشت صحنه مدیریت می‌کند." snap={0.48}><div className="sheet-list" dir="rtl" data-testid="model-sheet">{options.map((option) => <SheetRow key={option.name} icon={option.icon} title={option.name} description={option.description} selected={mode === option.name} onClick={() => { onSelect(option.name); onClose(); }} />)}</div></BottomSheet>;
+  return <BottomSheet open={sheet === "models"} onOpenChange={(open) => !open && onClose()} title="ترجیح پاسخ" description="انتخاب نمایشی این نشست برای اتصال آزمایشی آینده." snap={0.52}><div className="sheet-list" dir="rtl" data-testid="model-sheet"><p className="model-connection-boundary" role="status" data-testid="model-connection-boundary"><ShieldCheck size={17} aria-hidden="true" /> مدل هنوز متصل نیست؛ این انتخاب پاسخ تولید نمی‌کند و فقط ترجیح همین نشست را نگه می‌دارد.</p>{options.map((option) => <SheetRow key={option.name} icon={option.icon} title={option.name} description={option.description} selected={mode === option.name} onClick={() => { onSelect(option.name); onClose(); }} />)}</div></BottomSheet>;
 }
 
 function AttachSheet({ sheet, disabled, onClose, onChoose }: { sheet: SheetName; disabled: boolean; onClose: () => void; onChoose: (file: File | undefined, source: ProjectFileRecord["source"]) => void }) {
@@ -21808,31 +22408,107 @@ function builtArtifactEffectiveStatus(artifact: BuiltArtifactRecord, dependencie
   return artifact.status === "active" && (dependenciesLocked || builtArtifactHasInvalidationIncident(artifact, invalidationIncidents)) ? "blocked" : artifact.status;
 }
 
+function BuiltArtifactProjectFollowupView({ project, backbone, tasks, mode, canUse, interactionLocked = false, onOpenTasks }: {
+  project: BuilderProject;
+  backbone: ProjectBackboneGraph | null;
+  tasks: ProjectTaskRecord[];
+  mode: "preview" | "active";
+  canUse: boolean;
+  interactionLocked?: boolean;
+  onOpenTasks: () => void;
+}) {
+  const [filter, setFilter] = useState<BuiltArtifactViewFilter>("all");
+  const milestone = backbone ? projectBackboneCurrentSnapshot(backbone.milestone) as ProjectMilestoneSnapshot : null;
+  const backboneTask = backbone ? projectBackboneCurrentSnapshot(backbone.task) as ProjectBackboneTaskSnapshot : null;
+  const items = useMemo<BuiltArtifactViewItem[]>(() => [
+    ...(backboneTask && backbone ? [{
+      id: backbone.task.id,
+      title: backboneTask.title,
+      nextStep: backboneTask.nextStep,
+      dueLabel: backboneTask.dueAt ? formatTehranDateTime(backboneTask.dueAt) : null,
+      status: backboneTask.status,
+      source: "برنامهٔ فعلی" as const,
+    }] : []),
+    ...tasks.map((task) => ({
+      id: task.id,
+      title: task.title,
+      nextStep: task.currentStep,
+      dueLabel: task.dueDate,
+      status: task.status,
+      source: "کار دستی" as const,
+    })),
+  ], [backbone, backboneTask, tasks]);
+  const activeCount = items.filter((item) => item.status === "in-progress").length;
+  const completedCount = items.filter((item) => item.status === "completed").length;
+  const filteredItems = filter === "all" ? items : items.filter((item) => item.status === filter);
+  const filters: { id: BuiltArtifactViewFilter; label: string; count: number }[] = [
+    { id: "all", label: "همه", count: items.length },
+    { id: "in-progress", label: "در حال انجام", count: activeCount },
+    { id: "completed", label: "انجام‌شده", count: completedCount },
+  ];
+
+  useEffect(() => setFilter("all"), [project.id]);
+
+  return (
+    <article className="built-artifact-render-view" data-testid="built-artifact-render-preview" data-mode={mode}>
+      <header className="built-artifact-render-head">
+        <span><LayoutGrid size={20} /></span>
+        <div><small>{mode === "preview" ? "پیش‌نمایش زنده" : "نمای فعال در ابزارهای پروژه"}</small><strong>پیگیری {project.name}</strong></div>
+        <em>فقط خواندنی</em>
+      </header>
+
+      <section className="built-artifact-summary-card" data-testid="built-artifact-summary-card">
+        <div><small>برنامهٔ فعلی</small><strong>{milestone?.title ?? "برنامهٔ فعلی هنوز تنظیم نشده"}</strong></div>
+        <span><strong>{activeCount.toLocaleString("fa-IR")}</strong> کار در حال انجام</span>
+      </section>
+
+      <div className="built-artifact-view-filters" role="group" aria-label="فیلتر کارهای نمای پیگیری" data-testid="built-artifact-view-filters">
+        {filters.map((item) => <button type="button" key={item.id} aria-pressed={filter === item.id} disabled={interactionLocked} onClick={() => setFilter(item.id)} data-testid={`built-artifact-filter-${item.id}`}><span>{item.label}</span><small>{item.count.toLocaleString("fa-IR")}</small></button>)}
+      </div>
+
+      <section className="built-artifact-status-list" aria-live="polite" data-testid="built-artifact-status-list">
+        {filteredItems.length > 0 ? filteredItems.slice(0, 4).map((item) => (
+          <article key={item.id} data-state={item.status}>
+            <span>{item.status === "completed" ? <Check size={16} /> : <Clock3 size={16} />}</span>
+            <div><small>{item.source} · {item.status === "completed" ? "انجام‌شده" : "در حال انجام"}</small><strong>{item.title}</strong><p>{item.nextStep}</p>{item.dueLabel ? <em>موعد: {item.dueLabel}</em> : null}</div>
+          </article>
+        )) : <p className="built-artifact-view-empty">{items.length === 0 ? "هنوز کاری در مرکز کارها ثبت نشده است." : "در این وضعیت کاری وجود ندارد."}</p>}
+      </section>
+
+      {canUse ? <button className="primary-button built-artifact-use-button" type="button" onClick={onOpenTasks} disabled={interactionLocked} aria-label={`بازکردن کارهای ${project.name}`} data-testid="built-artifact-open-tasks"><CheckCircle2 size={18} /> بازکردن مرکز کارها</button> : <p className="built-artifact-preview-action"><CheckCircle2 size={16} /> پس از فعال‌سازی، این نما مرکز کارهای همین پروژه را باز می‌کند.</p>}
+      <p className="built-artifact-live-note">این داده‌ها نسخهٔ ثابتِ زمان تأیید نیستند؛ با تغییر برنامه یا کارهای پروژه، همین نمای خواندنی هم به‌روز می‌شود.</p>
+    </article>
+  );
+}
+
 function ToolsSheet({ sheet, artifacts, storageLocked, dependenciesLocked, invalidationError, invalidationIncidents, onBuild, onArtifact, onRetryRead, onRetryDependencies, onSearch, onSourceDemo, onFiles, onClose }: { sheet: SheetName; artifacts: BuiltArtifactRecord[]; storageLocked: boolean; dependenciesLocked: boolean; invalidationError: boolean; invalidationIncidents: string[]; onBuild: () => void; onArtifact: (artifactId: string) => void; onRetryRead: () => void; onRetryDependencies: () => void; onSearch: () => void; onSourceDemo: () => void; onFiles: () => void; onClose: () => void }) {
   const hasActiveInvalidationIncident = artifacts.some((artifact) => artifact.status === "active" && builtArtifactHasInvalidationIncident(artifact, invalidationIncidents));
   return (
     <BottomSheet open={sheet === "tools"} onOpenChange={(open) => !open && onClose()} title="ابزارهای پروژه" description="ساخته‌های محلی و ابزارهای همین پروژه." snap={0.72}>
       <div className="sheet-list" dir="rtl" data-testid="tools-sheet">
         <SheetRow icon={<Hammer size={20} />} title="برایم بساز" description="ساخت یک نمای پروژه از کاتالوگ امن" testId="build-tool-entry" disabled={storageLocked || dependenciesLocked || hasActiveInvalidationIncident} onClick={onBuild} />
-        {storageLocked ? <section className="built-artifact-inline-error" role="alert" data-testid="built-artifact-tools-read-error"><div data-testid="built-artifact-read-error"><p data-testid="built-artifact-error">مخزن ساخته‌های پروژه کامل خوانده نشد؛ این وضعیت empty نیست و ساخت و تغییر قفل است.</p><button type="button" onClick={onRetryRead} data-testid="built-artifact-retry-read">تلاش دوباره برای خواندن</button></div></section> : null}
+        {storageLocked ? <section className="built-artifact-inline-error" role="alert" data-testid="built-artifact-tools-read-error"><div data-testid="built-artifact-read-error"><p data-testid="built-artifact-error">مخزن ساخته‌های پروژه کامل خوانده نشد؛ این وضعیت خالی‌بودن نیست و ساخت و تغییر قفل است.</p><button type="button" onClick={onRetryRead} data-testid="built-artifact-retry-read">تلاش دوباره برای خواندن</button></div></section> : null}
         {!storageLocked && (dependenciesLocked || hasActiveInvalidationIncident) ? <section className="built-artifact-inline-error" role="alert" data-testid="built-artifact-dependency-error"><p>{dependenciesLocked ? "برنامه یا کارهای پروژه کامل خوانده نشد؛ ساخت تازه قفل و استفاده از ساختهٔ فعال فوراً متوقف است." : "وقفهٔ وابستگی قبلی ثبت شد؛ ساخته تا ثبت ماندگار توقف و فعال‌سازی دوباره، متوقف می‌ماند."}</p>{invalidationError ? <><p>ثبت ماندگار وضعیت توقف انجام نشد؛ دادهٔ قبلی حفظ شد.</p><button type="button" onClick={onRetryDependencies} data-testid="built-artifact-retry-invalidation">تلاش دوباره برای ثبت توقف</button></> : null}</section> : null}
+        {!storageLocked && artifacts.length === 0 ? <p className="built-artifact-tools-empty" data-testid="built-artifact-tools-empty"><LayoutGrid size={18} aria-hidden="true" /><span><strong>هنوز نمایی نساخته‌ای</strong><small>از «برایم بساز» یک نمای امن و محلی برای همین پروژه بساز.</small></span></p> : null}
         {artifacts.map((artifact) => {
           const revision = builtArtifactCurrentRevision(artifact);
           const effectiveStatus = builtArtifactEffectiveStatus(artifact, dependenciesLocked, invalidationIncidents);
-          return <button className="sheet-row" type="button" key={artifact.id} onClick={() => onArtifact(artifact.id)} data-testid="built-artifact-tool-row" data-state={effectiveStatus}><span className="sheet-row-icon">{effectiveStatus === "active" ? <PackageCheck size={20} /> : <Hammer size={20} />}</span><span className="sheet-row-copy"><strong>{revision.name}</strong><small>{builtArtifactStatusLabel(effectiveStatus)} · ساختهٔ محلی همین پروژه</small></span><ChevronDown size={18} /></button>;
+          return <button className="sheet-row" type="button" key={artifact.id} onClick={() => onArtifact(artifact.id)} data-testid="built-artifact-tool-row" data-artifact-id={artifact.id} data-state={effectiveStatus}><span className="sheet-row-icon">{effectiveStatus === "active" ? <PackageCheck size={20} /> : <Hammer size={20} />}</span><span className="sheet-row-copy"><strong>{revision.name}</strong><small>{effectiveStatus === "active" ? "فعال · بازکردن نمای پیگیری" : `${builtArtifactStatusLabel(effectiveStatus)} · ساختهٔ محلی همین پروژه`}</small></span><ChevronDown size={18} /></button>;
         })}
         <SheetRow icon={<Search size={20} />} title="جست‌وجوی محلی پروژه" description="حافظه و شناسنامهٔ فایل‌های همین پروژه" testId="source-search-tool" onClick={onSearch} />
         <SheetRow icon={<Sparkles size={20} />} title="پاسخ منبع‌دار · نمونه" description="دادهٔ ساختگی؛ بدون وب، فایل یا هوش مصنوعی" testId="source-answer-demo-tool" onClick={onSourceDemo} />
         <SheetRow icon={<FileText size={20} />} title="اسناد پروژه" description="فایل‌های ثبت‌شده در پروژهٔ فعال" testId="project-documents-tool" onClick={onFiles} />
-        <SheetRow icon={<Wrench size={20} />} title="دستیار فنی" description="چک‌لیست و تحلیل تخصصی ساخت" onClick={onClose} />
+        <SheetRow icon={<Wrench size={20} />} title="دستیار فنی" description="به‌زودی · چک‌لیست و تحلیل تخصصی ساخت" testId="technical-assistant-tool" disabled onClick={() => undefined} />
       </div>
     </BottomSheet>
   );
 }
 
-function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, storageLocked, dependenciesLocked, invalidationError, invalidationIncidents, legacyRecordDetected, onSelectArtifact, onRetryRead, onRetryDependencies, onCreatePreview, onMutate, onClose }: {
+function BuildSheet({ sheet, activeProject, backbone, tasks, artifacts, selectedArtifactId, storageLocked, dependenciesLocked, invalidationError, invalidationIncidents, legacyRecordDetected, onRetryRead, onRetryDependencies, onCreatePreview, onMutate, onOpenTasks, onClose }: {
   sheet: SheetName;
   activeProject: BuilderProject;
+  backbone: ProjectBackboneGraph | null;
+  tasks: ProjectTaskRecord[];
   artifacts: BuiltArtifactRecord[];
   selectedArtifactId: string | null;
   storageLocked: boolean;
@@ -21840,14 +22516,15 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
   invalidationError: boolean;
   invalidationIncidents: string[];
   legacyRecordDetected: boolean;
-  onSelectArtifact: (artifactId: string | null) => void;
   onRetryRead: () => void;
   onRetryDependencies: () => void;
   onCreatePreview: (name: string, description: string) => Promise<BuiltArtifactMutationResult>;
   onMutate: (artifactId: string, expectedVersion: number, command: "activate" | "disable" | "reactivate" | "create-revision" | "preview" | "rollback" | "remove", input?: { name?: string; description?: string; approvalFingerprint?: string; rollbackFromVersion?: number }) => Promise<BuiltArtifactMutationResult>;
+  onOpenTasks: () => void;
   onClose: () => void;
 }) {
   const keyboard = useKeyboard();
+  const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const [step, setStep] = useState<BuildStep>("define");
   const [name, setName] = useState("نمای پیگیری پروژه");
   const [description, setDescription] = useState("برنامهٔ پروژه و کارهای ثبت‌شده را در یک نمای محلی و خواندنی کنار هم نشان بده");
@@ -21858,6 +22535,8 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
   const currentRevision = selectedArtifact ? builtArtifactCurrentRevision(selectedArtifact) : null;
   const effectiveStatus = selectedArtifact ? builtArtifactEffectiveStatus(selectedArtifact, dependenciesLocked, invalidationIncidents) : null;
   const selectedInvalidationIncident = Boolean(selectedArtifact && builtArtifactHasInvalidationIncident(selectedArtifact, invalidationIncidents));
+  const stepIndex = step === "define" ? 0 : step === "catalog" ? 1 : step === "preview" ? 2 : 3;
+  const stepLabel = step === "define" ? "تعریف نیاز" : step === "catalog" ? "انتخاب قالب امن" : step === "preview" ? "بررسی پیش‌نمایش" : step === "detail" ? "استفاده و مدیریت نما" : step === "history" ? "نسخه‌ها و بازگشت" : "تأیید حذف";
 
   useEffect(() => {
     if (sheet !== "build") return;
@@ -21882,6 +22561,17 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
     setApproved(false);
   }, [currentRevision?.id, selectedArtifact?.id, sheet]);
 
+  useLayoutEffect(() => {
+    if (sheet !== "build") return;
+    const frame = window.requestAnimationFrame(() => {
+      const heading = stepHeadingRef.current;
+      const scrollContainer = heading?.closest<HTMLElement>(".sheet-content");
+      if (scrollContainer) scrollContainer.scrollTop = 0;
+      heading?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [sheet, step, storageLocked]);
+
   const mutationError = (result: BuiltArtifactMutationResult) => {
     if (result === "invalid") return "نام و توضیح باید روشن و بدون کد، اسکریپت یا نشانی اجرایی باشند.";
     if (result === "read-failure") return "مخزن ساخته‌ها کامل خوانده نشد؛ هیچ تغییری ثبت نشد.";
@@ -21898,7 +22588,15 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
     if (pending || storageLocked) return;
     setPending(true);
     setError("");
-    const result = await operation();
+    let result: BuiltArtifactMutationResult;
+    try {
+      result = await operation();
+    } catch {
+      setPending(false);
+      setApproved(false);
+      setError("ثبت امن تغییر کامل نشد؛ نسخهٔ قبلی حفظ شد و می‌توانی دوباره تلاش کنی.");
+      return;
+    }
     setPending(false);
     if (["created", "updated", "removed", "unchanged"].includes(result)) {
       onSuccess?.();
@@ -21908,18 +22606,33 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
     setError(mutationError(result));
   };
 
+  const normalizedDraft = () => ({
+    name: normalizeBuiltArtifactText(name, 80),
+    description: normalizeBuiltArtifactText(description, 500),
+  });
+
+  const continueToCatalog = () => {
+    const draft = normalizedDraft();
+    if (!builtArtifactDraftIsValid(draft.name, draft.description)) {
+      setError(mutationError("invalid"));
+      return;
+    }
+    keyboard.hide();
+    setError("");
+    setStep("catalog");
+  };
+
   const startBuild = () => {
-    const normalizedName = normalizeBuiltArtifactText(name, 80);
-    const normalizedDescription = normalizeBuiltArtifactText(description, 500);
-    if (!builtArtifactDraftIsValid(normalizedName, normalizedDescription)) {
+    const draft = normalizedDraft();
+    if (!builtArtifactDraftIsValid(draft.name, draft.description)) {
       setError(mutationError("invalid"));
       return;
     }
     keyboard.hide();
     if (selectedArtifact) {
-      void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "preview", { name: normalizedName, description: normalizedDescription }));
+      void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "preview", { name: draft.name, description: draft.description }));
     } else {
-      void runMutation(() => onCreatePreview(normalizedName, normalizedDescription));
+      void runMutation(() => onCreatePreview(draft.name, draft.description));
     }
   };
 
@@ -21932,8 +22645,14 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
   };
 
   return (
-    <BottomSheet open={sheet === "build"} onOpenChange={(open) => !open && onClose()} title="برایم بساز" description="ساخت و مدیریت یک نمای امن در همین پروژه." snap={0.92}>
-      <div className="build-flow" dir="rtl" data-testid="build-flow" data-step={step}>
+    <BottomSheet open={sheet === "build"} onOpenChange={(open) => !open && !pending && onClose()} title="برایم بساز" description="ساخت و مدیریت یک نمای امن در همین پروژه." snap={0.92}>
+      <div className="build-flow" dir="rtl" role="region" aria-label={stepLabel} aria-busy={pending} data-testid="build-flow" data-step={step}>
+        <button className="build-flow-back" type="button" onClick={onClose} disabled={pending} data-testid="build-flow-back"><ArrowRight size={17} /> بازگشت</button>
+        <h2 ref={stepHeadingRef} className="build-current-step-title" tabIndex={-1} data-testid="build-step-heading">{stepLabel}</h2>
+        {pending ? <p className="build-pending-status" role="status" data-testid="build-pending-status">در حال ثبت امن تغییر…</p> : null}
+        {!storageLocked ? <ol className="build-stepper" aria-label="مراحل ساخت نما" data-testid="build-stepper">
+          {[{ label: "نیاز", index: 0 }, { label: "قالب امن", index: 1 }, { label: "پیش‌نمایش", index: 2 }, { label: "استفاده", index: 3 }].map((item) => <li key={item.label} data-state={item.index === stepIndex ? "current" : item.index < stepIndex ? "complete" : "upcoming"} aria-current={item.index === stepIndex ? "step" : undefined}><span>{item.index < stepIndex ? <Check size={13} /> : (item.index + 1).toLocaleString("fa-IR")}</span><small>{item.label}</small></li>)}
+        </ol> : null}
         {storageLocked ? (
           <section className="build-step built-artifact-read-error" role="alert" data-testid="built-artifact-read-error">
             <ShieldCheck size={28} />
@@ -21945,13 +22664,30 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
           <section className="build-step" data-testid="build-define-step">
             {dependenciesLocked ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-dependency-error">برنامه یا کارهای پروژه کامل خوانده نشد؛ ساخت پیش‌نمایش و فعال‌سازی تا بازیابی وابستگی قفل است.</p> : null}
             {selectedArtifact ? <span className="built-artifact-state-chip" data-testid="built-artifact-status" data-state={selectedArtifact.status}>{builtArtifactStatusLabel(selectedArtifact.status)}</span> : null}
-            <div className="build-agent-intro"><span><Bot size={21} /></span><div><strong>قالب امن «نمای پیگیری پروژه»</strong><small>از اجزای بسته و نسخه‌دار ساخته می‌شود؛ متن تو کد یا منطق اجرایی تولید نمی‌کند.</small></div></div>
+            <div className="build-agent-intro"><span><Hammer size={21} /></span><div><strong>{selectedArtifact ? "این نما را چطور بشناسی؟" : "چه نمایی برای پروژه می‌خواهی؟"}</strong><small>نام و یادداشت فقط ظاهر ساخته را شخصی می‌کنند؛ رفتار آن در مرحلهٔ بعد روشن است.</small></div></div>
             {legacyRecordDetected ? <p className="built-artifact-legacy-note" data-testid="built-artifact-legacy-note">یک رکورد قدیمی و سراسری Build پیدا شد، اما چون پروژهٔ مالک آن قابل‌اثبات نیست به این پروژه نسبت داده نشد.</p> : null}
-            <label className="build-field"><span>نام ساخته</span><KeyboardInput value={name} maxLength={80} onChange={(event) => { setName(event.target.value); setError(""); }} data-testid="build-name-input" /></label>
-            <label className="build-field"><span>هدف این نما</span><KeyboardTextarea value={description} maxLength={500} onChange={(event) => { setDescription(event.target.value); setError(""); }} data-testid="build-description-input" rows={4} /></label>
+            <p className="build-version-boundary">این نسخه فقط همین قالب امن را می‌سازد؛ متن تو به مدل فرستاده نمی‌شود و کد یا منطق تازه تولید نمی‌کند.</p>
+            <label className="build-field"><span>نام روی ابزارهای پروژه</span><KeyboardInput value={name} maxLength={80} onChange={(event) => { setName(event.target.value); setError(""); }} data-testid="build-name-input" /></label>
+            <label className="build-field"><span>یادداشت نمایشی</span><KeyboardTextarea value={description} maxLength={500} onChange={(event) => { setDescription(event.target.value); setError(""); }} data-testid="build-description-input" rows={3} /></label>
             <div className="build-scope"><Folder size={17} /><span><small>محل فعال‌سازی</small><strong>{activeProject.name}</strong></span></div>
-            <button className="primary-button" type="button" data-testid={selectedArtifact ? "built-artifact-save-revision" : "build-start-button"} disabled={pending || dependenciesLocked || !name.trim() || !description.trim()} onClick={startBuild}>{pending ? "در حال ثبت…" : "ساخت پیش‌نمایش"}</button>
-            {selectedArtifact ? <div className="built-artifact-actions"><button className="secondary-button" type="button" data-testid="built-artifact-history" onClick={() => setStep("history")}>نسخه‌ها و بازگشت</button><button className="danger-button" type="button" data-testid="built-artifact-remove" onClick={() => setStep("remove")}>حذف از پروژه</button></div> : null}
+            <button className="primary-button" type="button" data-testid={selectedArtifact ? "built-artifact-save-revision" : "build-start-button"} disabled={pending || dependenciesLocked || !name.trim() || !description.trim()} onClick={continueToCatalog}>ادامه: انتخاب قالب امن</button>
+            {selectedArtifact ? <div className="built-artifact-actions"><button className="secondary-button" type="button" data-testid="built-artifact-history" disabled={pending} onClick={() => setStep("history")}>نسخه‌ها و بازگشت</button><button className="danger-button" type="button" data-testid="built-artifact-remove" disabled={pending} onClick={() => setStep("remove")}>حذف از پروژه</button></div> : null}
+            {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
+          </section>
+        ) : null}
+
+        {!storageLocked && step === "catalog" ? (
+          <section className="build-step build-catalog" data-testid="build-catalog-step">
+            <div className="build-agent-intro"><span><LayoutGrid size={21} /></span><div><strong>قالب امن را بررسی کن</strong><small>در نسخهٔ فعلی یک قالب قابل‌استفاده و آزموده وجود دارد.</small></div></div>
+            <article className="build-template-card" data-testid="build-template-project-followup" data-selected="true">
+              <div className="build-template-head"><span><Check size={17} /></span><div><small>تنها قالب فعال این نسخه</small><h3>نمای پیگیری پروژه</h3></div></div>
+              <p>برنامه و کارهای همین پروژه را در یک نمای فقط خواندنی کنار هم می‌آورد.</p>
+              <ul><li><LayoutGrid size={15} /> خلاصهٔ برنامه و تعداد کارها</li><li><SlidersHorizontal size={15} /> فیلتر وضعیت و فهرست کارها</li><li><CheckCircle2 size={15} /> بازکردن مرکز کارها</li></ul>
+              <p className="build-template-boundary"><ShieldCheck size={15} /> بدون کد آزاد، شبکه، نصب یا اثر بیرونی</p>
+            </article>
+            <p className="build-template-match-note">نام و یادداشتت روی همین قالب قرار می‌گیرند؛ این مرحله تشخیص مدل یا انتخاب خودکار قالب نیست.</p>
+            <button className="primary-button" type="button" data-testid="build-template-confirm" disabled={pending || dependenciesLocked} onClick={startBuild}>{pending ? "در حال ثبت…" : "ساخت پیش‌نمایش این قالب"}</button>
+            <button className="secondary-button build-step-back" type="button" data-testid="build-template-back" disabled={pending} onClick={() => setStep("define")}>بازگشت و ویرایش نیاز</button>
             {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
           </section>
         ) : null}
@@ -21960,28 +22696,27 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
           <section className="build-step build-preview" data-testid="built-artifact-preview">
             {dependenciesLocked ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-dependency-error">برنامه یا کارهای پروژه کامل خوانده نشد؛ این پیش‌نمایش تا بازیابی وابستگی فعال نمی‌شود.</p> : null}
             <span className="built-artifact-state-chip" data-testid="built-artifact-status" data-state={selectedArtifact.status}>{builtArtifactStatusLabel(selectedArtifact.status)}</span>
-            <div className="build-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={100} data-testid="build-progress"><span style={{ width: "100%" }} /></div>
-            <div className="build-stages" aria-label="مراحل ساخت">
-              <div data-testid="build-stage-spec" data-state="complete"><CheckCircle2 size={17} /><span><strong>تعریف declarative</strong><small>هدف و پروژه bind شدند</small></span></div>
-              <div data-testid="build-stage-plugin" data-state="complete"><Puzzle size={17} /><span><strong>رندرکنندهٔ مرتبط</strong><small>فقط رابطه؛ پلاگین تولید نشده</small></span></div>
-              <div data-testid="build-stage-skill" data-state="complete"><BrainCircuit size={17} /><span><strong>مهارت مرتبط</strong><small>فقط metadata همین ساخته</small></span></div>
-            </div>
             <article className="build-preview-card">
               <div className="build-preview-title"><span><Hammer size={20} /></span><div><small>پیش‌نمایش ساختهٔ خصوصی پروژه</small><h3>{currentRevision.name}</h3></div></div>
               <p>{currentRevision.description}</p>
-              <div className="build-chips"><span>کارت خلاصه</span><span>فهرست وضعیت</span><span>فیلتر امن</span></div>
+              <p className="build-preview-template-label"><Check size={14} /> قالب «نمای پیگیری پروژه» · نسخهٔ ۱</p>
+            </article>
+            {!dependenciesLocked ? <BuiltArtifactProjectFollowupView project={activeProject} backbone={backbone} tasks={tasks} mode="preview" canUse={false} interactionLocked={pending} onOpenTasks={onOpenTasks} /> : <p className="built-artifact-preview-locked"><ShieldCheck size={17} /> تا بازیابی کامل برنامه و کارها، دادهٔ زنده به‌عنوان پیش‌نمایش نمایش داده نمی‌شود.</p>}
+            <p className="built-artifact-trust-summary"><ShieldCheck size={16} /> فقط برنامه و کارهای همین پروژه را می‌خواند و هیچ اثر بیرونی ندارد.</p>
+            <details className="built-artifact-contract-details" data-testid="built-artifact-contract-details">
+              <summary><span>داده و دسترسی این نما</span><ChevronDown size={17} /></summary>
               <dl className="build-permissions">
-                <div><dt>دادهٔ مجاز</dt><dd>فقط برنامه و کارهای ثبت‌شدهٔ {activeProject.name}؛ خواندنی</dd></div>
+                <div><dt>دادهٔ مجاز</dt><dd>برنامه و کارهای ثبت‌شدهٔ {activeProject.name}؛ فقط خواندنی و زنده</dd></div>
                 <div><dt>اقدام مجاز</dt><dd>بازکردن مرکز کارهای همین پروژه؛ بدون اثر بیرونی</dd></div>
                 <div><dt>اجزای امن</dt><dd>کارت خلاصه، فهرست وضعیت و فیلتر از کاتالوگ نسخهٔ ۱</dd></div>
                 <div><dt>محل فعال‌سازی</dt><dd>بخش ابزارهای {activeProject.name} در همین مرورگر</dd></div>
                 <div><dt>مرز اجرا</dt><dd>بدون اجرای کد آزاد، شبکه، نصب خارجی یا اقدام تجاری</dd></div>
               </dl>
-            </article>
-            <label className="built-artifact-approval"><input type="checkbox" checked={approved} onChange={(event) => { setApproved(event.target.checked); setError(""); }} data-testid="built-artifact-approval" /><span>همین پیش‌نمایش، داده‌ها، مجوزها و محل فعال‌سازی را بررسی کردم.</span></label>
+              <p>رابط قابلیت و مهارت فقط شناسنامهٔ همین ساخته است؛ هیچ پلاگین، اسکیل یا بسته‌ای نصب و اجرا نمی‌شود.</p>
+            </details>
+            <label className="built-artifact-approval"><input type="checkbox" checked={approved} onChange={(event) => { setApproved(event.target.checked); setError(""); }} data-testid="built-artifact-approval" /><span>قالب، داده‌های مجاز، اقدام و محل فعال‌سازی همین نسخه را بررسی کردم.</span></label>
             <button className="primary-button" type="button" data-testid="built-artifact-activate" disabled={!approved || pending || dependenciesLocked} onClick={activate}>{pending ? "در حال ثبت…" : "فعال‌سازی محلی در این پروژه"}</button>
-            <div className="built-artifact-actions"><button className="secondary-button" type="button" data-testid="built-artifact-edit-preview" disabled={pending} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "create-revision"), () => setStep("define"))}>ویرایش پیش‌نمایش</button><button className="secondary-button" type="button" data-testid="built-artifact-history" onClick={() => setStep("history")}>نسخه‌ها و بازگشت</button><button className="danger-button" type="button" data-testid="built-artifact-remove" onClick={() => setStep("remove")}>حذف از پروژه</button></div>
-            <p className="prototype-disclaimer">نصب پلاگین یا اسکیل واقعی نیست؛ فقط همین BuiltArtifact محلی در پروژه فعال می‌شود و هیچ بستهٔ خارجی یا مهارت اجرایی به دستگاه افزوده نمی‌شود.</p>
+            <div className="built-artifact-actions"><button className="secondary-button" type="button" data-testid="built-artifact-edit-preview" disabled={pending} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "create-revision"), () => setStep("define"))}>ویرایش پیش‌نمایش</button><button className="secondary-button" type="button" data-testid="built-artifact-history" disabled={pending} onClick={() => setStep("history")}>نسخه‌ها و بازگشت</button><button className="danger-button" type="button" data-testid="built-artifact-remove" disabled={pending} onClick={() => setStep("remove")}>حذف از پروژه</button></div>
             {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
           </section>
         ) : null}
@@ -21995,15 +22730,17 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
               {effectiveStatus === "blocked" ? <p className="built-artifact-inline-error" role="alert">{selectedArtifact.status === "blocked" ? currentRevision.blockedReason : "وابستگی محلی قابل‌تأیید نیست؛ استفاده تا بازیابی متوقف است."}</p> : null}
               <dl className="build-permissions"><div><dt>پروژه</dt><dd>{activeProject.name}</dd></div><div><dt>نسخه</dt><dd>{selectedArtifact.version.toLocaleString("fa-IR")}</dd></div><div><dt>اثر</dt><dd>فقط نمایش محلی؛ شبکه و اثر بیرونی ندارد</dd></div></dl>
             </article>
+            {effectiveStatus === "active" ? <BuiltArtifactProjectFollowupView project={activeProject} backbone={backbone} tasks={tasks} mode="active" canUse interactionLocked={pending} onOpenTasks={onOpenTasks} /> : null}
+            <div className="built-artifact-management-heading"><strong>مدیریت نما</strong><small>وضعیت، نسخه یا تاریخچه را تغییر بده.</small></div>
             <div className="built-artifact-actions">
               {selectedArtifact.status === "active" ? <button className="secondary-button" type="button" data-testid="built-artifact-disable" disabled={pending || selectedInvalidationIncident} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "disable"))}>غیرفعال‌کردن</button> : null}
               {["disabled", "blocked"].includes(selectedArtifact.status) ? <button className="primary-button" type="button" data-testid="built-artifact-reactivate" disabled={pending || dependenciesLocked || selectedInvalidationIncident} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "reactivate", { approvalFingerprint: currentRevision.fingerprint }))}>اعتبارسنجی و فعال‌سازی دوباره</button> : null}
               <button className="secondary-button" type="button" data-testid="built-artifact-create-revision" disabled={pending || selectedInvalidationIncident} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "create-revision"), () => setStep("define"))}>ساخت نسخهٔ تازه</button>
-              <button className="secondary-button" type="button" data-testid="built-artifact-history" onClick={() => setStep("history")}>نسخه‌ها و بازگشت</button>
-              <button className="danger-button" type="button" data-testid="built-artifact-remove" disabled={selectedInvalidationIncident} onClick={() => setStep("remove")}>حذف از پروژه</button>
+              <button className="secondary-button" type="button" data-testid="built-artifact-history" disabled={pending} onClick={() => setStep("history")}>نسخه‌ها و بازگشت</button>
+              <button className="danger-button" type="button" data-testid="built-artifact-remove" disabled={pending || selectedInvalidationIncident} onClick={() => setStep("remove")}>حذف از پروژه</button>
             </div>
             {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
-            <button className="secondary-button" type="button" onClick={onClose}>بستن</button>
+            <button className="secondary-button" type="button" onClick={onClose} disabled={pending}>بستن</button>
           </section>
         ) : null}
 
@@ -22012,7 +22749,7 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
             <div className="build-preview-title"><span><RotateCcw size={20} /></span><div><small>تاریخچهٔ تغییرناپذیر</small><h3>نسخه‌های {builtArtifactCurrentRevision(selectedArtifact).name}</h3></div></div>
             {selectedArtifact.revisions.map((revision) => <article key={revision.id}><div><strong>نسخهٔ {revision.version.toLocaleString("fa-IR")}</strong><small>{builtArtifactStatusLabel(revision.status)} · {formatProjectFileDate(revision.createdAt)}</small></div><p>{revision.name}</p>{revision.version < selectedArtifact.version ? <button className="secondary-button" type="button" data-testid="built-artifact-rollback" data-version={revision.version} disabled={pending} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "rollback", { rollbackFromVersion: revision.version }), () => setStep("define"))}>بازگشت به‌صورت پیش‌نویس تازه</button> : null}</article>)}
             {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
-            <button className="secondary-button" type="button" onClick={() => setStep(selectedArtifact.status === "preview_ready" ? "preview" : selectedArtifact.status === "draft" ? "define" : "detail")}>بازگشت</button>
+            <button className="secondary-button" type="button" disabled={pending} onClick={() => setStep(selectedArtifact.status === "preview_ready" ? "preview" : selectedArtifact.status === "draft" ? "define" : "detail")}>بازگشت</button>
           </section>
         ) : null}
 
@@ -22020,9 +22757,9 @@ function BuildSheet({ sheet, activeProject, artifacts, selectedArtifactId, stora
           <section className="build-step built-artifact-remove-confirm" data-testid="built-artifact-remove-confirmation">
             <Archive size={28} />
             <h3>حذف «{currentRevision.name}» از این پروژه؟</h3>
-            <p>رکورد ساخته حذف می‌شود، اما tombstone حداقلی برای جلوگیری از بازگشت خاموش و حفظ lineage باقی می‌ماند.</p>
+            <p>نما از پروژه حذف می‌شود؛ فقط یک نشان فنیِ بدون محتوای نما می‌ماند تا حذف آن بی‌صدا برنگردد.</p>
             <button className="danger-button" type="button" data-testid="built-artifact-confirm-remove" disabled={pending} onClick={() => void runMutation(() => onMutate(selectedArtifact.id, selectedArtifact.version, "remove"), onClose)}>{pending ? "در حال ثبت…" : "تأیید حذف"}</button>
-            <button className="secondary-button" type="button" onClick={() => setStep(selectedArtifact.status === "preview_ready" ? "preview" : selectedArtifact.status === "draft" ? "define" : "detail")}>انصراف</button>
+            <button className="secondary-button" type="button" disabled={pending} onClick={() => setStep(selectedArtifact.status === "preview_ready" ? "preview" : selectedArtifact.status === "draft" ? "define" : "detail")}>انصراف</button>
             {error ? <p className="built-artifact-inline-error" role="alert" data-testid="built-artifact-error">{error}</p> : null}
           </section>
         ) : null}
@@ -22060,8 +22797,9 @@ function BriefSheet({ sheet, schedule, onClose, onSave }: { sheet: SheetName; sc
   };
 
   return (
-    <BottomSheet open={sheet === "brief"} onOpenChange={(open) => !open && onClose()} title="بریف پروژه" description="در زمان انتخابی، فقط موارد مهم و قابل اقدام پروژه را جمع‌بندی می‌کند." snap={0.84}>
+    <BottomSheet open={sheet === "brief"} onOpenChange={(open) => !open && onClose()} title="بریف پروژه" description="برنامهٔ محلیِ نمایش بریف در همین مرورگر." snap={0.84}>
       <div className="brief-panel" dir="rtl" data-testid="brief-panel">
+        <p className="brief-local-boundary" role="status" data-testid="brief-local-boundary"><ShieldCheck size={17} aria-hidden="true" /> این زمان‌بندی فقط محلی شبیه‌سازی می‌شود؛ اجرای پس‌زمینه یا ارسال خودکار ندارد.</p>
         <div className="brief-preview">
           <div className="brief-preview-head"><span><CalendarDays size={20} /></span><div><small>بریف {activeBriefLabel(frequency)}</small><strong>امروزِ پروژه در یک نگاه</strong></div></div>
           <ul><li>تصمیم‌هایی که امروز لازم‌اند</li><li>کارهای عقب‌افتاده و نزدیک</li><li>خریدها و درخواست‌های باز</li><li>اسناد و ورودی‌های بلاتکلیف</li><li>تغییرات مهم از آخرین بازدید</li></ul>
@@ -22073,11 +22811,11 @@ function BriefSheet({ sheet, schedule, onClose, onSave }: { sheet: SheetName; sc
         </div>
 
         <div className="brief-fields">
-          {frequency === "weekly" ? <label><span>روز دریافت</span><select value={weekday} onChange={(event) => { setWeekday(event.target.value); setSaveError(""); }} data-testid="brief-weekday-select"><option>شنبه</option><option>یکشنبه</option><option>دوشنبه</option><option>سه‌شنبه</option><option>چهارشنبه</option><option>پنجشنبه</option></select></label> : null}
-          <label><span>ساعت دریافت</span><span className="time-field"><Clock3 size={17} /><KeyboardInput type="text" dir="ltr" inputMode="numeric" maxLength={5} value={time} onChange={(event) => { setTime(event.target.value); setSaveError(""); }} data-testid="brief-time-input" /></span></label>
+          {frequency === "weekly" ? <label><span>روز برنامهٔ محلی</span><select value={weekday} onChange={(event) => { setWeekday(event.target.value); setSaveError(""); }} data-testid="brief-weekday-select"><option>شنبه</option><option>یکشنبه</option><option>دوشنبه</option><option>سه‌شنبه</option><option>چهارشنبه</option><option>پنجشنبه</option></select></label> : null}
+          <label><span>ساعت برنامهٔ محلی</span><span className="time-field"><Clock3 size={17} /><KeyboardInput type="text" dir="ltr" inputMode="numeric" maxLength={5} value={time} onChange={(event) => { setTime(event.target.value); setSaveError(""); }} data-testid="brief-time-input" /></span></label>
         </div>
 
-        <button className="primary-button" type="button" data-testid="brief-save-button" onClick={save}>ذخیرهٔ برنامهٔ بریف</button>
+        <button className="primary-button" type="button" data-testid="brief-save-button" onClick={save}>ذخیرهٔ برنامهٔ محلی بریف</button>
         {saveError ? <p className="brief-save-error" role="alert" data-testid="brief-save-error">{saveError}</p> : null}
         <button className="text-button" type="button" data-testid="brief-back-button" onClick={onClose}>بازگشت به چت</button>
       </div>
@@ -22203,20 +22941,65 @@ function ProjectCreateSheet({ sheet, onClose, onSave }: { sheet: SheetName; onCl
   );
 }
 
-function SettingsSheet({ sheet, projectName, projectCount, localRecordCount, briefSummary, modelMode, onClose }: { sheet: SheetName; projectName: string; projectCount: number; localRecordCount: number | null; briefSummary: string; modelMode: ModelMode; onClose: () => void }) {
+function SettingsSheet({ sheet, projectName, projectCount, localRecordCount, localRecordCountPending, localRecordCountReadError, briefSummary, modelMode, onClose }: { sheet: SheetName; projectName: string; projectCount: number; localRecordCount: number | null; localRecordCountPending: boolean; localRecordCountReadError: boolean; briefSummary: string; modelMode: ModelMode; onClose: () => void }) {
+  const [view, setView] = useState<"overview" | "plan">("overview");
+  const planButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (sheet !== "settings") setView("overview");
+  }, [sheet]);
+
+  const returnToOverview = () => {
+    setView("overview");
+    window.requestAnimationFrame(() => planButtonRef.current?.focus());
+  };
+
   return (
-    <BottomSheet open={sheet === "settings"} onOpenChange={(open) => !open && onClose()} title="پروفایل و تنظیمات" description="حساب، مصرف، حریم و ترجیحات واقعی این نمونه" snap={0.94}>
-      <div className="settings-sheet" dir="rtl">
+    <BottomSheet open={sheet === "settings"} onOpenChange={(open) => !open && onClose()} title={view === "plan" ? "طرح و ارتقا" : "پروفایل و تنظیمات"} description={view === "plan" ? "وضعیت واقعی دسترسی این نمونه" : "حساب، مصرف، حریم و ترجیحات واقعی این نمونه"} snap={0.94}>
+      {view === "plan" ? (
+        <div className="settings-sheet settings-plan-view" dir="rtl" data-testid="settings-plan-view">
+          <button className="settings-plan-back" type="button" onClick={returnToOverview} data-testid="settings-plan-back"><ArrowRight size={18} /> بازگشت به تنظیمات</button>
+
+          <section className="settings-current-plan-card" data-testid="settings-current-plan">
+            <span className="settings-access-label">دسترسی فعلی</span>
+            <Sparkles size={24} aria-hidden="true" />
+            <h3>نسخهٔ آزمایشی سازنده</h3>
+            <p>فعال در همین نمونهٔ محلی</p>
+          </section>
+
+          <section className="settings-section settings-plan-boundary">
+            <div className="settings-section-heading"><ShieldCheck size={19} /><span><strong>مرز واقعی ارتقا</strong><small>بدون ادعای تجاری یا پرداخت نمایشی</small></span></div>
+            <p>طرح تجاری، قیمت، سهمیه و پرداخت هنوز تعریف یا متصل نشده‌اند.</p>
+            <dl className="settings-plan-status-list">
+              <div><dt>طرح تجاری</dt><dd>تعریف نشده</dd></div>
+              <div><dt>قیمت و سهمیه</dt><dd>متصل نیست</dd></div>
+              <div><dt>پرداخت و صورتحساب</dt><dd>متصل نیست</dd></div>
+            </dl>
+          </section>
+
+          <div className="role-lock-note"><CircleHelp size={18} /><span>وقتی طرح تجاری و سرویس پرداخت واقعاً تعریف و متصل شوند، مسیر ارتقا از همین بخش در دسترس قرار می‌گیرد.</span></div>
+        </div>
+      ) : (
+        <div className="settings-sheet" dir="rtl">
         <section className="settings-profile-card" data-testid="settings-profile-section">
           <img src="/chida/profile-builder-fictional.jpg" alt="تصویر نمایشی پروفایل سازنده" data-testid="settings-profile-image" />
           <span><small>حساب سازنده</small><strong>مهیار کلباسی</strong><em>تصویر نمایشی</em></span>
           <HardHat size={20} aria-hidden="true" />
         </section>
 
+        <section className="settings-access-card" data-testid="settings-access-section">
+          <div className="settings-access-copy"><small>دسترسی فعلی</small><strong>نسخهٔ آزمایشی سازنده</strong><span>فعال در همین نمونهٔ محلی</span></div>
+          <button ref={planButtonRef} type="button" onClick={() => setView("plan")} data-testid="settings-open-plan"><span>طرح و ارتقا</span><ArrowUpRight size={17} aria-hidden="true" /></button>
+        </section>
+
         <section className="settings-section" data-testid="settings-usage-section">
           <div className="settings-section-heading"><Archive size={19} /><span><strong>مصرف و داده‌های محلی</strong><small>شمارش شفاف، بدون ساختن عدد مصرف مدل</small></span></div>
-          <div className="settings-metrics"><span><strong>{projectCount.toLocaleString("fa-IR")} پروژه</strong><small>فضای ثبت‌شده</small></span><span data-testid="settings-local-record-count"><strong>{localRecordCount === null ? "—" : `${localRecordCount.toLocaleString("fa-IR")} رکورد`}</strong><small>{localRecordCount === null ? "شمارش کامل نشد" : `در ${projectName}`}</small></span></div>
-          <p>توکن، هزینه و سهمیهٔ حساب هنوز به این نمونه متصل نیست؛ بنابراین مصرف واقعی نمایش داده نمی‌شود.</p>
+          <div className="settings-connection-statuses">
+            <span data-testid="settings-model-usage-status"><small>مصرف مدل</small><strong>متصل نیست</strong></span>
+            <span data-testid="settings-billing-status"><small>هزینه و صورتحساب</small><strong>متصل نیست</strong></span>
+          </div>
+          <div className="settings-metrics"><span><strong>{projectCount.toLocaleString("fa-IR")} پروژه</strong><small>فضای ثبت‌شده</small></span><span data-testid="settings-local-record-count"><strong>{localRecordCountPending ? "…" : localRecordCountReadError || localRecordCount === null ? "—" : `${localRecordCount.toLocaleString("fa-IR")} رکورد`}</strong><small>{localRecordCountPending ? <span role="status" data-testid="settings-local-record-pending">در حال آماده‌سازی داده‌های محلی…</span> : localRecordCountReadError || localRecordCount === null ? "شمارش کامل نشد" : `در ${projectName}`}</small></span></div>
+          <p>عدد مصرف یا سهمیه تا اتصال منبع معتبر نمایش داده نمی‌شود؛ شمارش پایین فقط داده‌های محلی همین نمونه است.</p>
         </section>
 
         <section className="settings-section" data-testid="settings-privacy-section">
@@ -22225,7 +23008,7 @@ function SettingsSheet({ sheet, projectName, projectCount, localRecordCount, bri
 
         <section className="settings-section" data-testid="settings-model-section">
           <div className="settings-section-heading"><Gauge size={19} /><span><strong>حالت پاسخ</strong><small>انتخاب فعلی: {modelMode}</small></span></div>
-          <p>تغییر حالت از دکمهٔ Gauge کنار Composer انجام می‌شود؛ مدل پایه همچنان قابل‌تعویض می‌ماند.</p>
+          <p>ترجیح پاسخ از دکمهٔ نشانگر کنار کادر پیام تغییر می‌کند؛ مدل هنوز متصل نیست.</p>
         </section>
 
         <section className="settings-section" data-testid="settings-brief-section">
@@ -22244,6 +23027,7 @@ function SettingsSheet({ sheet, projectName, projectCount, localRecordCount, bri
         </section>
         <div className="role-lock-note"><ShieldCheck size={18} /><span>نقش این حساب «سازنده» است و قابل تغییر نیست.</span></div>
       </div>
+      )}
     </BottomSheet>
   );
 }
