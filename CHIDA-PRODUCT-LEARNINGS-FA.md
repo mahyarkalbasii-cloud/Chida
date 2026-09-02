@@ -1990,3 +1990,93 @@
 - **شکاف یا ابهام:** این finding شکاف محصولی تازه‌ای در سند مادر نیست؛ شکاف implementation در مالکیت lifecycle focus بود. `saveRequest` پس از چند state update فقط یک `requestAnimationFrame` داشت. بازتولید ۱۰باره ۷/۱۰ و instrumentation موقت ۳/۶ نشان داد در تمام runهای شکست‌خورده حتی یک فراخوانی `focus()` برای heading رخ نداده است: frame پیش از commit و attach ref مصرف می‌شد و retry مالک‌شده‌ای وجود نداشت. lifecycle خروج BottomSheet/FocusScope این ترتیب را timing-sensitive می‌کرد.
 - **تصمیم و وضعیت:** **[اصلاح محدود و آزموده؛ final gate تازه لازم]** intent focus موفقیت save در ref موقت ثبت و فقط با passive effect پس از commit، بسته‌شدن editor و موجودبودن selected Request روی heading اعمال و پاک می‌شود. failureهای lock/write/version/idempotency intent نمی‌سازند؛ cancel، mark-ready، return-to-draft و focus ویژهٔ بازگشت از Approval تغییر نکرده‌اند. test assertion و timeout دست‌نخورده‌اند. همان مسیر پس از اصلاح ۱۰/۱۰، چهار regression مجاور ۴/۴، build/TypeScript/runtime integrity و review مستقل بدون P0/P1/P2 پاس شدند.
 - **پیشنهاد اصلاح سند مادر:** اصلاح سند مادر لازم نیست. در راهنمای پیاده‌سازی/پذیرش آینده، انتقال focus پس از بستن overlay یا sheet باید به state/commit/teardown واقعی bind شود؛ one-shot timing primitive پیش از attach ref یا افزایش timeout نباید معیار پذیرش accessibility باشد. اجرای ۴۰۹/۴۱۰ فقط شاهد شکست است و candidate تازه پس از freeze اسناد یک `gate:release` کامل تازه نیاز دارد.
+
+## انتشار baseline تا BG-F5 و آغاز تسک مشروط بعدی — ۲۰۲۶/۰۹/۰۲
+
+### تجربهٔ مشاهده‌شده
+
+- پس از اصلاح race انتقال focus، candidate تازه منجمد شد و گیت کامل آن با Playwright برابر ۴۱۰/۴۱۰ و Sites برابر ۴/۴ پاس شد. همان bytes با SHA `93c41a8f728ff973a3ca9db29581b1e4968fe52b` روی local/GitHub `main`، Cloudflare Pages و ChatGPT Sites same-source منتشر شدند؛ دسترسی Sites owner-only باقی ماند.
+- این نتیجه اجرای ۴۰۹/۴۱۰ قبلی را به receipt تبدیل نمی‌کند؛ آن اجرا شاهد شکست تاریخی است. receipt معتبر فقط گیت تازه و انتشار SHA بالا است و شناسه‌های پویای deployment/version مطابق قرارداد بیرون repo و در پیام تحویل terminal ثبت شدند.
+
+### شکاف یا ابهام سند مادر
+
+- این انتشار شکاف محصولی تازه‌ای در سند مادر ایجاد نکرد. ابهام اجرایی میان «Gate انتشار یک snapshot» و «Builder Prototype Architecture Gate» بود: سبزشدن release gate صحت و ثبات bytes همان release را نشان می‌دهد، نه بسته‌شدن ماتریس معماری یا مجوز فاز بعد.
+- سند مادر نیز زمان commit/deploy یا SHA را تعیین نمی‌کند؛ این‌ها شواهد فرایند توسعه‌اند و نباید به‌عنوان تصمیم محصولی وارد آن شوند.
+
+### تصمیم و وضعیت آن
+
+- **[تصمیم اجراشده و منتشرشده]** baseline تا BG-F5 با SHA بالا بسته شد و وضعیت‌های میان‌راهی local/candidate/unpublished در اسناد وضعیت supersede شدند. `BG-GATE-1` rerun نشده و نتیجهٔ تاریخی آن همچنان `FAIL` است.
+- **[مجوز مصرف‌شده]** شرط «اول همه‌چیز تا اینجا منتشر شود» برآورده شد و سپس فقط آغاز محلی و تست‌محور BG-F6 مجاز شد. این مجوز commit/push/deploy BG-F6، مدل، backend، شبکه/ارسال، `case_private` یا حساب/مسیر تأمین‌کننده را باز نمی‌کند.
+
+### پیشنهاد اصلاح سند مادر
+
+- اصلاح تازه‌ای برای سند مادر پیشنهاد نمی‌شود. تفکیک release verification از architecture/product acceptance در AGENTS، هنداف و راهنمای توسعه باقی بماند؛ شناسه‌های عملیات انتشار نیز به سند محصول منتقل نشوند.
+
+## BG-F6 — Proposal Authority & Concurrency Foundation؛ candidate محلی — ۲۰۲۶/۰۹/۰۲
+
+### تجربهٔ مشاهده‌شده
+
+- Proposal ثبت‌شدهٔ سازنده در تجربهٔ T7/T8 قابل‌استفاده بود، اما authority آن هنوز آرایهٔ v1 با fingerprintهای FNV و writer مستقیم بود. این شکل در رقابت دو تب، stale dependency، readback مبهم، rollback و replay idempotency مرز قابل‌اثبات نداشت و در عین حال downstreamهای Comparison/Decision/Negotiation به revisionهای تاریخی همان داده پین بودند.
+- پیاده‌سازی محلی BG-F6 authority Proposal/ProposalRevision را به envelope canonical v2 با SHA-256، owner/scope، migration/cutover، revision/history، receipt و mutation سریال منتقل می‌کند و legacy FNV را فقط به‌عنوان evidence خواندنی برای lineage موجود نگه می‌دارد. storeهای پایین‌دستی در این migration نوشته یا canonical نمی‌شوند.
+- هنگام آزمون retry مشخص شد `payloadHash` یک receipt فقط از revision نتیجه قابل‌بازتولید نیست: exact pinهای command، به‌ویژه pin File در حضور rename مجاز display name، evidence همان تلاش‌اند. در UI نیز حفظ صرف id/key کافی نیست؛ attempt باید pins و hash draft نرمال‌شده را کنار proposal id نگه دارد تا retry مبهم همان command را replay کند، نه اینکه با dependency تازه mutation دیگری بسازد.
+- QA واقعی موبایل نشان داد صندوق، جزئیات، diff تاریخچه، empty مقایسهٔ محصول، مقایسهٔ خدمت، سؤال/پاسخ و فرم ساده/پیشرفته پس از cutover همان تجربهٔ روزمرهٔ آرام و خصوصی را حفظ می‌کنند؛ overflow افقی و warning/error تازهٔ console صفر بود. این مشاهده به معنی ارسال، دریافت پاسخ یا اتصال طرف دوم نیست.
+
+### شکاف یا ابهام سند مادر
+
+- سند مادر Proposal را شیء نسخه‌دار و قابل‌ردیابی می‌خواهد و مدیریت شکست/جلوگیری از تکرار ناخواسته را اصل محصول می‌داند، اما shape canonical Proposal، cutover از دادهٔ قدیمی، command receipt، expected version، pinهای Request/Approval/Contact/File و replay هم‌زمان receipt→event→revision را هنجاری نمی‌کند.
+- سند مادر همچنین رفتار editor پس از نتیجهٔ مبهم یا storage reconciliation را تعیین نمی‌کند: draft باید حفظ شود، اما «retry همان تلاش» با «mutation تازه روی binding تازه» دو اقدام متفاوت‌اند و نباید از روی state جدید بی‌صدا به هم تبدیل شوند.
+
+### تصمیم و وضعیت آن
+
+- **[تصمیم کاری پیاده‌سازی و اعتبارسنجی‌شدهٔ محلی]** authority فقط `chida-prototype-builder-recorded-proposals:v2` با marker سه‌مرحله‌ای و parser exact است؛ v1 فقط migration input می‌ماند و canonical/marker خراب fallback ندارد. mutationها زیر lock مشترک procurement با commit-time reread، expectedVersion، idempotency، exact readback و candidate-owned rollback اجرا می‌شوند.
+- هر `BuilderProposalCommandReceipt` exact `commandPins` را ماندگار می‌کند و parser payload را از revision، authority و همان pins بازسازی می‌کند. `commandPins.expectedDependencySnapshotHash` باید با receipt برابر باشد؛ Request/Approval/Contact pins به revision وصل‌اند و File pin commit-time از dependency mutable حدس زده نمی‌شود. same key با payload/pins متفاوت fail-close است.
+- editor هر save attempt را با `proposalId`، `idempotencyKey`، `normalizedPayloadHash` و exact pins bind می‌کند. reconciliationِ stale mutation تازه را می‌بندد؛ فقط draft بدون تغییر می‌تواند همان attempt و expected versionهای قبلی را برای بازیابی receipt دوباره بفرستد. تغییر draft یا بستن editor attempt را باطل می‌کند و conflict/failure draft را حفظ می‌کند.
+- **[وضعیت جاری]** candidate BG-F6 در working tree اصلی uncommitted/unpublished است. suite نهایی BG-F6 برابر ۵۳/۵۳ و بستهٔ نمایندهٔ downstream برابر ۹/۹ پاس شد؛ runtime integrity هر ۲۸ فایل، build/TypeScript/Vite/Sites prepare، `git diff --check`، QA واقعی `390 × 844` و review مستقل روی آخرین bytes نیز پاس‌اند. این PASS فقط تحویل محلی است: `gate:release`، commit، push یا deploy انجام نشده است. Builder Gate تاریخی rerun نشده و مدل، backend، شبکه/ارسال، `case_private` و مسیر تأمین‌کننده خارج از دامنه‌اند. authority خود Comparison/Negotiation، File/Photo و تصمیم‌های Gate-or-defer برای برش‌های جدا باز می‌مانند و هیچ‌کدام هنوز مجاز نشده‌اند.
+
+### پیشنهاد اصلاح سند مادر
+
+- یک پیوست normative برای `Proposal / ProposalRevision` اضافه شود که ownership/scope، original-vs-normalized separation، exact dependency lineage، canonical SHA-256، migration/cutover، command receipt با pins ماندگار، optimistic concurrency/idempotency، candidate-owned rollback و compatibility evidence نسل قبلی را تعریف کند.
+- در قرارداد تجربهٔ failure نیز «retry همان attempt برای receipt replay» از «بازکردن binding تازه برای mutation تازه» جدا شود؛ draft و intent کاربر حفظ شوند، اما هیچ rebind یا refresh pin خاموشی زیر همان idempotency key مجاز نباشد.
+
+## بازخورد نهایی BG-F6، مجوز انتشار و ادامهٔ سبک — ۲۰۲۶/۰۹/۰۲
+
+### تجربهٔ مشاهده‌شده
+
+- ماهیار پس از دریافت گزارش تکمیل محلی BG-F6 خواست «بعد از اتمام تسک منتشرش کن» و به‌دلیل سنگین‌شدن این گفت‌وگو، ساخت یک گفت‌وگوی تازه در همین پروژه و قراردادن هنداف کامل در آن را نیز صریحاً درخواست کرد.
+- این بازخورد دربارهٔ ترتیب عملیات و ادامهٔ کار است؛ تجربهٔ روزمرهٔ BG-F6 همان صندوق خصوصی ثبت دستی، تاریخچه، مقایسه و پیگیری بدون شبکه یا اثر بیرونی باقی می‌ماند.
+
+### شکاف یا ابهام سند مادر
+
+- شکاف محصولی تازه‌ای ایجاد نشد. ابهام فقط محورهای مستقل وضعیت بود: «تکمیل و اعتبارسنجی محلی»، «مجوز انتشار»، «رسید terminal سه مقصد» و «ساخت continuation» نباید با یک واژهٔ done ادغام شوند.
+- سند مادر نباید SHA، deployment ID یا وضعیت گفت‌وگوی Codex را حمل کند؛ این‌ها شواهد فرایند توسعه و هنداف‌اند.
+
+### تصمیم و وضعیت آن
+
+- **[مجوز صریح دریافت‌شده؛ انتشار در انتظار gate terminal]** exact candidate BG-F6 پس از freeze اسناد فقط یک `gate:release` کامل می‌گیرد؛ در صورت PASS، همان bytes یک commit می‌شوند، `gate:publish` را پاس می‌کنند و همان SHA یک بار به GitHub و سپس به Cloudflare Pages و ChatGPT Sites خصوصی منتشر می‌شود. هیچ تغییر post-gate بدون باطل‌کردن receipt مجاز نیست.
+- **[continuation مجاز پس از انتشار]** پس از اثبات terminal هر سه مقصد، یک گفت‌وگوی تازه در saved project فعلی CHIDA با `environment: local`، checkout اصلی و شاخهٔ `main` ساخته می‌شود. هنداف باید SHA، gate/fingerprint، رسید Cloudflare/Sites، owner-only بودن، وضعیت تمیز Git، بدهی‌های باز و non-actionها را ثبت کند و تا پیام بعدی read-only بماند.
+- این مجوز به rerun `BG-GATE-1`، انتخاب remediation بعدی، `case_private`، مدل، backend، شبکه/ارسال یا مسیر تأمین‌کننده گسترش ندارد.
+
+### پیشنهاد اصلاح سند مادر
+
+- اصلاح سند مادر لازم نیست. قرارداد عملیاتی freeze → gate → exact commit/push/deploy → continuation در AGENTS، هنداف و ابزار release باقی بماند و رسیدهای پویای بیرونی داخل سند محصول نوشته نشوند.
+
+## blocker گیت انتشار BG-F6؛ بستهٔ محلی و نیازمند گیت تازه — ۲۰۲۶/۰۹/۰۲
+
+### تجربهٔ مشاهده‌شده
+
+- نخستین `gate:release` روی candidate مجاز، build/integrity/TypeScript را پاس کرد اما در Playwright با ۶ شکست از ۴۶۳ سناریو متوقف شد و receipt انتشار نساخت. پنج شکست از oracleهای قدیمی T7/T8 بود که پس از انتقال authority Proposal به v2 هنوز کلید v1 را به‌شکل آرایه می‌خواندند؛ چند assertion دیگر نیز بی‌صدا `null` را با `null` مقایسه می‌کردند و دیگر ثبات bytes واقعی Proposal را نمی‌سنجیدند.
+- شکست ششم یک regression واقعی production بود: parser/normalizer تازهٔ Proposal عدد canonical را به ۱۶۰ نویسه محدود کرده بود، درحالی‌که قرارداد منتشرشدهٔ مقایسهٔ T7-B1 subtotal معتبر ۱۹۹رقمی و نتیجهٔ canonical تا ۲۰۰ رقم را پشتیبانی می‌کند. بنابراین ثبت Proposal پیش از رسیدن به محاسبه fail می‌شد.
+
+### شکاف یا ابهام سند مادر
+
+- شکاف محصولی تازه‌ای پیدا نشد؛ شکاف در قرارداد تغییر authority و کیفیت تست بود. پس از cutover کلید/shape، consumerهای production تنها مصرف‌کننده نیستند: byte oracle و fixture تست نیز باید از authority تازه بخوانند، مگر سناریویی که صریحاً migration نسل قدیمی را می‌آزماید.
+- حد طول عدد canonical Proposal در سند مادر هنجاری نشده است؛ در prototype باید با حد قطعی ۲۰۰رقمی محاسبهٔ مقایسه سازگار بماند، بدون آنکه سقف raw input یا رد payload بسیار بزرگ ضعیف شود.
+
+### تصمیم و وضعیت آن
+
+- **[اصلاح محدود و آزموده؛ گیت کامل تازه لازم]** یک حد مشترک ۲۰۰ برای normalizer و parser/migration Proposal اعمال شد؛ سقف raw برابر ۳۲۰ و تست رد رشتهٔ بسیار بزرگ دست‌نخورده ماند. helperهای downstream و همهٔ oracleهای غیرمهاجرتی T7-B1/T7-B2 به raw canonical v2 و `records` آن منتقل شدند؛ v1 فقط در fixtureهای صریح migration/cutover/recovery باقی ماند.
+- شش reproduction دقیق پس از اصلاح ۶/۶ و بستهٔ عمیق T7-B1/T7-B2/T8-A1 تا T8-A4/T8-UX1/BG-F6 برابر ۹۱/۹۱ پاس شد؛ oversized command، tamper، rollback، concurrency و lineage نیز داخل همین بسته سبز بودند. candidate همچنان uncommitted/unpublished است و چون bytes پس از گیت ناموفق تغییر کرده‌اند، فقط یک `gate:release` تازه روی freeze جدید می‌تواند receipt انتشار بسازد.
+
+### پیشنهاد اصلاح سند مادر
+
+- تغییر مستقیم سند مادر لازم نیست. در راهنمای مهندسیِ migration/cutover یک الزام اضافه شود: با تغییر authority، کلید و shape همهٔ oracleهای عدم‌تغییر bytes حسابرسی شوند و مقایسهٔ absent/null با خودش به‌عنوان شاهد preservation پذیرفته نشود.
