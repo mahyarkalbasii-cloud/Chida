@@ -4815,6 +4815,7 @@ test("memory envelope rejects nonempty v0 data and component timestamps newer th
   await page.getByTestId("project-memory-title").fill("رکورد آزمون chronology");
   await page.getByTestId("project-memory-content").fill("پاکت پایه نباید دادهٔ زنده داشته باشد.");
   await page.getByTestId("project-memory-save").click();
+  await expect(page.getByTestId("project-memory-card")).toHaveCount(1);
   const validRaw = await page.evaluate(() => window.localStorage.getItem("chida-prototype-memory-core:v2"));
   if (!validRaw) throw new Error("Valid memory fixture was not stored");
 
@@ -5100,6 +5101,7 @@ test("a pending MemoryCandidate stays separate until exact user consent promotes
   await page.getByTestId("project-memory-card").click();
   await page.getByTestId("project-memory-delete").click();
   await page.getByTestId("project-memory-delete-confirm").click();
+  await expect(page.getByTestId("project-memory-empty")).toBeVisible();
   canonical = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-memory-core:v2") ?? "null"));
   expect(canonical.records).toEqual([]);
   expect(canonical.candidates).toEqual([]);
@@ -11080,6 +11082,7 @@ test("T6-B2 stores and reloads a two-item product with independent lineage and d
   await expect(page.getByTestId("purchase-request-delivery-area-input")).toHaveValue("");
   await page.getByTestId("purchase-request-delivery-area-input").fill("سعادت‌آباد");
   await page.getByTestId("purchase-request-save").click();
+  await expect(page.getByTestId("purchase-request-editor-sheet")).toBeHidden();
   const answeredDeliveryRequest = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-project-purchase-requests:v1") ?? "[]")[0]);
   const deliveryClarification = answeredDeliveryRequest.clarificationAnswers.find((answer: { fieldPath: string }) => answer.fieldPath === "delivery.area");
   expect(deliveryClarification).toMatchObject({ answer: "سعادت‌آباد", status: "answered", source: "ثبت مستقیم شما", confidence: null, completionStatus: "complete", version: 2 });
@@ -15071,6 +15074,7 @@ test("T6-C keeps contacts and dispatch drafts isolated when the builder changes 
   await openApprovedPurchaseRequestDispatch(page);
   await addLocalSupplierContact(page, { name: "گیرنده پروژه الف", category: "میلگرد", coverage: "غرب تهران", capability: "product" });
   await page.getByTestId("dispatch-draft-save").click();
+  await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
   const firstProjectId = await readActiveProjectId(page);
 
   await reloadIntoBuilderHome(page);
@@ -15138,6 +15142,7 @@ test("T6-C rejects coordinated dispatch tampering and locks writes while leaving
   await openApprovedPurchaseRequestDispatch(page);
   await addLocalSupplierContact(page, { name: "فولاد امن", category: "میلگرد", coverage: "تهران", capability: "product" });
   await page.getByTestId("dispatch-draft-save").click();
+  await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
   const validDispatchStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"));
   const validContactStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2"));
   const payloadTamperedEnvelope = JSON.parse(validDispatchStore ?? "{\"records\":[]}");
@@ -15208,6 +15213,7 @@ for (const malformedAppend of [
     await openApprovedPurchaseRequestDispatch(page);
     await addLocalSupplierContact(page, { name: "گیرنده تاریخچه", category: "میلگرد", coverage: "تهران", capability: "product" });
     await page.getByTestId("dispatch-draft-save").click();
+    await expect(page.getByTestId("dispatch-draft-preview")).toBeVisible();
 
     const malformedEnvelope = await page.evaluate(({ store }) => {
       const key = store === "contact-history"
@@ -15815,6 +15821,7 @@ test("T7-A treats unchanged edits as a no-op, versions real edits, and keeps an 
   await page.getByTestId("proposal-line-status-0").selectOption("quoted");
   await page.getByTestId("proposal-line-unit-price-0").fill("4100000");
   await page.getByTestId("proposal-save").click();
+  await expect(page.getByTestId("proposal-detail-hero")).toBeFocused();
 
   const firstStore = await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsTestStorageKey);
   await page.getByTestId("proposal-edit").click();
