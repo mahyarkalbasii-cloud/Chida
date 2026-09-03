@@ -604,6 +604,8 @@ function parseDispositionEnvelope(value: unknown, authority: ProjectBriefAuthori
       || !isExactSha256(record.fingerprint) || !fingerprintMatches(record)) return { envelope: null, reason: "envelope-shape-invalid" };
     if (record.id !== dispositionIdFor(record.revisions[0]?.snapshot?.target ?? { kind: "project-document", id: "invalid", projectId: "invalid" })) return { envelope: null, reason: "envelope-shape-invalid" };
     totalVersions += record.version;
+    let priorSnapshot: ProjectInputDispositionSnapshot | null = null;
+    let priorReceiptIndex = -1;
     for (let index = 0; index < record.version; index += 1) {
       const version = index + 1;
       const revision = record.revisions[index];
@@ -628,6 +630,16 @@ function parseDispositionEnvelope(value: unknown, authority: ProjectBriefAuthori
         || receipt.authorizationContextHash !== record.authorizationContextHash
         || receipt.expectedDispositionVersion !== (version === 1 ? null : version - 1)
         || revision.snapshot.status !== (event.type === "resolved" ? "resolved" : "pending")) return { envelope: null, reason: "envelope-shape-invalid" };
+      const receiptIndex = envelope.idempotencyReceipts.indexOf(receipt);
+      const firstTarget = record.revisions[0].snapshot.target;
+      const stableLogicalTarget = revision.snapshot.target.projectId === firstTarget.projectId
+        && revision.snapshot.target.kind === firstTarget.kind && revision.snapshot.target.id === firstTarget.id;
+      const repeatsNoOp = priorSnapshot !== null && priorSnapshot.status === revision.snapshot.status
+        && targetsAreEqual(priorSnapshot.target, revision.snapshot.target);
+      if (!stableLogicalTarget || receiptIndex <= priorReceiptIndex
+        || priorSnapshot === null && receipt.action !== "resolve-input" || repeatsNoOp) return { envelope: null, reason: "semantic-replay-invalid" };
+      priorReceiptIndex = receiptIndex;
+      priorSnapshot = revision.snapshot;
       const command = {
         inputSchemaVersion: 1,
         action: receipt.action,
@@ -678,10 +690,10 @@ export function readProjectInputDispositionState(
   authority: ProjectBriefAuthority | null,
   dependencies: ProjectInputDependencies,
 ): ProjectInputDispositionState {
-  const derivation = deriveProjectInputTargets(dependencies);
-  if (derivation.status !== "ready") return { status: "unavailable", envelope: null, items: [], observedHeads: null, reason: derivation.reason };
   if (!authorityIsValid(authority)) return { status: "read-error", envelope: null, items: [], observedHeads: null, reason: "identity-mismatch" };
   if (!authority.projectIds.includes(dependencies.projectId)) return { status: "read-error", envelope: null, items: [], observedHeads: null, reason: "scope-mismatch" };
+  const derivation = deriveProjectInputTargets(dependencies);
+  if (derivation.status !== "ready") return { status: "unavailable", envelope: null, items: [], observedHeads: null, reason: derivation.reason };
   let raw: string | null;
   try {
     raw = window.localStorage.getItem(projectInputDispositionsStorageKey);
@@ -910,15 +922,19 @@ export async function executeProjectInputDispositionCommand(
   try {
     return await navigator.locks.request(projectInputDispositionsWriteLockName, async () => {
       let authority: ProjectBriefAuthority | null;
-      let dependencies: ProjectInputDependencies;
       try {
         authority = getAuthority();
-        dependencies = await getDependencies(command.projectId);
       } catch {
-        return { status: "dependency-read-failure", envelope: null } as ProjectInputDispositionMutationResult;
+        return { status: "read-failure", envelope: null } as ProjectInputDispositionMutationResult;
       }
       if (!authorityIsValid(authority)) return { status: "read-failure", envelope: null };
       if (!authority.projectIds.includes(command.projectId) || command.target.projectId !== command.projectId) return { status: "scope-mismatch", envelope: null };
+      let dependencies: ProjectInputDependencies;
+      try {
+        dependencies = await getDependencies(command.projectId);
+      } catch {
+        return { status: "dependency-read-failure", envelope: null };
+      }
       const derived = deriveProjectInputTargets(dependencies);
       if (derived.status !== "ready") return { status: "dependency-read-failure", envelope: null };
       if (dependencies.projectId !== command.projectId) return { status: "scope-mismatch", envelope: null };
@@ -956,6 +972,7 @@ export async function executeProjectInputDispositionCommand(
       try {
         window.localStorage.setItem(projectInputDispositionsStorageKey, candidateRaw);
       } catch {
+        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
         return { status: "write-failure", envelope: current };
       }
       let readbackRaw: string | null;
@@ -971,19 +988,24 @@ export async function executeProjectInputDispositionCommand(
       }
 
       let finalAuthority: ProjectBriefAuthority | null;
-      let finalDependencies: ProjectInputDependencies;
       try {
         finalAuthority = getAuthority();
-        finalDependencies = await getDependencies(command.projectId);
       } catch {
         await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: "dependency-read-failure", envelope: null };
+        return { status: "read-failure", envelope: null };
       }
       if (!authorityIsValid(finalAuthority)
         || finalAuthority.identityBindingHash !== authority.identityBindingHash
         || finalAuthority.authorizationHashes[command.projectId] !== authorizationContextHash) {
         await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: "dependency-stale", envelope: null };
+        return { status: "read-failure", envelope: null };
+      }
+      let finalDependencies: ProjectInputDependencies;
+      try {
+        finalDependencies = await getDependencies(command.projectId);
+      } catch {
+        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
+        return { status: "dependency-read-failure", envelope: null };
       }
       const finalDerivation = deriveProjectInputTargets(finalDependencies);
       const finalTarget = finalDerivation.status === "ready"

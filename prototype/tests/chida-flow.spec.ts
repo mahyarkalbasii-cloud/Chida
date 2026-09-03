@@ -8181,6 +8181,242 @@ test("T9-B2 reads null as byte-stable empty and rejects malformed cross-project 
     window.localStorage.getItem("chida-prototype-project-input-dispositions:v1"))).toBe(JSON.stringify(validLedger));
 });
 
+test("T9-B2 rejects coherently rehashed writer-impossible disposition histories", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
+  dependencies.files.push({
+    ...dependencies.files[0],
+    id: "doc-b",
+    displayName: "قرارداد ب",
+    originalName: "b.pdf",
+    createdAt: "2026-09-03T08:02:00.000Z",
+  });
+  const results = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const targets = domain.deriveProjectInputTargets(currentDependencies).targets;
+    const targetA = targets.find((target: { id: string }) => target.id === "doc-a");
+    const targetB = targets.find((target: { id: string }) => target.id === "doc-b");
+    if (!targetA || !targetB) throw new Error("semantic replay fixtures are missing");
+    await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: currentDependencies.projectId,
+      target: targetA,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "semantic-resolve",
+    }, () => currentAuthority, async () => currentDependencies);
+    await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "reopen-input" as const,
+      projectId: currentDependencies.projectId,
+      target: targetA,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "semantic-reopen",
+    }, () => currentAuthority, async () => currentDependencies);
+    const valid = JSON.parse(localStorage.getItem(domain.projectInputDispositionsStorageKey)!);
+    const withoutFingerprint = (value: Record<string, unknown>) => {
+      const { fingerprint: _fingerprint, ...payload } = value;
+      return payload;
+    };
+    const rehash = (envelope: any) => {
+      for (const record of envelope.records) {
+        for (let index = 0; index < record.revisions.length; index += 1) {
+          const revision = record.revisions[index];
+          const event = record.history[index];
+          const receipt = envelope.idempotencyReceipts.find((item: any) => item.revisionId === revision.id);
+          revision.fingerprint = domain.projectBriefHash(withoutFingerprint(revision));
+          receipt.payloadHash = domain.projectBriefHash({
+            inputSchemaVersion: 1,
+            action: receipt.action,
+            projectId: receipt.projectId,
+            target: revision.snapshot.target,
+            expectedStoreVersion: receipt.expectedStoreVersion,
+            expectedDispositionVersion: receipt.expectedDispositionVersion,
+            idempotencyKey: receipt.key,
+          });
+          event.commandPayloadHash = receipt.payloadHash;
+          event.fingerprint = domain.projectBriefHash(withoutFingerprint(event));
+          receipt.fingerprint = domain.projectBriefHash(withoutFingerprint(receipt));
+        }
+        record.currentRevisionId = record.revisions.at(-1).id;
+        record.version = record.revisions.length;
+        record.createdAt = record.revisions[0].createdAt;
+        record.updatedAt = record.revisions.at(-1).createdAt;
+        record.fingerprint = domain.projectBriefHash(withoutFingerprint(record));
+      }
+      envelope.storeVersion = envelope.idempotencyReceipts.length;
+      envelope.updatedAt = envelope.idempotencyReceipts.at(-1).recordedAt;
+      envelope.fingerprint = domain.projectBriefHash(withoutFingerprint(envelope));
+      return envelope;
+    };
+    const impossibleCases = [
+      {
+        name: "first reopen",
+        mutate: (candidate: any) => {
+          candidate.records[0].revisions[0].snapshot.status = "pending";
+          candidate.records[0].history[0].type = "reopened";
+          candidate.idempotencyReceipts[0].action = "reopen-input";
+        },
+      },
+      {
+        name: "repeated no-op resolve",
+        mutate: (candidate: any) => {
+          candidate.records[0].revisions[1].snapshot.status = "resolved";
+          candidate.records[0].history[1].type = "resolved";
+          candidate.idempotencyReceipts[1].action = "resolve-input";
+        },
+      },
+      {
+        name: "later logical target switch",
+        mutate: (candidate: any) => {
+          candidate.records[0].revisions[1].snapshot.target = targetB;
+        },
+      },
+    ];
+    return impossibleCases.map(({ name, mutate }) => {
+      const candidate = structuredClone(valid);
+      mutate(candidate);
+      localStorage.setItem(domain.projectInputDispositionsStorageKey, JSON.stringify(rehash(candidate)));
+      return { name, state: domain.readProjectInputDispositionState(currentAuthority, currentDependencies) };
+    });
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  for (const result of results) {
+    expect(result.state, result.name).toMatchObject({ status: "read-error", reason: "semantic-replay-invalid" });
+  }
+});
+
+test("T9-B2 restores prior bytes when storage writes candidate then throws", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
+  const result = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const target = domain.deriveProjectInputTargets(currentDependencies).targets?.[0];
+    if (!target) throw new Error("target fixture is missing");
+    await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "write-then-throw-seed",
+    }, () => currentAuthority, async () => currentDependencies);
+    const key = domain.projectInputDispositionsStorageKey;
+    const knownGoodRaw = localStorage.getItem(key)!;
+    const nativeSetItem = Storage.prototype.setItem;
+    let injected = false;
+    Storage.prototype.setItem = function writeThenThrow(storageKey: string, value: string) {
+      const written = nativeSetItem.call(this, storageKey, value);
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw && !injected) {
+        injected = true;
+        throw new DOMException("native write then injected throw", "QuotaExceededError");
+      }
+      return written;
+    };
+    const failed = await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "reopen-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "write-then-throw-reopen",
+    }, () => currentAuthority, async () => currentDependencies);
+    Storage.prototype.setItem = nativeSetItem;
+    return { failed, knownGoodRaw, after: localStorage.getItem(key) };
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  expect(result.failed.status).toBe("write-failure");
+  expect(result.after).toBe(result.knownGoodRaw);
+});
+
+test("T9-B2 validates authority before dependencies and classifies post-write drift as read failure", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
+  const result = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const target = domain.deriveProjectInputTargets(currentDependencies).targets?.[0];
+    if (!target) throw new Error("target fixture is missing");
+    const driftedIdentityAuthority = { ...currentAuthority, identityBindingHash: `sha256-${"9".repeat(64)}` };
+    const unavailableDependencies = {
+      status: "unavailable" as const,
+      projectId: currentDependencies.projectId,
+      files: [],
+      sourceEnvelope: { schemaVersion: 1 as const, envelopeVersion: 0, records: [], intakes: [], updatedAt: null },
+      reason: "source-read-failure",
+    };
+    const invalidRead = domain.readProjectInputDispositionState(null, unavailableDependencies);
+    let dependencyReads = 0;
+    const invalidMutation = await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "authority-preflight",
+    }, () => null, async () => {
+      dependencyReads += 1;
+      return unavailableDependencies;
+    });
+
+    await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "authority-drift-seed",
+    }, () => currentAuthority, async () => currentDependencies);
+    const knownGoodRaw = localStorage.getItem(domain.projectInputDispositionsStorageKey);
+    let identityReads = 0;
+    const identityDrift = await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "reopen-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "identity-post-write-drift",
+    }, () => ++identityReads === 1 ? currentAuthority : driftedIdentityAuthority, async () => currentDependencies);
+    const afterIdentityDrift = localStorage.getItem(domain.projectInputDispositionsStorageKey);
+    let authorizationReads = 0;
+    const driftedAuthorization = {
+      ...currentAuthority,
+      authorizationHashes: {
+        ...currentAuthority.authorizationHashes,
+        [currentDependencies.projectId]: `sha256-${"8".repeat(64)}`,
+      },
+    };
+    const authorizationDrift = await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "reopen-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "authorization-post-write-drift",
+    }, () => ++authorizationReads === 1 ? currentAuthority : driftedAuthorization, async () => currentDependencies);
+    return {
+      invalidRead, invalidMutation, dependencyReads, knownGoodRaw,
+      identityDrift, afterIdentityDrift, authorizationDrift,
+      afterAuthorizationDrift: localStorage.getItem(domain.projectInputDispositionsStorageKey),
+    };
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  expect(result.invalidRead).toMatchObject({ status: "read-error", reason: "identity-mismatch" });
+  expect(result.invalidMutation.status).toBe("read-failure");
+  expect(result.dependencyReads).toBe(0);
+  expect(result.identityDrift.status).toBe("read-failure");
+  expect(result.afterIdentityDrift).toBe(result.knownGoodRaw);
+  expect(result.authorizationDrift.status).toBe("read-failure");
+  expect(result.afterAuthorizationDrift).toBe(result.knownGoodRaw);
+});
+
 test("T9-B2 resolves reloads reopens and isolates dispositions by project", async ({ page }) => {
   await enterBuilderHome(page);
   const firstProjectId = await readActiveProjectId(page);
