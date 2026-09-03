@@ -84,37 +84,47 @@ export type ProjectInputSourceEnvelopeSnapshot = {
   updatedAt: string | null;
 };
 
-export type ProjectInputDependencies = {
-  status: "ready" | "unavailable";
-  projectId: string;
-  files: ProjectInputFileSnapshot[];
-  sourceEnvelope: ProjectInputSourceEnvelopeSnapshot;
-  reason: string;
-};
+export type ProjectInputDependencies =
+  | { status: "loading" | "unavailable"; projectId: string; reason: string }
+  | {
+      status: "ready";
+      projectId: string;
+      files: ProjectInputFileSnapshot[];
+      sourceEnvelope: ProjectInputSourceEnvelopeSnapshot;
+      reason: "";
+    };
 
 export type ProjectInputTarget = {
   kind: "project-document" | "composer-intake";
   id: string;
   projectId: string;
-  createdAt: string;
-  destinationSourceId: string | null;
+  version: 1;
   fingerprint: Sha256Fingerprint;
 };
 
-export type ProjectInputTargetObservedHead = Pick<ProjectInputTarget, "kind" | "id" | "projectId" | "createdAt" | "fingerprint">;
+export type ProjectInputEffectiveStatus = "pending" | "resolved" | "pending-stale";
 
-export type ProjectInputProjectionItem = {
+export type ProjectInputDestination =
+  | { kind: "project-document"; fileId: string }
+  | { kind: "composer-source"; sourceId: string };
+
+export type ProjectInputDerivedItem = {
   target: ProjectInputTarget;
-  observedHead: ProjectInputTargetObservedHead;
+  title: string;
+  meta: string;
+  createdAt: string;
+  destination: ProjectInputDestination | null;
 };
 
-export type ProjectInputTargetDerivation = {
-  status: "ready" | "unavailable";
-  targets: ProjectInputTarget[];
-  observedHeads: ProjectInputTargetObservedHead[];
-  items: ProjectInputProjectionItem[];
-  reason: string;
+export type ProjectInputProjectionItem = ProjectInputDerivedItem & {
+  effectiveStatus: ProjectInputEffectiveStatus;
+  dispositionId: string | null;
+  dispositionVersion: number | null;
 };
+
+export type ProjectInputDerivationState =
+  | { status: "loading" | "unavailable"; targets: null; items: []; reason: string }
+  | { status: "ready"; targets: ProjectInputTarget[]; items: ProjectInputDerivedItem[]; reason: "" };
 
 const sha256Constants = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -305,21 +315,25 @@ function validIntake(value: unknown, projectId: string): value is ProjectInputIn
     && intake.fingerprint === legacyFnvHash(withoutFingerprint(intake));
 }
 
-type ProjectInputDerivedItem = { target: ProjectInputTarget };
-
 function compareDerivedItems(first: ProjectInputDerivedItem, second: ProjectInputDerivedItem) {
-  return Date.parse(second.target.createdAt) - Date.parse(first.target.createdAt)
+  return Date.parse(second.createdAt) - Date.parse(first.createdAt)
     || compareCodePoints(first.target.kind, second.target.kind)
     || compareCodePoints(first.target.id, second.target.id);
 }
 
-function unavailable(reason: string): ProjectInputTargetDerivation {
-  return { status: "unavailable", targets: [], observedHeads: [], items: [], reason };
+function unavailable(reason: string): ProjectInputDerivationState {
+  return { status: "unavailable", targets: null, items: [], reason };
 }
 
-export function deriveProjectInputTargets(dependencies: ProjectInputDependencies): ProjectInputTargetDerivation {
-  if (!hasExactKeys(dependencies, ["status", "projectId", "files", "sourceEnvelope", "reason"]) || !["ready", "unavailable"].includes(dependencies.status) || !isExactString(dependencies.projectId) || typeof dependencies.reason !== "string") return unavailable("dependencies-invalid");
-  if (dependencies.status !== "ready") return unavailable(dependencies.reason || "dependencies-unavailable");
+export function deriveProjectInputTargets(dependencies: ProjectInputDependencies): ProjectInputDerivationState {
+  if (!dependencies || typeof dependencies !== "object" || Array.isArray(dependencies)) return unavailable("dependencies-invalid");
+  if (dependencies.status === "loading" || dependencies.status === "unavailable") {
+    if (!hasExactKeys(dependencies, ["status", "projectId", "reason"])
+      || !isExactString(dependencies.projectId) || typeof dependencies.reason !== "string") return unavailable("dependencies-invalid");
+    return { status: dependencies.status, targets: null, items: [], reason: dependencies.reason };
+  }
+  if (!hasExactKeys(dependencies, ["status", "projectId", "files", "sourceEnvelope", "reason"])
+    || dependencies.status !== "ready" || !isExactString(dependencies.projectId) || dependencies.reason !== "") return unavailable("dependencies-invalid");
   if (!Array.isArray(dependencies.files) || !hasExactKeys(dependencies.sourceEnvelope, ["schemaVersion", "envelopeVersion", "records", "intakes", "updatedAt"])) return unavailable("dependencies-invalid");
   const envelope = dependencies.sourceEnvelope;
   if (envelope.schemaVersion !== 1 || !Number.isSafeInteger(envelope.envelopeVersion) || envelope.envelopeVersion < 0
@@ -360,26 +374,35 @@ export function deriveProjectInputTargets(dependencies: ProjectInputDependencies
     });
     if (linkedAssets.some((asset) => asset === null)) return unavailable("asset-missing");
     const exactAssets = linkedAssets as { sourceId: string; file: ProjectInputFileSnapshot }[];
-    const destination = exactSources.find((source) => source.assetRef !== null)?.id ?? exactSources[0]?.id;
-    if (!destination) return unavailable("source-missing");
+    const destinationSource = exactSources.find((source) => source.assetRef !== null) ?? exactSources[0];
+    if (!destinationSource) return unavailable("source-missing");
     const fingerprint = projectBriefHash({
       intake: withoutFingerprint(intake),
       sources: exactSources.map(withoutFingerprint),
       linkedAssets: exactAssets,
     });
-    derived.push({ target: { kind: "composer-intake", id: intake.id, projectId: intake.projectId, createdAt: intake.createdAt, destinationSourceId: destination, fingerprint } });
+    derived.push({
+      target: { kind: "composer-intake", id: intake.id, projectId: intake.projectId, version: 1, fingerprint },
+      title: textSources[0]?.textContent?.trim() || exactAssets[0]?.file.displayName || "ورودی Composer",
+      meta: "ورودی Composer",
+      createdAt: intake.createdAt,
+      destination: { kind: "composer-source", sourceId: destinationSource.id },
+    });
   }
   for (const file of dependencies.files) {
     if (linkedFileIds.has(file.id) || isImageFile(file)) continue;
-    derived.push({ target: { kind: "project-document", id: file.id, projectId: file.projectId, createdAt: file.createdAt, destinationSourceId: null, fingerprint: projectBriefHash(file) } });
+    derived.push({
+      target: { kind: "project-document", id: file.id, projectId: file.projectId, version: 1, fingerprint: projectBriefHash(file) },
+      title: file.displayName,
+      meta: "سند پروژه",
+      createdAt: file.createdAt,
+      destination: { kind: "project-document", fileId: file.id },
+    });
   }
   derived.sort(compareDerivedItems);
   const targets = derived.map((item) => item.target);
-  const observedHeads = targets.map(({ kind, id, projectId, createdAt, fingerprint }) => ({ kind, id, projectId, createdAt, fingerprint }));
-  return { status: "ready", targets, observedHeads, items: targets.map((target, index) => ({ target, observedHead: observedHeads[index] })), reason: "" };
+  return { status: "ready", targets, items: derived, reason: "" };
 }
-
-export type ProjectInputEffectiveStatus = "pending" | "resolved" | "pending-stale";
 
 export type ProjectInputDispositionSnapshot = {
   target: ProjectInputTarget;
@@ -458,12 +481,6 @@ export type ProjectInputDispositionEnvelope = {
   idempotencyReceipts: ProjectInputDispositionReceipt[];
   updatedAt: string | null;
   fingerprint: Sha256Fingerprint;
-};
-
-export type ProjectInputDispositionProjectionItem = ProjectInputProjectionItem & {
-  effectiveStatus: ProjectInputEffectiveStatus;
-  dispositionId: string | null;
-  dispositionVersion: number | null;
 };
 
 export type ProjectInputObservedHead = {
@@ -660,16 +677,17 @@ export type ProjectVisitCheckpointMutationResult = {
 };
 
 export type ProjectInputDispositionState =
+  | { status: "loading"; envelope: null; items: []; observedHeads: null; reason: "dependencies-loading" }
   | { status: "unavailable" | "read-error"; envelope: null; items: []; observedHeads: null; reason: string }
   | {
       status: "ready";
       envelope: ProjectInputDispositionEnvelope;
-      items: ProjectInputDispositionProjectionItem[];
+      items: ProjectInputProjectionItem[];
       observedHeads: ProjectInputObservedHead[];
       reason: "";
     };
 
-const targetKeys = ["kind", "id", "projectId", "createdAt", "destinationSourceId", "fingerprint"] as const;
+const targetKeys = ["kind", "id", "projectId", "version", "fingerprint"] as const;
 const dispositionRevisionKeys = ["id", "version", "createdAt", "authorizationContextHash", "snapshot", "fingerprint"] as const;
 const dispositionEventKeys = ["id", "type", "actor", "actorPrincipalId", "at", "version", "revisionId", "authorizationContextHash", "idempotencyKey", "commandPayloadHash", "fingerprint"] as const;
 const dispositionRecordKeys = ["schemaVersion", "objectType", "id", "projectId", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "custodianService", "sensitivity", "authorizationContextHash", "version", "currentRevisionId", "createdAt", "updatedAt", "history", "revisions", "fingerprint"] as const;
@@ -691,13 +709,12 @@ function exactTarget(value: unknown): value is ProjectInputTarget {
   if (!hasExactKeys(value, targetKeys)) return false;
   const target = value as ProjectInputTarget;
   return ["project-document", "composer-intake"].includes(target.kind)
-    && isExactString(target.id) && isExactString(target.projectId) && isExactTimestamp(target.createdAt)
-    && (target.kind === "project-document" ? target.destinationSourceId === null : isExactString(target.destinationSourceId))
+    && isExactString(target.id) && isExactString(target.projectId) && target.version === 1
     && isExactSha256(target.fingerprint);
 }
 
-function dispositionIdFor(target: Pick<ProjectInputTarget, "kind" | "id" | "projectId">) {
-  return `project-input-disposition:${projectBriefHash({ kind: target.kind, id: target.id, projectId: target.projectId }).slice(7)}`;
+function dispositionIdFor(target: Pick<ProjectInputTarget, "kind" | "id">) {
+  return `project-input-disposition:${projectBriefHash({ kind: target.kind, id: target.id }).slice(7)}`;
 }
 
 function dispositionRevisionId(dispositionId: string, version: number) {
@@ -789,7 +806,7 @@ function parseDispositionEnvelope(value: unknown, authority: ProjectBriefAuthori
       || !Array.isArray(record.history) || !Array.isArray(record.revisions)
       || record.history.length !== record.version || record.revisions.length !== record.version
       || !isExactSha256(record.fingerprint) || !fingerprintMatches(record)) return { envelope: null, reason: "envelope-shape-invalid" };
-    if (record.id !== dispositionIdFor(record.revisions[0]?.snapshot?.target ?? { kind: "project-document", id: "invalid", projectId: "invalid" })) return { envelope: null, reason: "envelope-shape-invalid" };
+    if (record.id !== dispositionIdFor(record.revisions[0]?.snapshot?.target ?? { kind: "project-document", id: "invalid" })) return { envelope: null, reason: "envelope-shape-invalid" };
     totalVersions += record.version;
     let priorSnapshot: ProjectInputDispositionSnapshot | null = null;
     let priorReceiptIndex = -1;
@@ -845,7 +862,7 @@ function parseDispositionEnvelope(value: unknown, authority: ProjectBriefAuthori
   return { envelope, reason: "" };
 }
 
-function dispositionProjection(envelope: ProjectInputDispositionEnvelope, derivation: ProjectInputTargetDerivation) {
+function dispositionProjection(envelope: ProjectInputDispositionEnvelope, derivation: Extract<ProjectInputDerivationState, { status: "ready" }>) {
   const recordByLogicalTarget = new Map(envelope.records.map((record) => {
     const current = record.revisions.at(-1)!.snapshot.target;
     return [`${current.kind}\u0000${current.id}\u0000${current.projectId}`, record] as const;
@@ -856,8 +873,7 @@ function dispositionProjection(envelope: ProjectInputDispositionEnvelope, deriva
     const snapshot = record?.revisions.at(-1)?.snapshot ?? null;
     const effectiveStatus: ProjectInputEffectiveStatus = !snapshot
       ? "pending"
-      : snapshot.target.fingerprint !== target.fingerprint || snapshot.target.createdAt !== target.createdAt
-        || snapshot.target.destinationSourceId !== target.destinationSourceId
+      : !targetsAreEqual(snapshot.target, target)
         ? "pending-stale"
         : snapshot.status;
     return {
@@ -880,6 +896,7 @@ export function readProjectInputDispositionState(
   if (!authorityIsValid(authority)) return { status: "read-error", envelope: null, items: [], observedHeads: null, reason: "identity-mismatch" };
   if (!authority.projectIds.includes(dependencies.projectId)) return { status: "read-error", envelope: null, items: [], observedHeads: null, reason: "scope-mismatch" };
   const derivation = deriveProjectInputTargets(dependencies);
+  if (derivation.status === "loading") return { status: "loading", envelope: null, items: [], observedHeads: null, reason: "dependencies-loading" };
   if (derivation.status !== "ready") return { status: "unavailable", envelope: null, items: [], observedHeads: null, reason: derivation.reason };
   let raw: string | null;
   try {

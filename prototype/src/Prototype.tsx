@@ -92,9 +92,11 @@ import {
   type ProjectBriefHeadAdapterState,
   type ProjectBriefObservationState,
   type ProjectInputDependencies,
-  type ProjectInputDispositionProjectionItem,
+  type ProjectInputDestination,
   type ProjectInputDispositionState,
   type ProjectInputEffectiveStatus,
+  type ProjectInputProjectionItem,
+  type ProjectInputSourceEnvelopeSnapshot,
   type ProjectInputTarget,
   type ProjectVisitCheckpointCommand,
   type ProjectVisitCheckpointState,
@@ -327,6 +329,7 @@ type ProjectInputPresentationState = "loading" | "ready" | "unavailable";
 type ProjectInputDisplayItem = {
   key: string;
   target: ProjectInputTarget;
+  destination: ProjectInputDestination | null;
   presentationState: ProjectInputPresentationState;
   effectiveStatus: ProjectInputEffectiveStatus | null;
   dispositionVersion: number | null;
@@ -13807,8 +13810,8 @@ function projectInputDependenciesForProject(projectId: string, files: ProjectFil
     sourceEnvelope: {
       schemaVersion: 1,
       envelopeVersion: projectIntakes.length,
-      records: projectSources as ProjectInputDependencies["sourceEnvelope"]["records"],
-      intakes: projectIntakes as ProjectInputDependencies["sourceEnvelope"]["intakes"],
+      records: projectSources as ProjectInputSourceEnvelopeSnapshot["records"],
+      intakes: projectIntakes as ProjectInputSourceEnvelopeSnapshot["intakes"],
       updatedAt: projectIntakes.at(-1)?.createdAt ?? null,
     },
     reason: "",
@@ -13816,13 +13819,11 @@ function projectInputDependenciesForProject(projectId: string, files: ProjectFil
 }
 
 function unavailableProjectInputDependencies(projectId: string, reason: string): ProjectInputDependencies {
-  return {
-    status: "unavailable",
-    projectId,
-    files: [],
-    sourceEnvelope: { schemaVersion: 1, envelopeVersion: 0, records: [], intakes: [], updatedAt: null },
-    reason,
-  };
+  return { status: "unavailable", projectId, reason };
+}
+
+function loadingProjectInputDependencies(projectId: string): ProjectInputDependencies {
+  return { status: "loading", projectId, reason: "dependencies-loading" };
 }
 
 async function readProjectInputDependencies(projectId: string): Promise<ProjectInputDependencies> {
@@ -13834,9 +13835,8 @@ async function readProjectInputDependencies(projectId: string): Promise<ProjectI
   } catch {
     return unavailableProjectInputDependencies(projectId, "storage-read-failure");
   }
-  if (files.readError || sources.readError || intakePending) {
-    return unavailableProjectInputDependencies(projectId, intakePending ? "intake-pending" : "source-read-failure");
-  }
+  if (intakePending) return loadingProjectInputDependencies(projectId);
+  if (files.readError || sources.readError) return unavailableProjectInputDependencies(projectId, "source-read-failure");
   const projectFiles = files.records.filter((file) => file.projectId === projectId);
   const projectIntakes = sources.envelope.intakes.filter((intake) => intake.projectId === projectId);
   const projectSourceIds = new Set(projectIntakes.flatMap((intake) => intake.sourceIds));
@@ -14917,7 +14917,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const [sourceRecoveryBlocked, setSourceRecoveryBlocked] = useState(false);
   const [projectInputDispositionSnapshot, setProjectInputDispositionSnapshot] = useState<ProjectInputDispositionSnapshot>(() => ({
     projectId: activeProject.id,
-    state: { status: "unavailable", envelope: null, items: [], observedHeads: null, reason: "loading" },
+    state: { status: "loading", envelope: null, items: [], observedHeads: null, reason: "dependencies-loading" },
   }));
   const projectInputDispositionState = projectInputDispositionSnapshot.state;
   const [projectInputReadPending, setProjectInputReadPending] = useState(true);
@@ -15625,7 +15625,8 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     ? "unavailable"
     : projectInputReadPending || projectInputsDependenciesPending
       ? "loading"
-      : projectInputDispositionState.status === "ready" ? "ready" : "unavailable";
+      : projectInputDispositionState.status === "loading" ? "loading"
+        : projectInputDispositionState.status === "ready" ? "ready" : "unavailable";
   const activeProjectInputDerivation = useMemo(() => deriveProjectInputTargets(
     projectFilesReadError || projectSourcesReadError
       ? unavailableProjectInputDependencies(activeProject.id, "source-read-failure")
@@ -15633,41 +15634,37 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   ), [activeProject.id, projectFiles, projectFilesReadError, projectSources, projectSourcesReadError]);
   const activeProjectInputItems = useMemo<ProjectInputDisplayItem[]>(() => {
     const readyState = projectInputDispositionState.status === "ready" ? projectInputDispositionState : null;
-    const projectedByKey = new Map<string, ProjectInputDispositionProjectionItem>((readyState?.items ?? []).map((item) => [`${item.target.kind}:${item.target.id}`, item]));
+    const projectedByKey = new Map<string, ProjectInputProjectionItem>((readyState?.items ?? []).map((item) => [`${item.target.kind}:${item.target.id}`, item]));
     const observedByKey = new Map((readyState?.observedHeads ?? []).map((item) => [item.id, item]));
-    return activeProjectInputDerivation.items.map(({ target }) => {
+    return activeProjectInputDerivation.items.map((derivedItem) => {
+      const { target } = derivedItem;
       const key = `${target.kind}:${target.id}`;
       const projected = projectedByKey.get(key) ?? null;
       const observed = observedByKey.get(key) ?? null;
-      const intake = target.kind === "composer-intake" ? projectSources.intakes.find((candidate) => candidate.id === target.id && candidate.projectId === activeProject.id) ?? null : null;
-      const intakeSources = intake ? intake.sourceIds.map((sourceId) => projectSources.records.find((source) => source.id === sourceId)).filter((source): source is ProjectSourceRecord => Boolean(source)) : [];
-      const intakeText = intakeSources.find((source) => source.sourceType === "composer-text")?.textContent?.trim() ?? "";
-      const intakeFileId = intakeSources.find((source) => source.assetRef !== null)?.assetRef?.fileId ?? null;
-      const file = target.kind === "project-document"
-        ? activeProjectFiles.find((candidate) => candidate.id === target.id) ?? null
-        : intakeFileId ? activeProjectFiles.find((candidate) => candidate.id === intakeFileId) ?? null : null;
+      const destinationFileId = derivedItem.destination?.kind === "project-document" ? derivedItem.destination.fileId : null;
+      const file = destinationFileId
+        ? activeProjectFiles.find((candidate) => candidate.id === destinationFileId) ?? null
+        : null;
       const itemPresentationState = projectInputPresentationState === "ready" && (!readyState || !observed)
         ? "loading"
         : projectInputPresentationState;
-      const title = target.kind === "project-document"
-        ? file?.displayName ?? "سند پروژه"
-        : intakeText || file?.displayName || "ورودی Composer";
       const effectiveStatus = itemPresentationState === "ready"
         ? observed?.state ?? projected?.effectiveStatus ?? null
         : null;
       return {
         key,
         target,
+        destination: derivedItem.destination,
         presentationState: itemPresentationState,
         effectiveStatus,
         dispositionVersion: projected?.dispositionVersion ?? (observed?.state === "resolved" ? observed.version : null),
-        title,
-        meta: `${target.kind === "project-document" ? "سند پروژه" : "ورودی Composer"} · ${formatProjectFileDate(target.createdAt)}`,
+        title: derivedItem.title,
+        meta: `${derivedItem.meta} · ${formatProjectFileDate(derivedItem.createdAt)}`,
         metadataOnly: target.kind === "project-document" && file?.storageMode === "metadata-only",
-        ready: itemPresentationState === "ready" && !projectInputsLocked && Boolean(readyState && observed && effectiveStatus),
+        ready: itemPresentationState === "ready" && !projectInputsLocked && Boolean(readyState && observed && effectiveStatus && derivedItem.destination),
       };
     });
-  }, [activeProject.id, activeProjectFiles, activeProjectInputDerivation.items, projectInputDispositionState, projectInputPresentationState, projectInputsLocked, projectSources.intakes, projectSources.records]);
+  }, [activeProjectFiles, activeProjectInputDerivation.items, projectInputDispositionState, projectInputPresentationState, projectInputsLocked]);
   const projectInputByFileId = useMemo(() => new Map(activeProjectInputItems.filter((item) => item.target.kind === "project-document").map((item) => [item.target.id, item])), [activeProjectInputItems]);
   const projectInputByIntakeId = useMemo(() => new Map(activeProjectInputItems.filter((item) => item.target.kind === "composer-intake").map((item) => [item.target.id, item])), [activeProjectInputItems]);
   const selectedSourceInput = selectedSource ? projectInputByIntakeId.get(selectedSource.intakeId) ?? null : null;
@@ -15897,7 +15894,8 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     ? "unavailable"
     : projectInputReadPending || projectInputsDependenciesPending
       ? "loading"
-      : projectInputDispositionState.status === "ready" ? "ready" : "unavailable";
+      : projectInputDispositionState.status === "loading" ? "loading"
+        : projectInputDispositionState.status === "ready" ? "ready" : "unavailable";
   const liveBriefInputs: LiveBriefInputsSection = {
     status: liveBriefInputsStatus,
     items: liveBriefInputsStatus === "ready"
@@ -19476,14 +19474,15 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         onDisposition={mutateProjectInputDisposition}
         onOpenInput={(item) => {
           setProjectInputMutationError(null);
-          if (item.target.kind === "project-document") {
+          if (item.destination?.kind === "project-document") {
             briefFileReturnKeyRef.current = item.key;
-            openProjectFiles("chat", item.target.id);
+            openProjectFiles("chat", item.destination.fileId);
             return;
           }
+          if (item.destination?.kind !== "composer-source") return;
           sourceDetailReturnSheetRef.current = "brief";
           briefInputReturnKeyRef.current = item.key;
-          setSelectedSourceId(item.target.destinationSourceId);
+          setSelectedSourceId(item.destination.sourceId);
           onOpenSheet("source-detail");
         }}
       />

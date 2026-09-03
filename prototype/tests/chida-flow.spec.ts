@@ -8016,12 +8016,12 @@ function projectBriefTestHash(value: unknown) {
     .update(JSON.stringify(stableTestValue(value))).digest("hex")}`;
 }
 
-function makeReadyProjectInputDependencies(projectId: string) {
+function makeReadyProjectInputDependencies(projectId: string, documentId = "doc-a") {
   return {
     status: "ready" as const,
     projectId,
     files: [{
-      id: "doc-a", projectId, displayName: "قرارداد الف", originalName: "a.pdf",
+      id: documentId, projectId, displayName: "قرارداد الف", originalName: documentId === "doc-a" ? "a.pdf" : `${documentId}.pdf`,
       mimeType: "application/pdf", size: 10, category: "قرارداد",
       source: "انتخاب مستقیم از دستگاه", status: "ثبت محلی", version: 1 as const,
       projectStage: "اسکلت بندی", visibility: "خصوصی پروژه" as const,
@@ -8041,14 +8041,13 @@ function makeProjectInputDispositionLedger(authority: Awaited<ReturnType<typeof 
     kind: "project-document" as const,
     id: "doc-a",
     projectId,
-    createdAt: "2026-09-03T08:00:00.000Z",
-    destinationSourceId: null,
+    version: 1 as const,
     fingerprint: projectBriefTestHash(makeReadyProjectInputDependencies(projectId).files[0]),
   };
   const action = "resolve-input" as const;
   const key = "parser-resolve-a";
   const timestamp = "2026-09-03T08:01:00.000Z";
-  const dispositionId = `project-input-disposition:${projectBriefTestHash({ kind: target.kind, id: target.id, projectId: target.projectId }).slice(7)}`;
+  const dispositionId = `project-input-disposition:${projectBriefTestHash({ kind: target.kind, id: target.id }).slice(7)}`;
   const revisionId = `project-input-disposition-revision:${projectBriefTestHash({ dispositionId, version: 1 }).slice(7)}`;
   const eventId = `project-input-disposition-event:${projectBriefTestHash({ dispositionId, version: 1 }).slice(7)}`;
   const command = {
@@ -8626,8 +8625,6 @@ test("T9-B2 validates authority before dependencies and classifies post-write dr
     const unavailableDependencies = {
       status: "unavailable" as const,
       projectId: currentDependencies.projectId,
-      files: [],
-      sourceEnvelope: { schemaVersion: 1 as const, envelopeVersion: 0, records: [], intakes: [], updatedAt: null },
       reason: "source-read-failure",
     };
     const invalidRead = domain.readProjectInputDispositionState(null, unavailableDependencies);
@@ -8707,7 +8704,7 @@ test("T9-B2 resolves reloads reopens and isolates dispositions by project", asyn
   expect(firstProjectId).not.toBe(activeProjectId);
   expect(authority.projectIds).toHaveLength(2);
   const firstDependencies = makeReadyProjectInputDependencies(firstProjectId);
-  const secondDependencies = makeReadyProjectInputDependencies(activeProjectId);
+  const secondDependencies = makeReadyProjectInputDependencies(activeProjectId, "doc-b");
   const result = await page.evaluate(async ({ currentAuthority, first, second }) => {
     const domain = await import("/src/projectBriefAuthorities.ts");
     const firstTarget = domain.deriveProjectInputTargets(first).targets?.[0];
@@ -9091,11 +9088,9 @@ test("T9-B2 fails closed for missing pinned targets and unreadable or tampered d
     }, () => currentAuthority, async () => ({
       status: "unavailable" as const,
       projectId: currentDependencies.projectId,
-      files: [],
-      sourceEnvelope: { schemaVersion: 1 as const, envelopeVersion: 0, records: [], intakes: [], updatedAt: null },
       reason: "source-read-failure",
     }));
-    const tamperedTarget = { ...target, createdAt: "2026-09-03T08:00:01.000Z" };
+    const tamperedTarget = { ...target, fingerprint: `sha256-${"f".repeat(64)}` as const };
     const tampered = await domain.executeProjectInputDispositionCommand({
       inputSchemaVersion: 1 as const,
       action: "reopen-input" as const,
@@ -9262,7 +9257,9 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
     const initial = domain.deriveProjectInputTargets(dependencies);
     const composerFingerprint = (candidate: any) => {
       const next = domain.deriveProjectInputTargets(candidate);
-      const target = next.targets.find((item: any) => item.kind === "composer-intake");
+      const target = next.status === "ready"
+        ? next.targets.find((item: any) => item.kind === "composer-intake")
+        : undefined;
       return { status: next.status, fingerprint: target?.fingerprint ?? null };
     };
     const mutations = [
@@ -9386,6 +9383,21 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
       files: [file({ id: "gallery-octet", displayName: "عکس کارگاه", originalName: "gallery.png", mimeType: "application/octet-stream", size: 15, storageMode: "browser-image", createdAt: "2026-09-03T10:00:00.000Z" })],
       sourceEnvelope: { schemaVersion: 1, envelopeVersion: 0, records: [], intakes: [], updatedAt: null },
     });
+    const loading = domain.deriveProjectInputTargets({
+      status: "loading",
+      projectId: "project-a",
+      reason: "dependencies-loading",
+    });
+    const unavailable = domain.deriveProjectInputTargets({
+      status: "unavailable",
+      projectId: "project-a",
+      reason: "source-read-failure",
+    });
+    const unavailableWithEmptyReason = domain.deriveProjectInputTargets({
+      status: "unavailable",
+      projectId: "project-a",
+      reason: "",
+    });
     return {
       projectHash: domain.projectBriefHash({ b: 2, a: "تست" }),
       standaloneOnly,
@@ -9393,12 +9405,30 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
       mutations,
       invalidCases,
       galleryOctetStream,
+      loading,
+      unavailable,
+      unavailableWithEmptyReason,
     };
   });
   expect(result.standaloneOnly.status).toBe("ready");
   expect(result.standaloneOnly.targets).toHaveLength(1);
-  expect(result.standaloneOnly.targets[0].kind).toBe("project-document");
+  expect(result.standaloneOnly.targets[0]).toMatchObject({
+    kind: "project-document",
+    id: "doc-standalone",
+    projectId: "project-a",
+    version: 1,
+  });
+  expect(Object.keys(result.standaloneOnly.targets[0]).sort()).toEqual([
+    "fingerprint", "id", "kind", "projectId", "version",
+  ]);
   expect(result.standaloneOnly.targets[0].fingerprint).toMatch(/^sha256-[0-9a-f]{64}$/);
+  expect(result.standaloneOnly.items[0]).toEqual({
+    target: result.standaloneOnly.targets[0],
+    title: "قرارداد",
+    meta: "سند پروژه",
+    createdAt: "2026-09-03T08:00:00.000Z",
+    destination: { kind: "project-document", fileId: "doc-standalone" },
+  });
   expect(result.projectHash).toBe(`sha256-${createHash("sha256").update(JSON.stringify(stableTestValue({ b: 2, a: "تست" }))).digest("hex")}`);
   expect(result.initial.status).toBe("ready");
   expect(result.initial.targets.map((target: { id: string }) => target.id)).toEqual([
@@ -9407,6 +9437,13 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
     "doc-standalone",
   ]);
   expect(result.initial.targets.filter((target: { kind: string }) => target.kind === "composer-intake")).toHaveLength(1);
+  expect(result.initial.items.find((item: { target: { kind: string } }) => item.target.kind === "composer-intake")).toEqual({
+    target: result.initial.targets.find((target: { kind: string }) => target.kind === "composer-intake"),
+    title: "متن ثبت‌شدهٔ بریف",
+    meta: "ورودی Composer",
+    createdAt: "2026-09-03T09:00:00.000Z",
+    destination: { kind: "composer-source", sourceId: "source-asset" },
+  });
   const initialComposerFingerprint = result.initial.targets.find((target: { kind: string }) => target.kind === "composer-intake")?.fingerprint;
   expect(result.mutations).toHaveLength(9);
   for (const mutation of result.mutations) {
@@ -9419,6 +9456,112 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
   for (const invalidCase of result.invalidCases) expect(invalidCase.status, invalidCase.name).toBe("unavailable");
   expect(result.galleryOctetStream.status).toBe("ready");
   expect(result.galleryOctetStream.targets).toEqual([]);
+  expect(result.loading).toEqual({ status: "loading", targets: null, items: [], reason: "dependencies-loading" });
+  expect(result.unavailable).toEqual({ status: "unavailable", targets: null, items: [], reason: "source-read-failure" });
+  expect(result.unavailableWithEmptyReason).toEqual({ status: "unavailable", targets: null, items: [], reason: "" });
+});
+
+test("T9-B2 persists exact target identity and rejects derived display fields in the ledger", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
+  const result = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const derivation = domain.deriveProjectInputTargets(currentDependencies);
+    if (derivation.status !== "ready") throw new Error("target derivation is unavailable");
+    const target = derivation.targets[0];
+    const loadingState = domain.readProjectInputDispositionState(currentAuthority, {
+      status: "loading",
+      projectId: currentDependencies.projectId,
+      reason: "intake-pending",
+    });
+    const mutation = await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1,
+      action: "resolve-input",
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "exact-target-contract",
+    }, () => currentAuthority, async () => currentDependencies);
+    const raw = localStorage.getItem(domain.projectInputDispositionsStorageKey);
+    if (!raw) throw new Error("disposition ledger was not persisted");
+    const valid = JSON.parse(raw);
+    const withoutFingerprint = (value: Record<string, unknown>) => {
+      const { fingerprint: _fingerprint, ...payload } = value;
+      return payload;
+    };
+    const rehash = (candidate: any) => {
+      for (const record of candidate.records) {
+        for (let index = 0; index < record.revisions.length; index += 1) {
+          const revision = record.revisions[index];
+          const event = record.history[index];
+          const receipt = candidate.idempotencyReceipts.find((item: any) => item.revisionId === revision.id);
+          revision.fingerprint = domain.projectBriefHash(withoutFingerprint(revision));
+          receipt.payloadHash = domain.projectBriefHash({
+            inputSchemaVersion: 1,
+            action: receipt.action,
+            projectId: receipt.projectId,
+            target: revision.snapshot.target,
+            expectedStoreVersion: receipt.expectedStoreVersion,
+            expectedDispositionVersion: receipt.expectedDispositionVersion,
+            idempotencyKey: receipt.key,
+          });
+          event.commandPayloadHash = receipt.payloadHash;
+          event.fingerprint = domain.projectBriefHash(withoutFingerprint(event));
+          receipt.fingerprint = domain.projectBriefHash(withoutFingerprint(receipt));
+        }
+        record.fingerprint = domain.projectBriefHash(withoutFingerprint(record));
+      }
+      candidate.fingerprint = domain.projectBriefHash(withoutFingerprint(candidate));
+      return candidate;
+    };
+    const extraDerivedFields = structuredClone(valid);
+    for (const record of extraDerivedFields.records) {
+      for (const revision of record.revisions) {
+        revision.snapshot.target.createdAt = "2026-09-03T08:00:00.000Z";
+        revision.snapshot.target.title = "قرارداد الف";
+        revision.snapshot.target.meta = "سند پروژه";
+        revision.snapshot.target.destination = { kind: "project-document", fileId: "doc-a" };
+        revision.snapshot.target.destinationSourceId = null;
+      }
+    }
+    rehash(extraDerivedFields);
+    localStorage.setItem(domain.projectInputDispositionsStorageKey, JSON.stringify(extraDerivedFields));
+    const extraFieldsState = domain.readProjectInputDispositionState(currentAuthority, currentDependencies);
+
+    const missingVersion = structuredClone(valid);
+    for (const record of missingVersion.records) {
+      for (const revision of record.revisions) delete revision.snapshot.target.version;
+    }
+    rehash(missingVersion);
+    localStorage.setItem(domain.projectInputDispositionsStorageKey, JSON.stringify(missingVersion));
+    const missingVersionState = domain.readProjectInputDispositionState(currentAuthority, currentDependencies);
+    return {
+      mutation,
+      loadingState,
+      target,
+      persistedTarget: valid.records[0].revisions[0].snapshot.target,
+      dispositionId: valid.records[0].id,
+      extraFieldsState,
+      missingVersionState,
+    };
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  expect(result.mutation.status).toBe("resolved");
+  expect(result.loadingState).toEqual({
+    status: "loading",
+    envelope: null,
+    items: [],
+    observedHeads: null,
+    reason: "dependencies-loading",
+  });
+  expect(result.persistedTarget).toEqual(result.target);
+  expect(Object.keys(result.persistedTarget).sort()).toEqual([
+    "fingerprint", "id", "kind", "projectId", "version",
+  ]);
+  expect(result.dispositionId).toBe(`project-input-disposition:${projectBriefTestHash({ kind: result.target.kind, id: result.target.id }).slice(7)}`);
+  expect(result.extraFieldsState).toMatchObject({ status: "read-error", reason: "envelope-shape-invalid" });
+  expect(result.missingVersionState).toMatchObject({ status: "read-error", reason: "envelope-shape-invalid" });
 });
 
 async function registerProjectDocumentForBrief(page: Page, name: string, contents: string) {
@@ -10026,7 +10169,7 @@ test("T9-B3 live seam hashes complete parser-shaped records and materializes cur
 
   const projectId = await readActiveProjectId(page);
   const authority = await readProjectBriefTestAuthority(page);
-  const inputDependencies = makeReadyProjectInputDependencies(projectId, []);
+  const inputDependencies = makeReadyProjectInputDependencies(projectId);
   const result = await page.evaluate(async ({ activeProjectId, currentAuthority, currentInputDependencies, keys }) => {
     const prototype = await import("/src/Prototype.tsx");
     const domain = await import("/src/projectBriefAuthorities.ts");
