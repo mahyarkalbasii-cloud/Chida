@@ -336,7 +336,7 @@ type ProjectInputDisplayItem = {
   ready: boolean;
 };
 type LiveBriefInputsSection = { status: LiveBriefSectionStatus; items: ProjectInputDisplayItem[] };
-type ProjectVisitCheckpointSnapshot = { projectId: string; state: ProjectVisitCheckpointState };
+type BoundProjectVisitCheckpointState = { projectId: string; state: ProjectVisitCheckpointState };
 type LiveBriefSnapshot = {
   projectName: string;
   decisions: LiveBriefSection;
@@ -903,7 +903,7 @@ type ProjectMemoryHardDeleteIntent = {
 type ProjectMemoryReadResult = { envelope: ProjectMemoryEnvelope; readError: boolean; migrationBlocked: boolean };
 type ProjectMemoryMutationResult = "created" | "updated" | "unchanged" | "deleted" | "version-conflict" | "read-failure" | "write-failure" | "lock-unavailable" | "invalid";
 type ProjectMemoryDraft = Pick<ProjectMemoryRevisionSnapshot, "title" | "content" | "kind"> & { scopeType: ProjectMemoryScopeType };
-type ProjectTaskFilter = "active" | "approval" | "completed" | "failed" | "monitor";
+type ProjectTaskFilter = "all-tasks" | "all-decisions" | "active" | "approval" | "completed" | "failed" | "monitor";
 type ProjectBackboneObjectType = "milestone" | "decision" | "task";
 type ProjectBackboneEventType = "created" | "updated" | "rolled-back";
 type ProjectBackboneHistoryEvent = {
@@ -2389,6 +2389,8 @@ function isValidMockSourceAnswerDemo(answer: MockSourceAnswerDemo) {
     && answer.claims.every((claim) => claim.sourceIds.length > 0 && claim.sourceIds.every((sourceId) => uniqueSourceIds.has(sourceId)));
 }
 const projectTaskFilters: readonly { id: ProjectTaskFilter; label: string }[] = [
+  { id: "all-tasks", label: "همهٔ کارها" },
+  { id: "all-decisions", label: "همهٔ تصمیم‌ها" },
   { id: "active", label: "در حال انجام" },
   { id: "approval", label: "منتظر تأیید" },
   { id: "completed", label: "تمام‌شده" },
@@ -2396,6 +2398,8 @@ const projectTaskFilters: readonly { id: ProjectTaskFilter; label: string }[] = 
   { id: "monitor", label: "پایش‌ها" },
 ];
 const projectTaskEmptyCopy: Readonly<Record<ProjectTaskFilter, { title: string; description: string }>> = {
+  "all-tasks": { title: "هنوز کاری ثبت نشده", description: "کارهای باز و تمام‌شدهٔ پروژه در این بخش یکجا دیده می‌شوند." },
+  "all-decisions": { title: "هنوز تصمیمی ثبت نشده", description: "تصمیم‌های منتظر، نهایی یا نیازمند بازبینی در این بخش یکجا دیده می‌شوند." },
   active: { title: "هنوز کار در حال انجامی ثبت نشده", description: "اولین کار پروژه را ثبت کن." },
   approval: { title: "نسخه‌ای منتظر تأیید نیست", description: "وقتی یک درخواست آمادهٔ بازبینی را صریحاً برای تأیید ثبت کنی، همان نسخه اینجا ظاهر می‌شود." },
   completed: { title: "هنوز کار یا تصمیمی تمام نشده", description: "کارهای تکمیل‌شده و تصمیم‌های ثبت‌شده با نسخه و تاریخچهٔ واقعی در این بخش می‌مانند." },
@@ -14801,6 +14805,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const pendingHomeQuickActionFocus = useRef<QuickActionId | null>(null);
   const pendingProjectSearchInputFocus = useRef(false);
   const pendingBuilderFocus = useRef<PendingBuilderFocus | null>(null);
+  const projectVisitGroupReturnRef = useRef<ProjectVisitDeltaGroup["kind"] | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
   const drawerCloseRef = useRef<HTMLButtonElement | null>(null);
   const toolsReturnFocus = useRef("capability-cluster");
@@ -14920,11 +14925,12 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const [projectInputMutationError, setProjectInputMutationError] = useState<{ key: string; message: string } | null>(null);
   const projectInputMutationAttemptsRef = useRef(new Map<string, string>());
   const projectInputRefreshVersionRef = useRef(0);
-  const [projectVisitCheckpointSnapshot, setProjectVisitCheckpointSnapshot] = useState<ProjectVisitCheckpointSnapshot>(() => ({
+  const [projectVisitCheckpointSnapshot, setProjectVisitCheckpointSnapshot] = useState<BoundProjectVisitCheckpointState>(() => ({
     projectId: activeProject.id,
     state: readProjectVisitCheckpointState(projectBriefAuthoritySnapshot()),
   }));
   const [projectVisitCheckpointMutationPending, setProjectVisitCheckpointMutationPending] = useState(false);
+  const [projectVisitCheckpointMutationBlocked, setProjectVisitCheckpointMutationBlocked] = useState(false);
   const [projectVisitCheckpointMutationError, setProjectVisitCheckpointMutationError] = useState("");
   const projectVisitCheckpointMutationAttemptsRef = useRef(new Map<string, string>());
   const activeProjectIdRef = useRef(activeProject.id);
@@ -15341,8 +15347,10 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     briefFileReturnKeyRef.current = null;
     setProjectInputMutationError(null);
     setProjectVisitCheckpointMutationPending(false);
+    setProjectVisitCheckpointMutationBlocked(false);
     setProjectVisitCheckpointMutationError("");
     projectVisitCheckpointMutationAttemptsRef.current.clear();
+    projectVisitGroupReturnRef.current = null;
     setComposerError("");
     setComposerActionStatus("");
   }, [activeProject.id]);
@@ -15474,7 +15482,12 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   useEffect(() => {
     const refresh = (projectId = activeProjectIdRef.current) => {
       const state = readProjectVisitCheckpointState(projectBriefAuthoritySnapshot());
-      if (activeProjectIdRef.current === projectId) setProjectVisitCheckpointSnapshot({ projectId, state });
+      if (activeProjectIdRef.current !== projectId) return;
+      setProjectVisitCheckpointSnapshot({ projectId, state });
+      if (state.status === "ready") {
+        setProjectVisitCheckpointMutationBlocked(false);
+        setProjectVisitCheckpointMutationError("");
+      }
     };
     const handleStorage = (event: StorageEvent) => {
       if (event.storageArea && event.storageArea !== window.localStorage) return;
@@ -15800,7 +15813,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     ? { status: "loading", groups: [], reason: "project-switch-loading" }
     : projectVisitDeltaForObservation(projectVisitCheckpointState, liveProjectBriefObservation, activeProject.id);
   const mutateProjectVisitCheckpoint = async () => {
-    if (projectVisitCheckpointMutationPending || !projectVisitCheckpointState || projectVisitCheckpointState.status !== "ready"
+    if (projectVisitCheckpointMutationPending || projectVisitCheckpointMutationBlocked || !projectVisitCheckpointState || projectVisitCheckpointState.status !== "ready"
       || liveProjectBriefObservation.status !== "ready" || liveProjectVisitDelta.status === "loading" || liveProjectVisitDelta.status === "unavailable") return;
     const projectId = activeProject.id;
     const action = activeProjectVisitCheckpoint ? "mark-all-seen" as const : "record-baseline" as const;
@@ -15823,29 +15836,46 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     setProjectVisitCheckpointMutationError("");
     const result = await executeProjectVisitCheckpointCommand(command, projectBriefAuthoritySnapshot, readFreshProjectBriefLiveObservation);
     if (activeProjectIdRef.current !== projectId) return;
-    if (result.status === "recorded") {
+    if (result.envelope) {
+      setProjectVisitCheckpointSnapshot({ projectId, state: { status: "ready", envelope: result.envelope, reason: "" } });
+    }
+    if (result.status === "recorded" && result.envelope) {
       projectVisitCheckpointMutationAttemptsRef.current.delete(signature);
-      setProjectVisitCheckpointSnapshot({ projectId, state: readProjectVisitCheckpointState(projectBriefAuthoritySnapshot()) });
+      setProjectVisitCheckpointMutationBlocked(false);
       setProjectVisitCheckpointMutationError("");
     } else {
       if (["read-failure", "dependency-read-failure", "dependency-stale", "scope-mismatch", "version-conflict", "idempotency-payload-mismatch"].includes(result.status)) {
         projectVisitCheckpointMutationAttemptsRef.current.delete(signature);
       }
-      setProjectVisitCheckpointSnapshot({ projectId, state: readProjectVisitCheckpointState(projectBriefAuthoritySnapshot()) });
-      setProjectVisitCheckpointMutationError("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
+      const outcomeUnverified = result.envelope === null;
+      setProjectVisitCheckpointMutationBlocked(outcomeUnverified);
+      setProjectVisitCheckpointMutationError(outcomeUnverified
+        ? "نتیجهٔ ثبت قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند."
+        : "تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
     }
     setProjectVisitCheckpointMutationPending(false);
+    if (result.status === "recorded" && result.envelope) {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('[data-testid="brief-changes-mark-seen-button"]')?.focus());
+      });
+    }
   };
   const openProjectVisitDeltaGroup = (group: ProjectVisitDeltaGroup["kind"]) => {
     if (group === "tasks") {
-      openProjectTasks("chat", "active");
+      projectVisitGroupReturnRef.current = group;
+      queueBuilderFocus('[data-testid="project-task-filter-all-tasks"]', null, "tasks");
+      openProjectTasks("chat", "all-tasks");
       return;
     }
     if (group === "decisions") {
-      openProjectTasks("chat", "approval");
+      projectVisitGroupReturnRef.current = group;
+      queueBuilderFocus('[data-testid="project-task-filter-all-decisions"]', null, "tasks");
+      openProjectTasks("chat", "all-decisions");
       return;
     }
     if (group === "procurement") {
+      projectVisitGroupReturnRef.current = group;
+      queueBuilderFocus('[data-testid="purchase-requests-back"]', null, "purchase-requests");
       openProjectPurchaseRequests("chat");
       return;
     }
@@ -19075,8 +19105,19 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         monitorsStorageLocked={projectTaskMonitorsReadError}
         approvalsStorageLocked={projectApprovalsStorageLocked || projectPurchaseRequestsReadError}
         dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsStorageLocked}
-        backLabel={projectTasksLaunch.returnView === "project" ? "بازگشت به فضای پروژه" : "بازگشت به گفت‌وگو"}
-        onBack={() => { keyboard.hide(); setView(projectTasksLaunch.returnView); }}
+        backLabel={projectVisitGroupReturnRef.current === "tasks" || projectVisitGroupReturnRef.current === "decisions" ? "بازگشت به بریف پروژه" : projectTasksLaunch.returnView === "project" ? "بازگشت به فضای پروژه" : "بازگشت به گفت‌وگو"}
+        onBack={() => {
+          keyboard.hide();
+          const returnGroup = projectVisitGroupReturnRef.current;
+          if (returnGroup === "tasks" || returnGroup === "decisions") {
+            projectVisitGroupReturnRef.current = null;
+            queueBuilderFocus(`[data-testid="brief-changes-group-${returnGroup}"]`, "brief");
+            setView("chat");
+            onOpenSheet("brief");
+            return;
+          }
+          setView(projectTasksLaunch.returnView);
+        }}
         onOpenBackbone={() => openProjectBackbone("tasks")}
         onReturnToPurchaseRequest={returnToProjectPurchaseRequest}
         onCreate={createProjectTask}
@@ -19125,8 +19166,19 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         dispatchPlanApprovalsStorageLocked={projectDispatchPlanApprovalsStorageLocked}
         initialSelectedId={initialPurchaseRequestId}
         startWithEditor={startPurchaseRequestEditor}
-        backLabel={purchaseRequestsReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
-        onBack={() => { keyboard.hide(); pendingPurchaseRequestsReturnFocus.current = purchaseRequestsReturnView; setView(purchaseRequestsReturnView); }}
+        backLabel={projectVisitGroupReturnRef.current === "procurement" ? "بازگشت به بریف پروژه" : purchaseRequestsReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
+        onBack={() => {
+          keyboard.hide();
+          if (projectVisitGroupReturnRef.current === "procurement") {
+            projectVisitGroupReturnRef.current = null;
+            queueBuilderFocus('[data-testid="brief-changes-group-procurement"]', "brief");
+            setView("chat");
+            onOpenSheet("brief");
+            return;
+          }
+          pendingPurchaseRequestsReturnFocus.current = purchaseRequestsReturnView;
+          setView(purchaseRequestsReturnView);
+        }}
         onRecoverStorage={recoverProjectPurchaseRequests}
         onCreate={createProjectPurchaseRequest}
         onUpdate={updateProjectPurchaseRequest}
@@ -19407,6 +19459,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         visitDelta={liveProjectVisitDelta}
         visitCheckpointVersion={activeProjectVisitCheckpoint?.version ?? null}
         visitMutationPending={projectVisitCheckpointMutationPending}
+        visitMutationBlocked={projectVisitCheckpointMutationBlocked}
         visitMutationError={projectVisitCheckpointMutationError}
         onVisitMutation={mutateProjectVisitCheckpoint}
         onOpenVisitGroup={openProjectVisitDeltaGroup}
@@ -22876,6 +22929,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
     [monitors],
   );
   const backboneTask = backbone ? projectBackboneCurrentSnapshot(backbone.task) as ProjectBackboneTaskSnapshot : null;
+  const backboneDecision = backbone ? projectBackboneCurrentSnapshot(backbone.decision) as ProjectDecisionSnapshot : null;
   const activeCount = tasks.filter((task) => task.status === "in-progress").length + (backboneTask?.status === "in-progress" ? 1 : 0);
   const completedCount = tasks.filter((task) => task.status === "completed").length + (backboneTask?.status === "completed" ? 1 : 0);
   const dispatchPlanStatus = (record: DispatchPlanApprovalRecord) => {
@@ -22887,24 +22941,38 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
   const pendingApprovalCount = approvals.filter((approval) => approval.status === "pending").length + dispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) === "pending").length;
   const decidedApprovalCount = approvals.filter((approval) => approval.status !== "pending").length + dispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) !== "pending").length;
   const failedMonitorCount = monitors.filter((monitor) => projectTaskMonitorCurrentSnapshot(monitor).status === "failed").length;
-  const filterCounts: Record<ProjectTaskFilter, number> = { active: activeCount, approval: pendingApprovalCount, completed: completedCount + decidedApprovalCount, failed: failedMonitorCount, monitor: monitors.length };
+  const filterCounts: Record<ProjectTaskFilter, number> = {
+    "all-tasks": tasks.length + (backboneTask ? 1 : 0),
+    "all-decisions": approvals.length + dispatchPlanApprovals.length + (backboneDecision ? 1 : 0),
+    active: activeCount,
+    approval: pendingApprovalCount,
+    completed: completedCount + decidedApprovalCount,
+    failed: failedMonitorCount,
+    monitor: monitors.length,
+  };
   const filteredTasks = tasksStorageLocked
     ? []
-    : filter === "active"
+    : filter === "all-tasks"
+      ? orderedTasks
+      : filter === "active"
       ? orderedTasks.filter((task) => task.status === "in-progress")
       : filter === "completed"
         ? orderedTasks.filter((task) => task.status === "completed")
         : [];
   const filteredApprovals = approvalsStorageLocked
     ? []
-    : filter === "approval"
+    : filter === "all-decisions"
+      ? orderedApprovals
+      : filter === "approval"
       ? orderedApprovals.filter((approval) => approval.status === "pending")
       : filter === "completed"
         ? orderedApprovals.filter((approval) => approval.status !== "pending")
         : [];
   const filteredDispatchPlanApprovals = dispatchPlanApprovalsStorageLocked
     ? []
-    : filter === "approval"
+    : filter === "all-decisions"
+      ? orderedDispatchPlanApprovals
+      : filter === "approval"
       ? orderedDispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) === "pending")
       : filter === "completed"
         ? orderedDispatchPlanApprovals.filter((approval) => dispatchPlanStatus(approval) !== "pending")
@@ -22916,7 +22984,11 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
       : filter === "failed"
         ? orderedMonitors.filter((monitor) => projectTaskMonitorCurrentSnapshot(monitor).status === "failed")
         : [];
-  const filterReadError = filter === "approval"
+  const filterReadError = filter === "all-tasks"
+    ? tasksStorageLocked || backboneStorageLocked
+    : filter === "all-decisions"
+      ? backboneStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
+    : filter === "approval"
     ? approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
     : filter === "completed"
       ? tasksStorageLocked || backboneStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
@@ -22925,8 +22997,9 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
         : filter === "monitor" || filter === "failed"
           ? monitorsStorageLocked || backboneStorageLocked
           : false;
-  const backboneTaskIsVisible = !backboneStorageLocked && Boolean(backboneTask) && (filter === "active" && backboneTask?.status === "in-progress" || filter === "completed" && backboneTask?.status === "completed");
-  const resultCount = filteredTasks.length + filteredApprovals.length + filteredDispatchPlanApprovals.length + filteredMonitors.length + (backboneTaskIsVisible ? 1 : 0);
+  const backboneTaskIsVisible = !backboneStorageLocked && Boolean(backboneTask) && (filter === "all-tasks" || filter === "active" && backboneTask?.status === "in-progress" || filter === "completed" && backboneTask?.status === "completed");
+  const backboneDecisionIsVisible = !backboneStorageLocked && Boolean(backboneDecision) && filter === "all-decisions";
+  const resultCount = filteredTasks.length + filteredApprovals.length + filteredDispatchPlanApprovals.length + filteredMonitors.length + (backboneTaskIsVisible ? 1 : 0) + (backboneDecisionIsVisible ? 1 : 0);
 
   useEffect(() => {
     if (selectedId && !selectedTask) setSelectedId(null);
@@ -23504,15 +23577,15 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
             </button>
           ) : null}
 
-          {tasksStorageLoading && (filter === "active" || filter === "completed") ? (
+          {tasksStorageLoading && (filter === "all-tasks" || filter === "active" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="status" data-testid="project-task-loading"><LoaderCircle size={17} className="spin" /><span><strong>در حال آماده‌سازی کارهای محلی</strong>نسخه و مالکیت رکوردها پیش از نمایش بررسی می‌شود.</span></p>
-          ) : tasksStorageLocked && (filter === "active" || filter === "completed") ? (
+          ) : tasksStorageLocked && (filter === "all-tasks" || filter === "active" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-task-read-error"><ShieldCheck size={17} /><span><strong>کارهای محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، ثبت و تغییر وضعیت تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
-          {backboneStorageLocked && (filter === "active" || filter === "completed") ? (
+          {backboneStorageLocked && (filter === "all-tasks" || filter === "all-decisions" || filter === "active" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-backbone-task-read-error"><ShieldCheck size={17} /><span><strong>کار متصل به برنامه کامل خوانده نشد.</strong> این وضعیت خالی نیست؛ برنامه و تغییرهای وابسته تا بازیابی موفق قفل‌اند.</span></p>
           ) : null}
-          {(approvalsStorageLocked || dispatchPlanApprovalsStorageLocked) && (filter === "approval" || filter === "completed") ? (
+          {(approvalsStorageLocked || dispatchPlanApprovalsStorageLocked) && (filter === "all-decisions" || filter === "approval" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-approval-read-error"><ShieldCheck size={17} /><span><strong>تأییدهای محلی کامل خوانده نشد.</strong> برای جلوگیری از تصمیم روی نسخهٔ نامطمئن، ایجاد و ثبت تصمیم تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
           {(monitorsStorageLocked || backboneStorageLocked) && (filter === "monitor" || filter === "failed") ? (
@@ -23523,7 +23596,11 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
 
           <Carousel ariaLabel="فیلتر وضعیت کارها" className="project-task-filters" contentClassName="project-task-filter-track">
             {projectTaskFilters.map((item) => {
-              const countUnavailable = item.id === "active"
+              const countUnavailable = item.id === "all-tasks"
+                ? tasksStorageLocked || backboneStorageLocked
+                : item.id === "all-decisions"
+                  ? backboneStorageLocked || approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
+                : item.id === "active"
                 ? tasksStorageLocked || backboneStorageLocked
                 : item.id === "approval"
                   ? approvalsStorageLocked || dispatchPlanApprovalsStorageLocked
@@ -23546,6 +23623,13 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
           ) : (
             <section className="project-task-list" aria-label={projectTaskFilters.find((item) => item.id === filter)?.label}>
               <div className="project-task-section-title"><strong>{projectTaskFilters.find((item) => item.id === filter)?.label}</strong><span>{resultCount.toLocaleString("fa-IR")}</span></div>
+              {backboneDecisionIsVisible && backboneDecision ? (
+                <button className="project-task-card project-backbone-decision-card" type="button" onClick={onOpenBackbone} data-testid="project-backbone-decision-card">
+                  <span className="project-task-card-icon"><Pin size={20} strokeWidth={1.65} /></span>
+                  <span className="project-task-card-copy"><span><small>تصمیم برنامهٔ پروژه</small><small>نسخهٔ جاری</small></span><strong>{backboneDecision.statement}</strong><em>{backboneDecision.reason}</em></span>
+                  <ArrowRight size={17} aria-hidden="true" />
+                </button>
+              ) : null}
               {filteredDispatchPlanApprovals.map((approval) => {
                 const request = requests.find((item) => item.id === approval.target.requestId);
                 const contentApproval = approvals.find((item) => item.id === approval.target.contentApprovalId);
@@ -25354,15 +25438,16 @@ function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, 
 const projectVisitDeltaGroupLabels: Record<ProjectVisitDeltaGroup["kind"], string> = {
   tasks: "کارها",
   decisions: "تصمیم‌ها",
-  procurement: "درخواست‌های خرید",
+  procurement: "خریدها",
   inputs: "اسناد و ورودی‌ها",
 };
 
-function BriefChangesSection({ projectId, checkpointVersion, delta, mutationPending, mutationError, onMutate, onOpenGroup }: {
+function BriefChangesSection({ projectId, checkpointVersion, delta, mutationPending, mutationBlocked, mutationError, onMutate, onOpenGroup }: {
   projectId: string;
   checkpointVersion: number | null;
   delta: ProjectVisitDeltaState;
   mutationPending: boolean;
+  mutationBlocked: boolean;
   mutationError: string;
   onMutate: () => Promise<void>;
   onOpenGroup: (group: ProjectVisitDeltaGroup["kind"]) => void;
@@ -25371,6 +25456,7 @@ function BriefChangesSection({ projectId, checkpointVersion, delta, mutationPend
     ? delta.groups.reduce((total, group) => total + group.added + group.updated, 0)
     : 0;
   const unavailable = delta.status === "unavailable";
+  const visibleError = mutationError || (unavailable ? "تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند." : "");
   return (
     <section
       className="brief-live-section brief-changes-section"
@@ -25385,7 +25471,7 @@ function BriefChangesSection({ projectId, checkpointVersion, delta, mutationPend
       </header>
       {delta.status === "loading" ? <p className="brief-section-state" role="status">در حال خواندن وضعیت فعلی پروژه…</p> : null}
       {delta.status === "uninitialized" ? <p className="brief-section-state is-empty">هنوز مبنای قبلی ثبت نشده</p> : null}
-      {unavailable || mutationError ? <p className="brief-section-state is-unavailable" role="alert" data-testid="brief-changes-error">تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.</p> : null}
+      {visibleError ? <p className="brief-section-state is-unavailable" role="alert" data-testid="brief-changes-error">{visibleError}</p> : null}
       {delta.status === "ready" ? (
         <div className="brief-change-groups">
           {delta.groups.map((group) => (
@@ -25406,13 +25492,14 @@ function BriefChangesSection({ projectId, checkpointVersion, delta, mutationPend
         </div>
       ) : null}
       {delta.status === "ready" && totalChanges === 0 ? <p className="brief-section-state is-empty">تغییر تازه‌ای از مبنای قبلی دیده نمی‌شود</p> : null}
-      {delta.status === "uninitialized" ? <button className="brief-changes-action" type="button" data-testid="brief-changes-baseline-button" disabled={mutationPending} aria-busy={mutationPending} onClick={() => { void onMutate(); }}>{mutationPending ? "در حال ثبت…" : "ثبت وضعیت فعلی به‌عنوان مبنا"}</button> : null}
-      {delta.status === "ready" ? <button className="brief-changes-action" type="button" data-testid="brief-changes-mark-seen-button" disabled={mutationPending} aria-busy={mutationPending} onClick={() => { void onMutate(); }}>{mutationPending ? "در حال ثبت…" : "همه را دیدم"}</button> : null}
+      {delta.status === "uninitialized" || delta.status === "ready" ? (
+        <button className="brief-changes-action" type="button" data-testid={delta.status === "uninitialized" ? "brief-changes-baseline-button" : "brief-changes-mark-seen-button"} disabled={mutationPending || mutationBlocked} aria-busy={mutationPending} onClick={() => { void onMutate(); }}>{mutationPending ? "در حال ثبت…" : delta.status === "uninitialized" ? "ثبت وضعیت فعلی به‌عنوان مبنا" : "همه را دیدم"}</button>
+      ) : null}
     </section>
   );
 }
 
-function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, visitProjectId, visitCheckpointVersion, visitDelta, visitMutationPending, visitMutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition, onVisitMutation, onOpenVisitGroup }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: { key: string; message: string } | null; visitProjectId: string; visitCheckpointVersion: number | null; visitDelta: ProjectVisitDeltaState; visitMutationPending: boolean; visitMutationError: string; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void>; onVisitMutation: () => Promise<void>; onOpenVisitGroup: (group: ProjectVisitDeltaGroup["kind"]) => void }) {
+function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, visitProjectId, visitCheckpointVersion, visitDelta, visitMutationPending, visitMutationBlocked, visitMutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition, onVisitMutation, onOpenVisitGroup }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: { key: string; message: string } | null; visitProjectId: string; visitCheckpointVersion: number | null; visitDelta: ProjectVisitDeltaState; visitMutationPending: boolean; visitMutationBlocked: boolean; visitMutationError: string; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void>; onVisitMutation: () => Promise<void>; onOpenVisitGroup: (group: ProjectVisitDeltaGroup["kind"]) => void }) {
   const keyboard = useKeyboard();
   const [frequency, setFrequency] = useState<BriefFrequency>(schedule?.frequency ?? "daily");
   const [weekday, setWeekday] = useState(schedule?.weekday ?? "شنبه");
@@ -25451,7 +25538,7 @@ function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, vis
             <BriefLiveSection testId="brief-tasks-section" title="کارهای باز و موعدها" section={snapshot.tasks} icon={<CheckCircle2 size={18} />} actionLabel="باز کردن کارها" actionTestId="brief-tasks-action" onAction={() => onOpenTasks("active")} />
             <BriefLiveSection testId="brief-procurement-section" title="درخواست‌های خرید باز" section={snapshot.procurement} icon={<ShoppingCart size={18} />} actionLabel="باز کردن درخواست‌ها" actionTestId="brief-procurement-action" onAction={onOpenPurchaseRequests} />
             <BriefInputsSection section={snapshot.inputs} mutationKey={mutationKey} mutationError={mutationError} onOpenInput={onOpenInput} onDisposition={onDisposition} />
-            <BriefChangesSection projectId={visitProjectId} checkpointVersion={visitCheckpointVersion} delta={visitDelta} mutationPending={visitMutationPending} mutationError={visitMutationError} onMutate={onVisitMutation} onOpenGroup={onOpenVisitGroup} />
+            <BriefChangesSection projectId={visitProjectId} checkpointVersion={visitCheckpointVersion} delta={visitDelta} mutationPending={visitMutationPending} mutationBlocked={visitMutationBlocked} mutationError={visitMutationError} onMutate={onVisitMutation} onOpenGroup={onOpenVisitGroup} />
           </div>
         </div>
 

@@ -11422,8 +11422,18 @@ function projectVisitObservedAtByProject(envelope: any) {
 
 async function expectBriefChangeGroup(page: Page, group: "tasks" | "decisions" | "procurement" | "inputs", added: number, updated: number) {
   const row = page.getByTestId(`brief-changes-group-${group}`);
+  const label = {
+    tasks: "کارها",
+    decisions: "تصمیم‌ها",
+    procurement: "خریدها",
+    inputs: "اسناد و ورودی‌ها",
+  }[group];
+  const localizedCounts = `افزوده ${added.toLocaleString("fa-IR")} · به‌روزشده ${updated.toLocaleString("fa-IR")}`;
   await expect(row).toHaveAttribute("data-added", String(added));
   await expect(row).toHaveAttribute("data-updated", String(updated));
+  await expect(row.locator("span")).toHaveText(label);
+  await expect(row.locator("small")).toHaveText(localizedCounts);
+  await expect(row).toHaveAccessibleName(`${label} ${localizedCounts}`);
 }
 
 test("T9-B3 open Brief stays byte-read-only and records the first baseline only on explicit action", async ({ page }) => {
@@ -11434,10 +11444,27 @@ test("T9-B3 open Brief stays byte-read-only and records the first baseline only 
 
   await openLiveBriefFromHome(page);
   await expect(page.getByTestId("brief-changes-section")).toContainText("هنوز مبنای قبلی ثبت نشده");
+  expect((await page.getByTestId("brief-changes-baseline-button").boundingBox())?.height).toBeGreaterThanOrEqual(44);
   expect(await allLocalStorageBytes(page)).toEqual(before);
 
+  await page.evaluate((checkpointKey) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    let checkpointReads = 0;
+    Object.defineProperty(window, "__t9B3NativeGetItem", { value: nativeGetItem, configurable: true });
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === checkpointKey && ++checkpointReads >= 4) {
+        throw new DOMException("Post-commit reread failed", "InvalidStateError");
+      }
+      return nativeGetItem.call(this, key);
+    };
+  }, projectVisitCheckpointsTestStorageKey);
   await page.getByTestId("brief-changes-baseline-button").click();
   await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeVisible();
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeFocused();
+  await page.evaluate(() => {
+    Storage.prototype.getItem = (window as Window & { __t9B3NativeGetItem: typeof Storage.prototype.getItem }).__t9B3NativeGetItem;
+    delete (window as Window & { __t9B3NativeGetItem?: typeof Storage.prototype.getItem }).__t9B3NativeGetItem;
+  });
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).not.toBeNull();
 });
 
@@ -11487,6 +11514,8 @@ test("T9-B3 shows added and updated groups after an explicit baseline and clears
   await page.getByTestId("purchase-request-mark-ready-legacy").click();
   await page.getByTestId("purchase-request-request-approval").click();
   await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
+  await page.getByTestId("project-approval-needs-changes").click();
+  await expect(page.getByTestId("project-approval-status")).toContainText("نیاز به اصلاح ثبت شد");
   await page.getByTestId("project-approval-detail-back").click();
   await page.getByTestId("project-tasks-back").click();
 
@@ -11501,19 +11530,34 @@ test("T9-B3 shows added and updated groups after an explicit baseline and clears
   await expectBriefChangeGroup(page, "decisions", 1, 0);
   await expectBriefChangeGroup(page, "procurement", 0, 1);
   await expectBriefChangeGroup(page, "inputs", 1, 1);
+
   await page.getByTestId("brief-changes-group-inputs").click();
   await expect(page.getByTestId("brief-inputs-heading")).toBeFocused();
-  await page.getByTestId("brief-changes-group-decisions").click();
-  await expect(page.getByTestId("project-task-filter-approval")).toHaveAttribute("aria-pressed", "true");
+
+  await page.getByTestId("brief-changes-group-tasks").click();
+  await expect(page.getByTestId("project-task-filter-all-tasks")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("project-task-filter-all-tasks")).toBeFocused();
+  await expect(page.getByTestId("project-task-card").filter({ hasText: "کار پایهٔ تغییرات بریف" })).toBeVisible();
+  await expect(page.getByTestId("project-task-card").filter({ hasText: "کار افزودهٔ تغییرات بریف" })).toBeVisible();
   await page.getByTestId("project-tasks-back").click();
-  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-group-tasks")).toBeFocused();
+
+  await page.getByTestId("brief-changes-group-decisions").click();
+  await expect(page.getByTestId("project-task-filter-all-decisions")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("project-task-filter-all-decisions")).toBeFocused();
+  await expect(page.getByTestId("project-approval-card").filter({ hasText: "سیمان مبنا" })).toContainText("نیاز به اصلاح");
+  await page.getByTestId("project-tasks-back").click();
+  await expect(page.getByTestId("brief-changes-group-decisions")).toBeFocused();
+
   await page.getByTestId("brief-changes-group-procurement").click();
   await expect(page.getByTestId("project-purchase-requests-view")).toBeVisible();
+  await expect(page.getByTestId("purchase-requests-back")).toBeFocused();
   await page.getByTestId("purchase-requests-back").click();
-  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-group-procurement")).toBeFocused();
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(baselineRaw);
 
   await page.getByTestId("brief-changes-mark-seen-button").click();
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeFocused();
   await expectBriefChangeGroup(page, "tasks", 0, 0);
   await expectBriefChangeGroup(page, "decisions", 0, 0);
   await expectBriefChangeGroup(page, "procurement", 0, 0);
@@ -11551,11 +11595,13 @@ test("T9-B3 leaves baseline unchanged on stale dependency unreadable dependency 
   }, { currentAuthority: authority, currentTask: task });
   expect(hiddenMutation.status).toBe("updated");
   await page.getByTestId("brief-changes-mark-seen-button").click();
-  await expect(page.getByTestId("brief-changes-error")).toContainText("مبنای قبلی دست‌نخورده ماند");
+  await expect(page.getByTestId("brief-changes-error")).toHaveText("نتیجهٔ ثبت قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند.");
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeDisabled();
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(baselineRaw);
 
   await dispatchBuilderStorageEvent(page, projectTasksTestStorageKey);
   await expectBriefChangeGroup(page, "tasks", 0, 1);
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeEnabled();
   await page.evaluate((checkpointKey) => {
     const nativeSetItem = Storage.prototype.setItem;
     Object.defineProperty(window, "__t9B3NativeSetItem", { value: nativeSetItem, configurable: true });
@@ -11565,7 +11611,8 @@ test("T9-B3 leaves baseline unchanged on stale dependency unreadable dependency 
     };
   }, projectVisitCheckpointsTestStorageKey);
   await page.getByTestId("brief-changes-mark-seen-button").click();
-  await expect(page.getByTestId("brief-changes-error")).toContainText("مبنای قبلی دست‌نخورده ماند");
+  await expect(page.getByTestId("brief-changes-error")).toHaveText("نتیجهٔ ثبت قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند.");
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeDisabled();
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(baselineRaw);
   await page.evaluate(() => {
     Storage.prototype.setItem = (window as Window & { __t9B3NativeSetItem: typeof Storage.prototype.setItem }).__t9B3NativeSetItem;
@@ -11577,6 +11624,52 @@ test("T9-B3 leaves baseline unchanged on stale dependency unreadable dependency 
   await expect(page.getByTestId("brief-changes-section")).toContainText("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(baselineRaw);
   expect((await readProjectVisitCheckpointEnvelope(page)).records[0].revisions.at(-1).snapshot.observedAt).toBe(baselineObservedAt);
+});
+
+test("T9-B3 fails closed when a checkpoint write outcome cannot be verified", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await createManualTaskForLiveBrief(page, "کار پایهٔ نتیجهٔ نامعلوم");
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await page.getByTestId("brief-changes-baseline-button").click();
+  const baselineRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey);
+  await page.getByTestId("brief-back-button").click();
+  await createManualTaskForLiveBrief(page, "کار افزودهٔ نتیجهٔ نامعلوم");
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expectBriefChangeGroup(page, "tasks", 1, 0);
+
+  await page.evaluate((checkpointKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    let checkpointWrites = 0;
+    Object.defineProperty(window, "__t9B3NativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === checkpointKey) {
+        checkpointWrites += 1;
+        if (checkpointWrites === 1) {
+          nativeSetItem.call(this, key, value);
+          throw new DOMException("Write completed before failure", "UnknownError");
+        }
+        throw new DOMException("Rollback could not be verified", "UnknownError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+  }, projectVisitCheckpointsTestStorageKey);
+
+  await page.getByTestId("brief-changes-mark-seen-button").click();
+  await expect(page.getByTestId("brief-changes-error")).toHaveText("نتیجهٔ ثبت قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند.");
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeDisabled();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).not.toBe(baselineRaw);
+
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __t9B3NativeSetItem: typeof Storage.prototype.setItem }).__t9B3NativeSetItem;
+    delete (window as Window & { __t9B3NativeSetItem?: typeof Storage.prototype.setItem }).__t9B3NativeSetItem;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(page.getByTestId("brief-changes-error")).toHaveCount(0);
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeEnabled();
+  await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-checkpoint-version", "2");
 });
 
 test("T9-B3 stays isolated across project switch reload storage event and focus", async ({ page }) => {
@@ -11597,6 +11690,12 @@ test("T9-B3 stays isolated across project switch reload storage event and focus"
   await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-project-id", secondProjectId!);
   await expect(page.getByTestId("brief-changes-section")).toContainText("هنوز مبنای قبلی ثبت نشده");
   await page.getByTestId("brief-changes-baseline-button").click();
+  await page.getByTestId("brief-back-button").click();
+  await createManualTaskForLiveBrief(page, "کار اول تازهٔ پروژهٔ دوم");
+  await createManualTaskForLiveBrief(page, "کار دوم تازهٔ پروژهٔ دوم");
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expectBriefChangeGroup(page, "tasks", 2, 0);
   const checkpointBeforeReadTriggers = await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey);
   const observedBeforeReadTriggers = projectVisitObservedAtByProject(JSON.parse(checkpointBeforeReadTriggers!));
 
@@ -11605,34 +11704,45 @@ test("T9-B3 stays isolated across project switch reload storage event and focus"
   await page.getByTestId("brief-save-button").click();
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
   await openLiveBriefFromHome(page);
+  await expectBriefChangeGroup(page, "tasks", 2, 0);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
   await page.getByTestId("brief-back-button").click();
 
   await reloadIntoBuilderHome(page);
   await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-project-id", secondProjectId!);
+  await expectBriefChangeGroup(page, "tasks", 2, 0);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
   expect(projectVisitObservedAtByProject(await readProjectVisitCheckpointEnvelope(page))).toEqual(observedBeforeReadTriggers);
   await dispatchBuilderStorageEvent(page, projectVisitCheckpointsTestStorageKey);
+  await expectBriefChangeGroup(page, "tasks", 2, 0);
   await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
   expect(projectVisitObservedAtByProject(await readProjectVisitCheckpointEnvelope(page))).toEqual(observedBeforeReadTriggers);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expectBriefChangeGroup(page, "tasks", 2, 0);
   await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
   expect(projectVisitObservedAtByProject(await readProjectVisitCheckpointEnvelope(page))).toEqual(observedBeforeReadTriggers);
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expectBriefChangeGroup(page, "tasks", 2, 0);
   await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
   expect(projectVisitObservedAtByProject(await readProjectVisitCheckpointEnvelope(page))).toEqual(observedBeforeReadTriggers);
 
+  await page.getByTestId("brief-back-button").click();
   await activateExistingProjectFromHome(page, /برج نیلوفر/);
+  await createManualTaskForLiveBrief(page, "کار تازهٔ پروژهٔ اول");
   await waitForLiveBriefObservation(page);
   await openLiveBriefFromHome(page);
   await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-project-id", firstProjectId!);
   await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-checkpoint-version", "1");
+  await expectBriefChangeGroup(page, "tasks", 1, 0);
   await page.getByTestId("brief-back-button").click();
   await activateExistingProjectFromHome(page, /پروژهٔ دوم مبنای مراجعه/);
   await waitForLiveBriefObservation(page);
   await openLiveBriefFromHome(page);
   await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-project-id", secondProjectId!);
   await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-checkpoint-version", "1");
+  await expectBriefChangeGroup(page, "tasks", 2, 0);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
 });
 
@@ -11667,6 +11777,10 @@ test("T9-B3 keeps healthy T9-B1 and T9-B2 sections visible when checkpoint is un
   await expect(page.getByTestId("brief-changes-section")).not.toContainText("حذف");
   await expect(page.getByTestId("brief-tasks-section")).toContainText("کار سالم کنار checkpoint خراب");
   await expect(page.getByTestId("brief-inputs-section")).toContainText("ورودی سالم کنار checkpoint");
+  await expect(page.getByTestId("brief-decisions-section")).toHaveAttribute("data-status", "ready");
+  await expect(page.getByTestId("brief-decisions-section")).toContainText("تصمیمی منتظر شما نیست");
+  await expect(page.getByTestId("brief-procurement-section")).toHaveAttribute("data-status", "ready");
+  await expect(page.getByTestId("brief-procurement-section")).toContainText("درخواست بازی در این پروژه نیست");
 
   const corruptRaw = "{unreadable-project-visit-checkpoint";
   await page.evaluate(({ key, raw }) => {
@@ -11676,6 +11790,10 @@ test("T9-B3 keeps healthy T9-B1 and T9-B2 sections visible when checkpoint is un
   await expect(page.getByTestId("brief-changes-section")).toContainText("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
   await expect(page.getByTestId("brief-tasks-section")).toContainText("کار سالم کنار checkpoint خراب");
   await expect(page.getByTestId("brief-inputs-section")).toContainText("ورودی سالم کنار checkpoint");
+  await expect(page.getByTestId("brief-decisions-section")).toHaveAttribute("data-status", "ready");
+  await expect(page.getByTestId("brief-decisions-section")).toContainText("تصمیمی منتظر شما نیست");
+  await expect(page.getByTestId("brief-procurement-section")).toHaveAttribute("data-status", "ready");
+  await expect(page.getByTestId("brief-procurement-section")).toContainText("درخواست بازی در این پروژه نیست");
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(corruptRaw);
 });
 
@@ -11702,16 +11820,29 @@ test("T9-B3 remains RTL console-clean and overflow-free at 390x844", async ({ pa
   await waitForLiveBriefObservation(page);
   await openLiveBriefFromHome(page);
   await expectBriefChangeGroup(page, "tasks", 1, 0);
+  for (const group of ["tasks", "decisions", "procurement", "inputs"] as const) {
+    expect((await page.getByTestId(`brief-changes-group-${group}`).boundingBox())?.height).toBeGreaterThanOrEqual(44);
+  }
+  expect((await page.getByTestId("brief-changes-mark-seen-button").boundingBox())?.height).toBeGreaterThanOrEqual(44);
   await page.getByTestId("brief-changes-group-tasks").click();
   await expect(page.getByTestId("project-tasks-view")).toBeVisible();
-  await expect(page.getByTestId("project-task-filter-active")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("project-task-filter-all-tasks")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("project-task-filter-all-tasks")).toBeFocused();
   await page.getByTestId("project-tasks-back").click();
-  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-group-tasks")).toBeFocused();
   await page.getByTestId("brief-changes-mark-seen-button").click();
   await expectBriefChangeGroup(page, "tasks", 0, 0);
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeFocused();
+
+  const sheetScroller = page.getByTestId("bottom-sheet").locator(".sheet-content");
+  await sheetScroller.evaluate((element) => { element.scrollTop = 0; });
+  await sheetScroller.hover();
+  await page.mouse.wheel(0, 560);
+  await expect.poll(() => sheetScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await page.getByTestId("brief-back-button").scrollIntoViewIfNeeded();
 
   await expect(page.getByTestId("brief-panel")).toHaveCSS("direction", "rtl");
+  expect(await sheetScroller.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   expect(await page.getByTestId("brief-panel").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
   expect(await page.getByTestId("brief-back-button").evaluate((element) => {
