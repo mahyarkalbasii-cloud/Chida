@@ -4919,6 +4919,7 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
 
 .brief-live-section > header > div { display: flex; gap: 8px; align-items: center; justify-content: space-between; min-width: 0; }
 .brief-live-section > header strong { overflow-wrap: anywhere; color: var(--text); font-size: 11px; }
+.brief-live-section > header strong:focus-visible { border-radius: 5px; outline: 2px solid var(--copper); outline-offset: 3px; }
 .brief-live-section > header small { flex: 0 0 auto; color: var(--text-soft); font-size: 9px; }
 
 .brief-live-section ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }

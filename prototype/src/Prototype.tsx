@@ -311,10 +311,12 @@ type BriefSchedule = { frequency: BriefFrequency; weekday: string; time: string 
 type LiveBriefSectionStatus = "loading" | "ready" | "unavailable";
 type LiveBriefItem = { id: string; title: string; meta: string };
 type LiveBriefSection = { status: LiveBriefSectionStatus; items: LiveBriefItem[]; emptyMessage: string };
+type ProjectInputPresentationState = "loading" | "ready" | "unavailable";
 type ProjectInputDisplayItem = {
   key: string;
   target: ProjectInputTarget;
-  effectiveStatus: ProjectInputEffectiveStatus;
+  presentationState: ProjectInputPresentationState;
+  effectiveStatus: ProjectInputEffectiveStatus | null;
   dispositionVersion: number | null;
   title: string;
   meta: string;
@@ -15258,12 +15260,18 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     ? activeProjectFiles.find((file) => file.id === selectedSource.assetRef?.fileId && file.version === selectedSource.assetRef.fileVersion) ?? null
     : null;
   const sourceStorageLocked = projectFilesReadError || projectSourcesReadError || sourceRecoveryPending || sourceRecoveryBlocked || sourceAssetValidationPending;
-  const projectInputsLocked = projectFilesReadError
+  const projectInputsTerminallyUnavailable = projectFilesReadError
     || projectSourcesReadError
-    || sourceRecoveryPending
-    || sourceRecoveryBlocked
+    || sourceRecoveryBlocked;
+  const projectInputsDependenciesPending = sourceRecoveryPending
     || sourceAssetValidationPending
     || projectFileContentReconciliationPending;
+  const projectInputsLocked = projectInputsTerminallyUnavailable || projectInputsDependenciesPending;
+  const projectInputPresentationState: ProjectInputPresentationState = projectInputsTerminallyUnavailable
+    ? "unavailable"
+    : projectInputReadPending || projectInputsDependenciesPending
+      ? "loading"
+      : projectInputDispositionState.status === "ready" ? "ready" : "unavailable";
   const activeProjectInputDerivation = useMemo(() => deriveProjectInputTargets(
     projectFilesReadError || projectSourcesReadError
       ? unavailableProjectInputDependencies(activeProject.id, "source-read-failure")
@@ -15284,27 +15292,33 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       const file = target.kind === "project-document"
         ? activeProjectFiles.find((candidate) => candidate.id === target.id) ?? null
         : intakeFileId ? activeProjectFiles.find((candidate) => candidate.id === intakeFileId) ?? null : null;
+      const itemPresentationState = projectInputPresentationState === "ready" && (!readyState || !observed)
+        ? "loading"
+        : projectInputPresentationState;
       const title = target.kind === "project-document"
         ? file?.displayName ?? "سند پروژه"
         : intakeText || file?.displayName || "ورودی Composer";
-      const effectiveStatus = observed?.state ?? projected?.effectiveStatus ?? "pending";
+      const effectiveStatus = itemPresentationState === "ready"
+        ? observed?.state ?? projected?.effectiveStatus ?? null
+        : null;
       return {
         key,
         target,
+        presentationState: itemPresentationState,
         effectiveStatus,
         dispositionVersion: projected?.dispositionVersion ?? (observed?.state === "resolved" ? observed.version : null),
         title,
         meta: `${target.kind === "project-document" ? "سند پروژه" : "ورودی Composer"} · ${formatProjectFileDate(target.createdAt)}`,
         metadataOnly: target.kind === "project-document" && file?.storageMode === "metadata-only",
-        ready: Boolean(readyState && observed) && !projectInputReadPending && !projectInputsLocked,
+        ready: itemPresentationState === "ready" && !projectInputsLocked && Boolean(readyState && observed && effectiveStatus),
       };
     });
-  }, [activeProject.id, activeProjectFiles, activeProjectInputDerivation.items, projectFileContentReconciliationPending, projectInputDispositionState, projectInputReadPending, projectInputsLocked, projectSources.intakes, projectSources.records]);
+  }, [activeProject.id, activeProjectFiles, activeProjectInputDerivation.items, projectInputDispositionState, projectInputPresentationState, projectInputsLocked, projectSources.intakes, projectSources.records]);
   const projectInputByFileId = useMemo(() => new Map(activeProjectInputItems.filter((item) => item.target.kind === "project-document").map((item) => [item.target.id, item])), [activeProjectInputItems]);
   const projectInputByIntakeId = useMemo(() => new Map(activeProjectInputItems.filter((item) => item.target.kind === "composer-intake").map((item) => [item.target.id, item])), [activeProjectInputItems]);
   const selectedSourceInput = selectedSource ? projectInputByIntakeId.get(selectedSource.intakeId) ?? null : null;
   const mutateProjectInputDisposition = async (item: ProjectInputDisplayItem) => {
-    if (!item.ready || projectInputMutationKey !== null || projectInputDispositionState.status !== "ready") return;
+    if (!item.ready || item.presentationState !== "ready" || item.effectiveStatus === null || projectInputMutationKey !== null || projectInputDispositionState.status !== "ready") return;
     const projectId = activeProject.id;
     const action = item.effectiveStatus === "resolved" ? "reopen-input" as const : "resolve-input" as const;
     const expectedStoreVersion = projectInputDispositionState.envelope.storeVersion;
@@ -15428,9 +15442,11 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const liveBriefDecisionsLoading = projectApprovalsLoading || projectSupplierContactsLoading || projectDispatchDraftsLoading || projectDispatchPlanApprovalsLoading;
   const liveBriefDecisionsUnavailable = projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError;
   const liveBriefDecisionsStatus: LiveBriefSectionStatus = liveBriefDecisionsLoading ? "loading" : liveBriefDecisionsUnavailable ? "unavailable" : "ready";
-  const liveBriefInputsStatus: LiveBriefSectionStatus = projectInputReadPending || projectInputsLocked
-    ? "loading"
-    : projectInputDispositionState.status === "ready" ? "ready" : "unavailable";
+  const liveBriefInputsStatus: LiveBriefSectionStatus = projectInputsTerminallyUnavailable
+    ? "unavailable"
+    : projectInputReadPending || projectInputsDependenciesPending
+      ? "loading"
+      : projectInputDispositionState.status === "ready" ? "ready" : "unavailable";
   const liveBriefInputs: LiveBriefInputsSection = {
     status: liveBriefInputsStatus,
     items: liveBriefInputsStatus === "ready"
@@ -18546,7 +18562,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         onRegister={registerProjectFile}
         onRestoreContent={restoreProjectFileContent}
         onRename={renameProjectFile}
-        onDisposition={(item) => { void mutateProjectInputDisposition(item); }}
+        onDisposition={mutateProjectInputDisposition}
       />
     );
   }
@@ -18904,7 +18920,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         mutationKey={projectInputMutationKey}
         mutationError={projectInputMutationError}
         assetReadLocked={projectSourcesReadError || sourceRecoveryBlocked}
-        onDisposition={(item) => { void mutateProjectInputDisposition(item); }}
+        onDisposition={mutateProjectInputDisposition}
         onClose={closeSourceDetail}
       />
       <ToolsSheet
@@ -18952,7 +18968,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         onOpenPurchaseRequests={() => openProjectPurchaseRequests("chat")}
         mutationKey={projectInputMutationKey}
         mutationError={projectInputMutationError}
-        onDisposition={(item) => { void mutateProjectInputDisposition(item); }}
+        onDisposition={mutateProjectInputDisposition}
         onOpenInput={(item) => {
           setProjectInputMutationError(null);
           if (item.target.kind === "project-document") {
@@ -24046,29 +24062,32 @@ function ProjectGalleryDetailSheet({ file, imageUrl, project, onClose }: { file:
   );
 }
 
-function projectInputStatusLabel(status: ProjectInputEffectiveStatus) {
+function projectInputStatusLabel(status: ProjectInputEffectiveStatus | null, presentationState: ProjectInputPresentationState = "ready") {
+  if (presentationState === "loading") return "در حال آماده‌سازی وضعیت…";
+  if (presentationState === "unavailable") return "اطلاعات تعیین‌تکلیف در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.";
+  if (status === null) return "در حال آماده‌سازی وضعیت…";
   if (status === "resolved") return "تعیین‌تکلیف شده";
   if (status === "pending-stale") return "بعد از بررسی تغییر کرده";
   return "نیازمند تعیین‌تکلیف";
 }
 
-function ProjectInputDispositionControl({ item, testIdPrefix, mutationKey, mutationError, onDisposition }: { item: ProjectInputDisplayItem; testIdPrefix: "project-file" | "project-source"; mutationKey: string | null; mutationError: { key: string; message: string } | null; onDisposition: (item: ProjectInputDisplayItem) => void }) {
+function ProjectInputDispositionControl({ item, testIdPrefix, mutationKey, mutationError, onDisposition }: { item: ProjectInputDisplayItem; testIdPrefix: "project-file" | "project-source"; mutationKey: string | null; mutationError: { key: string; message: string } | null; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
   const pending = mutationKey !== null;
   return (
-    <div className="project-input-disposition" data-status={item.effectiveStatus}>
+    <div className="project-input-disposition" data-status={item.presentationState === "ready" ? item.effectiveStatus ?? "unavailable" : item.presentationState}>
       <div className="project-input-disposition-copy">
-        <span data-testid={`${testIdPrefix}-disposition-status`}>{projectInputStatusLabel(item.effectiveStatus)}</span>
+        <span data-testid={`${testIdPrefix}-disposition-status`}>{projectInputStatusLabel(item.effectiveStatus, item.presentationState)}</span>
         {item.metadataOnly ? <small>فقط شناسنامهٔ فایل در دسترس است؛ محتوا یا اصالت فایل تأیید نشده است.</small> : null}
       </div>
-      <button type="button" data-testid={`${testIdPrefix}-disposition-action`} disabled={!item.ready || pending} onClick={() => onDisposition(item)}>
-        {mutationKey === item.key ? "در حال ثبت…" : item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد"}
+      <button type="button" data-testid={`${testIdPrefix}-disposition-action`} disabled={item.presentationState !== "ready" || !item.ready || pending} onClick={() => { void onDisposition(item); }}>
+        {mutationKey === item.key ? "در حال ثبت…" : item.presentationState === "unavailable" ? "فعلاً در دسترس نیست" : item.presentationState === "loading" || item.effectiveStatus === null ? "در حال آماده‌سازی" : item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد"}
       </button>
       {mutationError?.key === item.key ? <p role="alert" className="project-input-disposition-error">{mutationError.message}</p> : null}
     </div>
   );
 }
 
-function ProjectFilesView({ project, files, storageLocked, inputByFileId, mutationKey, mutationError, initialSelectedId = null, backLabel, onBack, onRegister, onRestoreContent, onRename, onDisposition }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; inputByFileId: Map<string, ProjectInputDisplayItem>; mutationKey: string | null; mutationError: { key: string; message: string } | null; initialSelectedId?: string | null; backLabel: string; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => void }) {
+function ProjectFilesView({ project, files, storageLocked, inputByFileId, mutationKey, mutationError, initialSelectedId = null, backLabel, onBack, onRegister, onRestoreContent, onRename, onDisposition }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; inputByFileId: Map<string, ProjectInputDisplayItem>; mutationKey: string | null; mutationError: { key: string; message: string } | null; initialSelectedId?: string | null; backLabel: string; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<PendingProjectFile | null>(null);
@@ -24282,7 +24301,7 @@ function ProjectFileRegisterSheet({ file, project, error, busy, categoryLocked =
   );
 }
 
-function ProjectFileDetailSheet({ file, project, disposition, mutationKey, mutationError, storageLocked, onClose, onRename, onDisposition }: { file: ProjectFileRecord | null; project: BuilderProject; disposition: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: { key: string; message: string } | null; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => void }) {
+function ProjectFileDetailSheet({ file, project, disposition, mutationKey, mutationError, storageLocked, onClose, onRename, onDisposition }: { file: ProjectFileRecord | null; project: BuilderProject; disposition: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: { key: string; message: string } | null; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
   const keyboard = useKeyboard();
   const [displayName, setDisplayName] = useState("");
   const [nameError, setNameError] = useState("");
@@ -24371,7 +24390,7 @@ function AttachSheet({ sheet, disabled, onClose, onChoose }: { sheet: SheetName;
   );
 }
 
-function ProjectSourceDetailSheet({ source, file, project, input, mutationKey, mutationError, assetReadLocked, onClose, onDisposition }: { source: ProjectSourceRecord | null; file: ProjectFileRecord | null; project: BuilderProject; input: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: { key: string; message: string } | null; assetReadLocked: boolean; onClose: () => void; onDisposition: (item: ProjectInputDisplayItem) => void }) {
+function ProjectSourceDetailSheet({ source, file, project, input, mutationKey, mutationError, assetReadLocked, onClose, onDisposition }: { source: ProjectSourceRecord | null; file: ProjectFileRecord | null; project: BuilderProject; input: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: { key: string; message: string } | null; assetReadLocked: boolean; onClose: () => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
   const [assetStatus, setAssetStatus] = useState<"idle" | "loading" | "available" | "missing" | "invalid" | "unreadable">("idle");
   const [assetUrl, setAssetUrl] = useState("");
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -24846,28 +24865,40 @@ function BriefLiveSection({ testId, title, section, icon, actionLabel, actionTes
   );
 }
 
-function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, onDisposition }: { section: LiveBriefInputsSection; mutationKey: string | null; mutationError: { key: string; message: string } | null; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => void }) {
+function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, onDisposition }: { section: LiveBriefInputsSection; mutationKey: string | null; mutationError: { key: string; message: string } | null; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+  const sectionRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLElement>(null);
   const visibleItems = section.items.slice(0, 3);
+  const resolveAndRestoreFocus = async (item: ProjectInputDisplayItem, index: number) => {
+    const preferredKey = visibleItems[index + 1]?.key ?? visibleItems[index - 1]?.key ?? null;
+    await onDisposition(item);
+    window.requestAnimationFrame(() => {
+      const itemButtons = [...(sectionRef.current?.querySelectorAll<HTMLElement>('[data-testid="brief-input-item"]') ?? [])];
+      if (itemButtons.some((button) => button.dataset.inputKey === item.key)) return;
+      const preferred = preferredKey ? itemButtons.find((button) => button.dataset.inputKey === preferredKey) : null;
+      (preferred ?? itemButtons[0] ?? headingRef.current)?.focus();
+    });
+  };
   return (
-    <section className="brief-live-section brief-inputs-section" data-testid="brief-inputs-section" data-status={section.status}>
+    <section ref={sectionRef} className="brief-live-section brief-inputs-section" data-testid="brief-inputs-section" data-status={section.status}>
       <header>
         <span aria-hidden="true"><FileText size={18} /></span>
-        <div><strong>اسناد و ورودی‌های تعیین‌تکلیف‌نشده</strong><small>{section.status === "ready" ? `${section.items.length.toLocaleString("fa-IR")} مورد` : section.status === "loading" ? "در حال آماده‌سازی" : "خواندن ناموفق"}</small></div>
+        <div><strong ref={headingRef} tabIndex={-1} data-testid="brief-inputs-heading">اسناد و ورودی‌های تعیین‌تکلیف‌نشده</strong><small>{section.status === "ready" ? `${section.items.length.toLocaleString("fa-IR")} مورد` : section.status === "loading" ? "در حال آماده‌سازی" : "خواندن ناموفق"}</small></div>
       </header>
       {section.status === "loading" ? <p className="brief-section-state" role="status">در حال بررسی فایل‌ها و ورودی‌های ثبت‌شده…</p> : null}
       {section.status === "unavailable" ? <p className="brief-section-state is-unavailable" role="alert">اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.</p> : null}
       {section.status === "ready" && visibleItems.length === 0 ? <p className="brief-section-state is-empty">سند یا ورودی تعیین‌تکلیف‌نشده‌ای نیست</p> : null}
       {section.status === "ready" && visibleItems.length > 0 ? (
         <ul>
-          {visibleItems.map((item) => (
+          {visibleItems.map((item, index) => (
             <li key={item.key} className="brief-input-row">
               <button type="button" className="brief-input-item" data-testid="brief-input-item" data-input-key={item.key} onClick={() => onOpenInput(item)}>
                 <strong dir="auto">{item.title}</strong>
                 <small>{item.meta}</small>
                 {item.metadataOnly ? <small className="brief-input-metadata-note">فقط شناسنامهٔ فایل در دسترس است؛ محتوا یا اصالت فایل تأیید نشده است.</small> : null}
-                <span>{projectInputStatusLabel(item.effectiveStatus)}</span>
+                <span>{projectInputStatusLabel(item.effectiveStatus, item.presentationState)}</span>
               </button>
-              <button type="button" className="brief-input-disposition-action" data-testid="brief-input-disposition-action" disabled={!item.ready || mutationKey !== null} onClick={() => onDisposition(item)}>{mutationKey === item.key ? "در حال ثبت…" : item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد"}</button>
+              <button type="button" className="brief-input-disposition-action" data-testid="brief-input-disposition-action" disabled={!item.ready || mutationKey !== null} onClick={() => { void resolveAndRestoreFocus(item, index); }}>{mutationKey === item.key ? "در حال ثبت…" : item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد"}</button>
               {mutationError?.key === item.key ? <p role="alert" className="project-input-disposition-error">{mutationError.message}</p> : null}
             </li>
           ))}
@@ -24878,7 +24909,7 @@ function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, 
   );
 }
 
-function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: { key: string; message: string } | null; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => void }) {
+function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: { key: string; message: string } | null; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
   const keyboard = useKeyboard();
   const [frequency, setFrequency] = useState<BriefFrequency>(schedule?.frequency ?? "daily");
   const [weekday, setWeekday] = useState(schedule?.weekday ?? "شنبه");
