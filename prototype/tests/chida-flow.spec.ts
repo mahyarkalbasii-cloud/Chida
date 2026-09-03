@@ -8209,12 +8209,30 @@ test("T9-B2 rejects coherently rehashed writer-impossible disposition histories"
     }, () => currentAuthority, async () => currentDependencies);
     await domain.executeProjectInputDispositionCommand({
       inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: currentDependencies.projectId,
+      target: targetB,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: null,
+      idempotencyKey: "semantic-resolve-b",
+    }, () => currentAuthority, async () => currentDependencies);
+    await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
       action: "reopen-input" as const,
       projectId: currentDependencies.projectId,
       target: targetA,
-      expectedStoreVersion: 1,
+      expectedStoreVersion: 2,
       expectedDispositionVersion: 1,
       idempotencyKey: "semantic-reopen",
+    }, () => currentAuthority, async () => currentDependencies);
+    await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "reopen-input" as const,
+      projectId: currentDependencies.projectId,
+      target: targetB,
+      expectedStoreVersion: 3,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "semantic-reopen-b",
     }, () => currentAuthority, async () => currentDependencies);
     const valid = JSON.parse(localStorage.getItem(domain.projectInputDispositionsStorageKey)!);
     const withoutFingerprint = (value: Record<string, unknown>) => {
@@ -8266,13 +8284,34 @@ test("T9-B2 rejects coherently rehashed writer-impossible disposition histories"
         mutate: (candidate: any) => {
           candidate.records[0].revisions[1].snapshot.status = "resolved";
           candidate.records[0].history[1].type = "resolved";
-          candidate.idempotencyReceipts[1].action = "resolve-input";
+          candidate.idempotencyReceipts[2].action = "resolve-input";
         },
       },
       {
         name: "later logical target switch",
         mutate: (candidate: any) => {
           candidate.records[0].revisions[1].snapshot.target = targetB;
+        },
+      },
+      {
+        name: "per-record receipt disorder",
+        mutate: (candidate: any) => {
+          const timestamp = "2026-09-03T08:30:00.000Z";
+          for (const record of candidate.records) {
+            for (const revision of record.revisions) revision.createdAt = timestamp;
+            for (const event of record.history) event.at = timestamp;
+          }
+          for (const receipt of candidate.idempotencyReceipts) receipt.recordedAt = timestamp;
+          candidate.idempotencyReceipts = [
+            candidate.idempotencyReceipts[2],
+            candidate.idempotencyReceipts[1],
+            candidate.idempotencyReceipts[0],
+            candidate.idempotencyReceipts[3],
+          ];
+          candidate.idempotencyReceipts.forEach((receipt: any, index: number) => {
+            receipt.expectedStoreVersion = index;
+            receipt.resultingStoreVersion = index + 1;
+          });
         },
       },
     ];
