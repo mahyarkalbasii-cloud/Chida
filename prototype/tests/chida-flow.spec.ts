@@ -8555,6 +8555,12 @@ test("T9-B2 rejects coherently rehashed writer-impossible disposition histories"
           });
         },
       },
+      {
+        name: "record array order by first linked receipt",
+        mutate: (candidate: any) => {
+          candidate.records.reverse();
+        },
+      },
     ];
     return impossibleCases.map(({ name, mutate }) => {
       const candidate = structuredClone(valid);
@@ -8609,7 +8615,10 @@ test("T9-B2 restores prior bytes when storage writes candidate then throws", asy
     Storage.prototype.setItem = nativeSetItem;
     return { failed, knownGoodRaw, after: localStorage.getItem(key) };
   }, { currentAuthority: authority, currentDependencies: dependencies });
-  expect(result.failed.status).toBe("write-failure");
+  expect(result.failed).toMatchObject({
+    status: "write-failure",
+    envelope: { storeVersion: 1, records: [{ version: 1 }] },
+  });
   expect(result.after).toBe(result.knownGoodRaw);
 });
 
@@ -8689,9 +8698,9 @@ test("T9-B2 validates authority before dependencies and classifies post-write dr
   expect(result.invalidRead).toMatchObject({ status: "read-error", reason: "identity-mismatch" });
   expect(result.invalidMutation.status).toBe("read-failure");
   expect(result.dependencyReads).toBe(0);
-  expect(result.identityDrift.status).toBe("read-failure");
+  expect(result.identityDrift).toMatchObject({ status: "read-failure", envelope: { storeVersion: 1 } });
   expect(result.afterIdentityDrift).toBe(result.knownGoodRaw);
-  expect(result.authorizationDrift.status).toBe("read-failure");
+  expect(result.authorizationDrift).toMatchObject({ status: "read-failure", envelope: { storeVersion: 1 } });
   expect(result.afterAuthorizationDrift).toBe(result.knownGoodRaw);
 });
 
@@ -9049,12 +9058,125 @@ test("T9-B2 rolls back only owned candidate bytes after write or readback failur
       competingFailure, afterCompetingFailure, competingRaw,
     };
   }, { currentAuthority: authority, currentDependencies: dependencies });
-  expect(result.setFailure.status).not.toMatch(/resolved|reopened/);
+  expect(result.setFailure).toMatchObject({ status: "write-failure", envelope: { storeVersion: 1 } });
   expect(result.afterSetFailure).toBe(result.knownGoodRaw);
-  expect(result.mismatchFailure.status).not.toMatch(/resolved|reopened/);
+  expect(result.mismatchFailure).toMatchObject({ status: "read-failure", envelope: { storeVersion: 1 } });
   expect(result.afterMismatchFailure).toBe(result.knownGoodRaw);
-  expect(result.competingFailure.status).not.toMatch(/resolved|reopened/);
+  expect(result.competingFailure).toEqual({ status: "write-failure", envelope: null });
   expect(result.afterCompetingFailure).toBe(result.competingRaw);
+});
+
+test("T9-B2 returns no stale envelope when disposition rollback cannot be verified", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
+  const result = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const key = domain.projectInputDispositionsStorageKey;
+    const target = domain.deriveProjectInputTargets(currentDependencies).targets?.[0];
+    if (!target) throw new Error("target fixture is missing");
+    await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "unverified-rollback-seed",
+    }, () => currentAuthority, async () => currentDependencies);
+    const knownGoodRaw = localStorage.getItem(key)!;
+    const reopen = (idempotencyKey: string) => domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "reopen-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey,
+    }, () => currentAuthority, async () => currentDependencies);
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeGetItem = Storage.prototype.getItem;
+
+    let candidateWritten = false;
+    Storage.prototype.setItem = function failCandidateAndRollback(storageKey: string, value: string) {
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw && !candidateWritten) {
+        candidateWritten = true;
+        nativeSetItem.call(this, storageKey, value);
+        throw new DOMException("candidate write then throw", "QuotaExceededError");
+      }
+      if (this === localStorage && storageKey === key && candidateWritten && value === knownGoodRaw) {
+        throw new DOMException("rollback write failure", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, storageKey, value);
+    };
+    const rollbackWriteFailure = await reopen("unverified-rollback-write");
+    Storage.prototype.setItem = nativeSetItem;
+    const candidateAfterRollbackWriteFailure = localStorage.getItem(key);
+
+    nativeSetItem.call(localStorage, key, knownGoodRaw);
+    candidateWritten = false;
+    let mismatchedReadback = false;
+    let rollbackWritten = false;
+    Storage.prototype.setItem = function trackRollback(storageKey: string, value: string) {
+      const written = nativeSetItem.call(this, storageKey, value);
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw) candidateWritten = true;
+      if (this === localStorage && storageKey === key && candidateWritten && value === knownGoodRaw) rollbackWritten = true;
+      return written;
+    };
+    Storage.prototype.getItem = function failRollbackVerification(storageKey: string) {
+      if (this === localStorage && storageKey === key && candidateWritten && !mismatchedReadback) {
+        mismatchedReadback = true;
+        return "{candidate-readback-mismatch";
+      }
+      if (this === localStorage && storageKey === key && rollbackWritten) {
+        throw new DOMException("rollback verification unavailable", "SecurityError");
+      }
+      return nativeGetItem.call(this, storageKey);
+    };
+    const rollbackReadFailure = await reopen("unverified-rollback-read");
+    Storage.prototype.getItem = nativeGetItem;
+    Storage.prototype.setItem = nativeSetItem;
+    const bytesAfterRollbackReadFailure = localStorage.getItem(key);
+
+    nativeSetItem.call(localStorage, key, knownGoodRaw);
+    candidateWritten = false;
+    let competitorInjected = false;
+    const competingRaw = JSON.stringify({ competitor: true });
+    Storage.prototype.setItem = function writeCandidateThenThrow(storageKey: string, value: string) {
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw && !candidateWritten) {
+        candidateWritten = true;
+        nativeSetItem.call(this, storageKey, value);
+        throw new DOMException("candidate write then throw", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, storageKey, value);
+    };
+    Storage.prototype.getItem = function exposeCompetitor(storageKey: string) {
+      if (this === localStorage && storageKey === key && candidateWritten && !competitorInjected) {
+        competitorInjected = true;
+        nativeSetItem.call(localStorage, key, competingRaw);
+      }
+      return nativeGetItem.call(this, storageKey);
+    };
+    const competingFailure = await reopen("unverified-rollback-competitor");
+    Storage.prototype.getItem = nativeGetItem;
+    Storage.prototype.setItem = nativeSetItem;
+    return {
+      knownGoodRaw,
+      rollbackWriteFailure,
+      candidateAfterRollbackWriteFailure,
+      rollbackReadFailure,
+      bytesAfterRollbackReadFailure,
+      competingFailure,
+      competingRaw,
+      bytesAfterCompetingFailure: localStorage.getItem(key),
+    };
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  expect(result.rollbackWriteFailure).toEqual({ status: "write-failure", envelope: null });
+  expect(result.candidateAfterRollbackWriteFailure).not.toBe(result.knownGoodRaw);
+  expect(result.rollbackReadFailure).toEqual({ status: "write-failure", envelope: null });
+  expect(result.bytesAfterRollbackReadFailure).toBe(result.knownGoodRaw);
+  expect(result.competingFailure).toEqual({ status: "write-failure", envelope: null });
+  expect(result.bytesAfterCompetingFailure).toBe(result.competingRaw);
 });
 
 test("T9-B2 fails closed for missing pinned targets and unreadable or tampered dependencies", async ({ page }) => {
@@ -9884,6 +10006,81 @@ test("T9-B2 File and Source details do not synthesize pending when disposition b
   await expect(page.getByTestId("composer-source-detail")).not.toContainText("نیازمند تعیین‌تکلیف");
   await expect(page.getByTestId("project-source-disposition-action")).toBeDisabled();
   expect(await page.evaluate(() => localStorage.getItem("chida-prototype-project-input-dispositions:v1"))).toBe("{malformed");
+});
+
+test("T9-B2 distinguishes a verified disposition rollback from an unverified write outcome", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await registerProjectDocumentForBrief(page, "قرارداد نتیجهٔ نامعلوم.pdf", "%PDF disposition outcome classification");
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-files-entry").click();
+  const row = page.getByTestId("project-file-row").filter({ hasText: "قرارداد نتیجهٔ نامعلوم" });
+  const action = row.getByTestId("project-file-disposition-action");
+  const dispositionStorageKey = "chida-prototype-project-input-dispositions:v1";
+
+  await page.evaluate((key) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    let injected = false;
+    (window as any).__restoreVerifiedDispositionWrite = () => { Storage.prototype.setItem = nativeSetItem; };
+    Storage.prototype.setItem = function writeCandidateThenThrow(storageKey: string, value: string) {
+      const written = nativeSetItem.call(this, storageKey, value);
+      if (this === localStorage && storageKey === key && !injected) {
+        injected = true;
+        throw new DOMException("candidate write then throw", "QuotaExceededError");
+      }
+      return written;
+    };
+  }, dispositionStorageKey);
+  await action.click();
+  await expect(row.getByRole("alert")).toHaveText("وضعیت تعیین‌تکلیف ذخیره نشد؛ دادهٔ قبلی دست‌نخورده ماند.");
+  await expect(row.getByTestId("project-file-disposition-status")).toHaveText("نیازمند تعیین‌تکلیف");
+  await expect(action).toBeEnabled();
+  expect(await page.evaluate((key) => localStorage.getItem(key), dispositionStorageKey)).toBeNull();
+  await page.evaluate(() => (window as any).__restoreVerifiedDispositionWrite());
+
+  await page.evaluate((key) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeRemoveItem = Storage.prototype.removeItem;
+    let candidateWritten = false;
+    (window as any).__restoreUnverifiedDispositionWrite = () => {
+      Storage.prototype.setItem = nativeSetItem;
+      Storage.prototype.removeItem = nativeRemoveItem;
+    };
+    Storage.prototype.setItem = function writeCandidateThenThrow(storageKey: string, value: string) {
+      const written = nativeSetItem.call(this, storageKey, value);
+      if (this === localStorage && storageKey === key && !candidateWritten) {
+        candidateWritten = true;
+        throw new DOMException("candidate write then throw", "QuotaExceededError");
+      }
+      return written;
+    };
+    Storage.prototype.removeItem = function blockRollback(storageKey: string) {
+      if (this === localStorage && storageKey === key && candidateWritten) {
+        throw new DOMException("rollback unavailable", "QuotaExceededError");
+      }
+      return nativeRemoveItem.call(this, storageKey);
+    };
+  }, dispositionStorageKey);
+  await action.click();
+  await expect(row.getByRole("alert")).toHaveText("نتیجهٔ ثبت تعیین‌تکلیف قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند.");
+  await expect(row.getByTestId("project-file-disposition-status")).toHaveText("اطلاعات تعیین‌تکلیف در دسترس نیست.");
+  await expect(action).toBeDisabled();
+  await expect(row).not.toContainText("دست‌نخورده ماند");
+  expect(await page.evaluate((key) => localStorage.getItem(key), dispositionStorageKey)).not.toBeNull();
+  await page.evaluate(() => (window as any).__restoreUnverifiedDispositionWrite());
+
+  await page.getByTestId("project-files-back").click();
+  await page.getByTestId("project-space-back").click();
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-inputs-section")).toHaveAttribute("data-status", "unavailable");
+  await expect(page.getByTestId("brief-inputs-error")).toHaveText("نتیجهٔ ثبت تعیین‌تکلیف قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند.");
+  await expect(page.getByTestId("brief-inputs-section")).not.toContainText("دست‌نخورده ماند");
+
+  await page.evaluate(() => { window.dispatchEvent(new Event("blur")); window.dispatchEvent(new Event("focus")); });
+  await expect(page.getByTestId("brief-inputs-section")).toHaveAttribute("data-status", "ready");
+  await expect(page.getByTestId("brief-inputs-error")).toHaveCount(0);
+  await expect(page.getByTestId("brief-inputs-section")).toContainText("سند یا ورودی تعیین‌تکلیف‌نشده‌ای نیست");
 });
 
 test("T9-B2 moves Brief focus to a surviving item after direct resolution removes the focused row", async ({ page }) => {

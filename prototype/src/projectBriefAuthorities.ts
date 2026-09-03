@@ -795,6 +795,7 @@ function parseDispositionEnvelope(value: unknown, authority: ProjectBriefAuthori
   if (envelope.idempotencyReceipts.at(-1)?.recordedAt !== envelope.updatedAt) return { envelope: null, reason: "chronology-invalid" };
 
   let totalVersions = 0;
+  let priorFirstReceiptIndex = -1;
   for (const record of envelope.records) {
     if (!hasExactKeys(record, dispositionRecordKeys) || record.schemaVersion !== 1 || record.objectType !== "project-input-disposition"
       || !isExactString(record.id) || !isExactString(record.projectId) || record.ownerPrincipalType !== "account"
@@ -841,8 +842,10 @@ function parseDispositionEnvelope(value: unknown, authority: ProjectBriefAuthori
       const repeatsNoOp = priorSnapshot !== null && priorSnapshot.status === revision.snapshot.status
         && targetsAreEqual(priorSnapshot.target, revision.snapshot.target);
       if (!stableLogicalTarget || receiptIndex <= priorReceiptIndex
+        || index === 0 && receiptIndex <= priorFirstReceiptIndex
         || priorSnapshot === null && receipt.action !== "resolve-input" || repeatsNoOp) return { envelope: null, reason: "semantic-replay-invalid" };
       priorReceiptIndex = receiptIndex;
+      if (index === 0) priorFirstReceiptIndex = receiptIndex;
       priorSnapshot = revision.snapshot;
       const command = {
         inputSchemaVersion: 1,
@@ -1486,6 +1489,7 @@ async function rollbackOwnedDispositionCandidate(previousRaw: string | null, can
   } catch {
     return false;
   }
+  if (currentRaw === previousRaw) return true;
   if (currentRaw !== candidateRaw) return false;
   try {
     if (previousRaw === null) window.localStorage.removeItem(projectInputDispositionsStorageKey);
@@ -1494,6 +1498,16 @@ async function rollbackOwnedDispositionCandidate(previousRaw: string | null, can
   } catch {
     return false;
   }
+}
+
+async function dispositionFailureAfterRollback(
+  previousRaw: string | null,
+  candidateRaw: string,
+  status: Exclude<ProjectInputDispositionMutationResult["status"], "resolved" | "reopened" | "unchanged" | "lock-unavailable">,
+  current: ProjectInputDispositionEnvelope,
+): Promise<ProjectInputDispositionMutationResult> {
+  const restored = await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
+  return restored ? { status, envelope: current } : { status: "write-failure", envelope: null };
 }
 
 function recordForTarget(envelope: ProjectInputDispositionEnvelope, target: ProjectInputTarget) {
@@ -1647,62 +1661,58 @@ export async function executeProjectInputDispositionCommand(
       try {
         window.localStorage.setItem(projectInputDispositionsStorageKey, candidateRaw);
       } catch {
-        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: "write-failure", envelope: current };
+        return dispositionFailureAfterRollback(previousRaw, candidateRaw, "write-failure", current);
       }
       let readbackRaw: string | null;
       try {
         readbackRaw = window.localStorage.getItem(projectInputDispositionsStorageKey);
       } catch {
-        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: "read-failure", envelope: null };
+        return dispositionFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
       }
       if (readbackRaw !== candidateRaw) {
-        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: "read-failure", envelope: null };
+        return dispositionFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
       }
 
       let finalAuthority: ProjectBriefAuthority | null;
       try {
         finalAuthority = getAuthority();
       } catch {
-        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: "read-failure", envelope: null };
+        return dispositionFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
       }
       if (!authorityIsValid(finalAuthority)
         || finalAuthority.identityBindingHash !== authority.identityBindingHash
         || finalAuthority.authorizationHashes[command.projectId] !== authorizationContextHash) {
-        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: "read-failure", envelope: null };
+        return dispositionFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
       }
       let finalDependencies: ProjectInputDependencies;
       try {
         finalDependencies = await getDependencies(command.projectId);
       } catch {
-        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: "dependency-read-failure", envelope: null };
+        return dispositionFailureAfterRollback(previousRaw, candidateRaw, "dependency-read-failure", current);
       }
       const finalDerivation = deriveProjectInputTargets(finalDependencies);
       const finalTarget = finalDerivation.status === "ready"
         ? finalDerivation.targets.find((target) => target.kind === command.target.kind && target.id === command.target.id && target.projectId === command.projectId)
         : null;
       if (!finalTarget || !targetsAreEqual(finalTarget, command.target)) {
-        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: finalDerivation.status === "ready" ? "dependency-stale" : "dependency-read-failure", envelope: null };
+        return dispositionFailureAfterRollback(
+          previousRaw,
+          candidateRaw,
+          finalDerivation.status === "ready" ? "dependency-stale" : "dependency-read-failure",
+          current,
+        );
       }
       let ownedRaw: string | null;
       try {
         ownedRaw = window.localStorage.getItem(projectInputDispositionsStorageKey);
       } catch {
-        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: "read-failure", envelope: null };
+        return dispositionFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
       }
-      if (ownedRaw !== candidateRaw) return { status: "read-failure", envelope: null };
+      if (ownedRaw !== candidateRaw) return dispositionFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
       const committed = readProjectInputDispositionState(finalAuthority, finalDependencies);
       if (committed.status !== "ready" || committed.envelope.storeVersion !== candidate.storeVersion
         || committed.envelope.fingerprint !== candidate.fingerprint) {
-        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
-        return { status: "read-failure", envelope: null };
+        return dispositionFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
       }
       return { status: command.action === "resolve-input" ? "resolved" : "reopened", envelope: committed.envelope };
     });

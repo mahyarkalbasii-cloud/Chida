@@ -4797,6 +4797,12 @@ type ProjectInputDispositionSnapshot = {
   state: ProjectInputDispositionState;
 };
 
+type ProjectInputMutationError = {
+  key: string;
+  message: string;
+  outcomeUnknown: boolean;
+};
+
 export type ProjectBriefLiveObservationSources = {
   projectId: string;
   projectTaskState: ProjectTaskState;
@@ -14922,7 +14928,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const projectInputDispositionState = projectInputDispositionSnapshot.state;
   const [projectInputReadPending, setProjectInputReadPending] = useState(true);
   const [projectInputMutationKey, setProjectInputMutationKey] = useState<string | null>(null);
-  const [projectInputMutationError, setProjectInputMutationError] = useState<{ key: string; message: string } | null>(null);
+  const [projectInputMutationError, setProjectInputMutationError] = useState<ProjectInputMutationError | null>(null);
   const projectInputMutationAttemptsRef = useRef(new Map<string, string>());
   const projectInputRefreshVersionRef = useRef(0);
   const [projectVisitCheckpointSnapshot, setProjectVisitCheckpointSnapshot] = useState<BoundProjectVisitCheckpointState>(() => ({
@@ -15449,6 +15455,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     if (requestedVersion !== projectInputRefreshVersionRef.current || projectId !== activeProjectIdRef.current) return;
     const next = readProjectInputDispositionState(projectBriefAuthoritySnapshot(), dependencies);
     setProjectInputDispositionSnapshot({ projectId, state: next });
+    if (next.status === "ready") setProjectInputMutationError(null);
     setProjectInputReadPending(false);
   };
 
@@ -15697,13 +15704,29 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       setProjectInputMutationError(null);
     } else {
       if (["version-conflict", "dependency-stale", "scope-mismatch", "idempotency-payload-mismatch"].includes(result.status)) projectInputMutationAttemptsRef.current.delete(signature);
-      await refreshProjectInputDisposition(projectId);
-      setProjectInputMutationError({
-        key: item.key,
-        message: result.status === "version-conflict" || result.status === "dependency-stale"
-          ? "نسخهٔ فایل یا ورودی تغییر کرده است؛ وضعیت تازه را بررسی و دوباره تلاش کن."
-          : "وضعیت تعیین‌تکلیف ذخیره نشد؛ دادهٔ قبلی دست‌نخورده ماند.",
-      });
+      const outcomeUnknown = result.status === "write-failure" && result.envelope === null;
+      if (outcomeUnknown) {
+        projectInputRefreshVersionRef.current += 1;
+        setProjectInputDispositionSnapshot({
+          projectId,
+          state: { status: "read-error", envelope: null, items: [], observedHeads: null, reason: "write-outcome-unverified" },
+        });
+        setProjectInputReadPending(false);
+        setProjectInputMutationError({
+          key: item.key,
+          message: "نتیجهٔ ثبت تعیین‌تکلیف قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند.",
+          outcomeUnknown: true,
+        });
+      } else {
+        await refreshProjectInputDisposition(projectId);
+        setProjectInputMutationError({
+          key: item.key,
+          message: result.status === "version-conflict" || result.status === "dependency-stale"
+            ? "نسخهٔ فایل یا ورودی تغییر کرده است؛ وضعیت تازه را بررسی و دوباره تلاش کن."
+            : "وضعیت تعیین‌تکلیف ذخیره نشد؛ دادهٔ قبلی دست‌نخورده ماند.",
+          outcomeUnknown: false,
+        });
+      }
     }
     setProjectInputMutationKey(null);
   };
@@ -24606,12 +24629,13 @@ function projectInputStatusLabel(status: ProjectInputEffectiveStatus | null, pre
   return "نیازمند تعیین‌تکلیف";
 }
 
-function ProjectInputDispositionControl({ item, testIdPrefix, mutationKey, mutationError, onDisposition }: { item: ProjectInputDisplayItem; testIdPrefix: "project-file" | "project-source"; mutationKey: string | null; mutationError: { key: string; message: string } | null; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+function ProjectInputDispositionControl({ item, testIdPrefix, mutationKey, mutationError, onDisposition }: { item: ProjectInputDisplayItem; testIdPrefix: "project-file" | "project-source"; mutationKey: string | null; mutationError: ProjectInputMutationError | null; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
   const pending = mutationKey !== null;
+  const hasUnknownMutationOutcome = item.presentationState === "unavailable" && mutationError?.key === item.key && mutationError.outcomeUnknown;
   return (
     <div className="project-input-disposition" data-status={item.presentationState === "ready" ? item.effectiveStatus ?? "unavailable" : item.presentationState}>
       <div className="project-input-disposition-copy">
-        <span data-testid={`${testIdPrefix}-disposition-status`}>{projectInputStatusLabel(item.effectiveStatus, item.presentationState)}</span>
+        <span data-testid={`${testIdPrefix}-disposition-status`}>{hasUnknownMutationOutcome ? "اطلاعات تعیین‌تکلیف در دسترس نیست." : projectInputStatusLabel(item.effectiveStatus, item.presentationState)}</span>
         {item.metadataOnly ? <small>فقط شناسنامهٔ فایل در دسترس است؛ محتوا یا اصالت فایل تأیید نشده است.</small> : null}
       </div>
       <button type="button" data-testid={`${testIdPrefix}-disposition-action`} disabled={item.presentationState !== "ready" || !item.ready || pending} onClick={() => { void onDisposition(item); }}>
@@ -24622,7 +24646,7 @@ function ProjectInputDispositionControl({ item, testIdPrefix, mutationKey, mutat
   );
 }
 
-function ProjectFilesView({ project, files, storageLocked, inputByFileId, mutationKey, mutationError, initialSelectedId = null, backLabel, onBack, onRegister, onRestoreContent, onRename, onDisposition }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; inputByFileId: Map<string, ProjectInputDisplayItem>; mutationKey: string | null; mutationError: { key: string; message: string } | null; initialSelectedId?: string | null; backLabel: string; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+function ProjectFilesView({ project, files, storageLocked, inputByFileId, mutationKey, mutationError, initialSelectedId = null, backLabel, onBack, onRegister, onRestoreContent, onRename, onDisposition }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; inputByFileId: Map<string, ProjectInputDisplayItem>; mutationKey: string | null; mutationError: ProjectInputMutationError | null; initialSelectedId?: string | null; backLabel: string; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<PendingProjectFile | null>(null);
@@ -24836,7 +24860,7 @@ function ProjectFileRegisterSheet({ file, project, error, busy, categoryLocked =
   );
 }
 
-function ProjectFileDetailSheet({ file, project, disposition, mutationKey, mutationError, storageLocked, onClose, onRename, onDisposition }: { file: ProjectFileRecord | null; project: BuilderProject; disposition: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: { key: string; message: string } | null; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+function ProjectFileDetailSheet({ file, project, disposition, mutationKey, mutationError, storageLocked, onClose, onRename, onDisposition }: { file: ProjectFileRecord | null; project: BuilderProject; disposition: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: ProjectInputMutationError | null; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
   const keyboard = useKeyboard();
   const [displayName, setDisplayName] = useState("");
   const [nameError, setNameError] = useState("");
@@ -24925,7 +24949,7 @@ function AttachSheet({ sheet, disabled, onClose, onChoose }: { sheet: SheetName;
   );
 }
 
-function ProjectSourceDetailSheet({ source, file, project, input, mutationKey, mutationError, assetReadLocked, onClose, onDisposition }: { source: ProjectSourceRecord | null; file: ProjectFileRecord | null; project: BuilderProject; input: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: { key: string; message: string } | null; assetReadLocked: boolean; onClose: () => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+function ProjectSourceDetailSheet({ source, file, project, input, mutationKey, mutationError, assetReadLocked, onClose, onDisposition }: { source: ProjectSourceRecord | null; file: ProjectFileRecord | null; project: BuilderProject; input: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: ProjectInputMutationError | null; assetReadLocked: boolean; onClose: () => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
   const [assetStatus, setAssetStatus] = useState<"idle" | "loading" | "available" | "missing" | "invalid" | "unreadable">("idle");
   const [assetUrl, setAssetUrl] = useState("");
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -25400,7 +25424,7 @@ function BriefLiveSection({ testId, title, section, icon, actionLabel, actionTes
   );
 }
 
-function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, onDisposition }: { section: LiveBriefInputsSection; mutationKey: string | null; mutationError: { key: string; message: string } | null; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, onDisposition }: { section: LiveBriefInputsSection; mutationKey: string | null; mutationError: ProjectInputMutationError | null; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
   const sectionRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLElement>(null);
   const visibleItems = section.items.slice(0, 3);
@@ -25421,7 +25445,7 @@ function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, 
         <div><strong ref={headingRef} tabIndex={-1} data-testid="brief-inputs-heading">اسناد و ورودی‌های تعیین‌تکلیف‌نشده</strong><small>{section.status === "ready" ? `${section.items.length.toLocaleString("fa-IR")} مورد` : section.status === "loading" ? "در حال آماده‌سازی" : "خواندن ناموفق"}</small></div>
       </header>
       {section.status === "loading" ? <p className="brief-section-state" role="status">در حال بررسی فایل‌ها و ورودی‌های ثبت‌شده…</p> : null}
-      {section.status === "unavailable" ? <p className="brief-section-state is-unavailable" role="alert">اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.</p> : null}
+      {section.status === "unavailable" ? <p className="brief-section-state is-unavailable" role="alert" data-testid="brief-inputs-error">{mutationError?.outcomeUnknown ? mutationError.message : "اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند."}</p> : null}
       {section.status === "ready" && visibleItems.length === 0 ? <p className="brief-section-state is-empty">سند یا ورودی تعیین‌تکلیف‌نشده‌ای نیست</p> : null}
       {section.status === "ready" && visibleItems.length > 0 ? (
         <ul>
@@ -25508,7 +25532,7 @@ function BriefChangesSection({ projectId, checkpointVersion, delta, mutationPend
   );
 }
 
-function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, visitProjectId, visitCheckpointVersion, visitDelta, visitMutationPending, visitMutationBlocked, visitMutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition, onVisitMutation, onOpenVisitGroup }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: { key: string; message: string } | null; visitProjectId: string; visitCheckpointVersion: number | null; visitDelta: ProjectVisitDeltaState; visitMutationPending: boolean; visitMutationBlocked: boolean; visitMutationError: string; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void>; onVisitMutation: () => Promise<void>; onOpenVisitGroup: (group: ProjectVisitDeltaGroup["kind"]) => void }) {
+function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, visitProjectId, visitCheckpointVersion, visitDelta, visitMutationPending, visitMutationBlocked, visitMutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition, onVisitMutation, onOpenVisitGroup }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: ProjectInputMutationError | null; visitProjectId: string; visitCheckpointVersion: number | null; visitDelta: ProjectVisitDeltaState; visitMutationPending: boolean; visitMutationBlocked: boolean; visitMutationError: string; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void>; onVisitMutation: () => Promise<void>; onOpenVisitGroup: (group: ProjectVisitDeltaGroup["kind"]) => void }) {
   const keyboard = useKeyboard();
   const [frequency, setFrequency] = useState<BriefFrequency>(schedule?.frequency ?? "daily");
   const [weekday, setWeekday] = useState(schedule?.weekday ?? "شنبه");
