@@ -11961,6 +11961,14 @@ test("T9-B3 clears the Brief decision return after editing a purchase request be
   await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
   await returnFromDispatchToHome(page);
 
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-purchase-requests-entry").click();
+  await expect(page.getByTestId("project-purchase-requests-view")).toBeVisible();
+  await page.getByTestId("purchase-requests-back").click();
+  await expect(page.getByTestId("project-workspace")).toBeVisible();
+  await page.getByTestId("project-space-back").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+
   await waitForLiveBriefObservation(page);
   await openLiveBriefFromHome(page);
   await expectBriefChangeGroup(page, "decisions", 2, 0);
@@ -11976,6 +11984,7 @@ test("T9-B3 clears the Brief decision return after editing a purchase request be
   await page.getByTestId("project-dispatch-plan-edit").click();
   await expect(page.getByTestId("project-purchase-request-detail-view")).toBeVisible();
   await page.getByTestId("purchase-request-detail-back").click();
+  await expect(page.getByTestId("purchase-requests-back")).toHaveAccessibleName("بازگشت به گفت‌وگو");
   await page.getByTestId("purchase-requests-back").click();
   await expect(page.getByTestId("builder-home")).toBeVisible();
 

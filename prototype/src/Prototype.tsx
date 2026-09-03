@@ -16717,6 +16717,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     keyboard.hide();
     if (projectVisitGroupReturnRef.current === "tasks" || projectVisitGroupReturnRef.current === "decisions") {
       projectVisitGroupReturnRef.current = null;
+      setPurchaseRequestsReturnView("chat");
     }
     setStartPurchaseRequestEditor(false);
     setInitialPurchaseRequestId(requestId);
