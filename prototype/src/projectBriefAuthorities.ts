@@ -1,5 +1,15 @@
-type Sha256Fingerprint = `sha256-${string}`;
+export type Sha256Fingerprint = `sha256-${string}`;
 type Fnv1aFingerprint = `fnv1a-${string}`;
+
+export const projectInputDispositionsStorageKey = "chida-prototype-project-input-dispositions:v1";
+export const projectInputDispositionsWriteLockName = `${projectInputDispositionsStorageKey}:write`;
+
+export type ProjectBriefAuthority = {
+  identityBindingHash: Sha256Fingerprint;
+  snapshotHash: Sha256Fingerprint;
+  projectIds: string[];
+  authorizationHashes: Record<string, Sha256Fingerprint>;
+};
 
 export type ProjectInputFileSnapshot = {
   id: string;
@@ -89,17 +99,17 @@ export type ProjectInputTarget = {
   fingerprint: Sha256Fingerprint;
 };
 
-export type ProjectInputObservedHead = Pick<ProjectInputTarget, "kind" | "id" | "projectId" | "createdAt" | "fingerprint">;
+export type ProjectInputTargetObservedHead = Pick<ProjectInputTarget, "kind" | "id" | "projectId" | "createdAt" | "fingerprint">;
 
 export type ProjectInputProjectionItem = {
   target: ProjectInputTarget;
-  observedHead: ProjectInputObservedHead;
+  observedHead: ProjectInputTargetObservedHead;
 };
 
 export type ProjectInputTargetDerivation = {
   status: "ready" | "unavailable";
   targets: ProjectInputTarget[];
-  observedHeads: ProjectInputObservedHead[];
+  observedHeads: ProjectInputTargetObservedHead[];
   items: ProjectInputProjectionItem[];
   reason: string;
 };
@@ -367,6 +377,639 @@ export function deriveProjectInputTargets(dependencies: ProjectInputDependencies
   return { status: "ready", targets, observedHeads, items: targets.map((target, index) => ({ target, observedHead: observedHeads[index] })), reason: "" };
 }
 
-export function projectInputObservedHeads(dependencies: ProjectInputDependencies): ProjectInputObservedHead[] {
-  return deriveProjectInputTargets(dependencies).observedHeads;
+export type ProjectInputEffectiveStatus = "pending" | "resolved" | "pending-stale";
+
+export type ProjectInputDispositionSnapshot = {
+  target: ProjectInputTarget;
+  status: "pending" | "resolved";
+};
+
+export type ProjectInputDispositionRevision = {
+  id: string;
+  version: number;
+  createdAt: string;
+  authorizationContextHash: Sha256Fingerprint;
+  snapshot: ProjectInputDispositionSnapshot;
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectInputDispositionEvent = {
+  id: string;
+  type: "resolved" | "reopened";
+  actor: "شما";
+  actorPrincipalId: "local-builder-account";
+  at: string;
+  version: number;
+  revisionId: string;
+  authorizationContextHash: Sha256Fingerprint;
+  idempotencyKey: string;
+  commandPayloadHash: Sha256Fingerprint;
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectInputDispositionRecord = {
+  schemaVersion: 1;
+  objectType: "project-input-disposition";
+  id: string;
+  projectId: string;
+  ownerPrincipalType: "account";
+  ownerPrincipalId: "local-builder-account";
+  accountSide: "builder";
+  scopeType: "project_private";
+  scopeId: string;
+  custodianService: "Project Brief Domain Service";
+  sensitivity: "private";
+  authorizationContextHash: Sha256Fingerprint;
+  version: number;
+  currentRevisionId: string;
+  createdAt: string;
+  updatedAt: string;
+  history: ProjectInputDispositionEvent[];
+  revisions: ProjectInputDispositionRevision[];
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectInputDispositionReceipt = {
+  schemaVersion: 1;
+  key: string;
+  action: "resolve-input" | "reopen-input";
+  payloadHash: Sha256Fingerprint;
+  projectId: string;
+  dispositionId: string;
+  expectedStoreVersion: number;
+  expectedDispositionVersion: number | null;
+  resultingStoreVersion: number;
+  resultingDispositionVersion: number;
+  eventId: string;
+  revisionId: string;
+  authorizationContextHash: Sha256Fingerprint;
+  recordedAt: string;
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectInputDispositionEnvelope = {
+  schemaVersion: 1;
+  fingerprintVersion: "project-input-disposition-v1";
+  identityBindingHash: Sha256Fingerprint;
+  storeVersion: number;
+  records: ProjectInputDispositionRecord[];
+  idempotencyReceipts: ProjectInputDispositionReceipt[];
+  updatedAt: string | null;
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectInputDispositionProjectionItem = ProjectInputProjectionItem & {
+  effectiveStatus: ProjectInputEffectiveStatus;
+  dispositionId: string | null;
+  dispositionVersion: number | null;
+};
+
+export type ProjectInputObservedHead = {
+  kind: "project-input";
+  id: string;
+  version: number;
+  state: ProjectInputEffectiveStatus;
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectInputDispositionState =
+  | { status: "unavailable" | "read-error"; envelope: null; items: []; observedHeads: null; reason: string }
+  | {
+      status: "ready";
+      envelope: ProjectInputDispositionEnvelope;
+      items: ProjectInputDispositionProjectionItem[];
+      observedHeads: ProjectInputObservedHead[];
+      reason: "";
+    };
+
+const targetKeys = ["kind", "id", "projectId", "createdAt", "destinationSourceId", "fingerprint"] as const;
+const dispositionRevisionKeys = ["id", "version", "createdAt", "authorizationContextHash", "snapshot", "fingerprint"] as const;
+const dispositionEventKeys = ["id", "type", "actor", "actorPrincipalId", "at", "version", "revisionId", "authorizationContextHash", "idempotencyKey", "commandPayloadHash", "fingerprint"] as const;
+const dispositionRecordKeys = ["schemaVersion", "objectType", "id", "projectId", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "custodianService", "sensitivity", "authorizationContextHash", "version", "currentRevisionId", "createdAt", "updatedAt", "history", "revisions", "fingerprint"] as const;
+const dispositionReceiptKeys = ["schemaVersion", "key", "action", "payloadHash", "projectId", "dispositionId", "expectedStoreVersion", "expectedDispositionVersion", "resultingStoreVersion", "resultingDispositionVersion", "eventId", "revisionId", "authorizationContextHash", "recordedAt", "fingerprint"] as const;
+const dispositionEnvelopeKeys = ["schemaVersion", "fingerprintVersion", "identityBindingHash", "storeVersion", "records", "idempotencyReceipts", "updatedAt", "fingerprint"] as const;
+
+function authorityIsValid(authority: ProjectBriefAuthority | null): authority is ProjectBriefAuthority {
+  if (!authority || !hasExactKeys(authority, ["identityBindingHash", "snapshotHash", "projectIds", "authorizationHashes"])
+    || !isExactSha256(authority.identityBindingHash) || !isExactSha256(authority.snapshotHash)
+    || !Array.isArray(authority.projectIds) || authority.projectIds.length === 0
+    || authority.projectIds.some((projectId) => !isExactString(projectId))
+    || new Set(authority.projectIds).size !== authority.projectIds.length
+    || authority.projectIds.some((projectId, index) => index > 0 && compareCodePoints(authority.projectIds[index - 1], projectId) >= 0)
+    || !hasExactKeys(authority.authorizationHashes, authority.projectIds)) return false;
+  return authority.projectIds.every((projectId) => isExactSha256(authority.authorizationHashes[projectId]));
+}
+
+function exactTarget(value: unknown): value is ProjectInputTarget {
+  if (!hasExactKeys(value, targetKeys)) return false;
+  const target = value as ProjectInputTarget;
+  return ["project-document", "composer-intake"].includes(target.kind)
+    && isExactString(target.id) && isExactString(target.projectId) && isExactTimestamp(target.createdAt)
+    && (target.kind === "project-document" ? target.destinationSourceId === null : isExactString(target.destinationSourceId))
+    && isExactSha256(target.fingerprint);
+}
+
+function dispositionIdFor(target: Pick<ProjectInputTarget, "kind" | "id" | "projectId">) {
+  return `project-input-disposition:${projectBriefHash({ kind: target.kind, id: target.id, projectId: target.projectId }).slice(7)}`;
+}
+
+function dispositionRevisionId(dispositionId: string, version: number) {
+  return `project-input-disposition-revision:${projectBriefHash({ dispositionId, version }).slice(7)}`;
+}
+
+function dispositionEventId(dispositionId: string, version: number) {
+  return `project-input-disposition-event:${projectBriefHash({ dispositionId, version }).slice(7)}`;
+}
+
+function fingerprintMatches(value: { fingerprint: Sha256Fingerprint }) {
+  return value.fingerprint === projectBriefHash(withoutFingerprint(value));
+}
+
+function emptyDispositionEnvelope(identityBindingHash: Sha256Fingerprint): ProjectInputDispositionEnvelope {
+  const payload = {
+    schemaVersion: 1 as const,
+    fingerprintVersion: "project-input-disposition-v1" as const,
+    identityBindingHash,
+    storeVersion: 0,
+    records: [] as ProjectInputDispositionRecord[],
+    idempotencyReceipts: [] as ProjectInputDispositionReceipt[],
+    updatedAt: null,
+  };
+  return { ...payload, fingerprint: projectBriefHash(payload) };
+}
+
+type DispositionParseResult =
+  | { envelope: ProjectInputDispositionEnvelope; reason: "" }
+  | { envelope: null; reason: string };
+
+function parseDispositionEnvelope(value: unknown, authority: ProjectBriefAuthority): DispositionParseResult {
+  if (!hasExactKeys(value, dispositionEnvelopeKeys)) return { envelope: null, reason: "envelope-shape-invalid" };
+  const envelope = value as ProjectInputDispositionEnvelope;
+  if (envelope.schemaVersion !== 1 || envelope.fingerprintVersion !== "project-input-disposition-v1"
+    || !Number.isSafeInteger(envelope.storeVersion) || envelope.storeVersion < 1
+    || !Array.isArray(envelope.records) || !Array.isArray(envelope.idempotencyReceipts)
+    || !isExactTimestamp(envelope.updatedAt) || !isExactSha256(envelope.fingerprint)) return { envelope: null, reason: "envelope-shape-invalid" };
+  if (envelope.identityBindingHash !== authority.identityBindingHash) return { envelope: null, reason: "identity-mismatch" };
+  if (envelope.records.some((record) => !record || typeof record !== "object" || Array.isArray(record) || !("id" in record))) return { envelope: null, reason: "envelope-shape-invalid" };
+  if (new Set(envelope.records.map((record) => record.id)).size !== envelope.records.length) return { envelope: null, reason: "duplicate-record" };
+  if (envelope.idempotencyReceipts.some((receipt) => !receipt || typeof receipt !== "object" || Array.isArray(receipt) || !("key" in receipt))) return { envelope: null, reason: "envelope-shape-invalid" };
+  if (new Set(envelope.idempotencyReceipts.map((receipt) => receipt.key)).size !== envelope.idempotencyReceipts.length) return { envelope: null, reason: "duplicate-receipt" };
+  for (const rawRecord of envelope.records) {
+    if (typeof rawRecord.projectId === "string" && (!authority.projectIds.includes(rawRecord.projectId) || rawRecord.scopeId !== rawRecord.projectId)) return { envelope: null, reason: "scope-mismatch" };
+    if (typeof rawRecord.projectId === "string" && typeof rawRecord.authorizationContextHash === "string"
+      && rawRecord.authorizationContextHash !== authority.authorizationHashes[rawRecord.projectId]) return { envelope: null, reason: "authorization-mismatch" };
+  }
+  for (const rawReceipt of envelope.idempotencyReceipts) {
+    if (typeof rawReceipt.projectId === "string" && !authority.projectIds.includes(rawReceipt.projectId)) return { envelope: null, reason: "scope-mismatch" };
+    if (typeof rawReceipt.projectId === "string" && typeof rawReceipt.authorizationContextHash === "string"
+      && rawReceipt.authorizationContextHash !== authority.authorizationHashes[rawReceipt.projectId]) return { envelope: null, reason: "authorization-mismatch" };
+  }
+  const envelopeTime = Date.parse(envelope.updatedAt!);
+  const chronologyInvalid = envelope.records.some((record) => isExactTimestamp(record.createdAt) && isExactTimestamp(record.updatedAt)
+    && (Date.parse(record.createdAt) > Date.parse(record.updatedAt) || Date.parse(record.updatedAt) > envelopeTime))
+    || envelope.idempotencyReceipts.some((receipt) => isExactTimestamp(receipt.recordedAt) && Date.parse(receipt.recordedAt) > envelopeTime);
+  if (chronologyInvalid) return { envelope: null, reason: "chronology-invalid" };
+  if (envelope.storeVersion !== envelope.idempotencyReceipts.length || !fingerprintMatches(envelope)) return { envelope: null, reason: "envelope-shape-invalid" };
+
+  const receiptsByRevision = new Map<string, ProjectInputDispositionReceipt>();
+  for (let receiptIndex = 0; receiptIndex < envelope.idempotencyReceipts.length; receiptIndex += 1) {
+    const receipt = envelope.idempotencyReceipts[receiptIndex];
+    if (!hasExactKeys(receipt, dispositionReceiptKeys) || receipt.schemaVersion !== 1
+      || !isExactString(receipt.key) || !["resolve-input", "reopen-input"].includes(receipt.action)
+      || !isExactSha256(receipt.payloadHash) || !isExactString(receipt.projectId) || !isExactString(receipt.dispositionId)
+      || !Number.isSafeInteger(receipt.expectedStoreVersion) || receipt.expectedStoreVersion < 0
+      || receipt.expectedDispositionVersion !== null && (!Number.isSafeInteger(receipt.expectedDispositionVersion) || receipt.expectedDispositionVersion < 1)
+      || receipt.expectedStoreVersion !== receiptIndex || receipt.resultingStoreVersion !== receiptIndex + 1
+      || !Number.isSafeInteger(receipt.resultingDispositionVersion) || receipt.resultingDispositionVersion < 1
+      || !isExactString(receipt.eventId) || !isExactString(receipt.revisionId)
+      || receipt.authorizationContextHash !== authority.authorizationHashes[receipt.projectId]
+      || !isExactTimestamp(receipt.recordedAt) || !isExactSha256(receipt.fingerprint) || !fingerprintMatches(receipt)) return { envelope: null, reason: "envelope-shape-invalid" };
+    if (receiptIndex > 0 && Date.parse(receipt.recordedAt) < Date.parse(envelope.idempotencyReceipts[receiptIndex - 1].recordedAt)) return { envelope: null, reason: "chronology-invalid" };
+    if (receiptsByRevision.has(receipt.revisionId)) return { envelope: null, reason: "duplicate-receipt" };
+    receiptsByRevision.set(receipt.revisionId, receipt);
+  }
+  if (envelope.idempotencyReceipts.at(-1)?.recordedAt !== envelope.updatedAt) return { envelope: null, reason: "chronology-invalid" };
+
+  let totalVersions = 0;
+  for (const record of envelope.records) {
+    if (!hasExactKeys(record, dispositionRecordKeys) || record.schemaVersion !== 1 || record.objectType !== "project-input-disposition"
+      || !isExactString(record.id) || !isExactString(record.projectId) || record.ownerPrincipalType !== "account"
+      || record.ownerPrincipalId !== "local-builder-account" || record.accountSide !== "builder" || record.scopeType !== "project_private"
+      || record.scopeId !== record.projectId || record.custodianService !== "Project Brief Domain Service" || record.sensitivity !== "private"
+      || record.authorizationContextHash !== authority.authorizationHashes[record.projectId]
+      || !Number.isSafeInteger(record.version) || record.version < 1 || !isExactString(record.currentRevisionId)
+      || !isExactTimestamp(record.createdAt) || !isExactTimestamp(record.updatedAt)
+      || !Array.isArray(record.history) || !Array.isArray(record.revisions)
+      || record.history.length !== record.version || record.revisions.length !== record.version
+      || !isExactSha256(record.fingerprint) || !fingerprintMatches(record)) return { envelope: null, reason: "envelope-shape-invalid" };
+    if (record.id !== dispositionIdFor(record.revisions[0]?.snapshot?.target ?? { kind: "project-document", id: "invalid", projectId: "invalid" })) return { envelope: null, reason: "envelope-shape-invalid" };
+    totalVersions += record.version;
+    for (let index = 0; index < record.version; index += 1) {
+      const version = index + 1;
+      const revision = record.revisions[index];
+      const event = record.history[index];
+      if (!hasExactKeys(revision, dispositionRevisionKeys) || revision.version !== version
+        || revision.id !== dispositionRevisionId(record.id, version) || !isExactTimestamp(revision.createdAt)
+        || revision.authorizationContextHash !== record.authorizationContextHash
+        || !hasExactKeys(revision.snapshot, ["target", "status"]) || !exactTarget(revision.snapshot.target)
+        || revision.snapshot.target.projectId !== record.projectId || !["pending", "resolved"].includes(revision.snapshot.status)
+        || !isExactSha256(revision.fingerprint) || !fingerprintMatches(revision)
+        || !hasExactKeys(event, dispositionEventKeys) || event.version !== version || event.id !== dispositionEventId(record.id, version)
+        || !["resolved", "reopened"].includes(event.type) || event.actor !== "شما" || event.actorPrincipalId !== "local-builder-account"
+        || !isExactTimestamp(event.at) || event.at !== revision.createdAt || event.revisionId !== revision.id
+        || event.authorizationContextHash !== record.authorizationContextHash || !isExactString(event.idempotencyKey)
+        || !isExactSha256(event.commandPayloadHash) || !isExactSha256(event.fingerprint) || !fingerprintMatches(event)) return { envelope: null, reason: "envelope-shape-invalid" };
+      if (index > 0 && Date.parse(revision.createdAt) < Date.parse(record.revisions[index - 1].createdAt)) return { envelope: null, reason: "chronology-invalid" };
+      const receipt = receiptsByRevision.get(revision.id);
+      const expectedAction = event.type === "resolved" ? "resolve-input" : "reopen-input";
+      if (!receipt || receipt.action !== expectedAction || receipt.key !== event.idempotencyKey
+        || receipt.projectId !== record.projectId || receipt.dispositionId !== record.id
+        || receipt.resultingDispositionVersion !== version || receipt.eventId !== event.id || receipt.recordedAt !== event.at
+        || receipt.authorizationContextHash !== record.authorizationContextHash
+        || receipt.expectedDispositionVersion !== (version === 1 ? null : version - 1)
+        || revision.snapshot.status !== (event.type === "resolved" ? "resolved" : "pending")) return { envelope: null, reason: "envelope-shape-invalid" };
+      const command = {
+        inputSchemaVersion: 1,
+        action: receipt.action,
+        projectId: receipt.projectId,
+        target: revision.snapshot.target,
+        expectedStoreVersion: receipt.expectedStoreVersion,
+        expectedDispositionVersion: receipt.expectedDispositionVersion,
+        idempotencyKey: receipt.key,
+      };
+      if (receipt.payloadHash !== projectBriefHash(command) || event.commandPayloadHash !== receipt.payloadHash) return { envelope: null, reason: "envelope-shape-invalid" };
+    }
+    if (record.currentRevisionId !== record.revisions.at(-1)?.id || record.createdAt !== record.revisions[0].createdAt
+      || record.updatedAt !== record.revisions.at(-1)?.createdAt) return { envelope: null, reason: "chronology-invalid" };
+  }
+  if (totalVersions !== envelope.idempotencyReceipts.length) return { envelope: null, reason: "envelope-shape-invalid" };
+  return { envelope, reason: "" };
+}
+
+function dispositionProjection(envelope: ProjectInputDispositionEnvelope, derivation: ProjectInputTargetDerivation) {
+  const recordByLogicalTarget = new Map(envelope.records.map((record) => {
+    const current = record.revisions.at(-1)!.snapshot.target;
+    return [`${current.kind}\u0000${current.id}\u0000${current.projectId}`, record] as const;
+  }));
+  const projected = derivation.items.map((item) => {
+    const target = item.target;
+    const record = recordByLogicalTarget.get(`${target.kind}\u0000${target.id}\u0000${target.projectId}`) ?? null;
+    const snapshot = record?.revisions.at(-1)?.snapshot ?? null;
+    const effectiveStatus: ProjectInputEffectiveStatus = !snapshot
+      ? "pending"
+      : snapshot.target.fingerprint !== target.fingerprint || snapshot.target.createdAt !== target.createdAt
+        || snapshot.target.destinationSourceId !== target.destinationSourceId
+        ? "pending-stale"
+        : snapshot.status;
+    return {
+      ...item,
+      effectiveStatus,
+      dispositionId: record?.id ?? null,
+      dispositionVersion: record?.version ?? null,
+    };
+  });
+  const statusOrder: Record<ProjectInputEffectiveStatus, number> = { "pending-stale": 0, pending: 1, resolved: 2 };
+  projected.sort((first, second) => statusOrder[first.effectiveStatus] - statusOrder[second.effectiveStatus]
+    || compareDerivedItems(first, second));
+  return projected;
+}
+
+export function readProjectInputDispositionState(
+  authority: ProjectBriefAuthority | null,
+  dependencies: ProjectInputDependencies,
+): ProjectInputDispositionState {
+  const derivation = deriveProjectInputTargets(dependencies);
+  if (derivation.status !== "ready") return { status: "unavailable", envelope: null, items: [], observedHeads: null, reason: derivation.reason };
+  if (!authorityIsValid(authority)) return { status: "read-error", envelope: null, items: [], observedHeads: null, reason: "identity-mismatch" };
+  if (!authority.projectIds.includes(dependencies.projectId)) return { status: "read-error", envelope: null, items: [], observedHeads: null, reason: "scope-mismatch" };
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(projectInputDispositionsStorageKey);
+  } catch {
+    return { status: "read-error", envelope: null, items: [], observedHeads: null, reason: "storage-read-failure" };
+  }
+  let envelope: ProjectInputDispositionEnvelope;
+  if (raw === null) envelope = emptyDispositionEnvelope(authority.identityBindingHash);
+  else {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { status: "read-error", envelope: null, items: [], observedHeads: null, reason: "malformed-json" };
+    }
+    const result = parseDispositionEnvelope(parsed, authority);
+    if (!result.envelope) return { status: "read-error", envelope: null, items: [], observedHeads: null, reason: result.reason };
+    envelope = result.envelope;
+  }
+  const availableTargets = new Set(derivation.targets.map((target) => `${target.kind}\u0000${target.id}\u0000${target.projectId}`));
+  for (const record of envelope.records) {
+    if (record.projectId !== dependencies.projectId) continue;
+    const target = record.revisions.at(-1)!.snapshot.target;
+    if (!availableTargets.has(`${target.kind}\u0000${target.id}\u0000${target.projectId}`)) return { status: "read-error", envelope: null, items: [], observedHeads: null, reason: "target-missing" };
+  }
+  const allItems = dispositionProjection(envelope, derivation);
+  const observedHeads: ProjectInputObservedHead[] = allItems.map((item) => ({
+    kind: "project-input" as const,
+    id: `${item.target.kind}:${item.target.id}`,
+    version: item.dispositionVersion ?? 1,
+    state: item.effectiveStatus,
+    fingerprint: projectBriefHash({
+      target: item.target,
+      effectiveStatus: item.effectiveStatus,
+      disposition: item.dispositionId === null ? null : { id: item.dispositionId, version: item.dispositionVersion },
+    }),
+  })).sort((first, second) => compareCodePoints(first.id, second.id));
+  return { status: "ready", envelope, items: allItems.filter((item) => item.effectiveStatus !== "resolved"), observedHeads, reason: "" };
+}
+
+export function projectInputObservedHeads(state: ProjectInputDispositionState): ProjectInputObservedHead[] | null {
+  return state.observedHeads;
+}
+
+export type ProjectInputDispositionCommand = {
+  inputSchemaVersion: 1;
+  action: "resolve-input" | "reopen-input";
+  projectId: string;
+  target: ProjectInputTarget;
+  expectedStoreVersion: number;
+  expectedDispositionVersion: number | null;
+  idempotencyKey: string;
+};
+
+export type ProjectInputDispositionMutationResult = {
+  status:
+    | "resolved"
+    | "reopened"
+    | "unchanged"
+    | "read-failure"
+    | "dependency-read-failure"
+    | "dependency-stale"
+    | "scope-mismatch"
+    | "version-conflict"
+    | "idempotency-payload-mismatch"
+    | "write-failure"
+    | "lock-unavailable";
+  envelope: ProjectInputDispositionEnvelope | null;
+};
+
+function commandIsValid(command: ProjectInputDispositionCommand) {
+  return hasExactKeys(command, ["inputSchemaVersion", "action", "projectId", "target", "expectedStoreVersion", "expectedDispositionVersion", "idempotencyKey"])
+    && command.inputSchemaVersion === 1 && ["resolve-input", "reopen-input"].includes(command.action)
+    && isExactString(command.projectId) && exactTarget(command.target) && command.target.projectId === command.projectId
+    && Number.isSafeInteger(command.expectedStoreVersion) && command.expectedStoreVersion >= 0
+    && (command.expectedDispositionVersion === null
+      || Number.isSafeInteger(command.expectedDispositionVersion) && command.expectedDispositionVersion >= 1)
+    && isExactString(command.idempotencyKey);
+}
+
+function targetsAreEqual(first: ProjectInputTarget, second: ProjectInputTarget) {
+  return JSON.stringify(stableValue(first)) === JSON.stringify(stableValue(second));
+}
+
+function finalizeDispositionRevision(value: Omit<ProjectInputDispositionRevision, "fingerprint">): ProjectInputDispositionRevision {
+  return { ...value, fingerprint: projectBriefHash(value) };
+}
+
+function finalizeDispositionEvent(value: Omit<ProjectInputDispositionEvent, "fingerprint">): ProjectInputDispositionEvent {
+  return { ...value, fingerprint: projectBriefHash(value) };
+}
+
+function finalizeDispositionRecord(value: Omit<ProjectInputDispositionRecord, "fingerprint">): ProjectInputDispositionRecord {
+  return { ...value, fingerprint: projectBriefHash(value) };
+}
+
+function finalizeDispositionReceipt(value: Omit<ProjectInputDispositionReceipt, "fingerprint">): ProjectInputDispositionReceipt {
+  return { ...value, fingerprint: projectBriefHash(value) };
+}
+
+function finalizeDispositionEnvelope(value: Omit<ProjectInputDispositionEnvelope, "fingerprint">): ProjectInputDispositionEnvelope {
+  return { ...value, fingerprint: projectBriefHash(value) };
+}
+
+function nextDispositionTimestamp(envelope: ProjectInputDispositionEnvelope) {
+  const now = new Date().toISOString();
+  if (envelope.updatedAt === null || Date.parse(now) >= Date.parse(envelope.updatedAt)) return now;
+  return envelope.updatedAt;
+}
+
+async function rollbackOwnedDispositionCandidate(previousRaw: string | null, candidateRaw: string) {
+  let currentRaw: string | null;
+  try {
+    currentRaw = window.localStorage.getItem(projectInputDispositionsStorageKey);
+  } catch {
+    return false;
+  }
+  if (currentRaw !== candidateRaw) return false;
+  try {
+    if (previousRaw === null) window.localStorage.removeItem(projectInputDispositionsStorageKey);
+    else window.localStorage.setItem(projectInputDispositionsStorageKey, previousRaw);
+    return window.localStorage.getItem(projectInputDispositionsStorageKey) === previousRaw;
+  } catch {
+    return false;
+  }
+}
+
+function recordForTarget(envelope: ProjectInputDispositionEnvelope, target: ProjectInputTarget) {
+  return envelope.records.find((record) => {
+    const recordedTarget = record.revisions.at(-1)!.snapshot.target;
+    return recordedTarget.kind === target.kind && recordedTarget.id === target.id && recordedTarget.projectId === target.projectId;
+  }) ?? null;
+}
+
+function buildDispositionCandidate(
+  current: ProjectInputDispositionEnvelope,
+  command: ProjectInputDispositionCommand,
+  authorizationContextHash: Sha256Fingerprint,
+) {
+  const priorRecord = recordForTarget(current, command.target);
+  const nextVersion = (priorRecord?.version ?? 0) + 1;
+  const nextStoreVersion = current.storeVersion + 1;
+  const timestamp = nextDispositionTimestamp(current);
+  const dispositionId = priorRecord?.id ?? dispositionIdFor(command.target);
+  const revisionId = dispositionRevisionId(dispositionId, nextVersion);
+  const eventId = dispositionEventId(dispositionId, nextVersion);
+  const payloadHash = projectBriefHash(command);
+  const revision = finalizeDispositionRevision({
+    id: revisionId,
+    version: nextVersion,
+    createdAt: timestamp,
+    authorizationContextHash,
+    snapshot: {
+      target: command.target,
+      status: command.action === "resolve-input" ? "resolved" : "pending",
+    },
+  });
+  const event = finalizeDispositionEvent({
+    id: eventId,
+    type: command.action === "resolve-input" ? "resolved" : "reopened",
+    actor: "شما",
+    actorPrincipalId: "local-builder-account",
+    at: timestamp,
+    version: nextVersion,
+    revisionId,
+    authorizationContextHash,
+    idempotencyKey: command.idempotencyKey,
+    commandPayloadHash: payloadHash,
+  });
+  const record = finalizeDispositionRecord({
+    schemaVersion: 1,
+    objectType: "project-input-disposition",
+    id: dispositionId,
+    projectId: command.projectId,
+    ownerPrincipalType: "account",
+    ownerPrincipalId: "local-builder-account",
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: command.projectId,
+    custodianService: "Project Brief Domain Service",
+    sensitivity: "private",
+    authorizationContextHash,
+    version: nextVersion,
+    currentRevisionId: revisionId,
+    createdAt: priorRecord?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+    history: [...(priorRecord?.history ?? []), event],
+    revisions: [...(priorRecord?.revisions ?? []), revision],
+  });
+  const receipt = finalizeDispositionReceipt({
+    schemaVersion: 1,
+    key: command.idempotencyKey,
+    action: command.action,
+    payloadHash,
+    projectId: command.projectId,
+    dispositionId,
+    expectedStoreVersion: command.expectedStoreVersion,
+    expectedDispositionVersion: command.expectedDispositionVersion,
+    resultingStoreVersion: nextStoreVersion,
+    resultingDispositionVersion: nextVersion,
+    eventId,
+    revisionId,
+    authorizationContextHash,
+    recordedAt: timestamp,
+  });
+  return finalizeDispositionEnvelope({
+    schemaVersion: 1,
+    fingerprintVersion: "project-input-disposition-v1",
+    identityBindingHash: current.identityBindingHash,
+    storeVersion: nextStoreVersion,
+    records: priorRecord
+      ? current.records.map((candidate) => candidate.id === priorRecord.id ? record : candidate)
+      : [...current.records, record],
+    idempotencyReceipts: [...current.idempotencyReceipts, receipt],
+    updatedAt: timestamp,
+  });
+}
+
+export async function executeProjectInputDispositionCommand(
+  command: ProjectInputDispositionCommand,
+  getAuthority: () => ProjectBriefAuthority | null,
+  getDependencies: (projectId: string) => Promise<ProjectInputDependencies>,
+): Promise<ProjectInputDispositionMutationResult> {
+  if (!commandIsValid(command)) return { status: command?.target?.projectId !== command?.projectId ? "scope-mismatch" : "dependency-stale", envelope: null };
+  if (!navigator.locks?.request) return { status: "lock-unavailable", envelope: null };
+  try {
+    return await navigator.locks.request(projectInputDispositionsWriteLockName, async () => {
+      let authority: ProjectBriefAuthority | null;
+      let dependencies: ProjectInputDependencies;
+      try {
+        authority = getAuthority();
+        dependencies = await getDependencies(command.projectId);
+      } catch {
+        return { status: "dependency-read-failure", envelope: null } as ProjectInputDispositionMutationResult;
+      }
+      if (!authorityIsValid(authority)) return { status: "read-failure", envelope: null };
+      if (!authority.projectIds.includes(command.projectId) || command.target.projectId !== command.projectId) return { status: "scope-mismatch", envelope: null };
+      const derived = deriveProjectInputTargets(dependencies);
+      if (derived.status !== "ready") return { status: "dependency-read-failure", envelope: null };
+      if (dependencies.projectId !== command.projectId) return { status: "scope-mismatch", envelope: null };
+      const currentTarget = derived.targets.find((target) => target.kind === command.target.kind && target.id === command.target.id && target.projectId === command.projectId);
+      if (!currentTarget || !targetsAreEqual(currentTarget, command.target)) return { status: "dependency-stale", envelope: null };
+      const currentState = readProjectInputDispositionState(authority, dependencies);
+      if (currentState.status === "unavailable") return { status: "dependency-read-failure", envelope: null };
+      if (currentState.status !== "ready") return { status: "read-failure", envelope: null };
+      const current = currentState.envelope;
+      const existingReceipt = current.idempotencyReceipts.find((receipt) => receipt.key === command.idempotencyKey);
+      const payloadHash = projectBriefHash(command);
+      if (existingReceipt) {
+        if (existingReceipt.payloadHash !== payloadHash
+          || existingReceipt.expectedStoreVersion !== command.expectedStoreVersion
+          || existingReceipt.expectedDispositionVersion !== command.expectedDispositionVersion) return { status: "idempotency-payload-mismatch", envelope: current };
+        return { status: existingReceipt.action === "resolve-input" ? "resolved" : "reopened", envelope: current };
+      }
+      const existingRecord = recordForTarget(current, command.target);
+      if (current.storeVersion !== command.expectedStoreVersion
+        || (existingRecord?.version ?? null) !== command.expectedDispositionVersion) return { status: "version-conflict", envelope: current };
+      const desiredStatus = command.action === "resolve-input" ? "resolved" : "pending";
+      const currentSnapshot = existingRecord?.revisions.at(-1)?.snapshot ?? null;
+      if ((!currentSnapshot && desiredStatus === "pending")
+        || currentSnapshot && currentSnapshot.status === desiredStatus && targetsAreEqual(currentSnapshot.target, command.target)) return { status: "unchanged", envelope: current };
+
+      let previousRaw: string | null;
+      try {
+        previousRaw = window.localStorage.getItem(projectInputDispositionsStorageKey);
+      } catch {
+        return { status: "read-failure", envelope: null };
+      }
+      const authorizationContextHash = authority.authorizationHashes[command.projectId];
+      const candidate = buildDispositionCandidate(current, command, authorizationContextHash);
+      const candidateRaw = JSON.stringify(candidate);
+      try {
+        window.localStorage.setItem(projectInputDispositionsStorageKey, candidateRaw);
+      } catch {
+        return { status: "write-failure", envelope: current };
+      }
+      let readbackRaw: string | null;
+      try {
+        readbackRaw = window.localStorage.getItem(projectInputDispositionsStorageKey);
+      } catch {
+        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
+        return { status: "read-failure", envelope: null };
+      }
+      if (readbackRaw !== candidateRaw) {
+        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
+        return { status: "read-failure", envelope: null };
+      }
+
+      let finalAuthority: ProjectBriefAuthority | null;
+      let finalDependencies: ProjectInputDependencies;
+      try {
+        finalAuthority = getAuthority();
+        finalDependencies = await getDependencies(command.projectId);
+      } catch {
+        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
+        return { status: "dependency-read-failure", envelope: null };
+      }
+      if (!authorityIsValid(finalAuthority)
+        || finalAuthority.identityBindingHash !== authority.identityBindingHash
+        || finalAuthority.authorizationHashes[command.projectId] !== authorizationContextHash) {
+        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
+        return { status: "dependency-stale", envelope: null };
+      }
+      const finalDerivation = deriveProjectInputTargets(finalDependencies);
+      const finalTarget = finalDerivation.status === "ready"
+        ? finalDerivation.targets.find((target) => target.kind === command.target.kind && target.id === command.target.id && target.projectId === command.projectId)
+        : null;
+      if (!finalTarget || !targetsAreEqual(finalTarget, command.target)) {
+        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
+        return { status: finalDerivation.status === "ready" ? "dependency-stale" : "dependency-read-failure", envelope: null };
+      }
+      let ownedRaw: string | null;
+      try {
+        ownedRaw = window.localStorage.getItem(projectInputDispositionsStorageKey);
+      } catch {
+        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
+        return { status: "read-failure", envelope: null };
+      }
+      if (ownedRaw !== candidateRaw) return { status: "read-failure", envelope: null };
+      const committed = readProjectInputDispositionState(finalAuthority, finalDependencies);
+      if (committed.status !== "ready" || committed.envelope.storeVersion !== candidate.storeVersion
+        || committed.envelope.fingerprint !== candidate.fingerprint) {
+        await rollbackOwnedDispositionCandidate(previousRaw, candidateRaw);
+        return { status: "read-failure", envelope: null };
+      }
+      return { status: command.action === "resolve-input" ? "resolved" : "reopened", envelope: committed.envelope };
+    });
+  } catch {
+    return { status: "lock-unavailable", envelope: null };
+  }
 }

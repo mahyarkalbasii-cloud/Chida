@@ -7921,6 +7921,684 @@ async function importProjectBriefAuthorities(page: Page) {
     Object.keys(await import("/src/projectBriefAuthorities.ts")));
 }
 
+function expectedProjectFoundationIdentityFixtureForBrief() {
+  const hash = (value: unknown) => `sha256-${createHash("sha256")
+    .update(JSON.stringify(stableTestValue(value))).digest("hex")}`;
+  const identity = {
+    schemaVersion: 1, objectType: "account-identity", id: "local-builder-account",
+    ownerPrincipalType: "account", ownerPrincipalId: "local-builder-account",
+    accountSide: "builder", scopeType: "account_private", scopeId: "local-builder-account",
+    custodianService: "Identity/Policy", status: "active", version: 1,
+  };
+  const membership = {
+    schemaVersion: 1, objectType: "membership", id: "local-builder-membership",
+    principalId: "local-builder-account",
+    scope: { type: "account", id: "local-builder-account" }, status: "active", version: 1,
+  };
+  const roleAssignment = {
+    schemaVersion: 1, objectType: "role-assignment", id: "local-builder-owner-role",
+    membershipId: "local-builder-membership", role: "owner", status: "active", version: 1,
+  };
+  const aclSnapshotHash = hash({
+    identity, membership, roleAssignment, policyVersion: "builder-prototype-policy:v1",
+  });
+  const templatePayload = {
+    schemaVersion: 1, objectType: "authorization-context-template",
+    id: "local-builder-project-private-authorization-template",
+    actorPrincipalId: "local-builder-account", identityVersion: 1, accountSide: "builder",
+    membershipId: "local-builder-membership", membershipVersion: 1,
+    roleAssignmentId: "local-builder-owner-role", roleAssignmentVersion: 1,
+    membershipRole: "owner", aclSnapshotHash, policyVersion: "builder-prototype-policy:v1",
+    scopeBinding: { scopeType: "project_private", scopeIdSource: "projectId" },
+    status: "active", version: 1,
+  };
+  const authorizationContextTemplate = {
+    ...templatePayload, fingerprint: hash(templatePayload),
+  };
+  const payload = {
+    schemaVersion: 1, fixtureVersion: 1, policyVersion: "builder-prototype-policy:v1",
+    identity, memberships: [membership], roleAssignments: [roleAssignment],
+    authorizationContextTemplate, aclSnapshotHash,
+  };
+  return { ...payload, fixtureFingerprint: hash(payload) };
+}
+
+async function readProjectBriefTestAuthority(page: Page) {
+  const raw = await page.evaluate(() => ({
+    canonicalRaw: localStorage.getItem("chida-prototype-builder-projects:v3"),
+    markerRaw: localStorage.getItem("chida-prototype-builder-projects:v3:cutover:v1"),
+    identityRaw: localStorage.getItem("chida-prototype-identity-policy-fixture:v1"),
+  }));
+  if (!raw.canonicalRaw || !raw.markerRaw || !raw.identityRaw)
+    throw new Error("project authority seed is incomplete");
+  const expectedFixture = expectedProjectFoundationIdentityFixtureForBrief();
+  const expectedIdentityRaw = JSON.stringify(expectedFixture);
+  expect(raw.identityRaw).toBe(expectedIdentityRaw);
+  expect(JSON.parse(raw.markerRaw)).toMatchObject({ state: "committed" });
+  const projectEnvelope = JSON.parse(raw.canonicalRaw);
+  const projectIds = projectEnvelope.projects
+    .map((project: { id: string }) => project.id).sort();
+  expect(projectIds.length).toBeGreaterThan(0);
+  const hash = (value: unknown) => `sha256-${createHash("sha256")
+    .update(JSON.stringify(stableTestValue(value))).digest("hex")}`;
+  const template = expectedFixture.authorizationContextTemplate;
+  const authorizationHashes = Object.fromEntries(projectIds.map((projectId: string) => {
+    const context = {
+      schemaVersion: 1, objectType: "authorization-context",
+      id: `authorization-context:${projectId}`,
+      templateId: template.id, templateVersion: template.version,
+      templateFingerprint: template.fingerprint, actorPrincipalId: template.actorPrincipalId,
+      identityVersion: template.identityVersion, accountSide: template.accountSide,
+      membershipId: template.membershipId, membershipVersion: template.membershipVersion,
+      roleAssignmentId: template.roleAssignmentId,
+      roleAssignmentVersion: template.roleAssignmentVersion,
+      membershipRole: template.membershipRole, aclSnapshotHash: template.aclSnapshotHash,
+      policyVersion: template.policyVersion,
+      resolvedScope: { scopeType: "project_private", scopeId: projectId },
+      status: "active", version: 1,
+    };
+    return [projectId, hash(context)];
+  }));
+  return {
+    identityBindingHash: expectedFixture.fixtureFingerprint,
+    snapshotHash: hash({
+      markerRaw: raw.markerRaw,
+      canonicalRaw: raw.canonicalRaw,
+      identityRaw: expectedIdentityRaw,
+    }),
+    projectIds,
+    authorizationHashes,
+  };
+}
+
+function projectBriefTestHash(value: unknown) {
+  return `sha256-${createHash("sha256")
+    .update(JSON.stringify(stableTestValue(value))).digest("hex")}`;
+}
+
+function makeReadyProjectInputDependencies(projectId: string) {
+  return {
+    status: "ready" as const,
+    projectId,
+    files: [{
+      id: "doc-a", projectId, displayName: "قرارداد الف", originalName: "a.pdf",
+      mimeType: "application/pdf", size: 10, category: "قرارداد",
+      source: "انتخاب مستقیم از دستگاه", status: "ثبت محلی", version: 1 as const,
+      projectStage: "اسکلت بندی", visibility: "خصوصی پروژه" as const,
+      storageMode: "metadata-only" as const, sourceModifiedAt: null,
+      createdAt: "2026-09-03T08:00:00.000Z",
+    }],
+    sourceEnvelope: {
+      schemaVersion: 1 as const, envelopeVersion: 0,
+      records: [], intakes: [], updatedAt: null,
+    },
+    reason: "" as const,
+  };
+}
+
+function makeProjectInputDispositionLedger(authority: Awaited<ReturnType<typeof readProjectBriefTestAuthority>>, projectId: string) {
+  const target = {
+    kind: "project-document" as const,
+    id: "doc-a",
+    projectId,
+    createdAt: "2026-09-03T08:00:00.000Z",
+    destinationSourceId: null,
+    fingerprint: projectBriefTestHash(makeReadyProjectInputDependencies(projectId).files[0]),
+  };
+  const action = "resolve-input" as const;
+  const key = "parser-resolve-a";
+  const timestamp = "2026-09-03T08:01:00.000Z";
+  const dispositionId = `project-input-disposition:${projectBriefTestHash({ kind: target.kind, id: target.id, projectId: target.projectId }).slice(7)}`;
+  const revisionId = `project-input-disposition-revision:${projectBriefTestHash({ dispositionId, version: 1 }).slice(7)}`;
+  const eventId = `project-input-disposition-event:${projectBriefTestHash({ dispositionId, version: 1 }).slice(7)}`;
+  const command = {
+    inputSchemaVersion: 1,
+    action,
+    projectId,
+    target,
+    expectedStoreVersion: 0,
+    expectedDispositionVersion: null,
+    idempotencyKey: key,
+  };
+  const payloadHash = projectBriefTestHash(command);
+  const revisionPayload = {
+    id: revisionId,
+    version: 1,
+    createdAt: timestamp,
+    authorizationContextHash: authority.authorizationHashes[projectId],
+    snapshot: { target, status: "resolved" as const },
+  };
+  const revision = { ...revisionPayload, fingerprint: projectBriefTestHash(revisionPayload) };
+  const eventPayload = {
+    id: eventId,
+    type: "resolved" as const,
+    actor: "شما" as const,
+    actorPrincipalId: "local-builder-account" as const,
+    at: timestamp,
+    version: 1,
+    revisionId,
+    authorizationContextHash: authority.authorizationHashes[projectId],
+    idempotencyKey: key,
+    commandPayloadHash: payloadHash,
+  };
+  const event = { ...eventPayload, fingerprint: projectBriefTestHash(eventPayload) };
+  const recordPayload = {
+    schemaVersion: 1,
+    objectType: "project-input-disposition" as const,
+    id: dispositionId,
+    projectId,
+    ownerPrincipalType: "account" as const,
+    ownerPrincipalId: "local-builder-account" as const,
+    accountSide: "builder" as const,
+    scopeType: "project_private" as const,
+    scopeId: projectId,
+    custodianService: "Project Brief Domain Service" as const,
+    sensitivity: "private" as const,
+    authorizationContextHash: authority.authorizationHashes[projectId],
+    version: 1,
+    currentRevisionId: revisionId,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    history: [event],
+    revisions: [revision],
+  };
+  const record = { ...recordPayload, fingerprint: projectBriefTestHash(recordPayload) };
+  const receiptPayload = {
+    schemaVersion: 1,
+    key,
+    action,
+    payloadHash,
+    projectId,
+    dispositionId,
+    expectedStoreVersion: 0,
+    expectedDispositionVersion: null,
+    resultingStoreVersion: 1,
+    resultingDispositionVersion: 1,
+    eventId,
+    revisionId,
+    authorizationContextHash: authority.authorizationHashes[projectId],
+    recordedAt: timestamp,
+  };
+  const receipt = { ...receiptPayload, fingerprint: projectBriefTestHash(receiptPayload) };
+  const envelopePayload = {
+    schemaVersion: 1,
+    fingerprintVersion: "project-input-disposition-v1" as const,
+    identityBindingHash: authority.identityBindingHash,
+    storeVersion: 1,
+    records: [record],
+    idempotencyReceipts: [receipt],
+    updatedAt: timestamp,
+  };
+  return { ...envelopePayload, fingerprint: projectBriefTestHash(envelopePayload) };
+}
+
+test("T9-B2 reads null as byte-stable empty and rejects malformed cross-project policy-drifted ledgers", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const dependencies = makeReadyProjectInputDependencies(projectId);
+  const before = await page.evaluate(() =>
+    window.localStorage.getItem("chida-prototype-project-input-dispositions:v1"));
+  expect(before).toBeNull();
+  const empty = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    return domain.readProjectInputDispositionState(currentAuthority, currentDependencies);
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  expect(empty.status).toBe("ready");
+  expect(empty.envelope?.storeVersion).toBe(0);
+  expect(await page.evaluate(() =>
+    window.localStorage.getItem("chida-prototype-project-input-dispositions:v1"))).toBeNull();
+
+  const validLedger = makeProjectInputDispositionLedger(authority, projectId);
+  const malformedCases = [
+    { reason: "malformed-json", raw: "{malformed" },
+    { reason: "envelope-shape-invalid", value: { ...validLedger, extra: true } },
+    { reason: "duplicate-record", value: { ...validLedger, records: [validLedger.records[0], validLedger.records[0]] } },
+    { reason: "duplicate-receipt", value: { ...validLedger, idempotencyReceipts: [validLedger.idempotencyReceipts[0], validLedger.idempotencyReceipts[0]] } },
+    { reason: "chronology-invalid", value: { ...validLedger, updatedAt: "2026-09-03T07:59:00.000Z" } },
+    { reason: "scope-mismatch", value: { ...validLedger, records: [{ ...validLedger.records[0], projectId: "foreign-project" }] } },
+    { reason: "identity-mismatch", value: { ...validLedger, identityBindingHash: `sha256-${"9".repeat(64)}` } },
+    { reason: "authorization-mismatch", value: { ...validLedger, records: [{ ...validLedger.records[0], authorizationContextHash: `sha256-${"8".repeat(64)}` }] } },
+    { reason: "target-missing", value: validLedger, dependencies: { ...dependencies, files: [] } },
+  ];
+  const failures = await page.evaluate(async ({ currentAuthority, currentDependencies, cases }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    return cases.map((candidate) => {
+      localStorage.setItem(
+        "chida-prototype-project-input-dispositions:v1",
+        "raw" in candidate ? candidate.raw! : JSON.stringify(candidate.value),
+      );
+      return domain.readProjectInputDispositionState(
+        currentAuthority,
+        candidate.dependencies ?? currentDependencies,
+      );
+    });
+  }, { currentAuthority: authority, currentDependencies: dependencies, cases: malformedCases });
+  for (let index = 0; index < malformedCases.length; index += 1) {
+    expect(failures[index]).toMatchObject({ status: "read-error", reason: malformedCases[index].reason });
+  }
+  expect(await page.evaluate(() =>
+    window.localStorage.getItem("chida-prototype-project-input-dispositions:v1"))).toBe(JSON.stringify(validLedger));
+});
+
+test("T9-B2 resolves reloads reopens and isolates dispositions by project", async ({ page }) => {
+  await enterBuilderHome(page);
+  const firstProjectId = await readActiveProjectId(page);
+  await addAndActivateProject(page, "پروژهٔ دوم تعیین تکلیف");
+  const activeProjectId = await readActiveProjectId(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  expect(firstProjectId).not.toBe(activeProjectId);
+  expect(authority.projectIds).toHaveLength(2);
+  const firstDependencies = makeReadyProjectInputDependencies(firstProjectId);
+  const secondDependencies = makeReadyProjectInputDependencies(activeProjectId);
+  const result = await page.evaluate(async ({ currentAuthority, first, second }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const firstTarget = domain.deriveProjectInputTargets(first).targets?.[0];
+    const secondTarget = domain.deriveProjectInputTargets(second).targets?.[0];
+    if (!firstTarget || !secondTarget) throw new Error("target fixture is missing");
+    const resolveCommand = {
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: first.projectId,
+      target: firstTarget,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "resolve-first",
+    };
+    const resolved = await domain.executeProjectInputDispositionCommand(
+      resolveCommand,
+      () => currentAuthority,
+      async () => first,
+    );
+    const resolvedBytes = localStorage.getItem("chida-prototype-project-input-dispositions:v1");
+    const replayed = await domain.executeProjectInputDispositionCommand(
+      resolveCommand,
+      () => currentAuthority,
+      async () => first,
+    );
+    const replayedBytes = localStorage.getItem("chida-prototype-project-input-dispositions:v1");
+    const reopened = await domain.executeProjectInputDispositionCommand({
+      ...resolveCommand,
+      action: "reopen-input" as const,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "reopen-first",
+    }, () => currentAuthority, async () => first);
+    const firstReread = domain.readProjectInputDispositionState(currentAuthority, first);
+    const secondBefore = domain.readProjectInputDispositionState(currentAuthority, second);
+    const secondResolved = await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: second.projectId,
+      target: secondTarget,
+      expectedStoreVersion: 2,
+      expectedDispositionVersion: null,
+      idempotencyKey: "resolve-second",
+    }, () => currentAuthority, async () => second);
+    const firstAfter = domain.readProjectInputDispositionState(currentAuthority, first);
+    const secondAfter = domain.readProjectInputDispositionState(currentAuthority, second);
+    return {
+      resolved, resolvedBytes, replayed, replayedBytes, reopened,
+      firstReread, secondBefore, secondResolved, firstAfter, secondAfter,
+    };
+  }, { currentAuthority: authority, first: firstDependencies, second: secondDependencies });
+  expect(result.resolved.status).toBe("resolved");
+  expect(result.resolved.envelope).toMatchObject({ storeVersion: 1 });
+  expect(result.resolved.envelope?.records[0]).toMatchObject({ projectId: firstProjectId, version: 1 });
+  expect(result.resolved.envelope?.records[0].history).toHaveLength(1);
+  expect(result.resolved.envelope?.records[0].revisions).toHaveLength(1);
+  expect(result.resolved.envelope?.idempotencyReceipts).toHaveLength(1);
+  expect(result.replayed.status).toBe("resolved");
+  expect(result.replayedBytes).toBe(result.resolvedBytes);
+  expect(result.reopened.status).toBe("reopened");
+  expect(result.reopened.envelope).toMatchObject({ storeVersion: 2 });
+  expect(result.reopened.envelope?.records[0]).toMatchObject({ version: 2 });
+  expect(result.firstReread.items[0]).toMatchObject({ effectiveStatus: "pending", dispositionVersion: 2 });
+  expect(result.secondBefore.items[0]).toMatchObject({ effectiveStatus: "pending", dispositionVersion: null });
+  expect(result.secondResolved.status).toBe("resolved");
+  expect(result.secondResolved.envelope).toMatchObject({ storeVersion: 3 });
+  expect(result.secondResolved.envelope?.records).toHaveLength(2);
+  expect(result.firstAfter.items[0]).toMatchObject({ effectiveStatus: "pending", dispositionVersion: 2 });
+  expect(result.secondAfter.items).toEqual([]);
+  expect(result.secondAfter.observedHeads[0]).toMatchObject({ state: "resolved", version: 1 });
+  expect(await readActiveProjectId(page)).toBe(activeProjectId);
+
+  await page.reload();
+  await enterBuilderHome(page);
+  const reloadedAuthority = await readProjectBriefTestAuthority(page);
+  const reloaded = await page.evaluate(async ({ currentAuthority, first, second }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    return {
+      first: domain.readProjectInputDispositionState(currentAuthority, first),
+      second: domain.readProjectInputDispositionState(currentAuthority, second),
+    };
+  }, { currentAuthority: reloadedAuthority, first: firstDependencies, second: secondDependencies });
+  expect(reloaded.first.status).toBe("ready");
+  expect(reloaded.first.envelope?.storeVersion).toBe(3);
+  expect(reloaded.second.status).toBe("ready");
+  expect(reloaded.second.observedHeads[0]).toMatchObject({ state: "resolved" });
+});
+
+test("T9-B2 keeps no-op bytes stable and retries the same command idempotently", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
+  const result = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const target = domain.deriveProjectInputTargets(currentDependencies).targets?.[0];
+    if (!target) throw new Error("target fixture is missing");
+    const original = {
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "stable-resolve",
+    };
+    const resolved = await domain.executeProjectInputDispositionCommand(original, () => currentAuthority, async () => currentDependencies);
+    const resolvedBytes = localStorage.getItem("chida-prototype-project-input-dispositions:v1");
+    const noOp = await domain.executeProjectInputDispositionCommand({
+      ...original,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "stable-resolve-no-op",
+    }, () => currentAuthority, async () => currentDependencies);
+    const noOpBytes = localStorage.getItem("chida-prototype-project-input-dispositions:v1");
+    const reopened = await domain.executeProjectInputDispositionCommand({
+      ...original,
+      action: "reopen-input" as const,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "stable-reopen",
+    }, () => currentAuthority, async () => currentDependencies);
+    const advancedBytes = localStorage.getItem("chida-prototype-project-input-dispositions:v1");
+    const retriedAfterAdvance = await domain.executeProjectInputDispositionCommand(original, () => currentAuthority, async () => currentDependencies);
+    return {
+      resolved, resolvedBytes, noOp, noOpBytes, reopened, advancedBytes,
+      retriedAfterAdvance,
+      retryBytes: localStorage.getItem("chida-prototype-project-input-dispositions:v1"),
+    };
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  expect(result.resolved.status).toBe("resolved");
+  expect(result.noOp.status).toBe("unchanged");
+  expect(result.noOpBytes).toBe(result.resolvedBytes);
+  expect(result.noOp.envelope?.idempotencyReceipts).toHaveLength(1);
+  expect(result.reopened.status).toBe("reopened");
+  expect(result.reopened.envelope).toMatchObject({ storeVersion: 2 });
+  expect(result.retriedAfterAdvance.status).toBe("resolved");
+  expect(result.retriedAfterAdvance.envelope).toMatchObject({ storeVersion: 2 });
+  expect(result.retryBytes).toBe(result.advancedBytes);
+});
+
+test("T9-B2 makes a changed resolved target pending-stale with a fresh SHA-256 preimage", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
+  const result = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const target = domain.deriveProjectInputTargets(currentDependencies).targets?.[0];
+    if (!target) throw new Error("target fixture is missing");
+    const resolved = await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "stale-resolve",
+    }, () => currentAuthority, async () => currentDependencies);
+    const changedDependencies = structuredClone(currentDependencies);
+    changedDependencies.files[0] = { ...changedDependencies.files[0], displayName: "قرارداد الف - ویرایش تازه" };
+    const changedTarget = domain.deriveProjectInputTargets(changedDependencies).targets?.[0];
+    if (!changedTarget) throw new Error("changed target fixture is missing");
+    const stale = domain.readProjectInputDispositionState(currentAuthority, changedDependencies);
+    const reResolved = await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: changedDependencies.projectId,
+      target: changedTarget,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "stale-resolve-fresh",
+    }, () => currentAuthority, async () => changedDependencies);
+    const fresh = domain.readProjectInputDispositionState(currentAuthority, changedDependencies);
+    return { target, changedTarget, resolved, stale, reResolved, fresh };
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  expect(result.target.fingerprint).toMatch(/^sha256-[0-9a-f]{64}$/);
+  expect(result.changedTarget.fingerprint).toMatch(/^sha256-[0-9a-f]{64}$/);
+  expect(result.changedTarget.fingerprint).not.toBe(result.target.fingerprint);
+  expect(result.resolved.status).toBe("resolved");
+  expect(result.stale.items[0]).toMatchObject({ effectiveStatus: "pending-stale", dispositionVersion: 1 });
+  expect(result.stale.observedHeads[0]).toMatchObject({ state: "pending-stale", version: 1 });
+  expect(result.reResolved.status).toBe("resolved");
+  expect(result.reResolved.envelope).toMatchObject({ storeVersion: 2 });
+  expect(result.reResolved.envelope?.records[0]).toMatchObject({ version: 2 });
+  expect(result.reResolved.envelope?.records[0].revisions).toHaveLength(2);
+  expect(result.fresh.items).toEqual([]);
+  expect(result.fresh.observedHeads[0]).toMatchObject({ state: "resolved", version: 2 });
+});
+
+test("T9-B2 rejects stale versions and serializes concurrent tabs", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
+  const secondPage = await page.context().newPage();
+  await secondPage.goto("/");
+  await enterBuilderHome(secondPage);
+  const lockName = "chida-prototype-project-input-dispositions:v1:write";
+  await page.evaluate((name) => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    (globalThis as any).__releaseDispositionTestLock = release;
+    void navigator.locks.request(name, async () => {
+      sessionStorage.setItem("disposition-test-lock", "held");
+      await held;
+    });
+  }, lockName);
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("disposition-test-lock"))).toBe("held");
+  for (const [candidatePage, key] of [[page, "race-a"], [secondPage, "race-b"]] as const) {
+    await candidatePage.evaluate(async ({ currentAuthority, currentDependencies, idempotencyKey }) => {
+      const domain = await import("/src/projectBriefAuthorities.ts");
+      const target = domain.deriveProjectInputTargets(currentDependencies).targets?.[0];
+      if (!target) throw new Error("target fixture is missing");
+      (globalThis as any).__dispositionRaceResult = domain.executeProjectInputDispositionCommand({
+        inputSchemaVersion: 1 as const,
+        action: "resolve-input" as const,
+        projectId: currentDependencies.projectId,
+        target,
+        expectedStoreVersion: 0,
+        expectedDispositionVersion: null,
+        idempotencyKey,
+      }, () => currentAuthority, async () => currentDependencies);
+    }, { currentAuthority: authority, currentDependencies: dependencies, idempotencyKey: key });
+  }
+  await page.evaluate(() => (globalThis as any).__releaseDispositionTestLock());
+  const [firstResult, secondResult] = await Promise.all([
+    page.evaluate(() => (globalThis as any).__dispositionRaceResult),
+    secondPage.evaluate(() => (globalThis as any).__dispositionRaceResult),
+  ]);
+  expect([firstResult.status, secondResult.status].filter((status) => status === "resolved")).toHaveLength(1);
+  expect([firstResult.status, secondResult.status].filter((status) => ["version-conflict", "dependency-stale"].includes(status))).toHaveLength(1);
+  const stale = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const target = domain.deriveProjectInputTargets(currentDependencies).targets?.[0];
+    return domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "reopen-input" as const,
+      projectId: currentDependencies.projectId,
+      target: target!,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "definitely-stale",
+    }, () => currentAuthority, async () => currentDependencies);
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  expect(stale.status).toBe("version-conflict");
+  await Promise.all([page.reload(), secondPage.reload()]);
+  await Promise.all([enterBuilderHome(page), enterBuilderHome(secondPage)]);
+  const parsed = await Promise.all([page, secondPage].map((candidatePage) => candidatePage.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    return domain.readProjectInputDispositionState(currentAuthority, currentDependencies);
+  }, { currentAuthority: authority, currentDependencies: dependencies })));
+  for (const state of parsed) {
+    expect(state.status).toBe("ready");
+    expect(state.envelope?.storeVersion).toBe(1);
+    expect(state.envelope?.records).toHaveLength(1);
+    expect(state.envelope?.records[0].revisions).toHaveLength(1);
+    expect(state.envelope?.idempotencyReceipts).toHaveLength(1);
+  }
+  await secondPage.close();
+});
+
+test("T9-B2 rolls back only owned candidate bytes after write or readback failure", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
+  const result = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const key = domain.projectInputDispositionsStorageKey;
+    const target = domain.deriveProjectInputTargets(currentDependencies).targets?.[0];
+    if (!target) throw new Error("target fixture is missing");
+    await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "rollback-seed",
+    }, () => currentAuthority, async () => currentDependencies);
+    const knownGoodRaw = localStorage.getItem(key)!;
+    const reopen = (idempotencyKey: string) => domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "reopen-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey,
+    }, () => currentAuthority, async () => currentDependencies);
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeGetItem = Storage.prototype.getItem;
+
+    Storage.prototype.setItem = function injectedSetFailure(storageKey: string, value: string) {
+      if (this === localStorage && storageKey === key) throw new DOMException("injected set failure", "QuotaExceededError");
+      return nativeSetItem.call(this, storageKey, value);
+    };
+    const setFailure = await reopen("rollback-set-failure");
+    Storage.prototype.setItem = nativeSetItem;
+    const afterSetFailure = localStorage.getItem(key);
+
+    let candidateWasWritten = false;
+    Storage.prototype.setItem = function trackCandidate(storageKey: string, value: string) {
+      const result = nativeSetItem.call(this, storageKey, value);
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw) candidateWasWritten = true;
+      return result;
+    };
+    let suppliedMismatch = false;
+    Storage.prototype.getItem = function injectedReadbackMismatch(storageKey: string) {
+      if (this === localStorage && storageKey === key && candidateWasWritten && !suppliedMismatch) {
+        suppliedMismatch = true;
+        return "{readback-mismatch";
+      }
+      return nativeGetItem.call(this, storageKey);
+    };
+    const mismatchFailure = await reopen("rollback-readback-failure");
+    Storage.prototype.getItem = nativeGetItem;
+    Storage.prototype.setItem = nativeSetItem;
+    const afterMismatchFailure = localStorage.getItem(key);
+
+    nativeSetItem.call(localStorage, key, knownGoodRaw);
+    candidateWasWritten = false;
+    suppliedMismatch = false;
+    const competingRaw = JSON.stringify({ competing: true });
+    Storage.prototype.setItem = function trackCompetingCandidate(storageKey: string, value: string) {
+      const result = nativeSetItem.call(this, storageKey, value);
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw) candidateWasWritten = true;
+      return result;
+    };
+    Storage.prototype.getItem = function injectCompetingWriter(storageKey: string) {
+      if (this === localStorage && storageKey === key && candidateWasWritten && !suppliedMismatch) {
+        suppliedMismatch = true;
+        nativeSetItem.call(localStorage, key, competingRaw);
+        return "{readback-mismatch";
+      }
+      return nativeGetItem.call(this, storageKey);
+    };
+    const competingFailure = await reopen("rollback-competing-writer");
+    Storage.prototype.getItem = nativeGetItem;
+    Storage.prototype.setItem = nativeSetItem;
+    const afterCompetingFailure = localStorage.getItem(key);
+    return {
+      knownGoodRaw, setFailure, afterSetFailure,
+      mismatchFailure, afterMismatchFailure,
+      competingFailure, afterCompetingFailure, competingRaw,
+    };
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  expect(result.setFailure.status).not.toMatch(/resolved|reopened/);
+  expect(result.afterSetFailure).toBe(result.knownGoodRaw);
+  expect(result.mismatchFailure.status).not.toMatch(/resolved|reopened/);
+  expect(result.afterMismatchFailure).toBe(result.knownGoodRaw);
+  expect(result.competingFailure.status).not.toMatch(/resolved|reopened/);
+  expect(result.afterCompetingFailure).toBe(result.competingRaw);
+});
+
+test("T9-B2 fails closed for missing pinned targets and unreadable or tampered dependencies", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
+  const result = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const target = domain.deriveProjectInputTargets(currentDependencies).targets?.[0];
+    if (!target) throw new Error("target fixture is missing");
+    await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "resolve-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "dependency-seed",
+    }, () => currentAuthority, async () => currentDependencies);
+    const before = localStorage.getItem(domain.projectInputDispositionsStorageKey);
+    const missingDependencies = { ...currentDependencies, files: [] };
+    const missing = domain.readProjectInputDispositionState(currentAuthority, missingDependencies);
+    const unavailable = await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "reopen-input" as const,
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "dependency-unavailable",
+    }, () => currentAuthority, async () => ({
+      status: "unavailable" as const,
+      projectId: currentDependencies.projectId,
+      files: [],
+      sourceEnvelope: { schemaVersion: 1 as const, envelopeVersion: 0, records: [], intakes: [], updatedAt: null },
+      reason: "source-read-failure",
+    }));
+    const tamperedTarget = { ...target, createdAt: "2026-09-03T08:00:01.000Z" };
+    const tampered = await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1 as const,
+      action: "reopen-input" as const,
+      projectId: currentDependencies.projectId,
+      target: tamperedTarget,
+      expectedStoreVersion: 1,
+      expectedDispositionVersion: 1,
+      idempotencyKey: "dependency-tampered",
+    }, () => currentAuthority, async () => currentDependencies);
+    return {
+      before, missing, unavailable, tampered,
+      after: localStorage.getItem(domain.projectInputDispositionsStorageKey),
+    };
+  }, { currentAuthority: authority, currentDependencies: dependencies });
+  expect(result.missing).toMatchObject({ status: "read-error", reason: "target-missing" });
+  expect(result.unavailable.status).toBe("dependency-read-failure");
+  expect(result.tampered.status).toBe("dependency-stale");
+  expect(result.after).toBe(result.before);
+});
+
 test("T9-B2 derives standalone documents and composer intakes once and orders the Brief deterministically", async ({ page }) => {
   await enterBuilderHome(page);
   const exports = await importProjectBriefAuthorities(page);
