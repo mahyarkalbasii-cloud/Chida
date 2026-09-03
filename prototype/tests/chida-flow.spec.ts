@@ -9179,6 +9179,230 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
   expect(result.galleryOctetStream.targets).toEqual([]);
 });
 
+async function registerProjectDocumentForBrief(page: Page, name: string, contents: string) {
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-files-entry").click();
+  await page.getByTestId("project-file-input").setInputFiles({
+    name,
+    mimeType: "application/pdf",
+    buffer: Buffer.from(contents),
+  });
+  await page.getByTestId("project-file-register").click();
+  await expect(page.getByTestId("project-file-row").filter({ hasText: name })).toBeVisible();
+  await page.getByTestId("project-files-back").click();
+  await page.getByTestId("project-space-back").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+}
+
+test("T9-B2 Brief items open the exact File or Composer Source detail and isolate partial failure at 390x844", async ({ page }) => {
+  test.setTimeout(180_000);
+  const consoleFailures: string[] = [];
+  const externalRequests: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") consoleFailures.push(message.text());
+  });
+  page.on("pageerror", (error) => consoleFailures.push(error.message));
+  page.on("request", (request) => {
+    if (!new URL(request.url()).hostname.match(/^(?:127\.0\.0\.1|localhost)$/u)) externalRequests.push(request.url());
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await registerProjectDocumentForBrief(page, "قرارداد بریف.pdf", "%PDF T9-B2 standalone");
+  await page.getByTestId("composer-input").fill("ورودی Composer برای بریف");
+  await page.getByTestId("attach-button").click();
+  await page.getByTestId("composer-file-input").setInputFiles({
+    name: "صورت وضعیت بریف.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF T9-B2 composer"),
+  });
+  await page.getByTestId("send-button").click();
+  await expect(page.getByTestId("composer-intake-message")).toContainText("ورودی Composer برای بریف");
+
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-inputs-section")).toContainText("اسناد و ورودی‌های تعیین‌تکلیف‌نشده");
+  await expect(page.getByTestId("brief-input-item")).toHaveCount(2);
+  const standaloneItem = page.getByTestId("brief-input-item").filter({ hasText: "قرارداد بریف" });
+  await standaloneItem.click();
+  await expect(page.getByTestId("project-file-detail-sheet")).toContainText("قرارداد بریف");
+  await expect(page.getByTestId("project-file-disposition-status")).toHaveText("نیازمند تعیین‌تکلیف");
+  await page.keyboard.press("Escape");
+  await page.getByTestId("project-files-back").click();
+  await expect(page.getByTestId("brief-panel")).toBeVisible();
+  await expect(page.getByTestId("brief-input-item").filter({ hasText: "قرارداد بریف" })).toBeFocused();
+
+  const intakeItem = page.getByTestId("brief-input-item").filter({ hasText: "ورودی Composer" });
+  await intakeItem.click();
+  await expect(page.getByTestId("composer-source-detail")).toContainText("ورودی Composer");
+  await expect(page.getByTestId("project-source-disposition-status")).toHaveText("نیازمند تعیین‌تکلیف");
+  await page.getByTestId("project-source-disposition-action").click();
+  await expect(page.getByTestId("project-source-disposition-status")).toHaveText("تعیین‌تکلیف شده", { timeout: 20_000 });
+  await expect(page.getByTestId("project-source-disposition-action")).toHaveText("بازکردن دوباره");
+  await page.getByTestId("project-source-disposition-action").click();
+  await expect(page.getByTestId("project-source-disposition-status")).toHaveText("نیازمند تعیین‌تکلیف", { timeout: 20_000 });
+  await page.getByTestId("composer-source-close").click();
+  await expect(page.getByTestId("brief-panel")).toBeVisible();
+  await expect(page.getByTestId("brief-input-item").filter({ hasText: "ورودی Composer" })).toBeFocused();
+  expect(await page.getByTestId("brief-panel").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  expect(consoleFailures).toEqual([]);
+  expect(externalRequests).toEqual([]);
+});
+
+test("T9-B2 lets metadata-only documents resolve without claiming content and blocks browser files until assets reconcile", async ({ page }) => {
+  test.setTimeout(180_000);
+  await enterBuilderHome(page);
+  const project = await page.evaluate(() => {
+    const envelope = JSON.parse(localStorage.getItem("chida-prototype-builder-projects:v3")!);
+    return envelope.projects.find((candidate: any) => candidate.id === envelope.activeProjectId);
+  });
+  const browserContents = "%PDF T9-B2 delayed browser file";
+  const records = [
+    {
+      id: "t9-metadata-document", projectId: project.id, displayName: "شناسنامهٔ قرارداد قدیمی", originalName: "legacy-brief.pdf",
+      mimeType: "application/pdf", size: 451, category: "قرارداد", source: "انتخاب مستقیم از دستگاه", status: "ثبت محلی",
+      version: 1, projectStage: project.stage, visibility: "خصوصی پروژه", storageMode: "metadata-only", sourceModifiedAt: null,
+      createdAt: "2026-09-03T10:00:00.000Z",
+    },
+    {
+      id: "t9-browser-document", projectId: project.id, displayName: "قرارداد مرورگر", originalName: "browser-brief.pdf",
+      mimeType: "application/pdf", size: Buffer.byteLength(browserContents), category: "قرارداد", source: "انتخاب مستقیم از دستگاه", status: "ثبت محلی",
+      version: 1, projectStage: project.stage, visibility: "خصوصی پروژه", storageMode: "browser-file", sourceModifiedAt: null,
+      createdAt: "2026-09-03T10:01:00.000Z",
+    },
+  ];
+  await page.evaluate((seed) => localStorage.setItem("chida-prototype-project-files:v1", JSON.stringify(seed)), records);
+  const lockPage = await page.context().newPage();
+  await lockPage.goto(`${new URL(page.url()).origin}/favicon.ico`);
+  await lockPage.evaluate(() => {
+    void navigator.locks.request("chida-prototype-project-assets-and-sources:write", async () => {
+      (window as any).__t9B2AssetLockHeld = true;
+      await new Promise<void>((resolve) => { (window as any).__releaseT9B2AssetLock = resolve; });
+    });
+  });
+  await expect.poll(() => lockPage.evaluate(() => Boolean((window as any).__t9B2AssetLockHeld))).toBe(true);
+  await reloadIntoBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-files-entry").click();
+  const pendingBrowserRow = page.getByTestId("project-file-row").filter({ hasText: "قرارداد مرورگر" });
+  await expect(pendingBrowserRow.getByTestId("project-file-disposition-action")).toBeDisabled();
+
+  await page.evaluate(async ({ file, bytes }) => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("chida-prototype-project-file-content:v1", 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains("files")) request.result.createObjectStore("files", { keyPath: "id" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("files", "readwrite");
+      transaction.objectStore("files").put({
+        id: file.id, projectId: file.projectId, originalName: file.originalName, mimeType: file.mimeType,
+        blob: new Blob([new Uint8Array(bytes)], { type: file.mimeType }),
+      });
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  }, { file: records[1], bytes: Array.from(Buffer.from(browserContents)) });
+  await lockPage.evaluate(() => (window as any).__releaseT9B2AssetLock());
+  await expect(pendingBrowserRow.getByTestId("project-file-disposition-action")).toBeEnabled();
+  await page.getByTestId("project-files-back").click();
+  await page.getByTestId("project-space-back").click();
+  await openLiveBriefFromHome(page);
+
+  const metadataItem = page.getByTestId("brief-input-item").filter({ hasText: "شناسنامهٔ قرارداد قدیمی" });
+  await expect(metadataItem).toContainText("فقط شناسنامهٔ فایل در دسترس است");
+  await expect(metadataItem).not.toContainText("محتوا یا اصالت فایل تأیید شد");
+  const metadataAction = metadataItem.locator("xpath=..").getByTestId("brief-input-disposition-action");
+  await expect(metadataAction).toBeEnabled();
+  await metadataAction.click();
+  await expect(metadataItem).toHaveCount(0);
+
+  await page.getByTestId("brief-back-button").click();
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-files-entry").click();
+  const metadataRow = page.getByTestId("project-file-row").filter({ hasText: "شناسنامهٔ قرارداد قدیمی" });
+  await expect(metadataRow.getByTestId("project-file-disposition-status")).toHaveText("تعیین‌تکلیف شده");
+  await expect(metadataRow.getByTestId("project-file-disposition-action")).toHaveText("بازکردن دوباره");
+  await metadataRow.getByTestId("project-file-disposition-action").click();
+  await expect(metadataRow.getByTestId("project-file-disposition-status")).toHaveText("نیازمند تعیین‌تکلیف");
+
+  const rawBeforeChange = await page.evaluate(() => localStorage.getItem("chida-prototype-project-files:v1"));
+  const rawAfterChange = await page.evaluate(() => {
+    const files = JSON.parse(localStorage.getItem("chida-prototype-project-files:v1")!);
+    files[0].displayName = "شناسنامهٔ قرارداد تغییرکرده";
+    const next = JSON.stringify(files);
+    localStorage.setItem("chida-prototype-project-files:v1", next);
+    return next;
+  });
+  await dispatchBuilderStorageEvent(page, "chida-prototype-project-files:v1", rawBeforeChange, rawAfterChange);
+  await expect(page.getByTestId("project-file-row").filter({ hasText: "شناسنامهٔ قرارداد تغییرکرده" }).getByTestId("project-file-disposition-status")).toHaveText("بعد از بررسی تغییر کرده");
+  await lockPage.close();
+});
+
+test("T9-B2 keeps the first three Brief sections healthy when disposition is unreadable", async ({ page }) => {
+  test.setTimeout(180_000);
+  await enterBuilderHome(page);
+  await createManualTaskForLiveBrief(page, "کار سالم کنار خطای اسناد");
+  await page.evaluate(() => localStorage.setItem("chida-prototype-project-input-dispositions:v1", "{malformed"));
+  await dispatchBuilderStorageEvent(page, "chida-prototype-project-input-dispositions:v1", null, "{malformed");
+  await openLiveBriefFromHome(page);
+
+  await expect(page.getByTestId("brief-inputs-section")).toContainText("اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.");
+  await expect(page.getByTestId("brief-tasks-section")).toContainText("کار سالم کنار خطای اسناد");
+  await expect(page.getByTestId("brief-tasks-section")).not.toContainText("در دسترس نیست");
+  await expect(page.getByTestId("brief-decisions-section")).toContainText("تصمیمی منتظر شما نیست");
+  await expect(page.getByTestId("brief-procurement-section")).toContainText("درخواست بازی در این پروژه نیست");
+  expect(await page.evaluate(() => localStorage.getItem("chida-prototype-project-input-dispositions:v1"))).toBe("{malformed");
+});
+
+test("T9-B2 refreshes disposition on storage focus reload and project switch without automatic writes", async ({ page }) => {
+  test.setTimeout(180_000);
+  await enterBuilderHome(page);
+  await registerProjectDocumentForBrief(page, "ورودی پروژهٔ اول.pdf", "%PDF first project brief");
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-input-item")).toContainText("ورودی پروژهٔ اول");
+  await page.getByTestId("brief-back-button").click();
+  const firstProjectId = await readActiveProjectId(page);
+  await addAndActivateProject(page, "پروژهٔ دوم ورودی‌ها");
+  await registerProjectDocumentForBrief(page, "ورودی پروژهٔ دوم.pdf", "%PDF second project brief");
+
+  const beforeReadTriggers = await allLocalStorageBytes(page);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-input-item")).toContainText("ورودی پروژهٔ دوم");
+  await expect(page.getByTestId("brief-inputs-section")).not.toContainText("ورودی پروژهٔ اول");
+  await page.getByTestId("brief-back-button").click();
+  expect(await allLocalStorageBytes(page)).toEqual(beforeReadTriggers);
+  await dispatchBuilderStorageEvent(page, "chida-prototype-project-input-dispositions:v1", null, null);
+  await page.evaluate(() => { window.dispatchEvent(new Event("blur")); window.dispatchEvent(new Event("focus")); });
+  expect(await allLocalStorageBytes(page)).toEqual(beforeReadTriggers);
+  await reloadIntoBuilderHome(page);
+  await expect.poll(() => allLocalStorageBytes(page)).toEqual(beforeReadTriggers);
+
+  const inputBytesBeforeSwitch = await page.evaluate(() => ({
+    files: localStorage.getItem("chida-prototype-project-files:v1"),
+    sources: localStorage.getItem("chida-prototype-project-sources:v1"),
+    dispositions: localStorage.getItem("chida-prototype-project-input-dispositions:v1"),
+  }));
+  await activateExistingProjectFromHome(page, /برج نیلوفر/);
+  expect(await readActiveProjectId(page)).toBe(firstProjectId);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-input-item")).toContainText("ورودی پروژهٔ اول");
+  await expect(page.getByTestId("brief-inputs-section")).not.toContainText("ورودی پروژهٔ دوم");
+  await page.getByTestId("brief-back-button").click();
+  await activateExistingProjectFromHome(page, /پروژهٔ دوم ورودی‌ها/);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-input-item")).toContainText("ورودی پروژهٔ دوم");
+  expect(await page.evaluate(() => ({
+    files: localStorage.getItem("chida-prototype-project-files:v1"),
+    sources: localStorage.getItem("chida-prototype-project-sources:v1"),
+    dispositions: localStorage.getItem("chida-prototype-project-input-dispositions:v1"),
+  }))).toEqual(inputBytesBeforeSwitch);
+  expect(await page.evaluate(() => localStorage.getItem("chida-prototype-project-input-dispositions:v1"))).toBeNull();
+});
+
 test("T9-B1 live Brief projects real work decisions and procurement without fixture copy or storage writes", async ({ page }) => {
   const consoleFailures: string[] = [];
   page.on("console", (message) => {

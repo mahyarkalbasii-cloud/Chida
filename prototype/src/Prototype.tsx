@@ -78,6 +78,18 @@ import {
   type ProjectTaskStatus,
 } from "./projectTasks";
 import {
+  deriveProjectInputTargets,
+  executeProjectInputDispositionCommand,
+  projectInputDispositionsStorageKey,
+  readProjectInputDispositionState,
+  type ProjectBriefAuthority,
+  type ProjectInputDependencies,
+  type ProjectInputDispositionProjectionItem,
+  type ProjectInputDispositionState,
+  type ProjectInputEffectiveStatus,
+  type ProjectInputTarget,
+} from "./projectBriefAuthorities";
+import {
   createProcurementDispatchDependencies,
   dispatchDraftIdForTarget,
   dispatchPlanApprovalEffectiveStatus as canonicalDispatchPlanApprovalEffectiveStatus,
@@ -203,7 +215,7 @@ import {
 } from "./builderProposalComparisons";
 
 type Screen = "role" | "invite" | "phone" | "otp" | "success" | "home";
-type SheetName = "supplier" | "models" | "attach" | "tools" | "build" | "brief" | "projects" | "new-project" | "settings" | null;
+type SheetName = "supplier" | "models" | "attach" | "source-detail" | "tools" | "build" | "brief" | "projects" | "new-project" | "settings" | null;
 type ModelMode = "خودکار" | "سریع" | "عمیق";
 type ChatMessage = { id: string; role: "user" | "assistant"; text: string; sourceIds: string[] };
 type BuildStep = "define" | "catalog" | "preview" | "detail" | "history" | "remove";
@@ -299,11 +311,23 @@ type BriefSchedule = { frequency: BriefFrequency; weekday: string; time: string 
 type LiveBriefSectionStatus = "loading" | "ready" | "unavailable";
 type LiveBriefItem = { id: string; title: string; meta: string };
 type LiveBriefSection = { status: LiveBriefSectionStatus; items: LiveBriefItem[]; emptyMessage: string };
+type ProjectInputDisplayItem = {
+  key: string;
+  target: ProjectInputTarget;
+  effectiveStatus: ProjectInputEffectiveStatus;
+  dispositionVersion: number | null;
+  title: string;
+  meta: string;
+  metadataOnly: boolean;
+  ready: boolean;
+};
+type LiveBriefInputsSection = { status: LiveBriefSectionStatus; items: ProjectInputDisplayItem[] };
 type LiveBriefSnapshot = {
   projectName: string;
   decisions: LiveBriefSection;
   tasks: LiveBriefSection;
   procurement: LiveBriefSection;
+  inputs: LiveBriefInputsSection;
 };
 type BuilderProject = {
   id: string;
@@ -2515,6 +2539,7 @@ function buildLiveBriefSnapshot({
   tasksStatus,
   decisionsStatus,
   procurementStatus,
+  inputs,
   getDispatchPlanApprovalEffectiveStatus,
 }: {
   projectName: string;
@@ -2527,6 +2552,7 @@ function buildLiveBriefSnapshot({
   tasksStatus: LiveBriefSectionStatus;
   decisionsStatus: LiveBriefSectionStatus;
   procurementStatus: LiveBriefSectionStatus;
+  inputs: LiveBriefInputsSection;
   getDispatchPlanApprovalEffectiveStatus: (record: DispatchPlanApprovalRecord, draft: DispatchDraftRecord | null) => DispatchPlanApprovalEffectiveStatus;
 }): LiveBriefSnapshot {
   const manualTasks = tasks
@@ -2583,6 +2609,7 @@ function buildLiveBriefSnapshot({
     decisions: { status: decisionsStatus, items: decisionsStatus === "ready" ? decisionItems : [], emptyMessage: "تصمیمی منتظر شما نیست" },
     tasks: { status: tasksStatus, items: tasksStatus === "ready" ? taskItems : [], emptyMessage: "کار بازی در این پروژه نیست" },
     procurement: { status: procurementStatus, items: procurementStatus === "ready" ? procurementItems : [], emptyMessage: "درخواست بازی در این پروژه نیست" },
+    inputs,
   };
 }
 
@@ -4674,6 +4701,17 @@ function projectTaskAuthoritySnapshot(): ProjectTaskAuthority | null {
     snapshotHash: projectFoundationHash({ markerRaw: foundation.markerRaw, canonicalRaw: foundation.canonicalRaw, identityRaw: projectFoundationFixtureRaw() }),
     projectIds,
     authorizationHashes: Object.fromEntries(projectIds.map((projectId) => [projectId, projectFoundationAuthorizationHash(projectId)])),
+  };
+}
+
+function projectBriefAuthoritySnapshot(): ProjectBriefAuthority | null {
+  const authority = projectTaskAuthoritySnapshot();
+  if (!authority) return null;
+  return {
+    identityBindingHash: authority.identityBindingHash as ProjectBriefAuthority["identityBindingHash"],
+    snapshotHash: authority.snapshotHash as ProjectBriefAuthority["snapshotHash"],
+    projectIds: authority.projectIds,
+    authorizationHashes: Object.fromEntries(Object.entries(authority.authorizationHashes).map(([projectId, hash]) => [projectId, hash as ProjectBriefAuthority["authorizationHashes"][string]])),
   };
 }
 
@@ -13460,6 +13498,80 @@ async function projectAssetStoresAreAvailable(envelope: ProjectSourceEnvelope, f
   return await projectFileContentsAreAvailable(files) && await projectSourceLinkedAssetsAreAvailable(envelope, files);
 }
 
+async function projectInputAssetReadsAreStable(envelope: ProjectSourceEnvelope, files: ProjectFileRecord[]) {
+  if (!await projectSourceLinkedAssetsAreAvailable(envelope, files)) return false;
+  try {
+    for (const file of files) {
+      if (file.storageMode === "metadata-only") continue;
+      const read = () => file.storageMode === "browser-image" ? readProjectImage(file) : readProjectFile(file);
+      const first = await read();
+      const second = await read();
+      if (!first || !second || await sha256ProjectSourceBlob(first) !== await sha256ProjectSourceBlob(second)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function projectInputDependenciesForProject(projectId: string, files: ProjectFileRecord[], sourceEnvelope: ProjectSourceEnvelope): ProjectInputDependencies {
+  const projectFiles = files.filter((file) => file.projectId === projectId);
+  const projectIntakes = sourceEnvelope.intakes.filter((intake) => intake.projectId === projectId);
+  const projectSourceIds = new Set(projectIntakes.flatMap((intake) => intake.sourceIds));
+  const projectSources = sourceEnvelope.records.filter((source) => source.projectId === projectId && projectSourceIds.has(source.id));
+  return {
+    status: "ready",
+    projectId,
+    files: projectFiles,
+    sourceEnvelope: {
+      schemaVersion: 1,
+      envelopeVersion: projectIntakes.length,
+      records: projectSources as ProjectInputDependencies["sourceEnvelope"]["records"],
+      intakes: projectIntakes as ProjectInputDependencies["sourceEnvelope"]["intakes"],
+      updatedAt: projectIntakes.at(-1)?.createdAt ?? null,
+    },
+    reason: "",
+  };
+}
+
+function unavailableProjectInputDependencies(projectId: string, reason: string): ProjectInputDependencies {
+  return {
+    status: "unavailable",
+    projectId,
+    files: [],
+    sourceEnvelope: { schemaVersion: 1, envelopeVersion: 0, records: [], intakes: [], updatedAt: null },
+    reason,
+  };
+}
+
+async function readProjectInputDependencies(projectId: string): Promise<ProjectInputDependencies> {
+  const files = readStoredProjectFiles();
+  const sources = validateProjectSourceAggregate(readStoredProjectSources(), files);
+  let intakePending = true;
+  try {
+    intakePending = window.localStorage.getItem(projectSourceIntakeIntentKey) !== null;
+  } catch {
+    return unavailableProjectInputDependencies(projectId, "storage-read-failure");
+  }
+  if (files.readError || sources.readError || intakePending) {
+    return unavailableProjectInputDependencies(projectId, intakePending ? "intake-pending" : "source-read-failure");
+  }
+  const projectFiles = files.records.filter((file) => file.projectId === projectId);
+  const projectIntakes = sources.envelope.intakes.filter((intake) => intake.projectId === projectId);
+  const projectSourceIds = new Set(projectIntakes.flatMap((intake) => intake.sourceIds));
+  const projectSourceEnvelope: ProjectSourceEnvelope = {
+    schemaVersion: 1,
+    envelopeVersion: projectIntakes.length,
+    records: sources.envelope.records.filter((source) => source.projectId === projectId && projectSourceIds.has(source.id)),
+    intakes: projectIntakes,
+    updatedAt: projectIntakes.at(-1)?.createdAt ?? null,
+  };
+  if (!await projectInputAssetReadsAreStable(projectSourceEnvelope, projectFiles)) {
+    return unavailableProjectInputDependencies(projectId, "asset-read-failure");
+  }
+  return projectInputDependenciesForProject(projectId, files.records, sources.envelope);
+}
+
 async function deleteProjectSourceIntentBlob(intent: ProjectSourceIntakeIntent) {
   if (!intent.fileId || !intent.storageMode) return true;
   try {
@@ -14439,6 +14551,9 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const attachmentsByProjectRef = useRef(attachmentsByProject);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const sourceDetailTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const sourceDetailReturnSheetRef = useRef<SheetName>(null);
+  const briefInputReturnKeyRef = useRef<string | null>(null);
+  const briefFileReturnKeyRef = useRef<string | null>(null);
   const [composerError, setComposerError] = useState("");
   const [composerActionStatus, setComposerActionStatus] = useState("");
   const [composerSending, setComposerSending] = useState(false);
@@ -14513,10 +14628,18 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const [projectFilesReadError, setProjectFilesReadError] = useState(initialProjectFiles.readError);
   const [projectSourcesReadError, setProjectSourcesReadError] = useState(initialProjectSources.readError);
   const [sourceAssetValidationPending, setSourceAssetValidationPending] = useState(() => !initialProjectSources.readError && initialProjectSources.envelope.records.some((source) => source.assetRef !== null));
+  const [projectFileContentReconciliationPending, setProjectFileContentReconciliationPending] = useState(() => initialProjectFiles.records.some((file) => file.storageMode !== "metadata-only"));
   const [sourceRecoveryPending, setSourceRecoveryPending] = useState(() => {
     try { return window.localStorage.getItem(projectSourceIntakeIntentKey) !== null; } catch { return true; }
   });
   const [sourceRecoveryBlocked, setSourceRecoveryBlocked] = useState(false);
+  const [projectInputDispositionState, setProjectInputDispositionState] = useState<ProjectInputDispositionState>({ status: "unavailable", envelope: null, items: [], observedHeads: null, reason: "loading" });
+  const [projectInputReadPending, setProjectInputReadPending] = useState(true);
+  const [projectInputMutationKey, setProjectInputMutationKey] = useState<string | null>(null);
+  const [projectInputMutationError, setProjectInputMutationError] = useState<{ key: string; message: string } | null>(null);
+  const projectInputMutationAttemptsRef = useRef(new Map<string, string>());
+  const projectInputRefreshVersionRef = useRef(0);
+  const activeProjectIdRef = useRef(activeProject.id);
   const [projectMemoriesReadError, setProjectMemoriesReadError] = useState(initialProjectMemories.readError);
   const [projectMemoriesLoading, setProjectMemoriesLoading] = useState(true);
   const projectTasksReadError = projectTaskState.status === "read-error";
@@ -14577,6 +14700,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   });
   const draft = draftsByProject[activeProject.id] ?? "";
   const pendingAttachment = attachmentsByProject[activeProject.id] ?? null;
+  activeProjectIdRef.current = activeProject.id;
   const messages = useMemo<ChatMessage[]>(() => projectSources.intakes.filter((intake) => intake.projectId === activeProject.id).flatMap((intake) => {
     const sources = intake.sourceIds.map((sourceId) => projectSources.records.find((record) => record.id === sourceId)).filter((record): record is ProjectSourceRecord => Boolean(record));
     const text = sources.find((source) => source.sourceType === "composer-text")?.textContent ?? "";
@@ -14668,6 +14792,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     const refreshProcurementDependencies = async (requestRead: LocalRecordsReadResult<ProjectPurchaseRequestRecord>, approvalRead: LocalRecordsReadResult<ProjectApprovalRecord>, procurementRead: ProcurementDispatchState, requestedVersion: number) => {
       const filesRead = readStoredProjectFiles();
       if (!filesRead.readError) {
+        setProjectFileContentReconciliationPending(filesRead.records.some((file) => file.storageMode !== "metadata-only"));
         setProjectFiles(filesRead.records);
         setProjectFilesReadError(false);
       } else setProjectFilesReadError(true);
@@ -14906,6 +15031,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       const nextSources = validateProjectSourceAggregate(readStoredProjectSources(), nextFiles);
       setProjectSources(nextSources.envelope);
       setProjectSourcesReadError(nextSources.readError);
+      setProjectFileContentReconciliationPending(nextFiles.records.some((file) => file.storageMode !== "metadata-only"));
       setProjectFiles(nextFiles.records);
       setProjectFilesReadError(nextFiles.readError);
       setSourceAssetValidationPending(!nextSources.readError && nextSources.envelope.records.some((source) => source.assetRef !== null));
@@ -14922,6 +15048,10 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     setFocusedMemoryId(null);
     setSelectedSourceId(null);
     sourceDetailTriggerRef.current = null;
+    sourceDetailReturnSheetRef.current = null;
+    briefInputReturnKeyRef.current = null;
+    briefFileReturnKeyRef.current = null;
+    setProjectInputMutationError(null);
     setComposerError("");
     setComposerActionStatus("");
   }, [activeProject.id]);
@@ -14948,7 +15078,16 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   }, [projectFiles, projectSources, projectSourcesReadError, sourceRecoveryBlocked, sourceRecoveryPending]);
 
   useEffect(() => {
-    if (projectSourcesReadError || sourceRecoveryPending || sourceRecoveryBlocked || sourceAssetValidationPending) return;
+    if (projectSourcesReadError || sourceRecoveryPending || sourceRecoveryBlocked || sourceAssetValidationPending) {
+      setProjectFileContentReconciliationPending(false);
+      return;
+    }
+    const hasStoredContent = projectFiles.some((file) => file.storageMode !== "metadata-only");
+    if (!hasStoredContent) {
+      setProjectFileContentReconciliationPending(false);
+      return;
+    }
+    setProjectFileContentReconciliationPending(true);
     if (!window.navigator.locks?.request) return;
     let disposed = false;
     const reconcileMissingFileContent = async () => {
@@ -14998,10 +15137,48 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         setProjectFilesReadError(true);
         setProjectSourcesReadError(true);
       }
+      if (!disposed) setProjectFileContentReconciliationPending(false);
     };
     void reconcileMissingFileContent();
     return () => { disposed = true; };
   }, [projectFiles, projectSources.records, projectSourcesReadError, sourceAssetValidationPending, sourceRecoveryBlocked, sourceRecoveryPending]);
+
+  const refreshProjectInputDisposition = async (projectId = activeProjectIdRef.current) => {
+    const requestedVersion = ++projectInputRefreshVersionRef.current;
+    if (projectId === activeProjectIdRef.current) setProjectInputReadPending(true);
+    const dependencies = await readProjectInputDependencies(projectId);
+    if (requestedVersion !== projectInputRefreshVersionRef.current || projectId !== activeProjectIdRef.current) return;
+    const next = readProjectInputDispositionState(projectBriefAuthoritySnapshot(), dependencies);
+    setProjectInputDispositionState(next);
+    setProjectInputReadPending(false);
+  };
+
+  useEffect(() => {
+    const projectId = activeProject.id;
+    void refreshProjectInputDisposition(projectId);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea && event.storageArea !== window.localStorage) return;
+      if (event.key !== null
+        && event.key !== projectInputDispositionsStorageKey
+        && event.key !== projectFilesStorageKey
+        && event.key !== projectSourcesStorageKey
+        && event.key !== projectSourceIntakeIntentKey
+        && event.key !== projectsStorageKey
+        && event.key !== projectFoundationCutoverMarkerKey
+        && event.key !== projectFoundationIdentityFixtureKey) return;
+      void refreshProjectInputDisposition(activeProjectIdRef.current);
+    };
+    const handleFocus = () => { void refreshProjectInputDisposition(activeProjectIdRef.current); };
+    const handleVisibility = () => { if (document.visibilityState === "visible") void refreshProjectInputDisposition(activeProjectIdRef.current); };
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [activeProject.id, projectFileContentReconciliationPending, projectFiles, projectSources, sourceAssetValidationPending, sourceRecoveryBlocked, sourceRecoveryPending]);
 
   useLayoutEffect(() => {
     if (view !== "chat") return;
@@ -15081,9 +15258,103 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     ? activeProjectFiles.find((file) => file.id === selectedSource.assetRef?.fileId && file.version === selectedSource.assetRef.fileVersion) ?? null
     : null;
   const sourceStorageLocked = projectFilesReadError || projectSourcesReadError || sourceRecoveryPending || sourceRecoveryBlocked || sourceAssetValidationPending;
+  const projectInputsLocked = projectFilesReadError
+    || projectSourcesReadError
+    || sourceRecoveryPending
+    || sourceRecoveryBlocked
+    || sourceAssetValidationPending
+    || projectFileContentReconciliationPending;
+  const activeProjectInputDerivation = useMemo(() => deriveProjectInputTargets(
+    projectFilesReadError || projectSourcesReadError
+      ? unavailableProjectInputDependencies(activeProject.id, "source-read-failure")
+      : projectInputDependenciesForProject(activeProject.id, projectFiles, projectSources),
+  ), [activeProject.id, projectFiles, projectFilesReadError, projectSources, projectSourcesReadError]);
+  const activeProjectInputItems = useMemo<ProjectInputDisplayItem[]>(() => {
+    const readyState = projectInputDispositionState.status === "ready" ? projectInputDispositionState : null;
+    const projectedByKey = new Map<string, ProjectInputDispositionProjectionItem>((readyState?.items ?? []).map((item) => [`${item.target.kind}:${item.target.id}`, item]));
+    const observedByKey = new Map((readyState?.observedHeads ?? []).map((item) => [item.id, item]));
+    return activeProjectInputDerivation.items.map(({ target }) => {
+      const key = `${target.kind}:${target.id}`;
+      const projected = projectedByKey.get(key) ?? null;
+      const observed = observedByKey.get(key) ?? null;
+      const intake = target.kind === "composer-intake" ? projectSources.intakes.find((candidate) => candidate.id === target.id && candidate.projectId === activeProject.id) ?? null : null;
+      const intakeSources = intake ? intake.sourceIds.map((sourceId) => projectSources.records.find((source) => source.id === sourceId)).filter((source): source is ProjectSourceRecord => Boolean(source)) : [];
+      const intakeText = intakeSources.find((source) => source.sourceType === "composer-text")?.textContent?.trim() ?? "";
+      const intakeFileId = intakeSources.find((source) => source.assetRef !== null)?.assetRef?.fileId ?? null;
+      const file = target.kind === "project-document"
+        ? activeProjectFiles.find((candidate) => candidate.id === target.id) ?? null
+        : intakeFileId ? activeProjectFiles.find((candidate) => candidate.id === intakeFileId) ?? null : null;
+      const title = target.kind === "project-document"
+        ? file?.displayName ?? "سند پروژه"
+        : intakeText || file?.displayName || "ورودی Composer";
+      const effectiveStatus = observed?.state ?? projected?.effectiveStatus ?? "pending";
+      return {
+        key,
+        target,
+        effectiveStatus,
+        dispositionVersion: projected?.dispositionVersion ?? (observed?.state === "resolved" ? observed.version : null),
+        title,
+        meta: `${target.kind === "project-document" ? "سند پروژه" : "ورودی Composer"} · ${formatProjectFileDate(target.createdAt)}`,
+        metadataOnly: target.kind === "project-document" && file?.storageMode === "metadata-only",
+        ready: Boolean(readyState && observed) && !projectInputReadPending && !projectInputsLocked,
+      };
+    });
+  }, [activeProject.id, activeProjectFiles, activeProjectInputDerivation.items, projectFileContentReconciliationPending, projectInputDispositionState, projectInputReadPending, projectInputsLocked, projectSources.intakes, projectSources.records]);
+  const projectInputByFileId = useMemo(() => new Map(activeProjectInputItems.filter((item) => item.target.kind === "project-document").map((item) => [item.target.id, item])), [activeProjectInputItems]);
+  const projectInputByIntakeId = useMemo(() => new Map(activeProjectInputItems.filter((item) => item.target.kind === "composer-intake").map((item) => [item.target.id, item])), [activeProjectInputItems]);
+  const selectedSourceInput = selectedSource ? projectInputByIntakeId.get(selectedSource.intakeId) ?? null : null;
+  const mutateProjectInputDisposition = async (item: ProjectInputDisplayItem) => {
+    if (!item.ready || projectInputMutationKey !== null || projectInputDispositionState.status !== "ready") return;
+    const projectId = activeProject.id;
+    const action = item.effectiveStatus === "resolved" ? "reopen-input" as const : "resolve-input" as const;
+    const expectedStoreVersion = projectInputDispositionState.envelope.storeVersion;
+    const signature = `${action}:${projectId}:${item.key}:${item.target.fingerprint}:${expectedStoreVersion}:${item.dispositionVersion ?? "null"}`;
+    const idempotencyKey = projectInputMutationAttemptsRef.current.get(signature) ?? `project-input-ui:${window.crypto.randomUUID()}`;
+    projectInputMutationAttemptsRef.current.set(signature, idempotencyKey);
+    setProjectInputMutationKey(item.key);
+    setProjectInputMutationError(null);
+    const result = await executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1,
+      action,
+      projectId,
+      target: item.target,
+      expectedStoreVersion,
+      expectedDispositionVersion: item.dispositionVersion,
+      idempotencyKey,
+    }, projectBriefAuthoritySnapshot, readProjectInputDependencies);
+    if (activeProjectIdRef.current !== projectId) {
+      setProjectInputMutationKey((current) => current === item.key ? null : current);
+      return;
+    }
+    if (["resolved", "reopened", "unchanged"].includes(result.status)) {
+      projectInputMutationAttemptsRef.current.delete(signature);
+      await refreshProjectInputDisposition(projectId);
+      setProjectInputMutationError(null);
+    } else {
+      if (["version-conflict", "dependency-stale", "scope-mismatch", "idempotency-payload-mismatch"].includes(result.status)) projectInputMutationAttemptsRef.current.delete(signature);
+      await refreshProjectInputDisposition(projectId);
+      setProjectInputMutationError({
+        key: item.key,
+        message: result.status === "version-conflict" || result.status === "dependency-stale"
+          ? "نسخهٔ فایل یا ورودی تغییر کرده است؛ وضعیت تازه را بررسی و دوباره تلاش کن."
+          : "وضعیت تعیین‌تکلیف ذخیره نشد؛ دادهٔ قبلی دست‌نخورده ماند.",
+      });
+    }
+    setProjectInputMutationKey(null);
+  };
   const closeSourceDetail = () => {
+    const returnSheet = sourceDetailReturnSheetRef.current;
+    const returnKey = briefInputReturnKeyRef.current;
+    sourceDetailReturnSheetRef.current = null;
+    briefInputReturnKeyRef.current = null;
     setSelectedSourceId(null);
-    window.requestAnimationFrame(() => sourceDetailTriggerRef.current?.focus());
+    if (returnSheet === "brief" && returnKey) {
+      queueBuilderFocus(`[data-testid="brief-input-item"][data-input-key="${returnKey}"]`, "brief");
+      onOpenSheet("brief");
+    } else {
+      onOpenSheet(null);
+      window.requestAnimationFrame(() => sourceDetailTriggerRef.current?.focus());
+    }
   };
   const activeProjectMemoryRecords = useMemo(
     () => projectMemories.filter((memory) => memory.scopeType === "project_private" && memory.scopeId === activeProject.id),
@@ -15157,6 +15428,20 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const liveBriefDecisionsLoading = projectApprovalsLoading || projectSupplierContactsLoading || projectDispatchDraftsLoading || projectDispatchPlanApprovalsLoading;
   const liveBriefDecisionsUnavailable = projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError;
   const liveBriefDecisionsStatus: LiveBriefSectionStatus = liveBriefDecisionsLoading ? "loading" : liveBriefDecisionsUnavailable ? "unavailable" : "ready";
+  const liveBriefInputsStatus: LiveBriefSectionStatus = projectInputReadPending || projectInputsLocked
+    ? "loading"
+    : projectInputDispositionState.status === "ready" ? "ready" : "unavailable";
+  const liveBriefInputs: LiveBriefInputsSection = {
+    status: liveBriefInputsStatus,
+    items: liveBriefInputsStatus === "ready"
+      ? projectInputDispositionState.status === "ready"
+        ? projectInputDispositionState.items.flatMap((projection) => {
+            const display = activeProjectInputItems.find((item) => item.key === `${projection.target.kind}:${projection.target.id}`);
+            return display ? [display] : [];
+          })
+        : []
+      : [],
+  };
   const liveBriefSnapshot = buildLiveBriefSnapshot({
     projectName: activeProject.name,
     tasks: activeProjectTasks,
@@ -15168,6 +15453,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     tasksStatus: liveBriefTasksStatus,
     decisionsStatus: liveBriefDecisionsStatus,
     procurementStatus: projectPurchaseRequestsReadError ? "unavailable" : "ready",
+    inputs: liveBriefInputs,
     getDispatchPlanApprovalEffectiveStatus: dispatchPlanApprovalStatus,
   });
   const activeBuilderRecordedProposals = useMemo(
@@ -15743,6 +16029,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     const result = await commitProjectSourceIntake(submittedProject, submittedDraft, submittedAttachment, submittedEnvelopeVersion);
     if (result.status === "created") {
       setProjectSources(result.envelope);
+      setProjectFileContentReconciliationPending(result.files.some((file) => file.storageMode !== "metadata-only"));
       setProjectFiles(result.files);
       setDraftsByProject((current) => (current[submittedProject.id] ?? "") === submittedDraft
         ? { ...current, [submittedProject.id]: "" }
@@ -15759,6 +16046,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       const latestSources = validateProjectSourceAggregate(readStoredProjectSources(), latestFiles);
       if (!latestSources.readError) {
         setProjectSources(latestSources.envelope);
+        setProjectFileContentReconciliationPending(latestFiles.records.some((file) => file.storageMode !== "metadata-only"));
         setProjectFiles(latestFiles.records);
         setSourceAssetValidationPending(latestSources.envelope.records.some((source) => source.assetRef !== null));
       }
@@ -16028,6 +16316,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
           setProjectSourcesReadError(true);
           return false;
         }
+        setProjectFileContentReconciliationPending(nextFiles.some((file) => file.storageMode !== "metadata-only"));
         setProjectFiles(nextFiles);
         return true;
       } catch {
@@ -16101,6 +16390,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
           setProjectSourcesReadError(true);
           return false;
         }
+        setProjectFileContentReconciliationPending(true);
         setProjectFiles(nextFiles);
         return true;
       } catch {
@@ -16142,6 +16432,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
           setProjectSourcesReadError(true);
           return false;
         }
+        setProjectFileContentReconciliationPending(nextFiles.some((file) => file.storageMode !== "metadata-only"));
         setProjectFiles(nextFiles);
         return true;
       } catch {
@@ -18231,6 +18522,9 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         project={activeProject}
         files={activeProjectDocuments}
         storageLocked={projectFilesReadError || sourceStorageLocked}
+        inputByFileId={projectInputByFileId}
+        mutationKey={projectInputMutationKey}
+        mutationError={projectInputMutationError}
         initialSelectedId={focusedFileId}
         backLabel={filesReturnView === "tools" ? "بازگشت به ابزارهای پروژه" : filesReturnView === "search" ? "بازگشت به جست‌وجو" : filesReturnView === "project" ? "بازگشت به فضای پروژه" : "بازگشت به گفت‌وگو"}
         onBack={() => {
@@ -18239,6 +18533,12 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
             queueBuilderFocus('[data-testid="project-documents-tool"]', "tools");
             setView("chat");
             onOpenSheet("tools");
+          } else if (filesReturnView === "chat" && briefFileReturnKeyRef.current) {
+            const returnKey = briefFileReturnKeyRef.current;
+            briefFileReturnKeyRef.current = null;
+            setView("chat");
+            queueBuilderFocus(`[data-testid="brief-input-item"][data-input-key="${returnKey}"]`, "brief");
+            onOpenSheet("brief");
           } else {
             setView(filesReturnView);
           }
@@ -18246,6 +18546,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         onRegister={registerProjectFile}
         onRestoreContent={restoreProjectFileContent}
         onRename={renameProjectFile}
+        onDisposition={(item) => { void mutateProjectInputDisposition(item); }}
       />
     );
   }
@@ -18504,7 +18805,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
                         const source = activeProjectSources.find((record) => record.id === sourceId);
                         if (!source) return null;
                         const file = source.assetRef ? activeProjectFiles.find((record) => record.id === source.assetRef?.fileId) : null;
-                        return <button type="button" key={source.id} onClick={(event) => { sourceDetailTriggerRef.current = event.currentTarget; setSelectedSourceId(source.id); }} data-testid="composer-source-open"><span>{source.sourceType === "composer-text" ? <MessageSquare size={15} /> : source.sourceType === "composer-photo" ? <ImageIcon size={15} /> : <FileText size={15} />}</span><strong dir="auto">{source.sourceType === "composer-text" ? "متن ثبت‌شده" : file?.displayName ?? "منبع در دسترس نیست"}</strong></button>;
+                        return <button type="button" key={source.id} onClick={(event) => { sourceDetailReturnSheetRef.current = null; briefInputReturnKeyRef.current = null; sourceDetailTriggerRef.current = event.currentTarget; setSelectedSourceId(source.id); onOpenSheet("source-detail"); }} data-testid="composer-source-open"><span>{source.sourceType === "composer-text" ? <MessageSquare size={15} /> : source.sourceType === "composer-photo" ? <ImageIcon size={15} /> : <FileText size={15} />}</span><strong dir="auto">{source.sourceType === "composer-text" ? "متن ثبت‌شده" : file?.displayName ?? "منبع در دسترس نیست"}</strong></button>;
                       })}
                     </div>
                   ) : null}
@@ -18595,7 +18896,17 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
 
       <ModelsSheet sheet={sheet} mode={modelMode} onClose={() => { queueBuilderFocus('[data-testid="model-button"]'); onOpenSheet(null); }} onSelect={onModelChange} />
       <AttachSheet sheet={sheet} disabled={sourceStorageLocked || projectFilesReadError} onClose={() => { queueBuilderFocus('[data-testid="attach-button"]'); onOpenSheet(null); }} onChoose={chooseComposerAttachment} />
-      <ProjectSourceDetailSheet source={selectedSource} file={selectedSourceFile} project={activeProject} assetReadLocked={projectSourcesReadError || sourceRecoveryBlocked} onClose={closeSourceDetail} />
+      <ProjectSourceDetailSheet
+        source={selectedSource}
+        file={selectedSourceFile}
+        project={activeProject}
+        input={selectedSourceInput}
+        mutationKey={projectInputMutationKey}
+        mutationError={projectInputMutationError}
+        assetReadLocked={projectSourcesReadError || sourceRecoveryBlocked}
+        onDisposition={(item) => { void mutateProjectInputDisposition(item); }}
+        onClose={closeSourceDetail}
+      />
       <ToolsSheet
         sheet={sheet}
         artifacts={activeProjectBuiltArtifacts}
@@ -18639,6 +18950,21 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         onSave={saveBrief}
         onOpenTasks={(filter) => openProjectTasks("chat", filter)}
         onOpenPurchaseRequests={() => openProjectPurchaseRequests("chat")}
+        mutationKey={projectInputMutationKey}
+        mutationError={projectInputMutationError}
+        onDisposition={(item) => { void mutateProjectInputDisposition(item); }}
+        onOpenInput={(item) => {
+          setProjectInputMutationError(null);
+          if (item.target.kind === "project-document") {
+            briefFileReturnKeyRef.current = item.key;
+            openProjectFiles("chat", item.target.id);
+            return;
+          }
+          sourceDetailReturnSheetRef.current = "brief";
+          briefInputReturnKeyRef.current = item.key;
+          setSelectedSourceId(item.target.destinationSourceId);
+          onOpenSheet("source-detail");
+        }}
       />
       <ProjectsSheet sheet={sheet} projects={projects} activeProjectId={activeProject.id} onClose={() => { queueBuilderFocus(`[data-testid="${projectsReturnFocus.current}"]`); onOpenSheet(null); }} onSelect={openProjectSpace} onCreate={openNewProject} />
       <ProjectCreateSheet sheet={sheet} onClose={() => { queueBuilderFocus(`[data-testid="${projectsReturnFocus.current}"]`); onOpenSheet(null); }} onSave={onProjectCreate} />
@@ -23720,7 +24046,29 @@ function ProjectGalleryDetailSheet({ file, imageUrl, project, onClose }: { file:
   );
 }
 
-function ProjectFilesView({ project, files, storageLocked, initialSelectedId = null, backLabel, onBack, onRegister, onRestoreContent, onRename }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; initialSelectedId?: string | null; backLabel: string; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean> }) {
+function projectInputStatusLabel(status: ProjectInputEffectiveStatus) {
+  if (status === "resolved") return "تعیین‌تکلیف شده";
+  if (status === "pending-stale") return "بعد از بررسی تغییر کرده";
+  return "نیازمند تعیین‌تکلیف";
+}
+
+function ProjectInputDispositionControl({ item, testIdPrefix, mutationKey, mutationError, onDisposition }: { item: ProjectInputDisplayItem; testIdPrefix: "project-file" | "project-source"; mutationKey: string | null; mutationError: { key: string; message: string } | null; onDisposition: (item: ProjectInputDisplayItem) => void }) {
+  const pending = mutationKey !== null;
+  return (
+    <div className="project-input-disposition" data-status={item.effectiveStatus}>
+      <div className="project-input-disposition-copy">
+        <span data-testid={`${testIdPrefix}-disposition-status`}>{projectInputStatusLabel(item.effectiveStatus)}</span>
+        {item.metadataOnly ? <small>فقط شناسنامهٔ فایل در دسترس است؛ محتوا یا اصالت فایل تأیید نشده است.</small> : null}
+      </div>
+      <button type="button" data-testid={`${testIdPrefix}-disposition-action`} disabled={!item.ready || pending} onClick={() => onDisposition(item)}>
+        {mutationKey === item.key ? "در حال ثبت…" : item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد"}
+      </button>
+      {mutationError?.key === item.key ? <p role="alert" className="project-input-disposition-error">{mutationError.message}</p> : null}
+    </div>
+  );
+}
+
+function ProjectFilesView({ project, files, storageLocked, inputByFileId, mutationKey, mutationError, initialSelectedId = null, backLabel, onBack, onRegister, onRestoreContent, onRename, onDisposition }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; inputByFileId: Map<string, ProjectInputDisplayItem>; mutationKey: string | null; mutationError: { key: string; message: string } | null; initialSelectedId?: string | null; backLabel: string; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<PendingProjectFile | null>(null);
@@ -23861,6 +24209,7 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
               <div className="project-file-list-title"><strong>فایل‌های ثبت‌شده</strong><span>{orderedFiles.length.toLocaleString("fa-IR")}</span></div>
               {orderedFiles.map((file) => {
                 const fileUrl = fileUrls[file.id];
+                const disposition = inputByFileId.get(file.id) ?? null;
                 const openContent = <><span className="project-file-row-icon"><FileText size={20} /></span><span className="project-file-row-copy"><strong dir="auto">{file.displayName}</strong><small>{file.category} · {formatProjectFileSize(file.size)}</small></span><ArrowUpRight size={17} aria-hidden="true" /></>;
                 return (
                   <article className="project-file-row" key={file.id} data-testid="project-file-row">
@@ -23874,6 +24223,7 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
                       setOpenError("فایل در حال آماده‌شدن است؛ یک لحظه دیگر دوباره بزن.");
                     }}>{openContent}</button>}
                     <button className="project-file-edit-button" type="button" onClick={() => { setOpenError(""); setSelectedFileId(file.id); }} data-testid="project-file-edit" aria-label={`ویرایش نام ${file.displayName}`}><PencilLine size={17} /></button>
+                    {disposition && selectedFileId !== file.id ? <ProjectInputDispositionControl item={disposition} testIdPrefix="project-file" mutationKey={mutationKey} mutationError={mutationError} onDisposition={onDisposition} /> : null}
                   </article>
                 );
               })}
@@ -23891,7 +24241,7 @@ function ProjectFilesView({ project, files, storageLocked, initialSelectedId = n
         onCancel={() => { setRegistrationError(""); setPendingFile(null); }}
         onRegister={registerPendingFile}
       />
-      <ProjectFileDetailSheet file={selectedFile} project={project} storageLocked={storageLocked} onClose={() => setSelectedFileId(null)} onRename={onRename} />
+      <ProjectFileDetailSheet file={selectedFile} project={project} disposition={selectedFile ? inputByFileId.get(selectedFile.id) ?? null : null} mutationKey={mutationKey} mutationError={mutationError} storageLocked={storageLocked} onClose={() => setSelectedFileId(null)} onRename={onRename} onDisposition={onDisposition} />
     </div>
   );
 }
@@ -23932,7 +24282,7 @@ function ProjectFileRegisterSheet({ file, project, error, busy, categoryLocked =
   );
 }
 
-function ProjectFileDetailSheet({ file, project, storageLocked, onClose, onRename }: { file: ProjectFileRecord | null; project: BuilderProject; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => Promise<boolean> }) {
+function ProjectFileDetailSheet({ file, project, disposition, mutationKey, mutationError, storageLocked, onClose, onRename, onDisposition }: { file: ProjectFileRecord | null; project: BuilderProject; disposition: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: { key: string; message: string } | null; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => void }) {
   const keyboard = useKeyboard();
   const [displayName, setDisplayName] = useState("");
   const [nameError, setNameError] = useState("");
@@ -23981,6 +24331,7 @@ function ProjectFileDetailSheet({ file, project, storageLocked, onClose, onRenam
             <div><dt>مرحله هنگام ثبت</dt><dd>{file.projectStage || "ثبت نشده"}</dd></div>
             <div><dt>زمان ثبت</dt><dd>{formatProjectFileDate(file.createdAt)}</dd></div>
           </dl>
+          {disposition ? <ProjectInputDispositionControl item={disposition} testIdPrefix="project-file" mutationKey={mutationKey} mutationError={mutationError} onDisposition={onDisposition} /> : null}
           <button className="primary-button" type="button" onClick={() => { void saveName(); }} disabled={storageLocked || savingName} data-testid="project-file-rename-save">{savingName ? "در حال ذخیره…" : "ذخیرهٔ نام نمایشی"}</button>
         </section>
       ) : null}
@@ -24020,7 +24371,7 @@ function AttachSheet({ sheet, disabled, onClose, onChoose }: { sheet: SheetName;
   );
 }
 
-function ProjectSourceDetailSheet({ source, file, project, assetReadLocked, onClose }: { source: ProjectSourceRecord | null; file: ProjectFileRecord | null; project: BuilderProject; assetReadLocked: boolean; onClose: () => void }) {
+function ProjectSourceDetailSheet({ source, file, project, input, mutationKey, mutationError, assetReadLocked, onClose, onDisposition }: { source: ProjectSourceRecord | null; file: ProjectFileRecord | null; project: BuilderProject; input: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: { key: string; message: string } | null; assetReadLocked: boolean; onClose: () => void; onDisposition: (item: ProjectInputDisplayItem) => void }) {
   const [assetStatus, setAssetStatus] = useState<"idle" | "loading" | "available" | "missing" | "invalid" | "unreadable">("idle");
   const [assetUrl, setAssetUrl] = useState("");
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -24079,6 +24430,7 @@ function ProjectSourceDetailSheet({ source, file, project, assetReadLocked, onCl
       {source ? (
         <section className="project-source-detail" dir="rtl" data-testid="composer-source-detail">
           <div className="project-source-detail-title"><span>{source.sourceType === "composer-text" ? <MessageSquare size={22} /> : source.sourceType === "composer-photo" ? <ImageIcon size={22} /> : <FileText size={22} />}</span><div><small>{sourceLabel}</small><strong dir="auto">{file?.displayName ?? (source.sourceType === "composer-text" ? "متن دقیق کاربر" : "اصل فایل در دسترس نیست")}</strong></div></div>
+          {input ? <p className="project-source-input-title" dir="auto">{input.title}</p> : null}
           {source.sourceType === "composer-text" && assetStatus === "available" ? <p className="project-source-text" dir="auto" data-testid="composer-source-text">{source.textContent}</p> : null}
           {source.sourceType === "composer-photo" && assetStatus === "available" && assetUrl && file && isBrowserPreviewableProjectImage(file) && !previewFailed ? <img className="project-source-image" src={assetUrl} alt={file.displayName} draggable={false} data-testid="composer-source-image" onError={() => setPreviewFailed(true)} /> : null}
           {source.sourceType !== "composer-text" && assetStatus === "available" && assetUrl ? <a className="primary-button project-source-open-asset" href={assetUrl} target="_blank" rel="noopener noreferrer" data-testid="composer-source-open-asset"><ArrowUpRight size={17} /> بازکردن اصل {source.sourceType === "composer-photo" ? "عکس" : "فایل"}</a> : null}
@@ -24090,6 +24442,7 @@ function ProjectSourceDetailSheet({ source, file, project, assetReadLocked, onCl
             <div><dt>نسخه و منشأ</dt><dd>نسخهٔ ۱ · ثبت مستقیم شما</dd></div>
             <div><dt>دسترسی فعلی</dt><dd>خصوصی پروژه · مدل، بازیابی و اشتراک خاموش</dd></div>
           </dl>
+          {input ? <ProjectInputDispositionControl item={input} testIdPrefix="project-source" mutationKey={mutationKey} mutationError={mutationError} onDisposition={onDisposition} /> : null}
           <button className="primary-button project-source-close" type="button" onClick={onClose} data-testid="composer-source-close">بستن</button>
         </section>
       ) : null}
@@ -24493,7 +24846,39 @@ function BriefLiveSection({ testId, title, section, icon, actionLabel, actionTes
   );
 }
 
-function BriefSheet({ sheet, schedule, snapshot, onClose, onSave, onOpenTasks, onOpenPurchaseRequests }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void }) {
+function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, onDisposition }: { section: LiveBriefInputsSection; mutationKey: string | null; mutationError: { key: string; message: string } | null; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => void }) {
+  const visibleItems = section.items.slice(0, 3);
+  return (
+    <section className="brief-live-section brief-inputs-section" data-testid="brief-inputs-section" data-status={section.status}>
+      <header>
+        <span aria-hidden="true"><FileText size={18} /></span>
+        <div><strong>اسناد و ورودی‌های تعیین‌تکلیف‌نشده</strong><small>{section.status === "ready" ? `${section.items.length.toLocaleString("fa-IR")} مورد` : section.status === "loading" ? "در حال آماده‌سازی" : "خواندن ناموفق"}</small></div>
+      </header>
+      {section.status === "loading" ? <p className="brief-section-state" role="status">در حال بررسی فایل‌ها و ورودی‌های ثبت‌شده…</p> : null}
+      {section.status === "unavailable" ? <p className="brief-section-state is-unavailable" role="alert">اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.</p> : null}
+      {section.status === "ready" && visibleItems.length === 0 ? <p className="brief-section-state is-empty">سند یا ورودی تعیین‌تکلیف‌نشده‌ای نیست</p> : null}
+      {section.status === "ready" && visibleItems.length > 0 ? (
+        <ul>
+          {visibleItems.map((item) => (
+            <li key={item.key} className="brief-input-row">
+              <button type="button" className="brief-input-item" data-testid="brief-input-item" data-input-key={item.key} onClick={() => onOpenInput(item)}>
+                <strong dir="auto">{item.title}</strong>
+                <small>{item.meta}</small>
+                {item.metadataOnly ? <small className="brief-input-metadata-note">فقط شناسنامهٔ فایل در دسترس است؛ محتوا یا اصالت فایل تأیید نشده است.</small> : null}
+                <span>{projectInputStatusLabel(item.effectiveStatus)}</span>
+              </button>
+              <button type="button" className="brief-input-disposition-action" data-testid="brief-input-disposition-action" disabled={!item.ready || mutationKey !== null} onClick={() => onDisposition(item)}>{mutationKey === item.key ? "در حال ثبت…" : item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد"}</button>
+              {mutationError?.key === item.key ? <p role="alert" className="project-input-disposition-error">{mutationError.message}</p> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {section.status === "ready" && section.items.length > visibleItems.length ? <p className="brief-section-more">و {Number(section.items.length - visibleItems.length).toLocaleString("fa-IR")} مورد دیگر</p> : null}
+    </section>
+  );
+}
+
+function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: { key: string; message: string } | null; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => void }) {
   const keyboard = useKeyboard();
   const [frequency, setFrequency] = useState<BriefFrequency>(schedule?.frequency ?? "daily");
   const [weekday, setWeekday] = useState(schedule?.weekday ?? "شنبه");
@@ -24531,8 +24916,9 @@ function BriefSheet({ sheet, schedule, snapshot, onClose, onSave, onOpenTasks, o
             <BriefLiveSection testId="brief-decisions-section" title="تصمیم‌های منتظر شما" section={snapshot.decisions} icon={<ClipboardCheck size={18} />} actionLabel="باز کردن تأییدها در کارها" actionTestId="brief-decisions-action" onAction={() => onOpenTasks("approval")} />
             <BriefLiveSection testId="brief-tasks-section" title="کارهای باز و موعدها" section={snapshot.tasks} icon={<CheckCircle2 size={18} />} actionLabel="باز کردن کارها" actionTestId="brief-tasks-action" onAction={() => onOpenTasks("active")} />
             <BriefLiveSection testId="brief-procurement-section" title="درخواست‌های خرید باز" section={snapshot.procurement} icon={<ShoppingCart size={18} />} actionLabel="باز کردن درخواست‌ها" actionTestId="brief-procurement-action" onAction={onOpenPurchaseRequests} />
+            <BriefInputsSection section={snapshot.inputs} mutationKey={mutationKey} mutationError={mutationError} onOpenInput={onOpenInput} onDisposition={onDisposition} />
           </div>
-          <p className="brief-deferred-note">تغییرات از آخرین بازدید و وضعیت اسناد، تا وقتی منبع قابل‌اثبات خودشان ساخته نشود، محاسبه نمی‌شوند.</p>
+          <p className="brief-deferred-note">تغییرات از آخرین بازدید، تا وقتی منبع قابل‌اثبات خودش ساخته نشود، محاسبه نمی‌شود.</p>
         </div>
 
         <div className="brief-frequency" role="radiogroup" aria-label="بازهٔ بریف" data-testid="brief-frequency-group">
