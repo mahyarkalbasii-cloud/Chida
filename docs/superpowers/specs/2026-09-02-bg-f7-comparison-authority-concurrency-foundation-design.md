@@ -1,7 +1,7 @@
 # طراحی BG-F7: زیربنای authority و هم‌زمانی Comparison
 
-تاریخ: ۲۰۲۶/۰۹/۰۲  
-وضعیت: طراحی تأییدشده توسط ماهیار؛ بازبینی داخلی بدون مانع تکمیل شد؛ در انتظار تأیید سند مکتوب پیش از برنامهٔ اجرا  
+تاریخ: ۲۰۲۶/۰۹/۰۲
+وضعیت: طراحی تأییدشده توسط ماهیار؛ بازبینی داخلی بدون مانع تکمیل شد؛ در انتظار تأیید سند مکتوب پیش از برنامهٔ اجرا
 برش: `BG-F7 — Product/Service Comparison Authority & Concurrency Foundation`
 
 ## ۱. هدف و مرز برش
@@ -1082,3 +1082,39 @@ BG-F7 فقط وقتی آمادهٔ مشاهدهٔ کاربر است که:
 11. به‌روزرسانی Learnings/Backlog/Handoff با تفکیک تجربه، شکاف، تصمیم و پیشنهاد اصلاح سند مادر؛
 12. بازبینی مستقل candidate؛
 13. freeze exact candidate، دریافت مجوز صریح همان candidate، اجرای یک‌بارهٔ `gate:release`، commit همان bytes، اجرای `gate:publish` و فقط سپس یک push و deploymentهای same-source.
+
+---
+
+## Amendment A-001 — durable rollback incident و سخت‌گیری parser — ۲۰۲۶/۰۹/۰۳
+
+این پیوست نتیجهٔ بازبینی مستقل پیاده‌سازی است و تاریخچهٔ طراحی تأییدشده را بازنویسی نمی‌کند. برای candidate نهایی، این بخش در موارد زیر بر متن پیشین اولویت دارد؛ هیچ دامنهٔ محصولی، schema پایین‌دستی، شبکه، backend یا اثر بیرونی تازه‌ای مجاز نمی‌کند. وضعیت جاری در ۲۰۲۶/۰۹/۰۳ این است که plan و implementation محلی تکمیل، evidence نهایی ثبت و exact candidate برای درخواست مجوز انتشار منجمد شده است؛ عبارت تاریخی header دربارهٔ انتظار برای برنامهٔ اجرا دیگر وضعیت جاری نیست.
+
+### topology هشت‌کلیدی
+
+تعریف شش‌کلیدی بخش ۴ برای هر خانواده با یک authority مستقل incident تکمیل و supersede می‌شود:
+
+```ts
+export const builderProductComparisonsRollbackIncidentKey =
+  `${builderProductComparisonsStorageKey}:rollback-incident:v1`;
+export const builderServiceComparisonsRollbackIncidentKey =
+  `${builderServiceComparisonsStorageKey}:rollback-incident:v1`;
+```
+
+پس topology نهایی دقیقاً هشت کلید دارد: legacy، canonical، marker و rollback-incident برای Product و همین چهار کلید برای Service. Decision و Negotiation همچنان دست‌نخورده‌اند. reconciliation باید هر هشت کلید را ببیند و incident خراب یک خانواده فقط همان خانواده را fail-close کند.
+
+### قرارداد incident
+
+- پیش از نخستین write به canonical، writer زیر همان Web Lock مشترک یک incident دقیق با `state=prepared` می‌نویسد و readback می‌کند. این رکورد `store/kind`، `idempotencyKey`، `commandPayloadHash`، hash بایت‌های canonical قبلی و candidate، `preparedAt` و fingerprint canonical خودش را bind می‌کند؛ `resolution/resolvedAt/resolvedCanonicalRawHash` در این حالت دقیقاً `null` هستند.
+- پس از اثبات candidate یا rollback، همان incident به `state=resolved` با `resolution=committed|rolled-back`، زمان حل و hash دقیق bytes اثبات‌شده منتقل و دوباره readback می‌شود. resolution دیگری تولیدپذیر نیست.
+- incident نامعتبر، خوانش مبهم یا `prepared` حل‌نشده authority را خالی تلقی نمی‌کند و mutation عادی را می‌بندد. فقط retry همان command با idempotency key و payload hash دقیق می‌تواند زیر lock، canonical و receipt را دوباره بخواند و committed یا rolled-back بودن را اثبات کند.
+- rollback فقط وقتی مجاز است که canonical هنوز دقیقاً candidate همان writer باشد؛ restore باید bytes قبلی را بنویسد و عیناً بازخوانی کند. failure اثبات restore برابر `rollback-failure` و ابهام read/write acknowledgement برابر `read-failure` است؛ هیچ fallback، overwrite رقیب یا hot-loop وجود ندارد.
+- marker cutover و v1/descendant bytes با incident نوشته یا پاک نمی‌شوند. دو خانواده ledger و incident مستقل دارند اما همهٔ writerها همان lock procurement را می‌گیرند.
+
+### سخت‌گیری‌های بازبینی
+
+- شناسهٔ record، revision و event باید در کل ledger یکتا باشد؛ parser برخورد migrated↔migrated و migrated↔live را حتی با envelope منسجم و دوباره‌هش‌شده رد می‌کند.
+- serialization، hash و ترتیب record/revision/event که مالک آن Comparison است، با emitter رشته‌ای recursive و ترتیب lexicographic Unicode scalar/code point انجام می‌شود، نه collation محلی، UTF-16 code-unit یا object enumeration پس از `Object.fromEntries`؛ vectorهای تمایزبخش `"\uE000"` در برابر `"\u{10000}"` و کلیدهای `"10"` در برابر `"2"` باید frozen بمانند. هر `undefined/function/symbol/bigint/non-finite` در هر عمق non-JSON و مردود است. این الزام قرارداد بیرونی `ProjectTaskAuthority.projectIds` را تغییر نمی‌دهد: upstream آن را با ترتیب تاریخی UTF-16 lexicographic تولید/اعتبارسنجی می‌کند و inference مخصوص replay با lookup own-key امن همان ترتیب را عیناً بازتولید می‌کند، نه اینکه آن authority را scalar-normalize کند؛ شناسه‌های معتبر رزروشده مانند `__proto__` نیز نباید با prototype object اشتباه شوند.
+- محدودیت ۲۰۰ رقم روی خروجی canonical نهایی اعمال می‌شود؛ intermediate موقتِ ضرب نرخ پیش از تقسیم بر ۱۰۰ به‌تنهایی علت رد نیست.
+- علاوه بر `builderProposalRecordIsCurrent`، seam خالص `builderProposalRevisionIsCanonical(value)` فقط برای اعتبارسنجی snapshot کامل ProposalRevision در parser مستقل Comparison export می‌شود. این seam هیچ Proposal schema، storage، writer یا byte ماندگاری را تغییر نمی‌دهد.
+- completion دیررس editor علاوه بر session/attempt باید project binding را پس از `await` exact بسنجد. project drift فقط pending را settle می‌کند و draft/binding/attempt را برای همان پروژه stale نگه می‌دارد؛ close/focus فقط در همان پروژه و پس از success/receipt/no-op اثبات‌شده مجاز است.
+- preflight اعتبار `liveInputs/livePreview` برای attempt تازه الزامی است، اما نباید stable attempt دقیق را که receipt آن از قبل committed شده پیش از رسیدن به command layer متوقف کند. اگر fresh binding دیگر exact نیست، adapter فقط با project binding و normalized payload hash ثابت از مسیر اتمیک `replay-only` زیر همان Web Lock عبور می‌کند؛ command در آن مسیر فقط exact receipt یا recovery incident آمادهٔ همان command را می‌پذیرد و پیش از هر mutation تازه، نبود receipt/incident متناظر یا هر تفاوت payload را با conflict fail-close می‌کند. regression UI باید این مرز را برای Product و Service هم با dependency واقعاً historical پس از committed receipt و هم با stale attempt بدون receipt پس از rollback پوشش دهد.

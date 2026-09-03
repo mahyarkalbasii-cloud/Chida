@@ -149,6 +149,7 @@ import {
   type BuilderProposalCommand,
   type BuilderProposalCommandPins,
   type BuilderProposalDependencies,
+  type BuilderProposalEnvelope,
   type BuilderProposalMutationResult,
   type BuilderProposalReadContext,
   type BuilderProposalState,
@@ -162,6 +163,44 @@ import {
   type BuilderRecordedProposalRevision,
   type BuilderRecordedProposalSupplierSnapshot,
 } from "./builderProposals";
+import {
+  builderComparisonRevisionFingerprintMatches,
+  builderProductComparisonCommandPinsForDraft,
+  builderProductComparisonEffectiveStatus as canonicalBuilderProductComparisonEffectiveStatus,
+  builderProductComparisonNormalizedDraftHash,
+  builderProductComparisonsCutoverMarkerKey,
+  builderProductComparisonsRollbackIncidentKey,
+  builderProductComparisonsStorageKey,
+  builderProposalComparisonRequestKey,
+  builderProposalComparisonDefaultDraft as canonicalBuilderProposalComparisonDefaultDraft,
+  builderProposalComparisonDraftFromRecord as canonicalBuilderProposalComparisonDraftFromRecord,
+  builderServiceComparisonCommandPinsForDraft,
+  builderServiceComparisonNormalizedDraftHash,
+  builderServiceComparisonsCutoverMarkerKey,
+  builderServiceComparisonsRollbackIncidentKey,
+  builderServiceComparisonsStorageKey,
+  builderServiceProposalComparisonCriteriaV1,
+  builderServiceProposalComparisonDefaultDraft as canonicalBuilderServiceProposalComparisonDefaultDraft,
+  builderServiceProposalComparisonDraftFromRecord as canonicalBuilderServiceProposalComparisonDraftFromRecord,
+  builderServiceComparisonEffectiveStatus as canonicalBuilderServiceProposalComparisonEffectiveStatus,
+  executeBuilderComparisonCommand,
+  initializeBuilderProductComparisons,
+  initializeBuilderServiceComparisons,
+  legacyBuilderProductComparisonsStorageKey,
+  legacyBuilderServiceComparisonsStorageKey,
+  readBuilderProductComparisonState,
+  readBuilderServiceComparisonState,
+  replayBuilderComparisonCommand,
+  type BuilderComparisonMutationResult,
+  type BuilderComparisonReadContext,
+  type BuilderComparisonState,
+  type BuilderProductComparisonCommandPins,
+  type BuilderProductComparisonEnvelope,
+  type BuilderProductComparisonRecord as CanonicalBuilderProductComparisonRecord,
+  type BuilderServiceComparisonCommandPins,
+  type BuilderServiceComparisonEnvelope,
+  type BuilderServiceComparisonRecord as CanonicalBuilderServiceComparisonRecord,
+} from "./builderProposalComparisons";
 
 type Screen = "role" | "invite" | "phone" | "otp" | "success" | "home";
 type SheetName = "supplier" | "models" | "attach" | "tools" | "build" | "brief" | "projects" | "new-project" | "settings" | null;
@@ -1492,6 +1531,31 @@ type BuilderProposalEditorBinding = {
   expectedProposalVersion: number | null;
   attempt: BuilderProposalEditorAttempt | null;
 };
+type BuilderComparisonEditorAttempt<Pins> = {
+  comparisonId: string;
+  idempotencyKey: string;
+  normalizedPayloadHash: `sha256-${string}`;
+  pins: Pins;
+};
+type BuilderComparisonEditorBinding<Kind, Pins> = {
+  projectId: string;
+  kind: Kind;
+  expectedStoreVersion: number;
+  expectedComparisonVersion: number | null;
+  reconciliationVersion: number;
+  attempt: BuilderComparisonEditorAttempt<Pins> | null;
+};
+type BuilderProductComparisonEditorBinding = BuilderComparisonEditorBinding<"product", BuilderProductComparisonCommandPins>;
+type BuilderServiceComparisonEditorBinding = BuilderComparisonEditorBinding<"service", BuilderServiceComparisonCommandPins>;
+
+function builderComparisonEvidenceIsExact(left: unknown, right: unknown) {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
 type BuilderProposalReferenceAvailability = "not-attached" | "available" | "metadata-only" | "metadata-missing" | "blob-missing" | "read-error";
 type BuilderProposalComparisonBasis = "declared-total" | "unit-price-times-adjusted-quantity" | "unknown";
 type BuilderProposalComparisonTaxMode = "included" | "fixed" | "rate" | "unknown";
@@ -1568,7 +1632,7 @@ type BuilderProposalComparisonRevision = {
   fingerprint: string;
 };
 type BuilderProposalComparisonRecord = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   id: string;
   projectId: string;
   purpose: "compare-builder-recorded-product-proposals";
@@ -1722,7 +1786,7 @@ type BuilderServiceProposalComparisonRevision = {
   fingerprint: string;
 };
 type BuilderServiceProposalComparisonRecord = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   id: string;
   projectId: string;
   purpose: "compare-builder-recorded-service-proposals";
@@ -2109,9 +2173,7 @@ const projectApprovalsStorageKey = "chida-prototype-project-approvals:v2";
 const projectApprovalsCutoverMarkerKey = `${projectApprovalsStorageKey}:cutover:v1`;
 const projectApprovalConfirmationIntentKey = `${projectApprovalsStorageKey}:request-confirmation-intent:v1`;
 const procurementDispatchPreconditionIntentKey = `${projectApprovalsStorageKey}:dispatch-precondition-intent:v1`;
-const projectBuilderProposalComparisonsStorageKey = "chida-prototype-builder-proposal-comparisons:v1";
 const projectBuilderProposalComparisonDecisionsStorageKey = "chida-prototype-builder-proposal-comparison-decisions:v1";
-const projectBuilderServiceProposalComparisonsStorageKey = "chida-prototype-builder-service-proposal-comparisons:v1";
 const projectBuilderServiceProposalComparisonDecisionsStorageKey = "chida-prototype-builder-service-proposal-comparison-decisions:v1";
 const projectBuilderNegotiationDraftsStorageKey = "chida-prototype-builder-negotiation-drafts:v1";
 const projectBuilderManualNegotiationResponsesStorageKey = "chida-prototype-builder-manual-negotiation-responses:v1";
@@ -2168,18 +2230,6 @@ const builderRecordedProposalLineStatuses: readonly { id: BuilderRecordedProposa
   { id: "alternative", label: "جایگزین پیشنهاد شده" },
   { id: "unavailable", label: "ناموجود اعلام شده" },
   { id: "not-mentioned", label: "ذکر نشده" },
-];
-const builderServiceProposalComparisonCriteriaV1: readonly { id: BuilderServiceProposalComparisonCriterionId; label: string; requestField: keyof Omit<BuilderServiceProposalComparisonRequestSnapshot, "id"> }[] = [
-  { id: "scope", label: "دامنهٔ کار", requestField: "scope" },
-  { id: "location", label: "موقعیت اجرا", requestField: "location" },
-  { id: "size-or-volume", label: "اندازه یا حجم", requestField: "sizeOrVolume" },
-  { id: "qualification", label: "صلاحیت", requestField: "qualification" },
-  { id: "timing", label: "مدت و زمان اجرا", requestField: "timing" },
-  { id: "method", label: "روش اجرا", requestField: "method" },
-  { id: "in-scope", label: "موارد داخل کار", requestField: "inScope" },
-  { id: "out-of-scope", label: "موارد خارج از کار", requestField: "outOfScope" },
-  { id: "warranty", label: "ضمانت اعلامی", requestField: "warranty" },
-  { id: "payment-terms", label: "شرایط پرداخت", requestField: "paymentTerms" },
 ];
 const projectFileExtensionPattern = /\.(?:pdf|png|jpe?g|webp|heic|heif|xls|xlsx|csv|doc|docx)$/i;
 const projectImageExtensionPattern = /\.(?:png|jpe?g|webp|heic|heif)$/i;
@@ -3261,10 +3311,6 @@ function builderRecordedProposalRevisionDiffDisplayValue(field: BuilderRecordedP
   return { before: display(field.before), after: display(field.after) };
 }
 
-function builderProposalComparisonRequestKey(proposal: BuilderRecordedProposalRecord) {
-  return [proposal.target.requestId, proposal.target.requestVersion, proposal.target.reviewRevisionId, proposal.target.reviewRevisionFingerprint].join(":");
-}
-
 function builderProposalComparisonDecimalParts(value: string) {
   if (!/^\d+(?:\.\d+)?$/.test(value)) return null;
   const [integer, fraction = ""] = value.split(".");
@@ -3303,9 +3349,13 @@ function builderProposalComparisonAdd(values: string[]) {
 }
 
 function builderProposalComparisonPercent(amount: string, rate: string) {
-  const multiplied = builderProposalComparisonMultiply(amount, rate);
-  const parts = multiplied ? builderProposalComparisonDecimalParts(multiplied) : null;
-  return parts ? builderProposalComparisonDecimalFromParts(parts.coefficient, parts.scale + 2) : null;
+  const amountParts = builderProposalComparisonDecimalParts(amount);
+  const rateParts = builderProposalComparisonDecimalParts(rate);
+  if (!amountParts || !rateParts) return null;
+  return builderProposalComparisonDecimalFromParts(
+    amountParts.coefficient * rateParts.coefficient,
+    amountParts.scale + rateParts.scale + 2,
+  );
 }
 
 function builderProposalComparisonCompare(first: string, second: string) {
@@ -3549,25 +3599,6 @@ function builderProposalComparisonSemanticValue(revision: BuilderProposalCompari
   return { inputs: revision.inputs, results: revision.results, recommendation: revision.recommendation };
 }
 
-function builderProposalComparisonEffectiveStatus(
-  comparison: BuilderProposalComparisonRecord,
-  proposals: BuilderRecordedProposalRecord[],
-  requests: ProjectPurchaseRequestRecord[],
-  approvals: ProjectApprovalRecord[],
-  contacts: SupplierContactRecord[],
-  revisionId = comparison.currentRevisionId,
-) {
-  const revision = comparison.revisions.find((item) => item.id === revisionId);
-  if (!revision) return "needs-review" as const;
-  return revision.inputs.every((input) => {
-    const proposal = proposals.find((item) => item.id === input.proposalId && item.projectId === comparison.projectId);
-    return proposal
-      && proposal.currentRevisionId === input.proposalRevisionId
-      && proposal.version === input.proposalVersion
-      && builderRecordedProposalEffectiveStatus(proposal, requests, approvals, contacts) === "current";
-  }) ? "current" as const : "needs-review" as const;
-}
-
 function builderProposalComparisonDecisionRevisionFingerprint(
   target: BuilderProposalComparisonDecisionRecord["target"],
   revision: Omit<BuilderProposalComparisonDecisionRevision, "fingerprint">,
@@ -3747,25 +3778,6 @@ function builderServiceProposalComparisonSemanticValue(revision: BuilderServiceP
   return { inputs: revision.inputs, results: revision.results, summary: revision.summary };
 }
 
-function builderServiceProposalComparisonEffectiveStatus(
-  comparison: BuilderServiceProposalComparisonRecord,
-  proposals: BuilderRecordedProposalRecord[],
-  requests: ProjectPurchaseRequestRecord[],
-  approvals: ProjectApprovalRecord[],
-  contacts: SupplierContactRecord[],
-  revisionId = comparison.currentRevisionId,
-) {
-  const revision = comparison.revisions.find((item) => item.id === revisionId);
-  if (!revision) return "needs-review" as const;
-  return revision.inputs.every((input) => {
-    const proposal = proposals.find((item) => item.id === input.proposalId && item.projectId === comparison.projectId);
-    return proposal
-      && proposal.currentRevisionId === input.proposalRevisionId
-      && proposal.version === input.proposalVersion
-      && builderRecordedProposalEffectiveStatus(proposal, requests, approvals, contacts) === "current";
-  }) ? "current" as const : "needs-review" as const;
-}
-
 function builderServiceProposalComparisonDecisionRevisionFingerprint(
   target: BuilderServiceProposalComparisonDecisionRecord["target"],
   revision: Omit<BuilderServiceProposalComparisonDecisionRevision, "fingerprint">,
@@ -3821,7 +3833,9 @@ function builderNegotiationDraftTargetEvidence(
 ): BuilderNegotiationDraftTargetOption | null {
   if (target.comparisonKind === "product") {
     const comparison = productComparisons.find((item) => item.id === target.comparisonId && item.projectId === projectId);
-    const revision = comparison?.revisions.find((item) => item.id === target.comparisonRevisionId && item.version === target.comparisonVersion && item.fingerprint === target.comparisonRevisionFingerprint);
+    const revision = comparison?.revisions.find((item) => item.id === target.comparisonRevisionId
+      && item.version === target.comparisonVersion
+      && builderComparisonRevisionFingerprintMatches(comparison as unknown as CanonicalBuilderProductComparisonRecord, item as unknown as CanonicalBuilderProductComparisonRecord["revisions"][number], target.comparisonRevisionFingerprint));
     const input = revision?.inputs.find((item) => item.proposalId === target.proposalId && item.proposalVersion === target.proposalVersion && item.proposalRevisionId === target.proposalRevisionId);
     const targetProposal = builderProposalRevisionForLineage(projectId, target.proposalId, target.proposalVersion, target.proposalRevisionId, target.proposalRevisionFingerprint, proposals);
     const inputProposal = input ? builderProposalRevisionForLineage(projectId, input.proposalId, input.proposalVersion, input.proposalRevisionId, input.proposalRevisionFingerprint, proposals) : null;
@@ -3857,7 +3871,9 @@ function builderNegotiationDraftTargetEvidence(
   }
 
   const comparison = serviceComparisons.find((item) => item.id === target.comparisonId && item.projectId === projectId);
-  const revision = comparison?.revisions.find((item) => item.id === target.comparisonRevisionId && item.version === target.comparisonVersion && item.fingerprint === target.comparisonRevisionFingerprint);
+  const revision = comparison?.revisions.find((item) => item.id === target.comparisonRevisionId
+    && item.version === target.comparisonVersion
+    && builderComparisonRevisionFingerprintMatches(comparison as unknown as CanonicalBuilderServiceComparisonRecord, item as unknown as CanonicalBuilderServiceComparisonRecord["revisions"][number], target.comparisonRevisionFingerprint));
   const input = revision?.inputs.find((item) => item.proposalId === target.proposalId && item.proposalVersion === target.proposalVersion && item.proposalRevisionId === target.proposalRevisionId && item.proposalLineId === target.proposalLineId);
   const targetProposal = builderProposalRevisionForLineage(projectId, target.proposalId, target.proposalVersion, target.proposalRevisionId, target.proposalRevisionFingerprint, proposals);
   const inputProposal = input ? builderProposalRevisionForLineage(projectId, input.proposalId, input.proposalVersion, input.proposalRevisionId, input.proposalRevisionFingerprint, proposals) : null;
@@ -3899,13 +3915,12 @@ function builderNegotiationDraftTargetOptions(
   productComparisons: BuilderProposalComparisonRecord[],
   serviceComparisons: BuilderServiceProposalComparisonRecord[],
   proposals: BuilderRecordedProposalRecord[],
-  requests: ProjectPurchaseRequestRecord[],
-  approvals: ProjectApprovalRecord[],
-  contacts: SupplierContactRecord[],
+  proposalEnvelope: BuilderProposalEnvelope | null,
+  proposalDependencies: BuilderProposalDependencies | null,
 ) {
   const productOptions = productComparisons.flatMap((comparison): BuilderNegotiationDraftTargetOption[] => {
     const revision = comparison.revisions.find((item) => item.id === comparison.currentRevisionId);
-    if (!revision || builderProposalComparisonEffectiveStatus(comparison, proposals, requests, approvals, contacts) !== "current") return [];
+    if (!revision || !proposalEnvelope || !proposalDependencies || canonicalBuilderProductComparisonEffectiveStatus(comparison as CanonicalBuilderProductComparisonRecord, proposalEnvelope, proposalDependencies) !== "current") return [];
     return revision.inputs.flatMap((input) => {
       const result = revision.results.find((item) => item.proposalId === input.proposalId);
       const canonical = builderProposalRevisionForLineage(projectId, input.proposalId, input.proposalVersion, input.proposalRevisionId, input.proposalRevisionFingerprint, proposals);
@@ -3938,7 +3953,7 @@ function builderNegotiationDraftTargetOptions(
   });
   const serviceOptions = serviceComparisons.flatMap((comparison): BuilderNegotiationDraftTargetOption[] => {
     const revision = comparison.revisions.find((item) => item.id === comparison.currentRevisionId);
-    if (!revision || builderServiceProposalComparisonEffectiveStatus(comparison, proposals, requests, approvals, contacts) !== "current") return [];
+    if (!revision || !proposalEnvelope || !proposalDependencies || canonicalBuilderServiceProposalComparisonEffectiveStatus(comparison as CanonicalBuilderServiceComparisonRecord, proposalEnvelope, proposalDependencies) !== "current") return [];
     return revision.inputs.flatMap((input) => input.criteria.filter((criterion) => builderNegotiationServiceCriterionIsEligible(criterion.assessment)).flatMap((criterion): BuilderNegotiationDraftTargetOption[] => {
       const definition = builderServiceProposalComparisonCriteriaV1.find((item) => item.id === criterion.criterionId);
       const canonical = builderProposalRevisionForLineage(projectId, input.proposalId, input.proposalVersion, input.proposalRevisionId, input.proposalRevisionFingerprint, proposals);
@@ -3975,9 +3990,8 @@ function builderNegotiationDraftEffectiveStatus(
   productComparisons: BuilderProposalComparisonRecord[],
   serviceComparisons: BuilderServiceProposalComparisonRecord[],
   proposals: BuilderRecordedProposalRecord[],
-  requests: ProjectPurchaseRequestRecord[],
-  approvals: ProjectApprovalRecord[],
-  contacts: SupplierContactRecord[],
+  proposalEnvelope: BuilderProposalEnvelope | null,
+  proposalDependencies: BuilderProposalDependencies | null,
 ) {
   const evidence = builderNegotiationDraftTargetEvidence(record.projectId, record.target, productComparisons, serviceComparisons, proposals);
   if (!evidence) return "needs-review" as const;
@@ -3985,14 +3999,18 @@ function builderNegotiationDraftEffectiveStatus(
     const comparison = productComparisons.find((item) => item.id === record.target.comparisonId && item.projectId === record.projectId);
     return comparison
       && comparison.currentRevisionId === record.target.comparisonRevisionId
-      && builderProposalComparisonEffectiveStatus(comparison, proposals, requests, approvals, contacts, record.target.comparisonRevisionId) === "current"
+      && proposalEnvelope
+      && proposalDependencies
+      && canonicalBuilderProductComparisonEffectiveStatus(comparison as CanonicalBuilderProductComparisonRecord, proposalEnvelope, proposalDependencies, record.target.comparisonRevisionId) === "current"
       ? "current" as const
       : "needs-review" as const;
   }
   const comparison = serviceComparisons.find((item) => item.id === record.target.comparisonId && item.projectId === record.projectId);
   return comparison
     && comparison.currentRevisionId === record.target.comparisonRevisionId
-    && builderServiceProposalComparisonEffectiveStatus(comparison, proposals, requests, approvals, contacts, record.target.comparisonRevisionId) === "current"
+    && proposalEnvelope
+    && proposalDependencies
+    && canonicalBuilderServiceProposalComparisonEffectiveStatus(comparison as CanonicalBuilderServiceComparisonRecord, proposalEnvelope, proposalDependencies, record.target.comparisonRevisionId) === "current"
     ? "current" as const
     : "needs-review" as const;
 }
@@ -4038,14 +4056,13 @@ function builderManualNegotiationResponseEffectiveStatus(
   productComparisons: BuilderProposalComparisonRecord[],
   serviceComparisons: BuilderServiceProposalComparisonRecord[],
   proposals: BuilderRecordedProposalRecord[],
-  requests: ProjectPurchaseRequestRecord[],
-  approvals: ProjectApprovalRecord[],
-  contacts: SupplierContactRecord[],
+  proposalEnvelope: BuilderProposalEnvelope | null,
+  proposalDependencies: BuilderProposalDependencies | null,
 ) {
   const evidence = builderManualNegotiationResponseQuestionEvidence(record.projectId, record.target, record.questionSnapshot, drafts);
   return evidence
     && evidence.draft.currentRevisionId === record.target.negotiationDraftRevisionId
-    && builderNegotiationDraftEffectiveStatus(evidence.draft, productComparisons, serviceComparisons, proposals, requests, approvals, contacts) === "current"
+    && builderNegotiationDraftEffectiveStatus(evidence.draft, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies) === "current"
     ? "current" as const
     : "needs-review" as const;
 }
@@ -4083,14 +4100,13 @@ function builderManualNegotiationResponseReviewEffectiveStatus(
   productComparisons: BuilderProposalComparisonRecord[],
   serviceComparisons: BuilderServiceProposalComparisonRecord[],
   proposals: BuilderRecordedProposalRecord[],
-  requests: ProjectPurchaseRequestRecord[],
-  approvals: ProjectApprovalRecord[],
-  contacts: SupplierContactRecord[],
+  proposalEnvelope: BuilderProposalEnvelope | null,
+  proposalDependencies: BuilderProposalDependencies | null,
 ) {
   const evidence = builderManualNegotiationResponseReviewEvidence(record.projectId, record.target, responses);
   return evidence
     && evidence.response.currentRevisionId === record.target.manualNegotiationResponseRevisionId
-    && builderManualNegotiationResponseEffectiveStatus(evidence.response, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts) === "current"
+    && builderManualNegotiationResponseEffectiveStatus(evidence.response, drafts, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies) === "current"
     ? "current" as const
     : "needs-review" as const;
 }
@@ -4128,14 +4144,13 @@ function builderManualNegotiationConditionImpactEffectiveStatus(
   productComparisons: BuilderProposalComparisonRecord[],
   serviceComparisons: BuilderServiceProposalComparisonRecord[],
   proposals: BuilderRecordedProposalRecord[],
-  requests: ProjectPurchaseRequestRecord[],
-  approvals: ProjectApprovalRecord[],
-  contacts: SupplierContactRecord[],
+  proposalEnvelope: BuilderProposalEnvelope | null,
+  proposalDependencies: BuilderProposalDependencies | null,
 ) {
   const evidence = builderManualNegotiationConditionImpactEvidence(record.projectId, record.target, responses);
   return evidence
     && evidence.response.currentRevisionId === record.target.manualNegotiationResponseRevisionId
-    && builderManualNegotiationResponseEffectiveStatus(evidence.response, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts) === "current"
+    && builderManualNegotiationResponseEffectiveStatus(evidence.response, drafts, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies) === "current"
     ? "current" as const
     : "needs-review" as const;
 }
@@ -4706,6 +4721,11 @@ function builderProposalDependenciesSnapshot(authority = projectTaskAuthoritySna
 function builderProposalReadContextSnapshot(): BuilderProposalReadContext {
   const authority = projectTaskAuthoritySnapshot();
   return { authority, dependencies: authority ? builderProposalDependenciesSnapshot(authority) : null };
+}
+
+function builderComparisonReadContextSnapshot(): BuilderComparisonReadContext {
+  const proposalContext = builderProposalReadContextSnapshot();
+  return { authority: proposalContext.authority, dependencies: proposalContext.dependencies };
 }
 
 function builderProposalCommandPinsForDraft(
@@ -12087,181 +12107,6 @@ async function withBuiltArtifactInvalidationIntentsWriteLock(operation: () => Bu
   }
 }
 
-function parseBuilderProposalComparisonInput(value: any, proposals: BuilderRecordedProposalRecord[]): { proposal: BuilderRecordedProposalRecord; revision: BuilderRecordedProposalRevision; input: BuilderProposalComparisonInput } | null {
-  const proposalId = typeof value?.proposalId === "string" ? value.proposalId.trim() : "";
-  const proposalVersion = value?.proposalVersion;
-  const proposalRevisionId = typeof value?.proposalRevisionId === "string" ? value.proposalRevisionId.trim() : "";
-  const proposalRevisionFingerprint = typeof value?.proposalRevisionFingerprint === "string" ? value.proposalRevisionFingerprint.trim() : "";
-  const proposal = proposals.find((item) => item.id === proposalId);
-  const revision = proposal?.revisions.find((item) => item.id === proposalRevisionId
-    && item.version === proposalVersion
-    && builderProposalRevisionFingerprintMatches(proposal, item, proposalRevisionFingerprint));
-  if (
-    !hasExactObjectKeys(value, ["proposalId", "proposalVersion", "proposalRevisionId", "proposalRevisionFingerprint", "supplierSnapshot", "lineAdjustments", "taxTreatment", "transportTreatment"])
-    || !proposal
-    || !revision
-    || proposal.target.requestKind !== "product"
-    || JSON.stringify(stablePurchaseRequestValue(value?.supplierSnapshot)) !== JSON.stringify(stablePurchaseRequestValue(proposal.supplierSnapshot))
-    || !Array.isArray(value?.lineAdjustments)
-    || value.lineAdjustments.length !== revision.lines.length
-  ) return null;
-  const lineAdjustments = value.lineAdjustments.flatMap((adjustmentValue: any, index: number): BuilderProposalComparisonLineAdjustment[] => {
-    const sourceLine = revision.lines[index];
-    const proposalLineId = typeof adjustmentValue?.proposalLineId === "string" ? adjustmentValue.proposalLineId.trim() : "";
-    const requestItemId = typeof adjustmentValue?.requestItemId === "string" ? adjustmentValue.requestItemId.trim() : "";
-    const basis = adjustmentValue?.basis as BuilderProposalComparisonBasis;
-    const adjustedQuantity = adjustmentValue?.adjustedQuantity === null ? null : typeof adjustmentValue?.adjustedQuantity === "string" ? adjustmentValue.adjustedQuantity : undefined;
-    const adjustedQuantityUnit = adjustmentValue?.adjustedQuantityUnit === null ? null : typeof adjustmentValue?.adjustedQuantityUnit === "string" ? adjustmentValue.adjustedQuantityUnit : undefined;
-    const assumption = adjustmentValue?.assumption === null ? null : typeof adjustmentValue?.assumption === "string" ? adjustmentValue.assumption : undefined;
-    if (
-      !sourceLine
-      || !sourceLine.requestItemId
-      || !hasExactObjectKeys(adjustmentValue, ["proposalLineId", "requestItemId", "basis", "adjustedQuantity", "adjustedQuantityUnit", "assumption", "source"])
-      || proposalLineId !== sourceLine.id
-      || requestItemId !== sourceLine.requestItemId
-      || adjustmentValue?.source !== "فرض ثبت‌شده توسط سازنده"
-    ) return [];
-    if (basis === "declared-total") {
-      const requested = proposal.requestSnapshot.items.find((item) => item.id === sourceLine.requestItemId);
-      if (sourceLine.status !== "quoted" || sourceLine.totalPrice === null || sourceLine.quantity === null || sourceLine.unit === null || sourceLine.quantity !== requested?.quantity || sourceLine.unit !== requested?.unit || adjustedQuantity !== null || adjustedQuantityUnit !== null || assumption !== null) return [];
-    } else if (basis === "unit-price-times-adjusted-quantity") {
-      if (sourceLine.status !== "quoted" || sourceLine.unitPrice === null || sourceLine.unit === null || adjustedQuantity === null || adjustedQuantity === undefined || normalizeBuilderProposalComparisonNumber(adjustedQuantity, false) !== adjustedQuantity || adjustedQuantityUnit !== sourceLine.unit || assumption === null || assumption === undefined || normalizeBuilderRecordedProposalText(assumption, 500) !== assumption) return [];
-    } else if (basis !== "unknown" || adjustedQuantity !== null || adjustedQuantityUnit !== null || assumption !== null) return [];
-    return [{ proposalLineId, requestItemId, basis, adjustedQuantity, adjustedQuantityUnit, assumption, source: "فرض ثبت‌شده توسط سازنده" }];
-  });
-  const parseTreatment = <Mode extends string>(treatmentValue: any, modes: { included: Mode; fixed: Mode; unknown: Mode; rate?: Mode }) => {
-    if (!hasExactObjectKeys(treatmentValue, ["mode", "value", "assumption", "source"]) || treatmentValue?.source !== "فرض ثبت‌شده توسط سازنده" || typeof treatmentValue?.mode !== "string") return null;
-    const normalized = normalizeBuilderProposalComparisonTreatment(treatmentValue.mode as Mode, treatmentValue.value ?? "", treatmentValue.assumption ?? "", modes);
-    return normalized && JSON.stringify(stablePurchaseRequestValue(normalized)) === JSON.stringify(stablePurchaseRequestValue(treatmentValue)) ? normalized : null;
-  };
-  const taxTreatment = parseTreatment<BuilderProposalComparisonTaxMode>(value.taxTreatment, { included: "included", fixed: "fixed", rate: "rate", unknown: "unknown" });
-  const transportTreatment = parseTreatment<BuilderProposalComparisonTransportMode>(value.transportTreatment, { included: "included", fixed: "fixed", unknown: "unknown" });
-  if (lineAdjustments.length !== revision.lines.length || !taxTreatment || !transportTreatment) return null;
-  return {
-    proposal,
-    revision,
-    input: { proposalId, proposalVersion, proposalRevisionId, proposalRevisionFingerprint, supplierSnapshot: structuredClone(proposal.supplierSnapshot), lineAdjustments, taxTreatment, transportTreatment } satisfies BuilderProposalComparisonInput,
-  };
-}
-
-function parseBuilderProposalComparison(value: any, proposals: LocalRecordsReadResult<BuilderRecordedProposalRecord>): BuilderProposalComparisonRecord | null {
-  const id = typeof value?.id === "string" ? value.id.trim() : "";
-  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
-  const target = {
-    requestId: typeof value?.target?.requestId === "string" ? value.target.requestId.trim() : "",
-    requestVersion: value?.target?.requestVersion,
-    reviewRevisionId: typeof value?.target?.reviewRevisionId === "string" ? value.target.reviewRevisionId.trim() : "",
-    reviewRevisionFingerprint: typeof value?.target?.reviewRevisionFingerprint === "string" ? value.target.reviewRevisionFingerprint.trim() : "",
-    requestKind: value?.target?.requestKind,
-  } as BuilderProposalComparisonRecord["target"];
-  const eventIds = new Set<string>();
-  const history: BuilderProposalComparisonEvent[] = Array.isArray(value?.history) ? value.history.flatMap((event: any, index: number): BuilderProposalComparisonEvent[] => {
-    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
-    const at = typeof event?.at === "string" ? event.at.trim() : "";
-    const type = event?.type as BuilderProposalComparisonEvent["type"];
-    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventIds.has(eventId) || (type !== "created" && type !== "updated") || event?.actor !== "شما" || event?.version !== index + 1 || (index === 0 ? type !== "created" : type !== "updated") || !isValidProjectFileDate(at)) return [];
-    eventIds.add(eventId);
-    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
-  }) : [];
-  const revisionIds = new Set<string>();
-  const revisions: BuilderProposalComparisonRevision[] = Array.isArray(value?.revisions) && value.revisions.length <= 100 ? value.revisions.flatMap((revisionValue: any, index: number): BuilderProposalComparisonRevision[] => {
-    const revisionId = typeof revisionValue?.id === "string" ? revisionValue.id.trim() : "";
-    const createdAt = typeof revisionValue?.createdAt === "string" ? revisionValue.createdAt.trim() : "";
-    if (!revisionId || revisionIds.has(revisionId) || revisionValue?.version !== index + 1 || createdAt !== history[index]?.at || !hasExactObjectKeys(revisionValue, ["id", "version", "createdAt", "inputs", "results", "recommendation", "fingerprint"]) || !Array.isArray(revisionValue?.inputs) || revisionValue.inputs.length < 2 || revisionValue.inputs.length > 8) return [];
-    const parsedInputs: Array<ReturnType<typeof parseBuilderProposalComparisonInput>> = revisionValue.inputs.map((inputValue: any) => parseBuilderProposalComparisonInput(inputValue, proposals.records));
-    if (parsedInputs.some((item) => !item)) return [];
-    const proposalIds = new Set(parsedInputs.map((item) => item!.proposal.id));
-    const allRelationsMatch = parsedInputs.every((item) => item!.proposal.projectId === projectId
-      && item!.proposal.target.requestId === target.requestId
-      && item!.proposal.target.requestVersion === target.requestVersion
-      && item!.proposal.target.reviewRevisionId === target.reviewRevisionId
-      && item!.proposal.target.reviewRevisionFingerprint === target.reviewRevisionFingerprint
-      && item!.proposal.target.requestKind === "product");
-    if (proposalIds.size !== parsedInputs.length || !allRelationsMatch || parsedInputs.some((item) => new Date(createdAt).getTime() < new Date(item!.revision.createdAt).getTime())) return [];
-    const inputs = parsedInputs.map((item) => item!.input);
-    const derived = deriveBuilderProposalComparisonPayload(inputs, proposals.records);
-    if (!derived) return [];
-    const revisionBase = { id: revisionId, version: revisionValue.version, createdAt, inputs, results: derived.results, recommendation: derived.recommendation } satisfies Omit<BuilderProposalComparisonRevision, "fingerprint">;
-    const fingerprint = builderProposalComparisonRevisionFingerprint({ projectId, target, requestSnapshot: value?.requestSnapshot }, revisionBase);
-    const expected = { ...revisionBase, fingerprint };
-    if (JSON.stringify(stablePurchaseRequestValue(expected)) !== JSON.stringify(stablePurchaseRequestValue(revisionValue))) return [];
-    revisionIds.add(revisionId);
-    return [expected];
-  }) : [];
-  const version = value?.version;
-  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
-  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
-  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
-  const firstProposal = revisions[0] ? proposals.records.find((proposal) => proposal.id === revisions[0].inputs[0].proposalId) : null;
-  const requestSnapshot = firstProposal?.requestSnapshot ?? null;
-  const hasRepeatedSemanticRevision = revisions.some((revision, index) => index > 0 && JSON.stringify(stablePurchaseRequestValue(builderProposalComparisonSemanticValue(revision))) === JSON.stringify(stablePurchaseRequestValue(builderProposalComparisonSemanticValue(revisions[index - 1]))));
-  if (
-    !hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "purpose", "target", "requestSnapshot", "currentRevisionId", "visibility", "localStatus", "externalEffect", "networkUsed", "aiUsed", "version", "createdAt", "updatedAt", "history", "revisions"])
-    || !hasExactObjectKeys(value?.target, ["requestId", "requestVersion", "reviewRevisionId", "reviewRevisionFingerprint", "requestKind"])
-    || value?.schemaVersion !== 1
-    || !id
-    || !projectId
-    || value?.purpose !== "compare-builder-recorded-product-proposals"
-    || target.requestKind !== "product"
-    || !target.requestId
-    || !Number.isInteger(target.requestVersion)
-    || target.requestVersion < 1
-    || !target.reviewRevisionId
-    || !target.reviewRevisionFingerprint
-    || !requestSnapshot
-    || requestSnapshot.requestKind !== "product"
-    || JSON.stringify(stablePurchaseRequestValue(value?.requestSnapshot)) !== JSON.stringify(stablePurchaseRequestValue(requestSnapshot))
-    || value?.visibility !== "خصوصی پروژه"
-    || value?.localStatus !== "ثبت محلی"
-    || value?.externalEffect !== "none"
-    || value?.networkUsed !== false
-    || value?.aiUsed !== false
-    || !Number.isInteger(version)
-    || version < 1
-    || !Array.isArray(value?.history)
-    || !Array.isArray(value?.revisions)
-    || history.length !== value.history.length
-    || revisions.length !== value.revisions.length
-    || history.length !== version
-    || revisions.length !== version
-    || currentRevisionId !== revisions[revisions.length - 1]?.id
-    || createdAt !== history[0]?.at
-    || updatedAt !== history[history.length - 1]?.at
-    || revisions[0]?.createdAt !== createdAt
-    || revisions[revisions.length - 1]?.createdAt !== updatedAt
-    || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())
-    || hasRepeatedSemanticRevision
-  ) return null;
-  return { schemaVersion: 1, id, projectId, purpose: "compare-builder-recorded-product-proposals", target, requestSnapshot, currentRevisionId, visibility: "خصوصی پروژه", localStatus: "ثبت محلی", externalEffect: "none", networkUsed: false, aiUsed: false, version, createdAt, updatedAt, history, revisions };
-}
-
-function readStoredBuilderProposalComparisons(proposals: LocalRecordsReadResult<BuilderRecordedProposalRecord>): LocalRecordsReadResult<BuilderProposalComparisonRecord> {
-  if (proposals.readError) return { records: [], readError: true };
-  try {
-    const raw = window.localStorage.getItem(projectBuilderProposalComparisonsStorageKey);
-    if (raw === null) return { records: [], readError: false };
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
-    const ids = new Set<string>();
-    const projectCounts = new Map<string, number>();
-    let readError = false;
-    const records = parsed.flatMap((value): BuilderProposalComparisonRecord[] => {
-      const record = parseBuilderProposalComparison(value, proposals);
-      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
-      if (!record || ids.has(record.id) || nextProjectCount > 100) {
-        readError = true;
-        return [];
-      }
-      ids.add(record.id);
-      projectCounts.set(record.projectId, nextProjectCount);
-      return [record];
-    });
-    return { records, readError };
-  } catch {
-    return { records: [], readError: true };
-  }
-}
-
 function parseBuilderProposalComparisonDecision(value: any, comparisons: LocalRecordsReadResult<BuilderProposalComparisonRecord>): BuilderProposalComparisonDecisionRecord | null {
   const id = typeof value?.id === "string" ? value.id.trim() : "";
   const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
@@ -12272,7 +12117,9 @@ function parseBuilderProposalComparisonDecision(value: any, comparisons: LocalRe
     comparisonRevisionFingerprint: typeof value?.target?.comparisonRevisionFingerprint === "string" ? value.target.comparisonRevisionFingerprint.trim() : "",
   } satisfies BuilderProposalComparisonDecisionRecord["target"];
   const comparison = comparisons.records.find((item) => item.id === target.comparisonId && item.projectId === projectId);
-  const comparisonRevision = comparison?.revisions.find((item) => item.id === target.comparisonRevisionId && item.version === target.comparisonVersion && item.fingerprint === target.comparisonRevisionFingerprint);
+  const comparisonRevision = comparison?.revisions.find((item) => item.id === target.comparisonRevisionId
+    && item.version === target.comparisonVersion
+    && builderComparisonRevisionFingerprintMatches(comparison as unknown as CanonicalBuilderProductComparisonRecord, item as unknown as CanonicalBuilderProductComparisonRecord["revisions"][number], target.comparisonRevisionFingerprint));
   if (!comparison || !comparisonRevision) return null;
   const eventIds = new Set<string>();
   const history: BuilderProposalComparisonDecisionEvent[] = Array.isArray(value?.history) ? value.history.flatMap((event: any, index: number): BuilderProposalComparisonDecisionEvent[] => {
@@ -12363,206 +12210,6 @@ function readStoredBuilderProposalComparisonDecisions(comparisons: LocalRecordsR
   }
 }
 
-function parseBuilderServiceProposalComparisonRequestSnapshot(value: any): BuilderServiceProposalComparisonRequestSnapshot | null {
-  if (!hasExactObjectKeys(value, ["id", "scope", "location", "sizeOrVolume", "qualification", "timing", "method", "inScope", "outOfScope", "warranty", "paymentTerms"])) return null;
-  const id = typeof value?.id === "string" ? value.id.trim() : "";
-  const textValue = (item: unknown) => item === null ? null : typeof item === "string" && item.trim() === item && hasVisibleProjectTaskText(item) && item.length <= 500 ? item : undefined;
-  const scope = textValue(value?.scope);
-  const location = textValue(value?.location);
-  const sizeOrVolume = textValue(value?.sizeOrVolume);
-  const qualification = textValue(value?.qualification);
-  const timing = textValue(value?.timing);
-  const method = textValue(value?.method);
-  const inScope = textValue(value?.inScope);
-  const outOfScope = textValue(value?.outOfScope);
-  const warranty = textValue(value?.warranty);
-  const paymentTerms = textValue(value?.paymentTerms);
-  if (!id || [scope, location, sizeOrVolume, qualification, timing, method, inScope, outOfScope, warranty, paymentTerms].some((item) => item === undefined)) return null;
-  return { id, scope: scope!, location: location!, sizeOrVolume: sizeOrVolume!, qualification: qualification!, timing: timing!, method: method!, inScope: inScope!, outOfScope: outOfScope!, warranty: warranty!, paymentTerms: paymentTerms! };
-}
-
-function parseBuilderServiceProposalComparisonInput(
-  value: any,
-  proposals: BuilderRecordedProposalRecord[],
-  projectId: string,
-  target: BuilderServiceProposalComparisonRecord["target"],
-  requestSnapshot: BuilderServiceProposalComparisonRequestSnapshot,
-): BuilderServiceProposalComparisonInput | null {
-  const proposalId = typeof value?.proposalId === "string" ? value.proposalId.trim() : "";
-  const proposalVersion = value?.proposalVersion;
-  const proposalRevisionId = typeof value?.proposalRevisionId === "string" ? value.proposalRevisionId.trim() : "";
-  const proposalRevisionFingerprint = typeof value?.proposalRevisionFingerprint === "string" ? value.proposalRevisionFingerprint.trim() : "";
-  const proposal = proposals.find((item) => item.id === proposalId && item.projectId === projectId && item.target.requestKind === "service");
-  const proposalRevision = proposal?.revisions.find((item) => item.id === proposalRevisionId
-    && item.version === proposalVersion
-    && builderProposalRevisionFingerprintMatches(proposal, item, proposalRevisionFingerprint));
-  const targetKey = [target.requestId, target.requestVersion, target.reviewRevisionId, target.reviewRevisionFingerprint].join(":");
-  if (
-    !hasExactObjectKeys(value, ["proposalId", "proposalVersion", "proposalRevisionId", "proposalRevisionFingerprint", "proposalLineId", "serviceSpecId", "supplierSnapshot", "criteria"])
-    || !proposal
-    || builderProposalComparisonRequestKey(proposal) !== targetKey
-    || !proposalRevision
-    || proposalRevision.lines.length !== 1
-    || value?.proposalLineId !== proposalRevision.lines[0].id
-    || value?.serviceSpecId !== proposalRevision.lines[0].serviceSpecId
-    || proposalRevision.lines[0].serviceSpecId !== requestSnapshot.id
-    || JSON.stringify(stablePurchaseRequestValue(value?.supplierSnapshot)) !== JSON.stringify(stablePurchaseRequestValue(proposal.supplierSnapshot))
-    || !Array.isArray(value?.criteria)
-    || value.criteria.length !== builderServiceProposalComparisonCriteriaV1.length
-  ) return null;
-  const seenCriteria = new Set<BuilderServiceProposalComparisonCriterionId>();
-  const criteria = value.criteria.flatMap((criterionValue: any, index: number): BuilderServiceProposalComparisonCriterionInput[] => {
-    const definition = builderServiceProposalComparisonCriteriaV1[index];
-    const criterionId = criterionValue?.criterionId as BuilderServiceProposalComparisonCriterionId;
-    const assessment = criterionValue?.assessment as BuilderServiceProposalComparisonAssessment;
-    const declaredValue = criterionValue?.declaredValue === null ? null : typeof criterionValue?.declaredValue === "string" && criterionValue.declaredValue.trim() === criterionValue.declaredValue && hasVisibleProjectTaskText(criterionValue.declaredValue) && criterionValue.declaredValue.length <= 500 ? criterionValue.declaredValue : undefined;
-    const rationale = criterionValue?.rationale === null ? null : typeof criterionValue?.rationale === "string" && criterionValue.rationale.trim() === criterionValue.rationale && hasVisibleProjectTaskText(criterionValue.rationale) && criterionValue.rationale.length <= 500 ? criterionValue.rationale : undefined;
-    const requestValue = definition ? requestSnapshot[definition.requestField] : null;
-    const stateIsValid = assessment === "unknown"
-      ? true
-      : assessment === "not-applicable"
-        ? requestValue === null && declaredValue === null && typeof rationale === "string"
-        : typeof declaredValue === "string" && typeof rationale === "string" && requestValue !== null;
-    if (
-      !definition
-      || !hasExactObjectKeys(criterionValue, ["criterionId", "declaredValue", "assessment", "rationale", "declaredSource", "assessmentSource"])
-      || criterionId !== definition.id
-      || seenCriteria.has(criterionId)
-      || !["aligned", "partial", "different", "unknown", "not-applicable"].includes(assessment)
-      || declaredValue === undefined
-      || rationale === undefined
-      || !stateIsValid
-      || criterionValue?.declaredSource !== "رونویسی تکمیلی سازنده برای مقایسه"
-      || criterionValue?.assessmentSource !== "ارزیابی سازنده"
-    ) return [];
-    seenCriteria.add(criterionId);
-    return [{ criterionId, declaredValue, assessment, rationale, declaredSource: "رونویسی تکمیلی سازنده برای مقایسه", assessmentSource: "ارزیابی سازنده" }];
-  });
-  if (criteria.length !== builderServiceProposalComparisonCriteriaV1.length) return null;
-  return { proposalId, proposalVersion, proposalRevisionId, proposalRevisionFingerprint, proposalLineId: proposalRevision.lines[0].id, serviceSpecId: proposalRevision.lines[0].serviceSpecId!, supplierSnapshot: structuredClone(proposal.supplierSnapshot), criteria };
-}
-
-function parseBuilderServiceProposalComparison(
-  value: any,
-  proposals: LocalRecordsReadResult<BuilderRecordedProposalRecord>,
-  requests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
-): BuilderServiceProposalComparisonRecord | null {
-  if (proposals.readError || requests.readError) return null;
-  const id = typeof value?.id === "string" ? value.id.trim() : "";
-  const projectId = typeof value?.projectId === "string" ? value.projectId.trim() : "";
-  const target = {
-    requestId: typeof value?.target?.requestId === "string" ? value.target.requestId.trim() : "",
-    requestVersion: value?.target?.requestVersion,
-    reviewRevisionId: typeof value?.target?.reviewRevisionId === "string" ? value.target.reviewRevisionId.trim() : "",
-    reviewRevisionFingerprint: typeof value?.target?.reviewRevisionFingerprint === "string" ? value.target.reviewRevisionFingerprint.trim() : "",
-    requestKind: value?.target?.requestKind,
-  } satisfies BuilderServiceProposalComparisonRecord["target"];
-  const request = requests.records.find((item) => item.id === target.requestId && item.projectId === projectId);
-  const reviewRevision = request?.reviewRevisions.find((item) => item.id === target.reviewRevisionId && item.requestVersion === target.requestVersion && item.fingerprint === target.reviewRevisionFingerprint);
-  const expectedRequestSnapshot = reviewRevision ? builderServiceProposalComparisonRequestSnapshotFromReview(reviewRevision.snapshot) : null;
-  const requestSnapshot = parseBuilderServiceProposalComparisonRequestSnapshot(value?.requestSnapshot);
-  if (!request || !reviewRevision || !expectedRequestSnapshot || !requestSnapshot || JSON.stringify(stablePurchaseRequestValue(requestSnapshot)) !== JSON.stringify(stablePurchaseRequestValue(expectedRequestSnapshot))) return null;
-  const eventIds = new Set<string>();
-  const history: BuilderServiceProposalComparisonEvent[] = Array.isArray(value?.history) && value.history.length <= 100 ? value.history.flatMap((event: any, index: number): BuilderServiceProposalComparisonEvent[] => {
-    const eventId = typeof event?.id === "string" ? event.id.trim() : "";
-    const at = typeof event?.at === "string" ? event.at.trim() : "";
-    const type = event?.type as BuilderServiceProposalComparisonEvent["type"];
-    if (!hasExactObjectKeys(event, ["id", "type", "actor", "at", "version"]) || !eventId || eventId !== event?.id || at !== event?.at || eventIds.has(eventId) || (index === 0 ? type !== "created" : type !== "updated") || event?.actor !== "شما" || event?.version !== index + 1 || !isValidProjectFileDate(at)) return [];
-    eventIds.add(eventId);
-    return [{ id: eventId, type, actor: "شما", at, version: event.version }];
-  }) : [];
-  const revisionIds = new Set<string>();
-  const revisions: BuilderServiceProposalComparisonRevision[] = Array.isArray(value?.revisions) && value.revisions.length <= 100 ? value.revisions.flatMap((revisionValue: any, index: number): BuilderServiceProposalComparisonRevision[] => {
-    const revisionId = typeof revisionValue?.id === "string" ? revisionValue.id.trim() : "";
-    const createdAt = typeof revisionValue?.createdAt === "string" ? revisionValue.createdAt.trim() : "";
-    if (!hasExactObjectKeys(revisionValue, ["id", "version", "createdAt", "inputs", "results", "summary", "fingerprint"]) || !revisionId || revisionIds.has(revisionId) || revisionValue?.version !== index + 1 || createdAt !== history[index]?.at || !Array.isArray(revisionValue?.inputs) || revisionValue.inputs.length < 2 || revisionValue.inputs.length > 8) return [];
-    const proposalIds = new Set<string>();
-    const inputs: BuilderServiceProposalComparisonInput[] = revisionValue.inputs.flatMap((inputValue: any): BuilderServiceProposalComparisonInput[] => {
-      const input = parseBuilderServiceProposalComparisonInput(inputValue, proposals.records, projectId, target, requestSnapshot);
-      if (!input || proposalIds.has(input.proposalId)) return [];
-      proposalIds.add(input.proposalId);
-      return [input];
-    });
-    const derived = inputs.length === revisionValue.inputs.length ? deriveBuilderServiceProposalComparisonPayload(inputs, proposals.records, requestSnapshot) : null;
-    if (!derived || JSON.stringify(stablePurchaseRequestValue(revisionValue?.results)) !== JSON.stringify(stablePurchaseRequestValue(derived.results)) || JSON.stringify(stablePurchaseRequestValue(revisionValue?.summary)) !== JSON.stringify(stablePurchaseRequestValue(derived.summary))) return [];
-    const revisionBase = { id: revisionId, version: revisionValue.version, createdAt, inputs, results: derived.results, summary: derived.summary } satisfies Omit<BuilderServiceProposalComparisonRevision, "fingerprint">;
-    const fingerprint = builderServiceProposalComparisonRevisionFingerprint({ projectId, target, requestSnapshot }, revisionBase);
-    const newestDependencyTime = Math.max(new Date(reviewRevision.createdAt).getTime(), ...inputs.map((input) => new Date(proposals.records.find((proposal) => proposal.id === input.proposalId)!.revisions.find((revision) => revision.id === input.proposalRevisionId)!.createdAt).getTime()));
-    if (revisionValue?.fingerprint !== fingerprint || new Date(createdAt).getTime() < newestDependencyTime) return [];
-    revisionIds.add(revisionId);
-    return [{ ...revisionBase, fingerprint }];
-  }) : [];
-  const version = value?.version;
-  const createdAt = typeof value?.createdAt === "string" ? value.createdAt.trim() : "";
-  const updatedAt = typeof value?.updatedAt === "string" ? value.updatedAt.trim() : "";
-  const currentRevisionId = typeof value?.currentRevisionId === "string" ? value.currentRevisionId.trim() : "";
-  const hasRepeatedSemanticRevision = revisions.some((revision, index) => index > 0 && JSON.stringify(stablePurchaseRequestValue(builderServiceProposalComparisonSemanticValue(revision))) === JSON.stringify(stablePurchaseRequestValue(builderServiceProposalComparisonSemanticValue(revisions[index - 1]))));
-  if (
-    !hasExactObjectKeys(value, ["schemaVersion", "id", "projectId", "purpose", "target", "requestSnapshot", "currentRevisionId", "visibility", "localStatus", "externalEffect", "networkUsed", "aiUsed", "scoringUsed", "version", "createdAt", "updatedAt", "history", "revisions"])
-    || !hasExactObjectKeys(value?.target, ["requestId", "requestVersion", "reviewRevisionId", "reviewRevisionFingerprint", "requestKind"])
-    || value?.schemaVersion !== 1
-    || !id
-    || !projectId
-    || value?.purpose !== "compare-builder-recorded-service-proposals"
-    || target.requestKind !== "service"
-    || !target.requestId
-    || !Number.isInteger(target.requestVersion)
-    || target.requestVersion < 1
-    || !target.reviewRevisionId
-    || !target.reviewRevisionFingerprint
-    || value?.visibility !== "خصوصی پروژه"
-    || value?.localStatus !== "ثبت محلی"
-    || value?.externalEffect !== "none"
-    || value?.networkUsed !== false
-    || value?.aiUsed !== false
-    || value?.scoringUsed !== false
-    || !Number.isInteger(version)
-    || version < 1
-    || history.length !== value?.history?.length
-    || revisions.length !== value?.revisions?.length
-    || history.length !== version
-    || revisions.length !== version
-    || currentRevisionId !== revisions[revisions.length - 1]?.id
-    || createdAt !== history[0]?.at
-    || updatedAt !== history[history.length - 1]?.at
-    || revisions[0]?.createdAt !== createdAt
-    || revisions[revisions.length - 1]?.createdAt !== updatedAt
-    || history.some((event, index) => index > 0 && new Date(event.at).getTime() < new Date(history[index - 1].at).getTime())
-    || hasRepeatedSemanticRevision
-  ) return null;
-  return { schemaVersion: 1, id, projectId, purpose: "compare-builder-recorded-service-proposals", target, requestSnapshot, currentRevisionId, visibility: "خصوصی پروژه", localStatus: "ثبت محلی", externalEffect: "none", networkUsed: false, aiUsed: false, scoringUsed: false, version, createdAt, updatedAt, history, revisions };
-}
-
-function readStoredBuilderServiceProposalComparisons(
-  proposals: LocalRecordsReadResult<BuilderRecordedProposalRecord>,
-  requests: LocalRecordsReadResult<ProjectPurchaseRequestRecord>,
-): LocalRecordsReadResult<BuilderServiceProposalComparisonRecord> {
-  if (proposals.readError || requests.readError) return { records: [], readError: true };
-  try {
-    const raw = window.localStorage.getItem(projectBuilderServiceProposalComparisonsStorageKey);
-    if (raw === null) return { records: [], readError: false };
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length > 1000) return { records: [], readError: true };
-    const ids = new Set<string>();
-    const projectCounts = new Map<string, number>();
-    let readError = false;
-    const records = parsed.flatMap((item): BuilderServiceProposalComparisonRecord[] => {
-      const record = parseBuilderServiceProposalComparison(item, proposals, requests);
-      const nextProjectCount = record ? (projectCounts.get(record.projectId) ?? 0) + 1 : 0;
-      if (!record || ids.has(record.id) || nextProjectCount > 100) {
-        readError = true;
-        return [];
-      }
-      ids.add(record.id);
-      projectCounts.set(record.projectId, nextProjectCount);
-      return [record];
-    });
-    return { records, readError };
-  } catch {
-    return { records: [], readError: true };
-  }
-}
-
 function parseBuilderServiceProposalComparisonDecision(
   value: any,
   comparisons: LocalRecordsReadResult<BuilderServiceProposalComparisonRecord>,
@@ -12576,7 +12223,9 @@ function parseBuilderServiceProposalComparisonDecision(
     comparisonRevisionFingerprint: typeof value?.target?.comparisonRevisionFingerprint === "string" ? value.target.comparisonRevisionFingerprint.trim() : "",
   } satisfies BuilderServiceProposalComparisonDecisionRecord["target"];
   const comparison = comparisons.records.find((item) => item.id === target.comparisonId && item.projectId === projectId);
-  const comparisonRevision = comparison?.revisions.find((item) => item.id === target.comparisonRevisionId && item.version === target.comparisonVersion && item.fingerprint === target.comparisonRevisionFingerprint);
+  const comparisonRevision = comparison?.revisions.find((item) => item.id === target.comparisonRevisionId
+    && item.version === target.comparisonVersion
+    && builderComparisonRevisionFingerprintMatches(comparison as unknown as CanonicalBuilderServiceComparisonRecord, item as unknown as CanonicalBuilderServiceComparisonRecord["revisions"][number], target.comparisonRevisionFingerprint));
   if (!comparison || !comparisonRevision) return null;
   const eventIds = new Set<string>();
   const history: BuilderServiceProposalComparisonDecisionEvent[] = Array.isArray(value?.history) && value.history.length <= 100 ? value.history.flatMap((event: any, index: number): BuilderServiceProposalComparisonDecisionEvent[] => {
@@ -14732,11 +14381,11 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const initialProjectSupplierContacts: LocalRecordsReadResult<SupplierContactRecord> = { records: initialProcurementDispatchState.contacts.envelope?.records ?? [], readError: initialProcurementDispatchState.contacts.status !== "ready" };
   const [initialBuilderProposalState] = useState<BuilderProposalState>(() => ({ status: "loading", envelope: null, dependencyStatus: "read-error" }));
   const initialBuilderRecordedProposals: LocalRecordsReadResult<BuilderRecordedProposalRecord> = { records: [], readError: true };
-  const [initialBuilderProposalComparisons] = useState<LocalRecordsReadResult<BuilderProposalComparisonRecord>>(() => readStoredBuilderProposalComparisons(initialBuilderRecordedProposals));
-  const [initialBuilderProposalComparisonDecisions] = useState<LocalRecordsReadResult<BuilderProposalComparisonDecisionRecord>>(() => readStoredBuilderProposalComparisonDecisions(initialBuilderProposalComparisons));
-  const [initialBuilderServiceProposalComparisons] = useState<LocalRecordsReadResult<BuilderServiceProposalComparisonRecord>>(() => readStoredBuilderServiceProposalComparisons(initialBuilderRecordedProposals, initialProjectPurchaseRequests));
-  const [initialBuilderServiceProposalComparisonDecisions] = useState<LocalRecordsReadResult<BuilderServiceProposalComparisonDecisionRecord>>(() => readStoredBuilderServiceProposalComparisonDecisions(initialBuilderServiceProposalComparisons));
-  const [initialBuilderNegotiationDrafts] = useState<LocalRecordsReadResult<BuilderNegotiationDraftRecord>>(() => readStoredBuilderNegotiationDrafts(initialBuilderProposalComparisons, initialBuilderServiceProposalComparisons, initialBuilderRecordedProposals));
+  const initialBuilderComparisonUnavailable: LocalRecordsReadResult<BuilderProposalComparisonRecord> = { records: [], readError: true };
+  const initialBuilderServiceComparisonUnavailable: LocalRecordsReadResult<BuilderServiceProposalComparisonRecord> = { records: [], readError: true };
+  const [initialBuilderProposalComparisonDecisions] = useState<LocalRecordsReadResult<BuilderProposalComparisonDecisionRecord>>(() => readStoredBuilderProposalComparisonDecisions(initialBuilderComparisonUnavailable));
+  const [initialBuilderServiceProposalComparisonDecisions] = useState<LocalRecordsReadResult<BuilderServiceProposalComparisonDecisionRecord>>(() => readStoredBuilderServiceProposalComparisonDecisions(initialBuilderServiceComparisonUnavailable));
+  const [initialBuilderNegotiationDrafts] = useState<LocalRecordsReadResult<BuilderNegotiationDraftRecord>>(() => readStoredBuilderNegotiationDrafts(initialBuilderComparisonUnavailable, initialBuilderServiceComparisonUnavailable, initialBuilderRecordedProposals));
   const [initialBuilderManualNegotiationResponses] = useState<LocalRecordsReadResult<BuilderManualNegotiationResponseRecord>>(() => readStoredBuilderManualNegotiationResponses(initialBuilderNegotiationDrafts));
   const [initialBuilderManualNegotiationResponseReviews] = useState<LocalRecordsReadResult<BuilderManualNegotiationResponseReviewRecord>>(() => readStoredBuilderManualNegotiationResponseReviews(initialBuilderManualNegotiationResponses));
   const [initialBuilderManualNegotiationConditionImpacts] = useState<LocalRecordsReadResult<BuilderManualNegotiationConditionImpactRecord>>(() => readStoredBuilderManualNegotiationConditionImpacts(initialBuilderManualNegotiationResponses));
@@ -14756,9 +14405,14 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const projectDispatchPlanApprovals = procurementDispatchState.plans.envelope?.records ?? [];
   const [builderProposalState, setBuilderProposalState] = useState<BuilderProposalState>(initialBuilderProposalState);
   const builderRecordedProposals = builderProposalState.status === "ready" ? builderProposalState.envelope.records : [];
-  const [builderProposalComparisons, setBuilderProposalComparisons] = useState<BuilderProposalComparisonRecord[]>(initialBuilderProposalComparisons.records);
+  const currentBuilderProposalEnvelope = builderProposalState.status === "ready" ? builderProposalState.envelope : null;
+  const currentBuilderProposalDependencies = builderProposalReadContextSnapshot().dependencies;
+  const [builderProductComparisonState, setBuilderProductComparisonState] = useState<BuilderComparisonState<BuilderProductComparisonEnvelope>>({ status: "loading", envelope: null, dependencyStatus: "unknown" });
+  const [builderComparisonReconciliationVersion, setBuilderComparisonReconciliationVersion] = useState(0);
+  const builderProposalComparisons: BuilderProposalComparisonRecord[] = builderProductComparisonState.status === "ready" ? builderProductComparisonState.envelope.records : [];
   const [builderProposalComparisonDecisions, setBuilderProposalComparisonDecisions] = useState<BuilderProposalComparisonDecisionRecord[]>(initialBuilderProposalComparisonDecisions.records);
-  const [builderServiceProposalComparisons, setBuilderServiceProposalComparisons] = useState<BuilderServiceProposalComparisonRecord[]>(initialBuilderServiceProposalComparisons.records);
+  const [builderServiceComparisonState, setBuilderServiceComparisonState] = useState<BuilderComparisonState<BuilderServiceComparisonEnvelope>>({ status: "loading", envelope: null, dependencyStatus: "unknown" });
+  const builderServiceProposalComparisons: BuilderServiceProposalComparisonRecord[] = builderServiceComparisonState.status === "ready" ? builderServiceComparisonState.envelope.records : [];
   const [builderServiceProposalComparisonDecisions, setBuilderServiceProposalComparisonDecisions] = useState<BuilderServiceProposalComparisonDecisionRecord[]>(initialBuilderServiceProposalComparisonDecisions.records);
   const [builderNegotiationDrafts, setBuilderNegotiationDrafts] = useState<BuilderNegotiationDraftRecord[]>(initialBuilderNegotiationDrafts.records);
   const [builderManualNegotiationResponses, setBuilderManualNegotiationResponses] = useState<BuilderManualNegotiationResponseRecord[]>(initialBuilderManualNegotiationResponses.records);
@@ -14810,9 +14464,11 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     || projectApprovalsStorageLocked
     || projectSupplierContactsReadError
     || projectFilesReadError;
-  const [builderProposalComparisonsReadError, setBuilderProposalComparisonsReadError] = useState(initialBuilderProposalComparisons.readError);
+  const builderProposalComparisonsReadError = builderProductComparisonState.status === "read-error";
+  const builderProposalComparisonsLoading = builderProductComparisonState.status === "loading";
   const [builderProposalComparisonDecisionsReadError, setBuilderProposalComparisonDecisionsReadError] = useState(initialBuilderProposalComparisonDecisions.readError);
-  const [builderServiceProposalComparisonsReadError, setBuilderServiceProposalComparisonsReadError] = useState(initialBuilderServiceProposalComparisons.readError);
+  const builderServiceProposalComparisonsReadError = builderServiceComparisonState.status === "read-error";
+  const builderServiceProposalComparisonsLoading = builderServiceComparisonState.status === "loading";
   const [builderServiceProposalComparisonDecisionsReadError, setBuilderServiceProposalComparisonDecisionsReadError] = useState(initialBuilderServiceProposalComparisonDecisions.readError);
   const [builderNegotiationDraftsReadError, setBuilderNegotiationDraftsReadError] = useState(initialBuilderNegotiationDrafts.readError);
   const [builderManualNegotiationResponsesReadError, setBuilderManualNegotiationResponsesReadError] = useState(initialBuilderManualNegotiationResponses.readError);
@@ -14935,9 +14591,32 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       const proposalsRead: LocalRecordsReadResult<BuilderRecordedProposalRecord> = effectiveProposalState.status === "ready"
         ? { records: effectiveProposalState.envelope.records, readError: false }
         : { records: [], readError: true };
-      const comparisonsRead = readStoredBuilderProposalComparisons(proposalsRead);
+      const comparisonContext = builderComparisonReadContextSnapshot();
+      const productComparisonSnapshot = readBuilderProductComparisonState(comparisonContext);
+      const serviceComparisonSnapshot = readBuilderServiceComparisonState(comparisonContext);
+      if (productComparisonSnapshot.status !== "ready") setBuilderProductComparisonState({ status: "loading", envelope: null, dependencyStatus: "unknown" });
+      if (serviceComparisonSnapshot.status !== "ready") setBuilderServiceComparisonState({ status: "loading", envelope: null, dependencyStatus: "unknown" });
+      await Promise.all([
+        productComparisonSnapshot.status === "ready"
+          ? Promise.resolve(productComparisonSnapshot)
+          : initializeBuilderProductComparisons(builderComparisonReadContextSnapshot),
+        serviceComparisonSnapshot.status === "ready"
+          ? Promise.resolve(serviceComparisonSnapshot)
+          : initializeBuilderServiceComparisons(builderComparisonReadContextSnapshot),
+      ]);
+      if (disposed || requestedVersion !== reconcileVersion) return;
+      const latestComparisonContext = builderComparisonReadContextSnapshot();
+      const latestProductComparisons = readBuilderProductComparisonState(latestComparisonContext);
+      const latestServiceComparisons = readBuilderServiceComparisonState(latestComparisonContext);
+      const effectiveProductComparisons = latestProductComparisons;
+      const effectiveServiceComparisons = latestServiceComparisons;
+      const comparisonsRead: LocalRecordsReadResult<BuilderProposalComparisonRecord> = effectiveProductComparisons.status === "ready"
+        ? { records: effectiveProductComparisons.envelope.records, readError: false }
+        : { records: [], readError: true };
       const comparisonDecisionsRead = readStoredBuilderProposalComparisonDecisions(comparisonsRead);
-      const serviceComparisonsRead = readStoredBuilderServiceProposalComparisons(proposalsRead, requestRead);
+      const serviceComparisonsRead: LocalRecordsReadResult<BuilderServiceProposalComparisonRecord> = effectiveServiceComparisons.status === "ready"
+        ? { records: effectiveServiceComparisons.envelope.records, readError: false }
+        : { records: [], readError: true };
       const serviceComparisonDecisionsRead = readStoredBuilderServiceProposalComparisonDecisions(serviceComparisonsRead);
       const negotiationDraftsRead = readStoredBuilderNegotiationDrafts(comparisonsRead, serviceComparisonsRead, proposalsRead);
       const manualResponsesRead = readStoredBuilderManualNegotiationResponses(negotiationDraftsRead);
@@ -14945,12 +14624,10 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       const conditionImpactsRead = readStoredBuilderManualNegotiationConditionImpacts(manualResponsesRead);
       setProcurementDispatchState(procurementRead);
       setBuilderProposalState(effectiveProposalState);
-      setBuilderProposalComparisons(comparisonsRead.records);
-      setBuilderProposalComparisonsReadError(comparisonsRead.readError);
+      setBuilderProductComparisonState(effectiveProductComparisons);
       setBuilderProposalComparisonDecisions(comparisonDecisionsRead.records);
       setBuilderProposalComparisonDecisionsReadError(comparisonDecisionsRead.readError);
-      setBuilderServiceProposalComparisons(serviceComparisonsRead.records);
-      setBuilderServiceProposalComparisonsReadError(serviceComparisonsRead.readError);
+      setBuilderServiceComparisonState(effectiveServiceComparisons);
       setBuilderServiceProposalComparisonDecisions(serviceComparisonDecisionsRead.records);
       setBuilderServiceProposalComparisonDecisionsReadError(serviceComparisonDecisionsRead.readError);
       setBuilderNegotiationDrafts(negotiationDraftsRead.records);
@@ -14961,6 +14638,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       setBuilderManualNegotiationResponseReviewsReadError(responseReviewsRead.readError);
       setBuilderManualNegotiationConditionImpacts(conditionImpactsRead.records);
       setBuilderManualNegotiationConditionImpactsReadError(conditionImpactsRead.readError);
+      setBuilderComparisonReconciliationVersion((current) => current + 1);
     };
     const reconcile = async () => {
       const requestedVersion = ++reconcileVersion;
@@ -15054,6 +14732,14 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         && event.key !== legacyBuilderProposalsStorageKey
         && event.key !== builderProposalsStorageKey
         && event.key !== builderProposalsCutoverMarkerKey
+        && event.key !== legacyBuilderProductComparisonsStorageKey
+        && event.key !== builderProductComparisonsStorageKey
+        && event.key !== builderProductComparisonsCutoverMarkerKey
+        && event.key !== builderProductComparisonsRollbackIncidentKey
+        && event.key !== legacyBuilderServiceComparisonsStorageKey
+        && event.key !== builderServiceComparisonsStorageKey
+        && event.key !== builderServiceComparisonsCutoverMarkerKey
+        && event.key !== builderServiceComparisonsRollbackIncidentKey
         && event.key !== projectFilesStorageKey
         && event.key !== projectSourceIntakeIntentKey
         && event.key !== projectsStorageKey
@@ -15417,7 +15103,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       ? `روزانه · ${briefSchedule.time}`
       : `هفتگی · ${briefSchedule.weekday} · ${briefSchedule.time}`
     : "تنظیم نشده";
-  const localRecordCountPending = sourceRecoveryPending || sourceAssetValidationPending || projectMemoriesLoading || projectApprovalsLoading || projectTaskState.status === "loading" || projectSupplierContactsLoading || projectDispatchDraftsLoading || projectDispatchPlanApprovalsLoading;
+  const localRecordCountPending = sourceRecoveryPending || sourceAssetValidationPending || projectMemoriesLoading || projectApprovalsLoading || projectTaskState.status === "loading" || projectSupplierContactsLoading || projectDispatchDraftsLoading || projectDispatchPlanApprovalsLoading || builderProposalComparisonsLoading || builderServiceProposalComparisonsLoading;
   const localRecordCountReadError = projectFilesReadError || projectSourcesReadError || sourceRecoveryBlocked || projectMemoriesReadError || projectTasksReadError || projectBackboneReadError || projectTaskMonitorsReadError || builtArtifactsReadError || projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError || builderRecordedProposalsReadError || builderProposalComparisonsReadError || builderProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError || builderServiceProposalComparisonDecisionsReadError || builderNegotiationDraftsReadError || builderManualNegotiationResponsesReadError || builderManualNegotiationResponseReviewsReadError || builderManualNegotiationConditionImpactsReadError;
   const localRecordCount = localRecordCountPending || localRecordCountReadError
     ? null
@@ -17622,86 +17308,91 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     return state.status === "ready" && state.dependencyStatus === "current" ? state.envelope.records : null;
   };
 
-  const persistBuilderProposalComparisons = (nextComparisons: BuilderProposalComparisonRecord[]) => {
-    if (builderProposalComparisonsReadError) return false;
-    try {
-      if (nextComparisons.length === 0) window.localStorage.removeItem(projectBuilderProposalComparisonsStorageKey);
-      else window.localStorage.setItem(projectBuilderProposalComparisonsStorageKey, JSON.stringify(nextComparisons));
-    } catch {
-      return false;
+  const prepareBuilderProductComparisonPins = (draft: BuilderProposalComparisonDraft) => {
+    if (builderProductComparisonState.status !== "ready" || builderProductComparisonState.dependencyStatus !== "current") return null;
+    return builderProductComparisonCommandPinsForDraft(activeProject.id, draft, builderComparisonReadContextSnapshot());
+  };
+
+  const executeBuilderProductComparisonMutation = async (
+    action: "create-comparison" | "update-comparison",
+    comparisonId: string,
+    draft: BuilderProposalComparisonDraft,
+    binding: BuilderProductComparisonEditorBinding,
+  ): Promise<BuilderComparisonMutationResult> => {
+    const attempt = binding.attempt;
+    if (!attempt || binding.projectId !== activeProject.id || binding.kind !== "product" || attempt.comparisonId !== comparisonId) return { status: "schema-invalid" };
+    const normalizedPayloadHash = builderProductComparisonNormalizedDraftHash(draft);
+    if (!normalizedPayloadHash || normalizedPayloadHash !== attempt.normalizedPayloadHash) return { status: "idempotency-payload-mismatch" };
+    const command = action === "create-comparison"
+      ? { inputSchemaVersion: 1 as const, action, kind: "product" as const, projectId: activeProject.id, comparisonId, draft, pins: attempt.pins, expectedStoreVersion: binding.expectedStoreVersion, idempotencyKey: attempt.idempotencyKey }
+      : { inputSchemaVersion: 1 as const, action, kind: "product" as const, projectId: activeProject.id, comparisonId, draft, pins: attempt.pins, expectedStoreVersion: binding.expectedStoreVersion, expectedComparisonVersion: binding.expectedComparisonVersion ?? -1, idempotencyKey: attempt.idempotencyKey };
+    const preflightContext = builderComparisonReadContextSnapshot();
+    const preflightState = readBuilderProductComparisonState(preflightContext);
+    setBuilderProductComparisonState(preflightState);
+    const exactBinding = preflightState.status === "ready"
+      && preflightState.dependencyStatus === "current"
+      && preflightState.envelope.storeVersion === binding.expectedStoreVersion
+      && builderComparisonReconciliationVersion === binding.reconciliationVersion
+      && (action === "create-comparison"
+        ? binding.expectedComparisonVersion === null
+        : preflightState.envelope.records.some((record) => record.id === comparisonId && record.projectId === activeProject.id && record.version === binding.expectedComparisonVersion));
+    const result = exactBinding
+      ? await executeBuilderComparisonCommand(command, builderComparisonReadContextSnapshot)
+      : await replayBuilderComparisonCommand(command, builderComparisonReadContextSnapshot);
+    const latestContext = builderComparisonReadContextSnapshot();
+    const latest = readBuilderProductComparisonState(latestContext);
+    setBuilderProductComparisonState(latest);
+    if (latest.status !== "ready") return ["rollback-failure", "read-failure"].includes(result.status) ? result : { status: "read-failure" };
+    if (!["created", "updated", "unchanged"].includes(result.status)) return result;
+    if (!result.envelope || result.recordId !== comparisonId || result.envelope.fingerprintVersion !== "builder-product-comparison-domain-v2") return { status: "read-failure" };
+    const returnedEnvelope = result.envelope as BuilderProductComparisonEnvelope;
+    const confirmedRecord = latest.envelope.records.find((record) => record.id === comparisonId && record.projectId === activeProject.id);
+    const returnedRecord = returnedEnvelope.records.find((record) => record.id === comparisonId && record.projectId === activeProject.id);
+    if (!confirmedRecord || !returnedRecord) return { status: "read-failure" };
+    if (result.status === "unchanged") {
+      const freshPins = builderProductComparisonCommandPinsForDraft(activeProject.id, draft, latestContext);
+      if (action !== "update-comparison"
+        || latest.dependencyStatus !== "current"
+        || binding.expectedComparisonVersion === null
+        || confirmedRecord.version !== binding.expectedComparisonVersion
+        || returnedRecord.version !== binding.expectedComparisonVersion
+        || !builderComparisonEvidenceIsExact(returnedEnvelope, latest.envelope)
+        || builderProductComparisonNormalizedDraftHash(canonicalBuilderProposalComparisonDraftFromRecord(confirmedRecord)) !== attempt.normalizedPayloadHash
+        || !freshPins
+        || !builderComparisonEvidenceIsExact(freshPins, attempt.pins)) return { status: "read-failure" };
+    } else {
+      const returnedReceipt = returnedEnvelope.idempotencyReceipts.find((item) => item.kind === "product" && item.key === attempt.idempotencyKey && item.recordId === comparisonId);
+      const latestReceipt = latest.envelope.idempotencyReceipts.find((item) => item.kind === "product" && item.key === attempt.idempotencyKey && item.recordId === comparisonId);
+      const expectedRecordVersion = action === "create-comparison" ? null : binding.expectedComparisonVersion;
+      if (!returnedReceipt || !latestReceipt
+        || returnedReceipt.action !== action
+        || returnedReceipt.result !== result.status
+        || returnedReceipt.projectId !== activeProject.id
+        || returnedReceipt.expectedStoreVersion !== binding.expectedStoreVersion
+        || returnedReceipt.expectedRecordVersion !== expectedRecordVersion
+        || returnedReceipt.expectedDependencySnapshotHash !== attempt.pins.expectedDependencySnapshotHash
+        || returnedReceipt.authorizationContextHash !== attempt.pins.authorizationContextHash
+        || !builderComparisonEvidenceIsExact(returnedReceipt.commandPins, attempt.pins)
+        || !builderComparisonEvidenceIsExact(returnedReceipt, latestReceipt)) return { status: "read-failure" };
+      const returnedRevision = returnedRecord.revisions.find((revision) => revision.id === returnedReceipt.revisionId && revision.version === returnedReceipt.resultingRecordVersion);
+      const latestRevision = confirmedRecord.revisions.find((revision) => revision.id === returnedReceipt.revisionId && revision.version === returnedReceipt.resultingRecordVersion);
+      const returnedEvent = returnedRecord.history.find((event) => event.id === returnedReceipt.eventId && event.version === returnedReceipt.resultingRecordVersion);
+      const latestEvent = confirmedRecord.history.find((event) => event.id === returnedReceipt.eventId && event.version === returnedReceipt.resultingRecordVersion);
+      if (!returnedRevision || !latestRevision || !returnedEvent || !latestEvent
+        || returnedEvent.idempotencyKey !== attempt.idempotencyKey
+        || returnedEvent.commandPayloadHash !== returnedReceipt.payloadHash
+        || returnedEvent.revisionId !== returnedReceipt.revisionId
+        || !builderComparisonEvidenceIsExact(returnedRevision, latestRevision)
+        || !builderComparisonEvidenceIsExact(returnedEvent, latestEvent)) return { status: "read-failure" };
     }
-    setBuilderProposalComparisons(nextComparisons);
-    return true;
+    return { ...result, envelope: latest.envelope, recordId: comparisonId };
   };
 
-  const createBuilderProposalComparison = (draft: BuilderProposalComparisonDraft) => {
-    if (builderProposalComparisonsReadError) return null;
-    const canonicalProposals = currentBuilderProposalRecordsForMutation();
-    if (!canonicalProposals) return null;
-    const activeCanonicalProposals = canonicalProposals.filter((proposal) => proposal.projectId === activeProject.id);
-    if (builderProposalComparisons.length >= 1000 || activeBuilderProposalComparisons.length >= 100) return null;
-    const inputs = normalizeBuilderProposalComparisonInputs(draft, activeCanonicalProposals);
-    if (!inputs) return null;
-    const selectedProposals = inputs.map((input) => activeCanonicalProposals.find((proposal) => proposal.id === input.proposalId)).filter((proposal): proposal is BuilderRecordedProposalRecord => Boolean(proposal));
-    const firstProposal = selectedProposals[0];
-    if (!firstProposal || selectedProposals.length !== inputs.length || selectedProposals.some((proposal) => proposal.target.requestKind !== "product" || builderProposalComparisonRequestKey(proposal) !== draft.requestKey || builderRecordedProposalEffectiveStatus(proposal, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current")) return null;
-    const derived = deriveBuilderProposalComparisonPayload(inputs, activeCanonicalProposals);
-    if (!derived) return null;
-    const target = { requestId: firstProposal.target.requestId, requestVersion: firstProposal.target.requestVersion, reviewRevisionId: firstProposal.target.reviewRevisionId, reviewRevisionFingerprint: firstProposal.target.reviewRevisionFingerprint, requestKind: "product" as const };
-    const requestSnapshot = structuredClone(firstProposal.requestSnapshot);
-    const timestamp = new Date(Math.max(Date.now(), ...inputs.map((input) => new Date(selectedProposals.find((proposal) => proposal.id === input.proposalId)!.revisions.find((revision) => revision.id === input.proposalRevisionId)!.createdAt).getTime()))).toISOString();
-    const comparisonId = `builder-proposal-comparison-${window.crypto.randomUUID()}`;
-    const revisionBase = { id: `builder-proposal-comparison-revision-${window.crypto.randomUUID()}`, version: 1, createdAt: timestamp, inputs, results: derived.results, recommendation: derived.recommendation } satisfies Omit<BuilderProposalComparisonRevision, "fingerprint">;
-    const revision = { ...revisionBase, fingerprint: builderProposalComparisonRevisionFingerprint({ projectId: activeProject.id, target, requestSnapshot }, revisionBase) } satisfies BuilderProposalComparisonRevision;
-    const record = {
-      schemaVersion: 1,
-      id: comparisonId,
-      projectId: activeProject.id,
-      purpose: "compare-builder-recorded-product-proposals",
-      target,
-      requestSnapshot,
-      currentRevisionId: revision.id,
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
-      externalEffect: "none",
-      networkUsed: false,
-      aiUsed: false,
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      history: [{ id: `builder-proposal-comparison-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-      revisions: [revision],
-    } satisfies BuilderProposalComparisonRecord;
-    if (!parseBuilderProposalComparison(record, { records: canonicalProposals, readError: false })) return null;
-    return persistBuilderProposalComparisons([...builderProposalComparisons, record]) ? comparisonId : null;
-  };
+  const createBuilderProposalComparison = (draft: BuilderProposalComparisonDraft, binding: BuilderProductComparisonEditorBinding) =>
+    executeBuilderProductComparisonMutation("create-comparison", binding.attempt?.comparisonId ?? "", draft, binding);
 
-  const updateBuilderProposalComparison = (comparisonId: string, draft: BuilderProposalComparisonDraft) => {
-    if (builderProposalComparisonsReadError) return false;
-    const canonicalProposals = currentBuilderProposalRecordsForMutation();
-    if (!canonicalProposals) return false;
-    const activeCanonicalProposals = canonicalProposals.filter((proposal) => proposal.projectId === activeProject.id);
-    const current = builderProposalComparisons.find((comparison) => comparison.id === comparisonId && comparison.projectId === activeProject.id);
-    const currentRevision = current?.revisions.find((revision) => revision.id === current.currentRevisionId);
-    const targetKey = current ? [current.target.requestId, current.target.requestVersion, current.target.reviewRevisionId, current.target.reviewRevisionFingerprint].join(":") : "";
-    if (!current || !currentRevision || draft.requestKey !== targetKey) return false;
-    const inputs = normalizeBuilderProposalComparisonInputs(draft, activeCanonicalProposals);
-    if (!inputs) return false;
-    const selectedProposals = inputs.map((input) => activeCanonicalProposals.find((proposal) => proposal.id === input.proposalId)).filter((proposal): proposal is BuilderRecordedProposalRecord => Boolean(proposal));
-    if (selectedProposals.length !== inputs.length || selectedProposals.some((proposal) => builderProposalComparisonRequestKey(proposal) !== targetKey || builderRecordedProposalEffectiveStatus(proposal, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current")) return false;
-    const derived = deriveBuilderProposalComparisonPayload(inputs, activeCanonicalProposals);
-    if (!derived) return false;
-    const semantic = { inputs, results: derived.results, recommendation: derived.recommendation };
-    if (JSON.stringify(stablePurchaseRequestValue(semantic)) === JSON.stringify(stablePurchaseRequestValue(builderProposalComparisonSemanticValue(currentRevision)))) return "unchanged" as const;
-    const timestamp = new Date(Math.max(Date.now(), new Date(current.updatedAt).getTime(), ...inputs.map((input) => new Date(selectedProposals.find((proposal) => proposal.id === input.proposalId)!.revisions.find((revision) => revision.id === input.proposalRevisionId)!.createdAt).getTime()))).toISOString();
-    const version = current.version + 1;
-    const revisionBase = { id: `builder-proposal-comparison-revision-${window.crypto.randomUUID()}`, version, createdAt: timestamp, ...semantic } satisfies Omit<BuilderProposalComparisonRevision, "fingerprint">;
-    if (current.version >= 100) return false;
-    const revision = { ...revisionBase, fingerprint: builderProposalComparisonRevisionFingerprint({ projectId: current.projectId, target: current.target, requestSnapshot: current.requestSnapshot }, revisionBase) } satisfies BuilderProposalComparisonRevision;
-    const updated = { ...current, currentRevisionId: revision.id, version, updatedAt: timestamp, history: [...current.history, { id: `builder-proposal-comparison-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }], revisions: [...current.revisions, revision] } satisfies BuilderProposalComparisonRecord;
-    if (!parseBuilderProposalComparison(updated, { records: canonicalProposals, readError: false })) return false;
-    return persistBuilderProposalComparisons(builderProposalComparisons.map((comparison) => comparison.id === current.id ? updated : comparison)) ? "updated" as const : false;
-  };
+  const updateBuilderProposalComparison = (comparisonId: string, draft: BuilderProposalComparisonDraft, binding: BuilderProductComparisonEditorBinding) =>
+    executeBuilderProductComparisonMutation("update-comparison", comparisonId, draft, binding);
 
   const persistBuilderProposalComparisonDecisions = (nextDecisions: BuilderProposalComparisonDecisionRecord[]) => {
     if (builderProposalComparisonDecisionsReadError || builderProposalComparisonsReadError) return false;
@@ -17721,16 +17412,17 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     const comparisonRevision = comparison?.revisions.find((item) => item.id === comparisonRevisionId);
     const reason = normalizeBuilderRecordedProposalText(draft.reason, 500);
     const selectedProposalId = draft.outcome === "preferred-for-follow-up" ? draft.selectedProposalId : null;
-    if (!comparison || !comparisonRevision || comparison.currentRevisionId !== comparisonRevision.id || reason === null || reason === undefined || !["preferred-for-follow-up", "needs-clarification", "no-selection"].includes(draft.outcome) || draft.outcome === "preferred-for-follow-up" && (!selectedProposalId || !comparisonRevision.inputs.some((input) => input.proposalId === selectedProposalId)) || draft.outcome !== "preferred-for-follow-up" && draft.selectedProposalId) return false;
+    if (!comparison || !comparisonRevision || comparison.currentRevisionId !== comparisonRevision.id || !currentBuilderProposalEnvelope || !currentBuilderProposalDependencies || canonicalBuilderProductComparisonEffectiveStatus(comparison as CanonicalBuilderProductComparisonRecord, currentBuilderProposalEnvelope, currentBuilderProposalDependencies, comparisonRevision.id) !== "current" || reason === null || reason === undefined || !["preferred-for-follow-up", "needs-clarification", "no-selection"].includes(draft.outcome) || draft.outcome === "preferred-for-follow-up" && (!selectedProposalId || !comparisonRevision.inputs.some((input) => input.proposalId === selectedProposalId)) || draft.outcome !== "preferred-for-follow-up" && draft.selectedProposalId) return false;
     const target = { comparisonId: comparison.id, comparisonVersion: comparisonRevision.version, comparisonRevisionId: comparisonRevision.id, comparisonRevisionFingerprint: comparisonRevision.fingerprint };
     const current = builderProposalComparisonDecisions.find((decision) => decision.projectId === activeProject.id && decision.target.comparisonId === comparison.id && decision.target.comparisonRevisionId === comparisonRevision.id);
+    const recordTarget = current?.target ?? target;
     const currentRevision = current?.revisions.find((revision) => revision.id === current.currentRevisionId);
     if (current ? current.version >= 100 : builderProposalComparisonDecisions.length >= 1000 || activeBuilderProposalComparisonDecisions.length >= 100) return false;
     if (currentRevision && currentRevision.outcome === draft.outcome && currentRevision.selectedProposalId === selectedProposalId && currentRevision.reason === reason) return "unchanged" as const;
     const timestamp = new Date(Math.max(Date.now(), new Date(comparisonRevision.createdAt).getTime(), current ? new Date(current.updatedAt).getTime() : 0)).toISOString();
     const version = current ? current.version + 1 : 1;
     const revisionBase = { id: `builder-proposal-comparison-decision-revision-${window.crypto.randomUUID()}`, version, createdAt: timestamp, outcome: draft.outcome, selectedProposalId, reason } satisfies Omit<BuilderProposalComparisonDecisionRevision, "fingerprint">;
-    const revision = { ...revisionBase, fingerprint: builderProposalComparisonDecisionRevisionFingerprint(target, revisionBase) } satisfies BuilderProposalComparisonDecisionRevision;
+    const revision = { ...revisionBase, fingerprint: builderProposalComparisonDecisionRevisionFingerprint(recordTarget, revisionBase) } satisfies BuilderProposalComparisonDecisionRevision;
     const record = current ? {
       ...current,
       currentRevisionId: revision.id,
@@ -17743,7 +17435,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       id: `builder-proposal-comparison-decision-${window.crypto.randomUUID()}`,
       projectId: activeProject.id,
       purpose: "record-local-proposal-comparison-decision",
-      target,
+      target: recordTarget,
       currentRevisionId: revision.id,
       visibility: "خصوصی پروژه",
       localStatus: "ثبت محلی",
@@ -17762,94 +17454,91 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     return persistBuilderProposalComparisonDecisions(next) ? current ? "updated" as const : "created" as const : false;
   };
 
-  const persistBuilderServiceProposalComparisons = (nextComparisons: BuilderServiceProposalComparisonRecord[]) => {
-    if (builderServiceProposalComparisonsReadError) return false;
-    try {
-      if (nextComparisons.length === 0) window.localStorage.removeItem(projectBuilderServiceProposalComparisonsStorageKey);
-      else window.localStorage.setItem(projectBuilderServiceProposalComparisonsStorageKey, JSON.stringify(nextComparisons));
-    } catch {
-      return false;
+  const prepareBuilderServiceComparisonPins = (draft: BuilderServiceProposalComparisonDraft) => {
+    if (builderServiceComparisonState.status !== "ready" || builderServiceComparisonState.dependencyStatus !== "current") return null;
+    return builderServiceComparisonCommandPinsForDraft(activeProject.id, draft, builderComparisonReadContextSnapshot());
+  };
+
+  const executeBuilderServiceComparisonMutation = async (
+    action: "create-comparison" | "update-comparison",
+    comparisonId: string,
+    draft: BuilderServiceProposalComparisonDraft,
+    binding: BuilderServiceComparisonEditorBinding,
+  ): Promise<BuilderComparisonMutationResult> => {
+    const attempt = binding.attempt;
+    if (!attempt || binding.projectId !== activeProject.id || binding.kind !== "service" || attempt.comparisonId !== comparisonId) return { status: "schema-invalid" };
+    const normalizedPayloadHash = builderServiceComparisonNormalizedDraftHash(draft);
+    if (!normalizedPayloadHash || normalizedPayloadHash !== attempt.normalizedPayloadHash) return { status: "idempotency-payload-mismatch" };
+    const command = action === "create-comparison"
+      ? { inputSchemaVersion: 1 as const, action, kind: "service" as const, projectId: activeProject.id, comparisonId, draft, pins: attempt.pins, expectedStoreVersion: binding.expectedStoreVersion, idempotencyKey: attempt.idempotencyKey }
+      : { inputSchemaVersion: 1 as const, action, kind: "service" as const, projectId: activeProject.id, comparisonId, draft, pins: attempt.pins, expectedStoreVersion: binding.expectedStoreVersion, expectedComparisonVersion: binding.expectedComparisonVersion ?? -1, idempotencyKey: attempt.idempotencyKey };
+    const preflightContext = builderComparisonReadContextSnapshot();
+    const preflightState = readBuilderServiceComparisonState(preflightContext);
+    setBuilderServiceComparisonState(preflightState);
+    const exactBinding = preflightState.status === "ready"
+      && preflightState.dependencyStatus === "current"
+      && preflightState.envelope.storeVersion === binding.expectedStoreVersion
+      && builderComparisonReconciliationVersion === binding.reconciliationVersion
+      && (action === "create-comparison"
+        ? binding.expectedComparisonVersion === null
+        : preflightState.envelope.records.some((record) => record.id === comparisonId && record.projectId === activeProject.id && record.version === binding.expectedComparisonVersion));
+    const result = exactBinding
+      ? await executeBuilderComparisonCommand(command, builderComparisonReadContextSnapshot)
+      : await replayBuilderComparisonCommand(command, builderComparisonReadContextSnapshot);
+    const latestContext = builderComparisonReadContextSnapshot();
+    const latest = readBuilderServiceComparisonState(latestContext);
+    setBuilderServiceComparisonState(latest);
+    if (latest.status !== "ready") return ["rollback-failure", "read-failure"].includes(result.status) ? result : { status: "read-failure" };
+    if (!["created", "updated", "unchanged"].includes(result.status)) return result;
+    if (!result.envelope || result.recordId !== comparisonId || result.envelope.fingerprintVersion !== "builder-service-comparison-domain-v2") return { status: "read-failure" };
+    const returnedEnvelope = result.envelope as BuilderServiceComparisonEnvelope;
+    const confirmedRecord = latest.envelope.records.find((record) => record.id === comparisonId && record.projectId === activeProject.id);
+    const returnedRecord = returnedEnvelope.records.find((record) => record.id === comparisonId && record.projectId === activeProject.id);
+    if (!confirmedRecord || !returnedRecord) return { status: "read-failure" };
+    if (result.status === "unchanged") {
+      const freshPins = builderServiceComparisonCommandPinsForDraft(activeProject.id, draft, latestContext);
+      if (action !== "update-comparison"
+        || latest.dependencyStatus !== "current"
+        || binding.expectedComparisonVersion === null
+        || confirmedRecord.version !== binding.expectedComparisonVersion
+        || returnedRecord.version !== binding.expectedComparisonVersion
+        || !builderComparisonEvidenceIsExact(returnedEnvelope, latest.envelope)
+        || builderServiceComparisonNormalizedDraftHash(canonicalBuilderServiceProposalComparisonDraftFromRecord(confirmedRecord)) !== attempt.normalizedPayloadHash
+        || !freshPins
+        || !builderComparisonEvidenceIsExact(freshPins, attempt.pins)) return { status: "read-failure" };
+    } else {
+      const returnedReceipt = returnedEnvelope.idempotencyReceipts.find((item) => item.kind === "service" && item.key === attempt.idempotencyKey && item.recordId === comparisonId);
+      const latestReceipt = latest.envelope.idempotencyReceipts.find((item) => item.kind === "service" && item.key === attempt.idempotencyKey && item.recordId === comparisonId);
+      const expectedRecordVersion = action === "create-comparison" ? null : binding.expectedComparisonVersion;
+      if (!returnedReceipt || !latestReceipt
+        || returnedReceipt.action !== action
+        || returnedReceipt.result !== result.status
+        || returnedReceipt.projectId !== activeProject.id
+        || returnedReceipt.expectedStoreVersion !== binding.expectedStoreVersion
+        || returnedReceipt.expectedRecordVersion !== expectedRecordVersion
+        || returnedReceipt.expectedDependencySnapshotHash !== attempt.pins.expectedDependencySnapshotHash
+        || returnedReceipt.authorizationContextHash !== attempt.pins.authorizationContextHash
+        || !builderComparisonEvidenceIsExact(returnedReceipt.commandPins, attempt.pins)
+        || !builderComparisonEvidenceIsExact(returnedReceipt, latestReceipt)) return { status: "read-failure" };
+      const returnedRevision = returnedRecord.revisions.find((revision) => revision.id === returnedReceipt.revisionId && revision.version === returnedReceipt.resultingRecordVersion);
+      const latestRevision = confirmedRecord.revisions.find((revision) => revision.id === returnedReceipt.revisionId && revision.version === returnedReceipt.resultingRecordVersion);
+      const returnedEvent = returnedRecord.history.find((event) => event.id === returnedReceipt.eventId && event.version === returnedReceipt.resultingRecordVersion);
+      const latestEvent = confirmedRecord.history.find((event) => event.id === returnedReceipt.eventId && event.version === returnedReceipt.resultingRecordVersion);
+      if (!returnedRevision || !latestRevision || !returnedEvent || !latestEvent
+        || returnedEvent.idempotencyKey !== attempt.idempotencyKey
+        || returnedEvent.commandPayloadHash !== returnedReceipt.payloadHash
+        || returnedEvent.revisionId !== returnedReceipt.revisionId
+        || !builderComparisonEvidenceIsExact(returnedRevision, latestRevision)
+        || !builderComparisonEvidenceIsExact(returnedEvent, latestEvent)) return { status: "read-failure" };
     }
-    setBuilderServiceProposalComparisons(nextComparisons);
-    return true;
+    return { ...result, envelope: latest.envelope, recordId: comparisonId };
   };
 
-  const createBuilderServiceProposalComparison = (draft: BuilderServiceProposalComparisonDraft) => {
-    if (builderServiceProposalComparisonsReadError) return null;
-    const canonicalProposals = currentBuilderProposalRecordsForMutation();
-    const currentRequests = readStoredProjectPurchaseRequests();
-    if (!canonicalProposals || currentRequests.readError) return null;
-    const activeCanonicalProposals = canonicalProposals.filter((proposal) => proposal.projectId === activeProject.id);
-    const activeCurrentRequests = currentRequests.records.filter((request) => request.projectId === activeProject.id);
-    if (builderServiceProposalComparisons.length >= 1000 || activeBuilderServiceProposalComparisons.length >= 100) return null;
-    const selectedDraft = draft.proposals.find((item) => item.selected);
-    const firstProposal = selectedDraft ? activeCanonicalProposals.find((proposal) => proposal.id === selectedDraft.proposalId && proposal.target.requestKind === "service") : null;
-    const request = firstProposal ? activeCurrentRequests.find((item) => item.id === firstProposal.target.requestId) : null;
-    const reviewRevision = request?.reviewRevisions.find((item) => item.id === firstProposal?.target.reviewRevisionId && item.requestVersion === firstProposal?.target.requestVersion && item.fingerprint === firstProposal?.target.reviewRevisionFingerprint);
-    const requestSnapshot = reviewRevision ? builderServiceProposalComparisonRequestSnapshotFromReview(reviewRevision.snapshot) : null;
-    if (!firstProposal || !request || !reviewRevision || !requestSnapshot || builderProposalComparisonRequestKey(firstProposal) !== draft.requestKey) return null;
-    const inputs = normalizeBuilderServiceProposalComparisonInputs(draft, activeCanonicalProposals, requestSnapshot);
-    if (!inputs) return null;
-    const selectedProposals = inputs.map((input) => activeCanonicalProposals.find((proposal) => proposal.id === input.proposalId)).filter((proposal): proposal is BuilderRecordedProposalRecord => Boolean(proposal));
-    if (selectedProposals.length !== inputs.length || selectedProposals.some((proposal) => proposal.target.requestKind !== "service" || builderProposalComparisonRequestKey(proposal) !== draft.requestKey || builderRecordedProposalEffectiveStatus(proposal, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current")) return null;
-    const derived = deriveBuilderServiceProposalComparisonPayload(inputs, activeCanonicalProposals, requestSnapshot);
-    if (!derived) return null;
-    const target = { requestId: firstProposal.target.requestId, requestVersion: firstProposal.target.requestVersion, reviewRevisionId: firstProposal.target.reviewRevisionId, reviewRevisionFingerprint: firstProposal.target.reviewRevisionFingerprint, requestKind: "service" as const };
-    const timestamp = new Date(Math.max(Date.now(), new Date(reviewRevision.createdAt).getTime(), ...inputs.map((input) => new Date(selectedProposals.find((proposal) => proposal.id === input.proposalId)!.revisions.find((revision) => revision.id === input.proposalRevisionId)!.createdAt).getTime()))).toISOString();
-    const comparisonId = `builder-service-proposal-comparison-${window.crypto.randomUUID()}`;
-    const revisionBase = { id: `builder-service-proposal-comparison-revision-${window.crypto.randomUUID()}`, version: 1, createdAt: timestamp, inputs, results: derived.results, summary: derived.summary } satisfies Omit<BuilderServiceProposalComparisonRevision, "fingerprint">;
-    const revision = { ...revisionBase, fingerprint: builderServiceProposalComparisonRevisionFingerprint({ projectId: activeProject.id, target, requestSnapshot }, revisionBase) } satisfies BuilderServiceProposalComparisonRevision;
-    const record = {
-      schemaVersion: 1,
-      id: comparisonId,
-      projectId: activeProject.id,
-      purpose: "compare-builder-recorded-service-proposals",
-      target,
-      requestSnapshot,
-      currentRevisionId: revision.id,
-      visibility: "خصوصی پروژه",
-      localStatus: "ثبت محلی",
-      externalEffect: "none",
-      networkUsed: false,
-      aiUsed: false,
-      scoringUsed: false,
-      version: 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      history: [{ id: `builder-service-proposal-comparison-event-${window.crypto.randomUUID()}`, type: "created", actor: "شما", at: timestamp, version: 1 }],
-      revisions: [revision],
-    } satisfies BuilderServiceProposalComparisonRecord;
-    if (!parseBuilderServiceProposalComparison(record, { records: canonicalProposals, readError: false }, currentRequests)) return null;
-    return persistBuilderServiceProposalComparisons([...builderServiceProposalComparisons, record]) ? comparisonId : null;
-  };
+  const createBuilderServiceProposalComparison = (draft: BuilderServiceProposalComparisonDraft, binding: BuilderServiceComparisonEditorBinding) =>
+    executeBuilderServiceComparisonMutation("create-comparison", binding.attempt?.comparisonId ?? "", draft, binding);
 
-  const updateBuilderServiceProposalComparison = (comparisonId: string, draft: BuilderServiceProposalComparisonDraft) => {
-    if (builderServiceProposalComparisonsReadError) return false;
-    const canonicalProposals = currentBuilderProposalRecordsForMutation();
-    const currentRequests = readStoredProjectPurchaseRequests();
-    if (!canonicalProposals || currentRequests.readError) return false;
-    const activeCanonicalProposals = canonicalProposals.filter((proposal) => proposal.projectId === activeProject.id);
-    const current = builderServiceProposalComparisons.find((comparison) => comparison.id === comparisonId && comparison.projectId === activeProject.id);
-    const currentRevision = current?.revisions.find((revision) => revision.id === current.currentRevisionId);
-    const targetKey = current ? [current.target.requestId, current.target.requestVersion, current.target.reviewRevisionId, current.target.reviewRevisionFingerprint].join(":") : "";
-    if (!current || !currentRevision || draft.requestKey !== targetKey) return false;
-    const inputs = normalizeBuilderServiceProposalComparisonInputs(draft, activeCanonicalProposals, current.requestSnapshot);
-    if (!inputs) return false;
-    const selectedProposals = inputs.map((input) => activeCanonicalProposals.find((proposal) => proposal.id === input.proposalId)).filter((proposal): proposal is BuilderRecordedProposalRecord => Boolean(proposal));
-    if (selectedProposals.length !== inputs.length || selectedProposals.some((proposal) => proposal.target.requestKind !== "service" || builderProposalComparisonRequestKey(proposal) !== targetKey || builderRecordedProposalEffectiveStatus(proposal, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current")) return false;
-    const derived = deriveBuilderServiceProposalComparisonPayload(inputs, activeCanonicalProposals, current.requestSnapshot);
-    if (!derived) return false;
-    const semantic = { inputs, results: derived.results, summary: derived.summary };
-    if (JSON.stringify(stablePurchaseRequestValue(semantic)) === JSON.stringify(stablePurchaseRequestValue(builderServiceProposalComparisonSemanticValue(currentRevision)))) return "unchanged" as const;
-    if (current.version >= 100) return false;
-    const timestamp = new Date(Math.max(Date.now(), new Date(current.updatedAt).getTime(), ...inputs.map((input) => new Date(selectedProposals.find((proposal) => proposal.id === input.proposalId)!.revisions.find((revision) => revision.id === input.proposalRevisionId)!.createdAt).getTime()))).toISOString();
-    const version = current.version + 1;
-    const revisionBase = { id: `builder-service-proposal-comparison-revision-${window.crypto.randomUUID()}`, version, createdAt: timestamp, ...semantic } satisfies Omit<BuilderServiceProposalComparisonRevision, "fingerprint">;
-    const revision = { ...revisionBase, fingerprint: builderServiceProposalComparisonRevisionFingerprint({ projectId: current.projectId, target: current.target, requestSnapshot: current.requestSnapshot }, revisionBase) } satisfies BuilderServiceProposalComparisonRevision;
-    const updated = { ...current, currentRevisionId: revision.id, version, updatedAt: timestamp, history: [...current.history, { id: `builder-service-proposal-comparison-event-${window.crypto.randomUUID()}`, type: "updated", actor: "شما", at: timestamp, version }], revisions: [...current.revisions, revision] } satisfies BuilderServiceProposalComparisonRecord;
-    if (!parseBuilderServiceProposalComparison(updated, { records: canonicalProposals, readError: false }, currentRequests)) return false;
-    return persistBuilderServiceProposalComparisons(builderServiceProposalComparisons.map((comparison) => comparison.id === current.id ? updated : comparison)) ? "updated" as const : false;
-  };
+  const updateBuilderServiceProposalComparison = (comparisonId: string, draft: BuilderServiceProposalComparisonDraft, binding: BuilderServiceComparisonEditorBinding) =>
+    executeBuilderServiceComparisonMutation("update-comparison", comparisonId, draft, binding);
 
   const persistBuilderServiceProposalComparisonDecisions = (nextDecisions: BuilderServiceProposalComparisonDecisionRecord[]) => {
     if (builderServiceProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError) return false;
@@ -17869,16 +17558,17 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     const comparisonRevision = comparison?.revisions.find((item) => item.id === comparisonRevisionId);
     const reason = normalizeBuilderRecordedProposalText(draft.reason, 500);
     const selectedProposalId = draft.outcome === "preferred-for-follow-up" ? draft.selectedProposalId : null;
-    if (!comparison || !comparisonRevision || comparison.currentRevisionId !== comparisonRevision.id || builderServiceProposalComparisonEffectiveStatus(comparison, activeBuilderRecordedProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts, comparisonRevision.id) !== "current" || reason === null || reason === undefined || !["preferred-for-follow-up", "needs-clarification", "no-selection"].includes(draft.outcome) || draft.outcome === "preferred-for-follow-up" && (!selectedProposalId || !comparisonRevision.inputs.some((input) => input.proposalId === selectedProposalId)) || draft.outcome !== "preferred-for-follow-up" && draft.selectedProposalId) return false;
+    if (!comparison || !comparisonRevision || comparison.currentRevisionId !== comparisonRevision.id || !currentBuilderProposalEnvelope || !currentBuilderProposalDependencies || canonicalBuilderServiceProposalComparisonEffectiveStatus(comparison as CanonicalBuilderServiceComparisonRecord, currentBuilderProposalEnvelope, currentBuilderProposalDependencies, comparisonRevision.id) !== "current" || reason === null || reason === undefined || !["preferred-for-follow-up", "needs-clarification", "no-selection"].includes(draft.outcome) || draft.outcome === "preferred-for-follow-up" && (!selectedProposalId || !comparisonRevision.inputs.some((input) => input.proposalId === selectedProposalId)) || draft.outcome !== "preferred-for-follow-up" && draft.selectedProposalId) return false;
     const target = { comparisonId: comparison.id, comparisonVersion: comparisonRevision.version, comparisonRevisionId: comparisonRevision.id, comparisonRevisionFingerprint: comparisonRevision.fingerprint };
     const current = builderServiceProposalComparisonDecisions.find((decision) => decision.projectId === activeProject.id && decision.target.comparisonId === comparison.id && decision.target.comparisonRevisionId === comparisonRevision.id);
+    const recordTarget = current?.target ?? target;
     const currentRevision = current?.revisions.find((revision) => revision.id === current.currentRevisionId);
     if (current ? current.version >= 100 : builderServiceProposalComparisonDecisions.length >= 1000 || activeBuilderServiceProposalComparisonDecisions.length >= 100) return false;
     if (currentRevision && currentRevision.outcome === draft.outcome && currentRevision.selectedProposalId === selectedProposalId && currentRevision.reason === reason) return "unchanged" as const;
     const timestamp = new Date(Math.max(Date.now(), new Date(comparisonRevision.createdAt).getTime(), current ? new Date(current.updatedAt).getTime() : 0)).toISOString();
     const version = current ? current.version + 1 : 1;
     const revisionBase = { id: `builder-service-proposal-comparison-decision-revision-${window.crypto.randomUUID()}`, version, createdAt: timestamp, outcome: draft.outcome, selectedProposalId, reason } satisfies Omit<BuilderServiceProposalComparisonDecisionRevision, "fingerprint">;
-    const revision = { ...revisionBase, fingerprint: builderServiceProposalComparisonDecisionRevisionFingerprint(target, revisionBase) } satisfies BuilderServiceProposalComparisonDecisionRevision;
+    const revision = { ...revisionBase, fingerprint: builderServiceProposalComparisonDecisionRevisionFingerprint(recordTarget, revisionBase) } satisfies BuilderServiceProposalComparisonDecisionRevision;
     const record = current ? {
       ...current,
       currentRevisionId: revision.id,
@@ -17891,7 +17581,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       id: `builder-service-proposal-comparison-decision-${window.crypto.randomUUID()}`,
       projectId: activeProject.id,
       purpose: "record-local-service-proposal-comparison-decision",
-      target,
+      target: recordTarget,
       currentRevisionId: revision.id,
       visibility: "خصوصی پروژه",
       localStatus: "ثبت محلی",
@@ -17938,7 +17628,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     const purpose = normalizeBuilderRecordedProposalText(draft.purpose, 300);
     const message = normalizeBuilderRecordedProposalText(draft.message, 800);
     if (!purpose || !message) return null;
-    const options = builderNegotiationDraftTargetOptions(activeProject.id, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeCanonicalProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts);
+    const options = builderNegotiationDraftTargetOptions(activeProject.id, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeCanonicalProposals, currentBuilderProposalEnvelope, currentBuilderProposalDependencies);
     const option = options.find((item) => item.key === draft.targetKey);
     if (!option || builderNegotiationDrafts.some((item) => item.projectId === activeProject.id && builderNegotiationDraftTargetKey(item.target) === option.key)) return null;
     const timestamp = new Date(Math.max(Date.now(), new Date(option.sourceCreatedAt).getTime())).toISOString();
@@ -17994,7 +17684,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       || !purpose
       || !message
       || current.version >= 100
-      || builderNegotiationDraftEffectiveStatus(current, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeCanonicalProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current"
+      || builderNegotiationDraftEffectiveStatus(current, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeCanonicalProposals, currentBuilderProposalEnvelope, currentBuilderProposalDependencies) !== "current"
     ) return false;
     if (currentRevision.purpose === purpose && currentRevision.message === message) return "unchanged" as const;
     const evidence = builderNegotiationDraftTargetEvidence(activeProject.id, current.target, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeCanonicalProposals);
@@ -18053,7 +17743,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       || !questionRevision
       || !responseText
       || questionDraft.currentRevisionId !== questionRevision.id
-      || builderNegotiationDraftEffectiveStatus(questionDraft, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current"
+      || builderNegotiationDraftEffectiveStatus(questionDraft, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, currentBuilderProposalEnvelope, currentBuilderProposalDependencies) !== "current"
     ) return null;
     const target = {
       negotiationDraftId: questionDraft.id,
@@ -18120,7 +17810,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       || !currentRevision
       || !responseText
       || current.version >= 100
-      || builderManualNegotiationResponseEffectiveStatus(current, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current"
+      || builderManualNegotiationResponseEffectiveStatus(current, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, currentBuilderProposalEnvelope, currentBuilderProposalDependencies) !== "current"
     ) return false;
     if (currentRevision.responseText === responseText) return "unchanged" as const;
     const evidence = builderManualNegotiationResponseQuestionEvidence(activeProject.id, current.target, current.questionSnapshot, activeBuilderNegotiationDrafts);
@@ -18178,7 +17868,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       || response.currentRevisionId !== responseRevision.id
       || !allowedOutcomes.includes(outcome)
       || !reason
-      || builderManualNegotiationResponseEffectiveStatus(response, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current"
+      || builderManualNegotiationResponseEffectiveStatus(response, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, currentBuilderProposalEnvelope, currentBuilderProposalDependencies) !== "current"
     ) return false;
     const target = {
       manualNegotiationResponseId: response.id,
@@ -18232,7 +17922,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     if (
       !currentRevision
       || existing.version >= 100
-      || builderManualNegotiationResponseReviewEffectiveStatus(existing, activeBuilderManualNegotiationResponses, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current"
+      || builderManualNegotiationResponseReviewEffectiveStatus(existing, activeBuilderManualNegotiationResponses, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, currentBuilderProposalEnvelope, currentBuilderProposalDependencies) !== "current"
     ) return false;
     if (currentRevision.outcome === outcome && currentRevision.reason === reason) return "unchanged" as const;
     const timestamp = new Date(Math.max(Date.now(), new Date(existing.updatedAt).getTime(), new Date(responseRevision.createdAt).getTime())).toISOString();
@@ -18294,7 +17984,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       || !allowedDomains.includes(impactDomain)
       || !allowedDirections.includes(impactDirection)
       || !reason
-      || builderManualNegotiationResponseEffectiveStatus(response, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current"
+      || builderManualNegotiationResponseEffectiveStatus(response, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, currentBuilderProposalEnvelope, currentBuilderProposalDependencies) !== "current"
     ) return false;
     const target = {
       manualNegotiationResponseId: response.id,
@@ -18353,7 +18043,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     if (
       !currentRevision
       || existing.version >= 100
-      || builderManualNegotiationConditionImpactEffectiveStatus(existing, activeBuilderManualNegotiationResponses, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, activeProjectPurchaseRequests, activeProjectApprovals, activeProjectSupplierContacts) !== "current"
+      || builderManualNegotiationConditionImpactEffectiveStatus(existing, activeBuilderManualNegotiationResponses, activeBuilderNegotiationDrafts, activeBuilderProposalComparisons, activeBuilderServiceProposalComparisons, activeBuilderRecordedProposals, currentBuilderProposalEnvelope, currentBuilderProposalDependencies) !== "current"
     ) return false;
     if (
       currentRevision.changeSummary === changeSummary
@@ -18626,10 +18316,15 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         filesReadError={projectFilesReadError || sourceRecoveryPending || sourceRecoveryBlocked}
         proposalStorageStatus={builderProposalState.status}
         proposalStoreVersion={builderProposalState.status === "ready" ? builderProposalState.envelope.storeVersion : null}
+        proposalEnvelope={builderProposalState.status === "ready" ? builderProposalState.envelope : null}
+        proposalDependencies={builderProposalReadContextSnapshot().dependencies}
         storageLocked={builderRecordedProposalsStorageLocked}
-        comparisonsStorageLocked={builderProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError}
+        productComparisonState={builderProductComparisonState}
+        serviceComparisonState={builderServiceComparisonState}
+        comparisonReconciliationVersion={builderComparisonReconciliationVersion}
+        comparisonsStorageLocked={builderProductComparisonState.status !== "ready" || builderProductComparisonState.dependencyStatus !== "current"}
         decisionsStorageLocked={builderProposalComparisonDecisionsReadError || builderProposalComparisonsReadError}
-        serviceComparisonsStorageLocked={builderServiceProposalComparisonsReadError || builderRecordedProposalsReadError || projectPurchaseRequestsReadError || projectApprovalsStorageLocked || projectSupplierContactsReadError}
+        serviceComparisonsStorageLocked={builderServiceComparisonState.status !== "ready" || builderServiceComparisonState.dependencyStatus !== "current"}
         serviceDecisionsStorageLocked={builderServiceProposalComparisonDecisionsReadError || builderServiceProposalComparisonsReadError}
         negotiationDraftsStorageLocked={negotiationDraftsStorageLocked}
         manualNegotiationResponsesStorageLocked={manualNegotiationResponsesStorageLocked}
@@ -18638,6 +18333,8 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         backLabel={proposalsReturnView === "chat" ? "بازگشت به گفت‌وگو" : "بازگشت به فضای پروژه"}
         onBack={() => { keyboard.hide(); pendingProposalsReturnFocus.current = proposalsReturnView; setView(proposalsReturnView); }}
         onPrepareCommandPins={prepareBuilderRecordedProposalCommandPins}
+        onPrepareProductComparisonPins={prepareBuilderProductComparisonPins}
+        onPrepareServiceComparisonPins={prepareBuilderServiceComparisonPins}
         onCreate={createBuilderRecordedProposal}
         onUpdate={updateBuilderRecordedProposal}
         onCreateComparison={createBuilderProposalComparison}
@@ -19347,15 +19044,48 @@ function ProposalComparisonDecisionPanel({ comparison, revision, decision, disab
   );
 }
 
-function ProjectProposalComparisonsView({ project, proposals, comparisons, decisions, negotiationDrafts, requests, approvals, contacts, storageLocked, decisionsStorageLocked, negotiationDraftsStorageLocked, initialNegotiationTarget, onBack, onCreate, onUpdate, onUpsertDecision, onStartNegotiation }: { project: BuilderProject; proposals: BuilderRecordedProposalRecord[]; comparisons: BuilderProposalComparisonRecord[]; decisions: BuilderProposalComparisonDecisionRecord[]; negotiationDrafts: BuilderNegotiationDraftRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; decisionsStorageLocked: boolean; negotiationDraftsStorageLocked: boolean; initialNegotiationTarget: BuilderNegotiationDraftTarget | null; onBack: () => void; onCreate: (draft: BuilderProposalComparisonDraft) => string | null; onUpdate: (comparisonId: string, draft: BuilderProposalComparisonDraft) => false | "unchanged" | "updated"; onUpsertDecision: (comparisonId: string, revisionId: string, draft: BuilderProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated"; onStartNegotiation: (target: BuilderNegotiationDraftTarget) => void }) {
+type ProjectProposalComparisonsViewProps = {
+  project: BuilderProject;
+  proposals: BuilderRecordedProposalRecord[];
+  proposalEnvelope: import("./builderProposals").BuilderProposalEnvelope | null;
+  proposalDependencies: BuilderProposalDependencies | null;
+  comparisonState: BuilderComparisonState<BuilderProductComparisonEnvelope>;
+  reconciliationVersion: number;
+  comparisons: BuilderProposalComparisonRecord[];
+  decisions: BuilderProposalComparisonDecisionRecord[];
+  negotiationDrafts: BuilderNegotiationDraftRecord[];
+  requests: ProjectPurchaseRequestRecord[];
+  approvals: ProjectApprovalRecord[];
+  contacts: SupplierContactRecord[];
+  storageLocked: boolean;
+  decisionsStorageLocked: boolean;
+  negotiationDraftsStorageLocked: boolean;
+  initialNegotiationTarget: BuilderNegotiationDraftTarget | null;
+  onBack: () => void;
+  onPreparePins: (draft: BuilderProposalComparisonDraft) => BuilderProductComparisonCommandPins | null;
+  onCreate: (draft: BuilderProposalComparisonDraft, binding: BuilderProductComparisonEditorBinding) => Promise<BuilderComparisonMutationResult>;
+  onUpdate: (comparisonId: string, draft: BuilderProposalComparisonDraft, binding: BuilderProductComparisonEditorBinding) => Promise<BuilderComparisonMutationResult>;
+  onUpsertDecision: (comparisonId: string, revisionId: string, draft: BuilderProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated";
+  onStartNegotiation: (target: BuilderNegotiationDraftTarget) => void;
+};
+
+function ProjectProposalComparisonsView({ project, proposals, proposalEnvelope, proposalDependencies, comparisonState, reconciliationVersion, comparisons, decisions, negotiationDrafts, requests, approvals, contacts, storageLocked, decisionsStorageLocked, negotiationDraftsStorageLocked, initialNegotiationTarget, onBack, onPreparePins, onCreate, onUpdate, onUpsertDecision, onStartNegotiation }: ProjectProposalComparisonsViewProps) {
   const keyboard = useKeyboard();
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const editorHeadingRef = useRef<HTMLSpanElement>(null);
   const detailHeadingRef = useRef<HTMLElement>(null);
+  const pendingSavedComparisonFocusRef = useRef(false);
+  const mutationPendingRef = useRef(false);
+  const editorSessionRef = useRef(0);
+  const activeAttemptKeyRef = useRef<string | null>(null);
+  const activeProjectIdRef = useRef(project.id);
+  activeProjectIdRef.current = project.id;
   const [selectedId, setSelectedId] = useState<string | null>(initialNegotiationTarget?.comparisonKind === "product" ? initialNegotiationTarget.comparisonId : null);
   const [previewRevisionId, setPreviewRevisionId] = useState<string | null>(initialNegotiationTarget?.comparisonKind === "product" ? initialNegotiationTarget.comparisonRevisionId : null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [mutationPending, setMutationPending] = useState(false);
+  const [editorBinding, setEditorBinding] = useState<BuilderProductComparisonEditorBinding | null>(null);
   const [draft, setDraft] = useState<BuilderProposalComparisonDraft>({ requestKey: "", proposals: [] });
   const [formError, setFormError] = useState("");
   const [liveMessage, setLiveMessage] = useState("");
@@ -19374,49 +19104,97 @@ function ProjectProposalComparisonsView({ project, proposals, comparisons, decis
   const previewRevision = selectedComparison?.revisions.find((revision) => revision.id === previewRevisionId) ?? currentRevision;
   const liveInputs = normalizeBuilderProposalComparisonInputs(draft, currentProductProposals);
   const livePreview = liveInputs ? deriveBuilderProposalComparisonPayload(liveInputs, currentProductProposals) : null;
+  const normalizedDraftHash = builderProductComparisonNormalizedDraftHash(draft);
+  const comparisonEffectiveStatus = (comparison: BuilderProposalComparisonRecord, revisionId = comparison.currentRevisionId) => proposalEnvelope && proposalDependencies
+    ? canonicalBuilderProductComparisonEffectiveStatus(comparison as CanonicalBuilderProductComparisonRecord, proposalEnvelope, proposalDependencies, revisionId)
+    : "needs-review" as const;
+  const editorBindingStale = Boolean(editorBinding && (
+    editorBinding.projectId !== project.id
+    || editorBinding.kind !== "product"
+    || editorBinding.reconciliationVersion !== reconciliationVersion
+    || comparisonState.status !== "ready"
+    || comparisonState.dependencyStatus !== "current"
+    || comparisonState.envelope.storeVersion !== editorBinding.expectedStoreVersion
+    || (editorBinding.expectedComparisonVersion !== null && !comparisonState.envelope.records.some((record) => record.id === editingId && record.projectId === project.id && record.version === editorBinding.expectedComparisonVersion))
+  ));
+  const receiptRetryAllowed = Boolean(editorBinding?.attempt && editorBinding.projectId === project.id && normalizedDraftHash === editorBinding.attempt.normalizedPayloadHash);
+  const submitLocked = mutationPending || (editorBindingStale && !receiptRetryAllowed) || (!receiptRetryAllowed && storageLocked);
 
   useEffect(() => {
     if (initialNegotiationTarget?.comparisonKind !== "product") return;
     window.requestAnimationFrame(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="negotiation-draft-start"]')).find((element) => element.dataset.comparisonKind === "product" && element.dataset.proposalId === initialNegotiationTarget.proposalId && element.dataset.criterionId === initialNegotiationTarget.criterionId)?.focus());
   }, [initialNegotiationTarget]);
 
+  useEffect(() => {
+    if (mutationPendingRef.current || mutationPending || !editorBinding?.attempt || normalizedDraftHash === editorBinding.attempt.normalizedPayloadHash) return;
+    activeAttemptKeyRef.current = null;
+    setEditorBinding((current) => current ? { ...current, attempt: null } : current);
+  }, [editorBinding?.attempt, mutationPending, normalizedDraftHash]);
+
+  useEffect(() => {
+    if (!editorOpen || !editorBindingStale || receiptRetryAllowed) return;
+    setFormError(editorBinding?.projectId !== project.id
+      ? "پروژهٔ فعال هنگام ثبت تغییر کرد؛ پیش‌نویس و تلاش ثابت برای همان پروژه حفظ شد. برای بازیابی نتیجه به پروژهٔ قبلی برگردید."
+      : "منبع یا نسخهٔ مخزن تغییر کرده است؛ پیش‌نویس شما حفظ شد، اما برای ثبت باید فرم را دوباره باز کنید.");
+  }, [editorBinding?.projectId, editorBindingStale, editorOpen, project.id, receiptRetryAllowed]);
+
+  useEffect(() => {
+    if (!pendingSavedComparisonFocusRef.current || editorOpen || !selectedComparison) return;
+    pendingSavedComparisonFocusRef.current = false;
+    const frame = window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [editorOpen, selectedComparison]);
+
   const openCreate = () => {
-    if (storageLocked || !eligibleGroups.length) return;
+    if (mutationPendingRef.current || storageLocked || comparisonState.status !== "ready" || comparisonState.dependencyStatus !== "current" || !eligibleGroups.length) return;
     const key = eligibleGroups.length === 1 ? eligibleGroups[0].key : "";
+    editorSessionRef.current += 1;
+    activeAttemptKeyRef.current = null;
     setEditingId(null);
-    setDraft(key ? builderProposalComparisonDefaultDraft(currentProductProposals, key) : { requestKey: "", proposals: [] });
+    setDraft(key ? canonicalBuilderProposalComparisonDefaultDraft(currentProductProposals, key) : { requestKey: "", proposals: [] });
+    setEditorBinding({ projectId: project.id, kind: "product", expectedStoreVersion: comparisonState.envelope.storeVersion, expectedComparisonVersion: null, reconciliationVersion, attempt: null });
     setFormError("");
     setEditorOpen(true);
     window.requestAnimationFrame(() => editorHeadingRef.current?.focus());
   };
   const openEdit = () => {
-    if (!selectedComparison || !currentRevision || storageLocked) return;
+    if (mutationPendingRef.current || !selectedComparison || !currentRevision || storageLocked || comparisonState.status !== "ready" || comparisonState.dependencyStatus !== "current") return;
     const key = [selectedComparison.target.requestId, selectedComparison.target.requestVersion, selectedComparison.target.reviewRevisionId, selectedComparison.target.reviewRevisionFingerprint].join(":");
-    const status = builderProposalComparisonEffectiveStatus(selectedComparison, proposals, requests, approvals, contacts);
+    const status = comparisonEffectiveStatus(selectedComparison);
+    editorSessionRef.current += 1;
+    activeAttemptKeyRef.current = null;
     setEditingId(selectedComparison.id);
-    setDraft(status === "current" ? builderProposalComparisonDraftFromRecord(selectedComparison) : builderProposalComparisonDefaultDraft(currentProductProposals, key));
+    setDraft(status === "current" ? canonicalBuilderProposalComparisonDraftFromRecord(selectedComparison as CanonicalBuilderProductComparisonRecord) : canonicalBuilderProposalComparisonDefaultDraft(currentProductProposals, key));
+    setEditorBinding({ projectId: project.id, kind: "product", expectedStoreVersion: comparisonState.envelope.storeVersion, expectedComparisonVersion: selectedComparison.version, reconciliationVersion, attempt: null });
     setFormError("");
     setEditorOpen(true);
     window.requestAnimationFrame(() => editorHeadingRef.current?.focus());
   };
   const closeEditor = () => {
+    if (mutationPendingRef.current) return;
     keyboard.hide();
+    editorSessionRef.current += 1;
+    activeAttemptKeyRef.current = null;
     setEditorOpen(false);
+    setEditorBinding(null);
     setFormError("");
     window.requestAnimationFrame(() => (editingId ? detailHeadingRef.current : addButtonRef.current)?.focus());
   };
   const changeGroup = (requestKey: string) => {
-    setDraft(requestKey ? builderProposalComparisonDefaultDraft(currentProductProposals, requestKey) : { requestKey: "", proposals: [] });
+    if (mutationPendingRef.current) return;
+    setDraft(requestKey ? canonicalBuilderProposalComparisonDefaultDraft(currentProductProposals, requestKey) : { requestKey: "", proposals: [] });
     setFormError("");
   };
   const updateProposalDraft = (proposalId: string, updater: (current: BuilderProposalComparisonProposalDraft) => BuilderProposalComparisonProposalDraft) => {
+    if (mutationPendingRef.current) return;
     setDraft((current) => ({ ...current, proposals: current.proposals.map((item) => item.proposalId === proposalId ? updater(item) : item) }));
     setFormError("");
   };
   const updateLineDraft = (proposalId: string, lineId: string, updater: (current: BuilderProposalComparisonLineAdjustmentDraft) => BuilderProposalComparisonLineAdjustmentDraft) => updateProposalDraft(proposalId, (current) => ({ ...current, lineAdjustments: current.lineAdjustments.map((line) => line.proposalLineId === lineId ? updater(line) : line) }));
-  const saveComparison = (event: React.FormEvent) => {
+  const saveComparison = async (event: React.FormEvent) => {
     event.preventDefault();
     keyboard.hide();
+    if (mutationPendingRef.current) return;
     if (!draft.requestKey) {
       setFormError("درخواست دارای حداقل دو پیشنهاد جاری را انتخاب کن.");
       document.getElementById("comparison-request-select")?.focus();
@@ -19427,42 +19205,83 @@ function ProjectProposalComparisonsView({ project, proposals, comparisons, decis
       document.querySelector<HTMLElement>("[data-testid='comparison-proposal-toggle']")?.focus();
       return;
     }
-    if (!liveInputs || !livePreview) {
+    if ((!liveInputs || !livePreview) && !receiptRetryAllowed) {
       setFormError("یکی از تعدیل‌های انتخاب‌شده ناقص یا ناسازگار است؛ مبلغ و دلیل فرض را بررسی کن.");
       document.querySelector<HTMLElement>("[data-comparison-control='invalid']")?.focus();
       return;
     }
-    if (editingId) {
-      const result = onUpdate(editingId, draft);
-      if (!result) {
-        setFormError("نسخهٔ مقایسه ثبت نشد؛ پیشنهادهای جاری و ذخیره‌سازی محلی را دوباره بررسی کن.");
+    if (!editorBinding || (editorBindingStale && !receiptRetryAllowed)) {
+      setFormError("نسخهٔ مخزن یا منبع مقایسه تغییر کرده است؛ پیش‌نویس حفظ شده و باید دوباره به مخزن جاری متصل شود.");
+      return;
+    }
+    let binding = editorBinding;
+    if (!binding.attempt) {
+      const pins = onPreparePins(draft);
+      if (!pins || !normalizedDraftHash) {
+        setFormError("منبع پیشنهادها تغییر کرده یا قابل تأیید نیست؛ پیش‌نویس شما حفظ شد.");
         return;
       }
-      setLiveMessage(result === "unchanged" ? "تغییر تازه‌ای برای ثبت وجود نداشت." : "نسخهٔ تازهٔ مقایسه ثبت شد؛ تصمیم نسخهٔ قبل تاریخی باقی ماند.");
-      setEditorOpen(false);
-      setPreviewRevisionId(null);
-      window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+      const attempt = {
+        comparisonId: editingId ?? `builder-proposal-comparison-${window.crypto.randomUUID()}`,
+        idempotencyKey: `builder-product-comparison:${editingId ? "update" : "create"}:${window.crypto.randomUUID()}`,
+        normalizedPayloadHash: normalizedDraftHash,
+        pins,
+      } satisfies BuilderComparisonEditorAttempt<BuilderProductComparisonCommandPins>;
+      binding = { ...binding, attempt };
+      activeAttemptKeyRef.current = attempt.idempotencyKey;
+      setEditorBinding(binding);
+    }
+    const activeAttempt = binding.attempt;
+    if (!activeAttempt) return;
+    const editorSession = editorSessionRef.current;
+    const attemptKey = activeAttempt.idempotencyKey;
+    activeAttemptKeyRef.current = attemptKey;
+    mutationPendingRef.current = true;
+    setMutationPending(true);
+    setFormError("");
+    let result: BuilderComparisonMutationResult;
+    try {
+      result = editingId
+        ? await onUpdate(editingId, draft, binding)
+        : await onCreate(draft, binding);
+    } catch {
+      result = { status: "read-failure", reason: "comparison-command-threw" };
+    }
+    if (editorSessionRef.current !== editorSession || activeAttemptKeyRef.current !== attemptKey) return;
+    mutationPendingRef.current = false;
+    setMutationPending(false);
+    if (activeProjectIdRef.current !== binding.projectId) {
+      setFormError("پروژهٔ فعال هنگام ثبت تغییر کرد؛ پیش‌نویس و تلاش ثابت برای همان پروژه حفظ شد. برای بازیابی نتیجه به پروژهٔ قبلی برگردید.");
       return;
     }
-    const createdId = onCreate(draft);
-    if (!createdId) {
-      setFormError("مقایسه ثبت نشد؛ پیشنهادهای جاری و ذخیره‌سازی محلی را دوباره بررسی کن.");
+    if (!["created", "updated", "unchanged"].includes(result.status) || !result.recordId) {
+      if (result.status === "version-conflict") setFormError("نسخهٔ مقایسه یا مخزن تغییر کرده است؛ پیش‌نویس شما حفظ شد.");
+      else if (result.status === "dependency-invalid") setFormError("یکی از پیشنهادها یا منبع درخواست تغییر کرده است؛ ثبت انجام نشد.");
+      else if (result.status === "read-failure" || result.status === "rollback-failure") setFormError("نتیجهٔ ذخیره قابل بازیابی و تأیید نبود؛ پیش‌نویس و تلاش ثابت حفظ شده است و می‌توانید دوباره تلاش کنید.");
+      else setFormError("مقایسه ذخیره نشد؛ پایداری مخزن محلی را دوباره بررسی کنید.");
       return;
     }
-    setSelectedId(createdId);
+    setSelectedId(result.recordId);
     setPreviewRevisionId(null);
-    setLiveMessage("مقایسهٔ خصوصی و نسخه‌دار پروژه ثبت شد.");
+    setLiveMessage(result.status === "unchanged" ? "تغییر تازه‌ای برای ثبت وجود نداشت." : editingId ? "نسخهٔ تازهٔ مقایسه ثبت شد؛ تصمیم نسخهٔ قبل تاریخی باقی ماند." : "مقایسهٔ خصوصی و نسخه‌دار پروژه ثبت شد.");
+    pendingSavedComparisonFocusRef.current = true;
+    editorSessionRef.current += 1;
+    activeAttemptKeyRef.current = null;
+    setEditorBinding(null);
     setEditorOpen(false);
-    window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
   };
 
   if (editorOpen) {
     const selectedCount = draft.proposals.filter((item) => item.selected).length;
     return (
       <div className="chida-app project-proposals-view comparison-editor-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="comparison-editor">
-        <header className="project-workspace-header"><button className="icon-button" type="button" onClick={closeEditor} aria-label="بستن فرم مقایسه" data-testid="comparison-editor-back"><ArrowRight size={21} /></button><span ref={editorHeadingRef} className="project-workspace-title" tabIndex={-1} data-testid="comparison-editor-title"><small>مقایسه کالاها</small><strong>{editingId ? "بازبینی مقایسه" : "ساخت مقایسه"}</strong></span><span className="project-workspace-header-spacer" aria-hidden="true" /></header>
+        <header className="project-workspace-header"><button className="icon-button" type="button" onClick={closeEditor} disabled={mutationPending} aria-label="بستن فرم مقایسه" data-testid="comparison-editor-back"><ArrowRight size={21} /></button><span ref={editorHeadingRef} className="project-workspace-title" tabIndex={-1} data-testid="comparison-editor-title"><small>مقایسه کالاها</small><strong>{editingId ? "بازبینی مقایسه" : "ساخت مقایسه"}</strong></span><span className="project-workspace-header-spacer" aria-hidden="true" /></header>
         <MobileScroll className="project-proposals-scroll"><form className="proposal-editor-content comparison-editor-content" onSubmit={saveComparison} noValidate>
+          <fieldset disabled={mutationPending} style={{ border: 0, margin: 0, minInlineSize: 0, padding: 0 }}>
           <section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>پیشنهادها دست‌نخورده می‌مانند</strong><small>فقط مبلغ‌ها را با فرض‌هایی که خودتان ثبت می‌کنید کنار هم می‌گذاریم.</small></span></section>
+          {comparisonState.status === "loading" ? <section className="proposal-storage-error" role="status" data-testid="comparison-ledger-loading"><CircleHelp size={19} /><span><strong>در حال بازیابی مقایسه‌ها</strong><small>پیش‌نویس حفظ شده است و ثبت پس از تأیید مخزن دوباره فعال می‌شود.</small></span></section> : null}
+          {comparisonState.status === "read-error" ? <section className="proposal-storage-error" role="alert" data-testid="comparison-ledger-read-error"><CircleHelp size={19} /><span><strong>وضعیت مقایسه‌ها قابل خواندن نیست</strong><small>این وضعیت خالی نیست؛ پیش‌نویس حفظ شده و ثبت بسته می‌ماند.</small></span></section> : null}
+          {editorBindingStale ? <section className="proposal-storage-error" role="alert" data-testid="comparison-editor-stale"><CircleHelp size={19} /><span><strong>اتصال این فرم قدیمی شده است</strong><small>پیش‌نویس پاک نشده؛ برای ثبت دوباره فرم را از نسخهٔ جاری باز کنید.</small></span></section> : null}
           <section className="proposal-form-section"><div className="proposal-section-heading"><span><small>دامنهٔ دقیق</small><strong>درخواست و پیشنهادها</strong></span><em>{selectedCount.toLocaleString("fa-IR")} انتخاب</em></div>
             {editingId ? <div className="proposal-locked-grid"><div><small>درخواست ثابت</small><strong>{comparisons.find((item) => item.id === editingId)?.requestSnapshot.title}</strong><span>تغییر request revision مجاز نیست.</span></div></div> : <label className="field-control" htmlFor="comparison-request-select"><span>درخواست محصول</span><select id="comparison-request-select" value={draft.requestKey} onChange={(event) => changeGroup(event.target.value)} data-testid="comparison-request-select"><option value="">انتخاب درخواست</option>{eligibleGroups.map((group) => <option key={group.key} value={group.key}>{group.title} · {group.proposals.length.toLocaleString("fa-IR")} پیشنهاد</option>)}</select><small>فقط پیشنهادهای جاریِ همان revision دقیق قابل انتخاب‌اند.</small></label>}
             <div className="comparison-proposal-toggles">{draft.proposals.map((item) => { const proposal = currentProductProposals.find((candidate) => candidate.id === item.proposalId); return proposal ? <button key={item.proposalId} type="button" aria-pressed={item.selected} onClick={() => updateProposalDraft(item.proposalId, (current) => ({ ...current, selected: !current.selected }))} data-testid="comparison-proposal-toggle"><span>{item.selected ? <Check size={15} /> : null}</span><strong>{proposal.supplierSnapshot.displayName}</strong><small>نسخهٔ {proposal.version.toLocaleString("fa-IR")}</small></button> : null; })}</div>
@@ -19484,7 +19303,8 @@ function ProjectProposalComparisonsView({ project, proposals, comparisons, decis
             </section>;
           })}
           <section className={`comparison-recommendation-preview ${livePreview?.recommendation.status ?? "insufficient-data"}`} data-testid="comparison-recommendation-preview"><LayoutGrid size={20} /><span><small>معیار ثابت و آشکار: کمترین مبلغ هم‌سطح کامل</small><strong>{livePreview?.recommendation.status === "conditional" ? `نامزد بررسی: ${livePreview.results.find((item) => item.proposalId === livePreview.recommendation.candidateProposalId)?.supplierDisplayName}` : livePreview?.recommendation.status === "tie" ? "کمترین مبلغ برابر است" : "داده برای جمع‌بندی کافی نیست"}</strong><p>{livePreview?.recommendation.reason ?? "برای ساخت نتیجه، ورودی‌های انتخاب‌شده باید معتبر باشند."}</p></span></section>
-          {formError ? <p className="proposal-form-error" role="alert" data-testid="comparison-form-error">{formError}</p> : null}<div className="proposal-editor-actions"><button className="secondary-button" type="button" onClick={closeEditor}>انصراف</button><button className="primary-button" type="submit" data-testid="comparison-save">{editingId ? "ثبت نسخهٔ تازه" : "ثبت مقایسهٔ خصوصی"}</button></div>
+          {formError ? <p className="proposal-form-error" role="alert" data-testid="comparison-form-error">{formError}</p> : null}<div className="proposal-editor-actions"><button className="secondary-button" type="button" onClick={closeEditor}>انصراف</button><button className="primary-button" type="submit" disabled={submitLocked} data-testid="comparison-save">{mutationPending ? "در حال ثبت…" : editingId ? "ثبت نسخهٔ تازه" : "ثبت مقایسهٔ خصوصی"}</button></div>
+          </fieldset>
         </form></MobileScroll>
       </div>
     );
@@ -19492,11 +19312,12 @@ function ProjectProposalComparisonsView({ project, proposals, comparisons, decis
 
   if (selectedComparison && previewRevision) {
     const currentPreview = previewRevision.id === selectedComparison.currentRevisionId;
-    const effectiveStatus = currentPreview ? builderProposalComparisonEffectiveStatus(selectedComparison, proposals, requests, approvals, contacts, previewRevision.id) : "needs-review" as const;
+    const effectiveStatus = currentPreview ? comparisonEffectiveStatus(selectedComparison, previewRevision.id) : "needs-review" as const;
     const decision = decisions.find((item) => item.target.comparisonId === selectedComparison.id && item.target.comparisonRevisionId === previewRevision.id) ?? null;
     const recommendationName = previewRevision.recommendation.candidateProposalId ? previewRevision.results.find((item) => item.proposalId === previewRevision.recommendation.candidateProposalId)?.supplierDisplayName : null;
     return <div className="chida-app project-proposals-view comparison-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="comparison-detail"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={() => { setSelectedId(null); setPreviewRevisionId(null); window.requestAnimationFrame(() => Array.from(document.querySelectorAll<HTMLElement>("[data-comparison-id]")).find((element) => element.dataset.comparisonId === selectedComparison.id)?.focus()); }} aria-label="بازگشت به مقایسه‌ها" data-testid="comparison-detail-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>مقایسهٔ خصوصی محصول</small><strong>{selectedComparison.requestSnapshot.title}</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="proposal-detail-content comparison-detail-content">
       <section className="proposal-detail-hero comparison-detail-hero" tabIndex={-1} ref={detailHeadingRef} data-testid="comparison-detail-hero"><span className="proposal-detail-icon"><LayoutGrid size={24} /></span><span className={`proposal-status-badge ${effectiveStatus}`}>{!currentPreview ? "نسخه قدیمی · فقط مشاهده" : effectiveStatus === "current" ? "جاری" : "نیازمند بررسی"}</span><h1>{selectedComparison.requestSnapshot.title}</h1><p>{previewRevision.inputs.length.toLocaleString("fa-IR")} پیشنهاد در این مقایسه</p></section>
+      <section className="proposal-honesty-banner" data-testid="comparison-authority-boundary"><ShieldCheck size={18} /><span><strong>خصوصی و ثبت دستی</strong><small>این مقایسه فقط در همین پروژه ثبت می‌شود و بدون اثر بیرونی است.</small></span></section>
       <details className="proposal-disclosure proposal-technical-disclosure" data-testid="comparison-technical-details"><summary><span><strong>نسخه‌ها و روش محاسبه</strong><small>اتصال دقیق داده‌ها و سابقه</small></span><ChevronDown size={18} /></summary><div className="proposal-disclosure-body"><div className="proposal-section-heading"><span><small>نسخه و اتصال</small><strong>منبع فنی این مقایسه</strong></span><em>request v{selectedComparison.target.requestVersion}</em></div><dl className="proposal-detail-meta"><div><dt>review revision</dt><dd>{selectedComparison.target.reviewRevisionId}</dd></div><div><dt>پیشنهادهای pin‌شده</dt><dd>{previewRevision.inputs.length.toLocaleString("fa-IR")} نسخهٔ دقیق</dd></div><div><dt>محاسبه</dt><dd>قطعی محلی · بدون گردکردن</dd></div><div><dt>اثر بیرونی</dt><dd>هیچ</dd></div></dl>{selectedComparison.revisions.length > 1 ? <label className="proposal-revision-picker" htmlFor="comparison-revision-select"><span>نمایش نسخه</span><select id="comparison-revision-select" value={previewRevision.id} onChange={(event) => setPreviewRevisionId(event.target.value)} data-testid="comparison-revision-select">{[...selectedComparison.revisions].reverse().map((revision) => <option key={revision.id} value={revision.id}>نسخهٔ {revision.version.toLocaleString("fa-IR")} · {revision.id === selectedComparison.currentRevisionId ? "جاری" : "تاریخی"}</option>)}</select></label> : null}</div></details>
       <section className={`comparison-recommendation-detail ${previewRevision.recommendation.status}`} data-testid="comparison-recommendation"><LayoutGrid size={22} /><span><small>جمع‌بندی قاعده‌محور · نه انتخاب نهایی</small><strong>{previewRevision.recommendation.status === "conditional" ? `${recommendationName} بر پایهٔ کمترین مبلغ هم‌سطح` : previewRevision.recommendation.status === "tie" ? "تساوی در کمترین مبلغ هم‌سطح" : "دادهٔ ناکافی برای جمع‌بندی"}</strong><p>{previewRevision.recommendation.reason}</p></span></section>
       {negotiationDraftsStorageLocked ? <section className="proposal-storage-error" role="alert" data-testid="negotiation-draft-storage-error"><CircleHelp size={19} /><span><strong>وضعیت پیش‌نویس‌های مذاکره قابل تأیید نیست</strong><small>خواندن مخزن کامل نشد؛ شروع پیش‌نویس تازه تا بازیابی موفق قفل می‌ماند.</small></span></section> : null}
@@ -19508,11 +19329,11 @@ function ProjectProposalComparisonsView({ project, proposals, comparisons, decis
     </main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span></div>;
   }
 
-  if (storageLocked) {
-    return <div className="chida-app project-proposals-view comparisons-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="proposal-comparisons-view"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="comparisons-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>مقایسه‌های محصول</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><LayoutGrid size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>مقایسه قیمت‌ها</h1><p>قیمت و شرایط پیشنهادهای یک درخواست را کنار هم ببین.</p></div></section><section className="proposal-storage-error" role="alert" data-testid="comparison-storage-error"><CircleHelp size={19} /><span><strong>بازیابی مقایسه‌ها کامل نشد</strong><small>برای جلوگیری از بازنویسی دادهٔ ناخوانده، ساخت و ویرایش مقایسه و تصمیم قفل شده است؛ پیشنهادهای اصلی دست‌نخورده‌اند.</small></span></section><div className="project-proposals-toolbar"><span><strong>—</strong><small>وضعیت نامشخص</small></span><button ref={addButtonRef} className="primary-button" type="button" disabled data-testid="comparison-add"><Plus size={17} /> مقایسه جدید</button></div></main></MobileScroll></div>;
+  if (comparisonState.status !== "ready") {
+    return <div className="chida-app project-proposals-view comparisons-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="proposal-comparisons-view"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="comparisons-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>مقایسه‌های محصول</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><LayoutGrid size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>مقایسه قیمت‌ها</h1><p>قیمت و شرایط پیشنهادهای یک درخواست را کنار هم ببین.</p></div></section>{comparisonState.status === "loading" ? <section className="proposal-storage-error" role="status" data-testid="comparison-ledger-loading"><CircleHelp size={19} /><span><strong>در حال بازیابی مقایسه‌ها</strong><small>تا تأیید مخزن، ساخت و ویرایش غیرفعال است.</small></span></section> : <section className="proposal-storage-error" role="alert" data-testid="comparison-ledger-read-error"><CircleHelp size={19} /><span data-testid="comparison-storage-error"><strong>بازیابی مقایسه‌ها کامل نشد</strong><small>این وضعیت خالی نیست؛ برای جلوگیری از بازنویسی دادهٔ ناخوانده، ساخت و ویرایش قفل شده است.</small></span></section>}<div className="project-proposals-toolbar"><span><strong>—</strong><small>وضعیت نامشخص</small></span><button ref={addButtonRef} className="primary-button" type="button" disabled data-testid="comparison-add"><Plus size={17} /> مقایسه جدید</button></div></main></MobileScroll></div>;
   }
 
-  return <div className="chida-app project-proposals-view comparisons-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="proposal-comparisons-view"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="comparisons-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>مقایسه‌های محصول</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><LayoutGrid size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>مقایسه قیمت‌ها</h1><p>قیمت و شرایط پیشنهادهای یک درخواست را کنار هم ببین.</p></div></section><section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>تصمیم با شماست</strong><small>چیدا فقط مبلغ‌های ثبت‌شده را کنار هم می‌گذارد؛ چیزی خریداری یا ارسال نمی‌شود.</small></span></section><div className="project-proposals-toolbar"><span><strong>{orderedComparisons.length.toLocaleString("fa-IR")}</strong><small>مقایسه</small></span><button ref={addButtonRef} className="primary-button" type="button" onClick={openCreate} disabled={eligibleGroups.length === 0} data-testid="comparison-add"><Plus size={17} /> مقایسه جدید</button></div>{eligibleGroups.length === 0 ? <p className="proposal-prerequisite-note" data-testid="comparison-prerequisite-note">برای مقایسه جدید، دست‌کم دو پیشنهاد محصولِ جاری باید به همان نسخهٔ دقیق یک درخواست وصل باشند.</p> : null}{orderedComparisons.length ? <div className="project-proposals-list comparison-list">{orderedComparisons.map((comparison) => { const revision = comparison.revisions.find((item) => item.id === comparison.currentRevisionId)!; const status = builderProposalComparisonEffectiveStatus(comparison, proposals, requests, approvals, contacts); return <button className="proposal-card comparison-card" type="button" key={comparison.id} data-comparison-id={comparison.id} onClick={() => { setSelectedId(comparison.id); setPreviewRevisionId(comparison.currentRevisionId); setLiveMessage(""); window.requestAnimationFrame(() => detailHeadingRef.current?.focus()); }} data-testid="comparison-card"><span className="proposal-card-icon"><LayoutGrid size={20} /></span><span className="proposal-card-copy"><span><small>{status === "current" ? "جاری" : "نیازمند بازبینی"}</small><small>{formatProjectFileDate(comparison.updatedAt)}</small></span><strong>{comparison.requestSnapshot.title}</strong><em>{revision.inputs.length.toLocaleString("fa-IR")} پیشنهاد · {revision.recommendation.status === "conditional" ? "جمع‌بندی شرطی" : revision.recommendation.status === "tie" ? "تساوی" : "دادهٔ ناکافی"}</em><small>نسخهٔ {revision.version.toLocaleString("fa-IR")}</small></span><ArrowRight size={17} /></button>; })}</div> : <section className="proposal-empty-state"><LayoutGrid size={26} /><h2>مقایسه‌ای ثبت نشده</h2><p>پس از ثبت دو پیشنهاد برای یک درخواست کالا، می‌توانی آن‌ها را مقایسه کنی.</p></section>}</main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span></div>;
+  return <div className="chida-app project-proposals-view comparisons-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="proposal-comparisons-view"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="comparisons-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>مقایسه‌های محصول</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><LayoutGrid size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>مقایسه قیمت‌ها</h1><p>قیمت و شرایط پیشنهادهای یک درخواست را کنار هم ببین.</p></div></section><section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>تصمیم با شماست</strong><small>چیدا فقط مبلغ‌های ثبت‌شده را کنار هم می‌گذارد؛ چیزی خریداری یا ارسال نمی‌شود.</small></span></section><div className="project-proposals-toolbar"><span><strong>{orderedComparisons.length.toLocaleString("fa-IR")}</strong><small>مقایسه</small></span><button ref={addButtonRef} className="primary-button" type="button" onClick={openCreate} disabled={storageLocked || eligibleGroups.length === 0} data-testid="comparison-add"><Plus size={17} /> مقایسه جدید</button></div>{eligibleGroups.length === 0 ? <p className="proposal-prerequisite-note" data-testid="comparison-prerequisite-note">برای مقایسه جدید، دست‌کم دو پیشنهاد محصولِ جاری باید به همان نسخهٔ دقیق یک درخواست وصل باشند.</p> : null}{orderedComparisons.length ? <div className="project-proposals-list comparison-list">{orderedComparisons.map((comparison) => { const revision = comparison.revisions.find((item) => item.id === comparison.currentRevisionId)!; const status = comparisonEffectiveStatus(comparison); return <button className="proposal-card comparison-card" type="button" key={comparison.id} data-comparison-id={comparison.id} onClick={() => { setSelectedId(comparison.id); setPreviewRevisionId(comparison.currentRevisionId); setLiveMessage(""); window.requestAnimationFrame(() => detailHeadingRef.current?.focus()); }} data-testid="comparison-card"><span className="proposal-card-icon"><LayoutGrid size={20} /></span><span className="proposal-card-copy"><span><small>{status === "current" ? "جاری" : "نیازمند بازبینی"}</small><small>{formatProjectFileDate(comparison.updatedAt)}</small></span><strong>{comparison.requestSnapshot.title}</strong><em>{revision.inputs.length.toLocaleString("fa-IR")} پیشنهاد · {revision.recommendation.status === "conditional" ? "جمع‌بندی شرطی" : revision.recommendation.status === "tie" ? "تساوی" : "دادهٔ ناکافی"}</em><small>نسخهٔ {revision.version.toLocaleString("fa-IR")}</small></span><ArrowRight size={17} /></button>; })}</div> : <section className="proposal-empty-state" data-testid="comparison-ledger-empty"><LayoutGrid size={26} /><h2>مقایسه‌ای ثبت نشده</h2><p>پس از ثبت دو پیشنهاد برای یک درخواست کالا، می‌توانی آن‌ها را مقایسه کنی.</p></section>}</main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span></div>;
 }
 
 function builderServiceProposalComparisonAssessmentLabel(value: BuilderServiceProposalComparisonAssessment) {
@@ -19571,15 +19392,48 @@ function ServiceProposalComparisonDecisionPanel({ comparison, revision, decision
   );
 }
 
-function ProjectServiceProposalComparisonsView({ project, proposals, comparisons, decisions, negotiationDrafts, requests, approvals, contacts, storageLocked, decisionsStorageLocked, negotiationDraftsStorageLocked, initialNegotiationTarget, onBack, onCreate, onUpdate, onUpsertDecision, onStartNegotiation }: { project: BuilderProject; proposals: BuilderRecordedProposalRecord[]; comparisons: BuilderServiceProposalComparisonRecord[]; decisions: BuilderServiceProposalComparisonDecisionRecord[]; negotiationDrafts: BuilderNegotiationDraftRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; decisionsStorageLocked: boolean; negotiationDraftsStorageLocked: boolean; initialNegotiationTarget: BuilderNegotiationDraftTarget | null; onBack: () => void; onCreate: (draft: BuilderServiceProposalComparisonDraft) => string | null; onUpdate: (comparisonId: string, draft: BuilderServiceProposalComparisonDraft) => false | "unchanged" | "updated"; onUpsertDecision: (comparisonId: string, revisionId: string, draft: BuilderServiceProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated"; onStartNegotiation: (target: BuilderNegotiationDraftTarget) => void }) {
+type ProjectServiceProposalComparisonsViewProps = {
+  project: BuilderProject;
+  proposals: BuilderRecordedProposalRecord[];
+  proposalEnvelope: import("./builderProposals").BuilderProposalEnvelope | null;
+  proposalDependencies: BuilderProposalDependencies | null;
+  comparisonState: BuilderComparisonState<BuilderServiceComparisonEnvelope>;
+  reconciliationVersion: number;
+  comparisons: BuilderServiceProposalComparisonRecord[];
+  decisions: BuilderServiceProposalComparisonDecisionRecord[];
+  negotiationDrafts: BuilderNegotiationDraftRecord[];
+  requests: ProjectPurchaseRequestRecord[];
+  approvals: ProjectApprovalRecord[];
+  contacts: SupplierContactRecord[];
+  storageLocked: boolean;
+  decisionsStorageLocked: boolean;
+  negotiationDraftsStorageLocked: boolean;
+  initialNegotiationTarget: BuilderNegotiationDraftTarget | null;
+  onBack: () => void;
+  onPreparePins: (draft: BuilderServiceProposalComparisonDraft) => BuilderServiceComparisonCommandPins | null;
+  onCreate: (draft: BuilderServiceProposalComparisonDraft, binding: BuilderServiceComparisonEditorBinding) => Promise<BuilderComparisonMutationResult>;
+  onUpdate: (comparisonId: string, draft: BuilderServiceProposalComparisonDraft, binding: BuilderServiceComparisonEditorBinding) => Promise<BuilderComparisonMutationResult>;
+  onUpsertDecision: (comparisonId: string, revisionId: string, draft: BuilderServiceProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated";
+  onStartNegotiation: (target: BuilderNegotiationDraftTarget) => void;
+};
+
+function ProjectServiceProposalComparisonsView({ project, proposals, proposalEnvelope, proposalDependencies, comparisonState, reconciliationVersion, comparisons, decisions, negotiationDrafts, requests, approvals, contacts, storageLocked, decisionsStorageLocked, negotiationDraftsStorageLocked, initialNegotiationTarget, onBack, onPreparePins, onCreate, onUpdate, onUpsertDecision, onStartNegotiation }: ProjectServiceProposalComparisonsViewProps) {
   const keyboard = useKeyboard();
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const editorHeadingRef = useRef<HTMLSpanElement>(null);
   const detailHeadingRef = useRef<HTMLElement>(null);
+  const pendingSavedComparisonFocusRef = useRef(false);
+  const mutationPendingRef = useRef(false);
+  const editorSessionRef = useRef(0);
+  const activeAttemptKeyRef = useRef<string | null>(null);
+  const activeProjectIdRef = useRef(project.id);
+  activeProjectIdRef.current = project.id;
   const [selectedId, setSelectedId] = useState<string | null>(initialNegotiationTarget?.comparisonKind === "service" ? initialNegotiationTarget.comparisonId : null);
   const [previewRevisionId, setPreviewRevisionId] = useState<string | null>(initialNegotiationTarget?.comparisonKind === "service" ? initialNegotiationTarget.comparisonRevisionId : null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [mutationPending, setMutationPending] = useState(false);
+  const [editorBinding, setEditorBinding] = useState<BuilderServiceComparisonEditorBinding | null>(null);
   const [draft, setDraft] = useState<BuilderServiceProposalComparisonDraft>({ requestKey: "", proposals: [] });
   const [formError, setFormError] = useState("");
   const [liveMessage, setLiveMessage] = useState("");
@@ -19606,47 +19460,95 @@ function ProjectServiceProposalComparisonsView({ project, proposals, comparisons
   const draftGroup = eligibleGroups.find((group) => group.key === draft.requestKey) ?? (selectedComparison && draft.requestKey === [selectedComparison.target.requestId, selectedComparison.target.requestVersion, selectedComparison.target.reviewRevisionId, selectedComparison.target.reviewRevisionFingerprint].join(":") ? { key: draft.requestKey, proposals: [], title: selectedComparison.requestSnapshot.scope ?? "خدمت درخواستی", requestSnapshot: selectedComparison.requestSnapshot } : null);
   const liveInputs = draftGroup ? normalizeBuilderServiceProposalComparisonInputs(draft, currentServiceProposals, draftGroup.requestSnapshot) : null;
   const livePreview = liveInputs && draftGroup ? deriveBuilderServiceProposalComparisonPayload(liveInputs, currentServiceProposals, draftGroup.requestSnapshot) : null;
+  const normalizedDraftHash = builderServiceComparisonNormalizedDraftHash(draft);
+  const comparisonEffectiveStatus = (comparison: BuilderServiceProposalComparisonRecord, revisionId = comparison.currentRevisionId) => proposalEnvelope && proposalDependencies
+    ? canonicalBuilderServiceProposalComparisonEffectiveStatus(comparison as CanonicalBuilderServiceComparisonRecord, proposalEnvelope, proposalDependencies, revisionId)
+    : "needs-review" as const;
+  const editorBindingStale = Boolean(editorBinding && (
+    editorBinding.projectId !== project.id
+    || editorBinding.kind !== "service"
+    || editorBinding.reconciliationVersion !== reconciliationVersion
+    || comparisonState.status !== "ready"
+    || comparisonState.dependencyStatus !== "current"
+    || comparisonState.envelope.storeVersion !== editorBinding.expectedStoreVersion
+    || (editorBinding.expectedComparisonVersion !== null && !comparisonState.envelope.records.some((record) => record.id === editingId && record.projectId === project.id && record.version === editorBinding.expectedComparisonVersion))
+  ));
+  const receiptRetryAllowed = Boolean(editorBinding?.attempt && editorBinding.projectId === project.id && normalizedDraftHash === editorBinding.attempt.normalizedPayloadHash);
+  const submitLocked = mutationPending || (editorBindingStale && !receiptRetryAllowed) || (!receiptRetryAllowed && storageLocked);
 
   useEffect(() => {
     if (initialNegotiationTarget?.comparisonKind !== "service") return;
     window.requestAnimationFrame(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="negotiation-draft-start"]')).find((element) => element.dataset.comparisonKind === "service" && element.dataset.proposalId === initialNegotiationTarget.proposalId && element.dataset.criterionId === initialNegotiationTarget.criterionId)?.focus());
   }, [initialNegotiationTarget]);
 
+  useEffect(() => {
+    if (mutationPendingRef.current || mutationPending || !editorBinding?.attempt || normalizedDraftHash === editorBinding.attempt.normalizedPayloadHash) return;
+    activeAttemptKeyRef.current = null;
+    setEditorBinding((current) => current ? { ...current, attempt: null } : current);
+  }, [editorBinding?.attempt, mutationPending, normalizedDraftHash]);
+
+  useEffect(() => {
+    if (!editorOpen || !editorBindingStale || receiptRetryAllowed) return;
+    setFormError(editorBinding?.projectId !== project.id
+      ? "پروژهٔ فعال هنگام ثبت تغییر کرد؛ پیش‌نویس و تلاش ثابت برای همان پروژه حفظ شد. برای بازیابی نتیجه به پروژهٔ قبلی برگردید."
+      : "منبع یا نسخهٔ مخزن تغییر کرده است؛ پیش‌نویس شما حفظ شد، اما برای ثبت باید فرم را دوباره باز کنید.");
+  }, [editorBinding?.projectId, editorBindingStale, editorOpen, project.id, receiptRetryAllowed]);
+
+  useEffect(() => {
+    if (!pendingSavedComparisonFocusRef.current || editorOpen || !selectedComparison) return;
+    pendingSavedComparisonFocusRef.current = false;
+    const frame = window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [editorOpen, selectedComparison]);
+
   const openCreate = () => {
-    if (storageLocked || !eligibleGroups.length) return;
+    if (mutationPendingRef.current || storageLocked || comparisonState.status !== "ready" || comparisonState.dependencyStatus !== "current" || !eligibleGroups.length) return;
     const key = eligibleGroups.length === 1 ? eligibleGroups[0].key : "";
+    editorSessionRef.current += 1;
+    activeAttemptKeyRef.current = null;
     setEditingId(null);
-    setDraft(key ? builderServiceProposalComparisonDefaultDraft(currentServiceProposals, key) : { requestKey: "", proposals: [] });
+    setDraft(key ? canonicalBuilderServiceProposalComparisonDefaultDraft(currentServiceProposals, key) : { requestKey: "", proposals: [] });
+    setEditorBinding({ projectId: project.id, kind: "service", expectedStoreVersion: comparisonState.envelope.storeVersion, expectedComparisonVersion: null, reconciliationVersion, attempt: null });
     setFormError("");
     setEditorOpen(true);
     window.requestAnimationFrame(() => editorHeadingRef.current?.focus());
   };
   const openEdit = () => {
-    if (!selectedComparison || !currentRevision || storageLocked || builderServiceProposalComparisonEffectiveStatus(selectedComparison, proposals, requests, approvals, contacts) !== "current") return;
+    if (mutationPendingRef.current || !selectedComparison || !currentRevision || storageLocked || comparisonState.status !== "ready" || comparisonState.dependencyStatus !== "current" || comparisonEffectiveStatus(selectedComparison) !== "current") return;
+    editorSessionRef.current += 1;
+    activeAttemptKeyRef.current = null;
     setEditingId(selectedComparison.id);
-    setDraft(builderServiceProposalComparisonDraftFromRecord(selectedComparison));
+    setDraft(canonicalBuilderServiceProposalComparisonDraftFromRecord(selectedComparison as CanonicalBuilderServiceComparisonRecord));
+    setEditorBinding({ projectId: project.id, kind: "service", expectedStoreVersion: comparisonState.envelope.storeVersion, expectedComparisonVersion: selectedComparison.version, reconciliationVersion, attempt: null });
     setFormError("");
     setEditorOpen(true);
     window.requestAnimationFrame(() => editorHeadingRef.current?.focus());
   };
   const closeEditor = () => {
+    if (mutationPendingRef.current) return;
     keyboard.hide();
+    editorSessionRef.current += 1;
+    activeAttemptKeyRef.current = null;
     setEditorOpen(false);
+    setEditorBinding(null);
     setFormError("");
     window.requestAnimationFrame(() => (editingId ? detailHeadingRef.current : addButtonRef.current)?.focus());
   };
   const changeGroup = (requestKey: string) => {
-    setDraft(requestKey ? builderServiceProposalComparisonDefaultDraft(currentServiceProposals, requestKey) : { requestKey: "", proposals: [] });
+    if (mutationPendingRef.current) return;
+    setDraft(requestKey ? canonicalBuilderServiceProposalComparisonDefaultDraft(currentServiceProposals, requestKey) : { requestKey: "", proposals: [] });
     setFormError("");
   };
   const updateProposalDraft = (proposalId: string, updater: (current: BuilderServiceProposalComparisonProposalDraft) => BuilderServiceProposalComparisonProposalDraft) => {
+    if (mutationPendingRef.current) return;
     setDraft((current) => ({ ...current, proposals: current.proposals.map((item) => item.proposalId === proposalId ? updater(item) : item) }));
     setFormError("");
   };
   const updateCriterionDraft = (proposalId: string, criterionId: BuilderServiceProposalComparisonCriterionId, updater: (current: BuilderServiceProposalComparisonCriterionDraft) => BuilderServiceProposalComparisonCriterionDraft) => updateProposalDraft(proposalId, (current) => ({ ...current, criteria: current.criteria.map((criterion) => criterion.criterionId === criterionId ? updater(criterion) : criterion) }));
-  const saveComparison = (event: React.FormEvent) => {
+  const saveComparison = async (event: React.FormEvent) => {
     event.preventDefault();
     keyboard.hide();
+    if (mutationPendingRef.current) return;
     if (!draft.requestKey) {
       setFormError("درخواست خدمت دارای حداقل دو پیشنهاد جاری را انتخاب کن.");
       document.getElementById("service-comparison-request-select")?.focus();
@@ -19657,47 +19559,90 @@ function ProjectServiceProposalComparisonsView({ project, proposals, comparisons
       document.querySelector<HTMLElement>("[data-testid='service-comparison-proposal-toggle']")?.focus();
       return;
     }
-    if (!liveInputs || !livePreview) {
+    if ((!liveInputs || !livePreview) && !receiptRetryAllowed) {
       setFormError("یکی از ارزیابی‌ها ناسازگار است؛ مقدار اعلامی، وضعیت و دلیل را بررسی کن.");
       document.querySelector<HTMLElement>("[data-testid='service-comparison-assessment-status']")?.focus();
       return;
     }
-    if (editingId) {
-      const result = onUpdate(editingId, draft);
-      if (!result) {
-        setFormError("نسخهٔ مقایسه ثبت نشد؛ پیشنهادهای جاری و ذخیره‌سازی محلی را دوباره بررسی کن.");
+    if (!editorBinding || (editorBindingStale && !receiptRetryAllowed)) {
+      setFormError("نسخهٔ مخزن یا منبع مقایسه تغییر کرده است؛ پیش‌نویس حفظ شده و باید دوباره به مخزن جاری متصل شود.");
+      return;
+    }
+    let binding = editorBinding;
+    if (!binding.attempt) {
+      const pins = onPreparePins(draft);
+      if (!pins || !normalizedDraftHash) {
+        setFormError("منبع پیشنهادها تغییر کرده یا قابل تأیید نیست؛ پیش‌نویس شما حفظ شد.");
         return;
       }
-      setLiveMessage(result === "unchanged" ? "تغییر تازه‌ای برای ثبت وجود نداشت." : "نسخهٔ تازهٔ مقایسهٔ خدمت ثبت شد؛ تصمیم نسخهٔ قبل تاریخی باقی ماند.");
-      setEditorOpen(false);
-      setPreviewRevisionId(null);
-      window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
+      const attempt = {
+        comparisonId: editingId ?? `builder-service-proposal-comparison-${window.crypto.randomUUID()}`,
+        idempotencyKey: `builder-service-comparison:${editingId ? "update" : "create"}:${window.crypto.randomUUID()}`,
+        normalizedPayloadHash: normalizedDraftHash,
+        pins,
+      } satisfies BuilderComparisonEditorAttempt<BuilderServiceComparisonCommandPins>;
+      binding = { ...binding, attempt };
+      activeAttemptKeyRef.current = attempt.idempotencyKey;
+      setEditorBinding(binding);
+    }
+    const activeAttempt = binding.attempt;
+    if (!activeAttempt) return;
+    const editorSession = editorSessionRef.current;
+    const attemptKey = activeAttempt.idempotencyKey;
+    activeAttemptKeyRef.current = attemptKey;
+    mutationPendingRef.current = true;
+    setMutationPending(true);
+    setFormError("");
+    let result: BuilderComparisonMutationResult;
+    try {
+      result = editingId
+        ? await onUpdate(editingId, draft, binding)
+        : await onCreate(draft, binding);
+    } catch {
+      result = { status: "read-failure", reason: "comparison-command-threw" };
+    }
+    if (editorSessionRef.current !== editorSession || activeAttemptKeyRef.current !== attemptKey) return;
+    mutationPendingRef.current = false;
+    setMutationPending(false);
+    if (activeProjectIdRef.current !== binding.projectId) {
+      setFormError("پروژهٔ فعال هنگام ثبت تغییر کرد؛ پیش‌نویس و تلاش ثابت برای همان پروژه حفظ شد. برای بازیابی نتیجه به پروژهٔ قبلی برگردید.");
       return;
     }
-    const createdId = onCreate(draft);
-    if (!createdId) {
-      setFormError("مقایسه ثبت نشد؛ پیشنهادهای جاری و ذخیره‌سازی محلی را دوباره بررسی کن.");
+    if (!["created", "updated", "unchanged"].includes(result.status) || !result.recordId) {
+      if (result.status === "version-conflict") setFormError("نسخهٔ مقایسه یا مخزن تغییر کرده است؛ پیش‌نویس شما حفظ شد.");
+      else if (result.status === "dependency-invalid" || result.status === "scope-mismatch" || result.status === "not-found") setFormError("یکی از پیشنهادها یا منبع درخواست تغییر کرده است؛ ثبت انجام نشد.");
+      else if (result.status === "read-failure" || result.status === "rollback-failure") setFormError("نتیجهٔ ذخیره قابل بازیابی و تأیید نبود؛ پیش‌نویس و تلاش ثابت حفظ شده است و می‌توانید دوباره تلاش کنید.");
+      else if (result.status === "lock-unavailable") setFormError("قفل امن مرورگر در دسترس نیست؛ پیش‌نویس حفظ شد و چیزی ثبت نشد.");
+      else setFormError("مقایسه ذخیره نشد؛ پایداری مخزن محلی را دوباره بررسی کنید.");
       return;
     }
-    setSelectedId(createdId);
+    setSelectedId(result.recordId);
     setPreviewRevisionId(null);
-    setLiveMessage("ماتریس خصوصی و نسخه‌دار خدمت ثبت شد.");
+    setLiveMessage(result.status === "unchanged" ? "تغییر تازه‌ای برای ثبت وجود نداشت." : editingId ? "نسخهٔ تازهٔ مقایسهٔ خدمت ثبت شد؛ تصمیم نسخهٔ قبل تاریخی باقی ماند." : "ماتریس خصوصی و نسخه‌دار خدمت ثبت شد.");
+    pendingSavedComparisonFocusRef.current = true;
+    editorSessionRef.current += 1;
+    activeAttemptKeyRef.current = null;
+    setEditorBinding(null);
     setEditorOpen(false);
-    window.requestAnimationFrame(() => detailHeadingRef.current?.focus());
   };
 
   if (editorOpen) {
     const selectedCount = draft.proposals.filter((item) => item.selected).length;
     return (
       <div className="chida-app project-proposals-view comparison-editor-view service-comparison-editor-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="service-comparison-editor">
-        <header className="project-workspace-header"><button className="icon-button" type="button" onClick={closeEditor} aria-label="بستن فرم مقایسهٔ خدمت" data-testid="service-comparison-editor-back"><ArrowRight size={21} /></button><span ref={editorHeadingRef} className="project-workspace-title" tabIndex={-1} data-testid="service-comparison-editor-title"><small>مقایسه خدمات</small><strong>{editingId ? "بازبینی مقایسه" : "ساخت مقایسه"}</strong></span><span className="project-workspace-header-spacer" aria-hidden="true" /></header>
+        <header className="project-workspace-header"><button className="icon-button" type="button" onClick={closeEditor} disabled={mutationPending} aria-label="بستن فرم مقایسهٔ خدمت" data-testid="service-comparison-editor-back"><ArrowRight size={21} /></button><span ref={editorHeadingRef} className="project-workspace-title" tabIndex={-1} data-testid="service-comparison-editor-title"><small>مقایسه خدمات</small><strong>{editingId ? "بازبینی مقایسه" : "ساخت مقایسه"}</strong></span><span className="project-workspace-header-spacer" aria-hidden="true" /></header>
         <MobileScroll className="project-proposals-scroll"><form className="proposal-editor-content comparison-editor-content" onSubmit={saveComparison} noValidate>
+          <fieldset disabled={mutationPending} style={{ border: 0, margin: 0, minInlineSize: 0, padding: 0 }}>
           <section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>مقایسه بر اساس نظر شما</strong><small>پاسخ و ارزیابی هر مورد را خودتان ثبت می‌کنید؛ چیدا مجری برتر انتخاب نمی‌کند.</small></span></section>
+          {comparisonState.status === "loading" ? <section className="proposal-storage-error" role="status" data-testid="service-comparison-ledger-loading"><CircleHelp size={19} /><span><strong>در حال بازیابی مقایسه‌های خدمت</strong><small>پیش‌نویس حفظ شده است و ثبت پس از تأیید مخزن دوباره فعال می‌شود.</small></span></section> : null}
+          {comparisonState.status === "read-error" ? <section className="proposal-storage-error" role="alert" data-testid="service-comparison-ledger-read-error"><CircleHelp size={19} /><span><strong>وضعیت مقایسه‌های خدمت قابل خواندن نیست</strong><small>این وضعیت خالی نیست؛ پیش‌نویس حفظ شده و ثبت بسته می‌ماند.</small></span></section> : null}
+          {editorBindingStale ? <section className="proposal-storage-error" role="alert" data-testid="service-comparison-editor-stale"><CircleHelp size={19} /><span><strong>اتصال این فرم قدیمی شده است</strong><small>پیش‌نویس پاک نشده؛ برای ثبت دوباره فرم را از نسخهٔ جاری باز کنید.</small></span></section> : null}
           <section className="proposal-form-section" aria-labelledby="service-comparison-target-title"><div className="proposal-section-heading"><span><small>اتصال دقیق</small><strong id="service-comparison-target-title">درخواست و پیشنهادهای جاری</strong></span></div>{editingId ? <div className="proposal-locked-grid"><div><small>درخواست خدمت</small><strong>{selectedComparison?.requestSnapshot.scope ?? "خدمت درخواستی"}</strong><span>نسخهٔ {selectedComparison?.target.requestVersion.toLocaleString("fa-IR")} · ثابت</span></div></div> : <label className="field-control" htmlFor="service-comparison-request-select"><span>درخواست دارای چند پیشنهاد</span><select id="service-comparison-request-select" value={draft.requestKey} onChange={(event) => changeGroup(event.target.value)} data-testid="service-comparison-request-select"><option value="">انتخاب درخواست خدمت</option>{eligibleGroups.map((group) => <option key={group.key} value={group.key}>{group.title} · {group.proposals.length.toLocaleString("fa-IR")} پیشنهاد</option>)}</select></label>}
             {draft.proposals.length ? <div className="comparison-proposal-toggles">{draft.proposals.map((proposalDraft) => { const proposal = currentServiceProposals.find((item) => item.id === proposalDraft.proposalId); return proposal ? <button type="button" key={proposal.id} aria-pressed={proposalDraft.selected} onClick={() => updateProposalDraft(proposal.id, (current) => ({ ...current, selected: !current.selected }))} data-testid="service-comparison-proposal-toggle" data-proposal-id={proposal.id}><span>{proposalDraft.selected ? <Check size={14} /> : null}</span><strong>{proposal.supplierSnapshot.displayName}</strong><small>نسخهٔ {proposal.version.toLocaleString("fa-IR")}</small></button> : null; })}</div> : null}<p className="comparison-boundary-note">{selectedCount.toLocaleString("fa-IR")} پیشنهاد انتخاب شده؛ اصل پیشنهاد و store محصول دست‌نخورده می‌مانند.</p></section>
           {draftGroup ? <section className="proposal-form-section service-comparison-matrix" aria-labelledby="service-comparison-matrix-title"><div className="proposal-section-heading"><span><small>نیاز ← رونویسی ← ارزیابی</small><strong id="service-comparison-matrix-title">ماتریس معیارهای خدمت</strong></span><em>خالی یا نامشخص = روشن‌سازی</em></div>{builderServiceProposalComparisonCriteriaV1.map((definition, criterionIndex) => { const requestValue = draftGroup.requestSnapshot[definition.requestField]; return <article className="service-comparison-criterion-editor" key={definition.id} data-testid="service-comparison-criterion-editor" data-criterion={definition.id}><div className="service-comparison-criterion-heading"><span><small>معیار {(criterionIndex + 1).toLocaleString("fa-IR")}</small><strong>{definition.label}</strong></span><em>{requestValue ?? "درخواست: نامشخص"}</em></div><div className="service-comparison-assessments">{draft.proposals.filter((item) => item.selected).map((proposalDraft, proposalIndex) => { const proposal = currentServiceProposals.find((item) => item.id === proposalDraft.proposalId); const criterion = proposalDraft.criteria.find((item) => item.criterionId === definition.id)!; if (!proposal) return null; const prefix = `service-comparison-${criterionIndex}-${proposalIndex}`; return <section className="service-comparison-proposal-assessment" key={proposal.id} data-testid="service-comparison-proposal-assessment" data-proposal-id={proposal.id}><strong>{proposal.supplierSnapshot.displayName}</strong><small>رونویسی و ارزیابی دستی شما · نه ادعای احرازشده</small><label className="field-control" htmlFor={`${prefix}-assessment`}><span>وضعیت انطباق</span><select id={`${prefix}-assessment`} aria-label={`وضعیت انطباق ${definition.label} برای ${proposal.supplierSnapshot.displayName}`} value={criterion.assessment} onChange={(event) => { const assessment = event.target.value as BuilderServiceProposalComparisonAssessment; updateCriterionDraft(proposal.id, definition.id, (current) => ({ ...current, assessment, declaredValue: assessment === "not-applicable" ? "" : current.declaredValue, rationale: "" })); }} data-testid="service-comparison-assessment-status"><option value="unknown">انطباق نامشخص</option><option value="aligned" disabled={requestValue === null}>هم‌راستا با نیاز</option><option value="partial" disabled={requestValue === null}>پوشش جزئی</option><option value="different" disabled={requestValue === null}>متفاوت</option><option value="not-applicable" disabled={requestValue !== null}>برای این نیاز نامرتبط</option></select></label>{criterion.assessment !== "not-applicable" ? <label className="field-control" htmlFor={`${prefix}-declared`}><span>مقدار اعلامی رونویسی‌شده <small>(برای نامشخص اختیاری)</small></span><KeyboardTextarea id={`${prefix}-declared`} aria-label={`مقدار اعلامی ${definition.label} برای ${proposal.supplierSnapshot.displayName}`} value={criterion.declaredValue} onChange={(event) => updateCriterionDraft(proposal.id, definition.id, (current) => ({ ...current, declaredValue: event.target.value }))} rows={2} placeholder="آنچه مجری بیرون از چیدا اعلام کرده…" data-testid="service-comparison-declared-value" /></label> : null}<label className="field-control" htmlFor={`${prefix}-rationale`}><span>{criterion.assessment === "unknown" ? "یادداشت یا سؤال روشن‌سازی (اختیاری)" : "دلیل ارزیابی شما"}</span><KeyboardTextarea id={`${prefix}-rationale`} aria-label={`دلیل ارزیابی ${definition.label} برای ${proposal.supplierSnapshot.displayName}`} value={criterion.rationale} onChange={(event) => updateCriterionDraft(proposal.id, definition.id, (current) => ({ ...current, rationale: event.target.value }))} rows={2} placeholder={criterion.assessment === "unknown" ? "چه چیزی هنوز روشن نیست؟" : "چرا این وضعیت را انتخاب کردی؟"} data-testid="service-comparison-assessment-rationale" /></label></section>; })}</div></article>; })}</section> : null}
           {livePreview ? <section className={`comparison-recommendation-preview ${livePreview.summary.status === "needs-clarification" ? "insufficient-data" : ""}`} data-testid="service-comparison-coverage-preview"><CircleHelp size={20} /><span><small>جمع‌بندی اطلاعات</small><strong>{livePreview.summary.status === "ready-for-human-decision" ? "آماده برای تصمیم انسانی" : `${livePreview.summary.unknownCount.toLocaleString("fa-IR")} معیار نیازمند روشن‌سازی`}</strong><p>{livePreview.summary.reason}</p></span></section> : null}
-          {formError ? <p className="proposal-form-error" role="alert" data-testid="service-comparison-form-error">{formError}</p> : null}<div className="proposal-editor-actions"><button className="secondary-button" type="button" onClick={closeEditor}>انصراف</button><button className="primary-button" type="submit" data-testid="service-comparison-save">{editingId ? "ثبت نسخهٔ تازه" : "ثبت مقایسه"}</button></div>
+          {formError ? <p className="proposal-form-error" role="alert" data-testid="service-comparison-form-error">{formError}</p> : null}<div className="proposal-editor-actions"><button className="secondary-button" type="button" onClick={closeEditor}>انصراف</button><button className="primary-button" type="submit" disabled={submitLocked} data-testid="service-comparison-save">{mutationPending ? "در حال ثبت…" : editingId ? "ثبت نسخهٔ تازه" : "ثبت مقایسه"}</button></div>
+          </fieldset>
         </form></MobileScroll>
       </div>
     );
@@ -19705,14 +19650,14 @@ function ProjectServiceProposalComparisonsView({ project, proposals, comparisons
 
   if (selectedComparison && previewRevision) {
     const currentPreview = previewRevision.id === selectedComparison.currentRevisionId;
-    const effectiveStatus = builderServiceProposalComparisonEffectiveStatus(selectedComparison, proposals, requests, approvals, contacts, previewRevision.id);
+    const effectiveStatus = currentPreview ? comparisonEffectiveStatus(selectedComparison, previewRevision.id) : "current" as const;
     const decision = decisions.find((item) => item.target.comparisonId === selectedComparison.id && item.target.comparisonRevisionId === previewRevision.id) ?? null;
     return (
       <div className="chida-app project-proposals-view comparison-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="service-comparison-detail">
         <header className="project-workspace-header"><button className="icon-button" type="button" onClick={() => { setSelectedId(null); setPreviewRevisionId(null); window.requestAnimationFrame(() => Array.from(document.querySelectorAll<HTMLElement>("[data-service-comparison-id]")).find((element) => element.dataset.serviceComparisonId === selectedComparison.id)?.focus()); }} aria-label="بازگشت به مقایسه‌های خدمت" data-testid="service-comparison-detail-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>مقایسه خدمات</small><strong>نتیجه و تصمیم</strong></span><span className="project-workspace-header-spacer" /></header>
         <MobileScroll className="project-proposals-scroll"><main className="proposal-detail-content comparison-detail-content">
           <section className="proposal-detail-hero comparison-detail-hero" tabIndex={-1} ref={detailHeadingRef} data-testid="service-comparison-detail-hero"><span className="proposal-detail-icon"><LayoutGrid size={24} /></span><span className={`proposal-status-badge ${effectiveStatus}`}>{effectiveStatus === "current" ? currentPreview ? "جاری" : "نسخه قدیمی · فقط مشاهده" : "نیازمند بررسی"}</span><h1>{selectedComparison.requestSnapshot.scope ?? "خدمت درخواستی"}</h1><p>{previewRevision.inputs.length.toLocaleString("fa-IR")} پیشنهاد در این مقایسه</p></section>
-          <section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>تصمیم با شماست</strong><small>این جمع‌بندی فقط بر اساس اطلاعاتی است که خودتان ثبت کرده‌اید.</small></span></section>
+          <section className="proposal-honesty-banner" data-testid="service-comparison-authority-boundary"><ShieldCheck size={18} /><span><strong>خصوصی و ثبت دستی</strong><small>این جمع‌بندی فقط بر اساس اطلاعاتی است که خودتان ثبت کرده‌اید و بدون اثر بیرونی است.</small></span></section>
           {selectedComparison.revisions.length > 1 ? <label className="proposal-revision-picker" htmlFor="service-comparison-revision-select"><span>نمایش نسخه</span><select id="service-comparison-revision-select" value={previewRevision.id} onChange={(event) => setPreviewRevisionId(event.target.value)} data-testid="service-comparison-revision-select">{[...selectedComparison.revisions].reverse().map((revision) => <option key={revision.id} value={revision.id}>نسخهٔ {revision.version.toLocaleString("fa-IR")} · {revision.id === selectedComparison.currentRevisionId ? "جاری" : "تاریخی"}</option>)}</select></label> : null}
           <section className={`comparison-recommendation-detail ${previewRevision.summary.status === "needs-clarification" ? "insufficient-data" : ""}`} data-testid="service-comparison-summary"><CircleHelp size={21} /><span><small>جمع‌بندی پوشش؛ نامزد خودکار ندارد</small><strong>{previewRevision.summary.status === "ready-for-human-decision" ? "آماده برای تصمیم انسانی" : `${previewRevision.summary.unknownCount.toLocaleString("fa-IR")} معیار نیازمند روشن‌سازی`}</strong><p>{previewRevision.summary.reason}</p></span></section>
           <details className="proposal-disclosure"><summary><span><strong>قیمت و شرایط اعلام‌شده</strong><small>جزئیات هر پیشنهاد، بدون رتبه‌بندی</small></span><ChevronDown size={18} /></summary><div className="proposal-disclosure-body"><div className="comparison-results-list">{previewRevision.results.map((result) => <article className="comparison-result-card service-commercial-card" key={result.proposalId}><strong>{result.supplierDisplayName}</strong><dl className="proposal-detail-meta"><div><dt>وضعیت</dt><dd>{builderRecordedProposalLineStatusLabel(result.declaredCommercialSnapshot.status)}</dd></div><div><dt>قیمت کل</dt><dd>{formatBuilderProposalComparisonMoney(result.declaredCommercialSnapshot.totalPrice)}</dd></div><div><dt>موعد اعلامی</dt><dd>{result.declaredCommercialSnapshot.leadTime ?? "نامشخص"}</dd></div><div><dt>پرداخت اعلامی</dt><dd>{result.declaredCommercialSnapshot.paymentTerms ?? "نامشخص"}</dd></div><div><dt>اعتبار پیشنهاد</dt><dd>{result.declaredCommercialSnapshot.validity ?? "نامشخص"}</dd></div></dl><small>هیچ فرمول، نرخ، جمع یا رتبه‌ای از این داده ساخته نشده است.</small></article>)}</div></div></details>
@@ -19750,7 +19695,11 @@ function ProjectServiceProposalComparisonsView({ project, proposals, comparisons
     );
   }
 
-  return <div className="chida-app project-proposals-view comparisons-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="service-proposal-comparisons-view"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="service-comparisons-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>مقایسه‌های خدمت</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><LayoutGrid size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>مقایسه خدمات</h1><p>دامنه کار، زمان و شرایط هر مجری را کنار هم ببین.</p></div></section><section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>تصمیم با شماست</strong><small>پاسخ‌ها را خودتان ثبت کرده‌اید و چیدا هیچ مجری‌ای را خودکار انتخاب نمی‌کند.</small></span></section>{storageLocked ? <section className="proposal-storage-error" role="alert" data-testid="service-comparison-storage-error"><CircleHelp size={19} /><span><strong>وضعیت مقایسه‌های خدمت قابل تأیید نیست</strong><small>خواندن مخزن کامل نشد؛ این وضعیت «مقایسه‌ای ثبت نشده» نیست و ساخت/ویرایش قفل می‌ماند.</small></span></section> : null}<div className="project-proposals-toolbar"><span><strong>{storageLocked ? "—" : orderedComparisons.length.toLocaleString("fa-IR")}</strong><small>مقایسه</small></span><button ref={addButtonRef} className="primary-button" type="button" onClick={openCreate} disabled={storageLocked || eligibleGroups.length === 0} data-testid="service-comparison-add"><Plus size={17} /> مقایسه جدید</button></div>{!storageLocked && eligibleGroups.length === 0 ? <p className="proposal-prerequisite-note" data-testid="service-comparison-prerequisite-note">برای مقایسه جدید، دست‌کم دو پیشنهاد خدمتِ جاری باید به همان نسخهٔ دقیق یک درخواست وصل باشند.</p> : null}{!storageLocked && orderedComparisons.length ? <div className="project-proposals-list comparison-list">{orderedComparisons.map((comparison) => { const revision = comparison.revisions.find((item) => item.id === comparison.currentRevisionId)!; const status = builderServiceProposalComparisonEffectiveStatus(comparison, proposals, requests, approvals, contacts); return <button className="proposal-card comparison-card" type="button" key={comparison.id} data-service-comparison-id={comparison.id} onClick={() => { setSelectedId(comparison.id); setPreviewRevisionId(comparison.currentRevisionId); setLiveMessage(""); window.requestAnimationFrame(() => detailHeadingRef.current?.focus()); }} data-testid="service-comparison-card"><span className="proposal-card-icon"><LayoutGrid size={20} /></span><span className="proposal-card-copy"><span><small>{status === "current" ? "جاری" : "نیازمند بازبینی"}</small><small>{formatProjectFileDate(comparison.updatedAt)}</small></span><strong>{comparison.requestSnapshot.scope ?? "خدمت درخواستی"}</strong><em>{revision.inputs.length.toLocaleString("fa-IR")} پیشنهاد · {revision.summary.status === "ready-for-human-decision" ? "آمادهٔ تصمیم انسانی" : "نیازمند روشن‌سازی"}</em><small>نسخهٔ {revision.version.toLocaleString("fa-IR")}</small></span><ArrowRight size={17} /></button>; })}</div> : !storageLocked ? <section className="proposal-empty-state"><LayoutGrid size={26} /><h2>مقایسه‌ای ثبت نشده</h2><p>پس از ثبت دو پیشنهاد خدمت، می‌توانی شرایط آن‌ها را کنار هم ببینی.</p></section> : null}</main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span></div>;
+  if (comparisonState.status !== "ready") {
+    return <div className="chida-app project-proposals-view comparisons-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="service-proposal-comparisons-view"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="service-comparisons-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>مقایسه‌های خدمت</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><LayoutGrid size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>مقایسه خدمات</h1><p>دامنه کار، زمان و شرایط هر مجری را کنار هم ببین.</p></div></section>{comparisonState.status === "loading" ? <section className="proposal-storage-error" role="status" data-testid="service-comparison-ledger-loading"><CircleHelp size={19} /><span><strong>در حال بازیابی مقایسه‌های خدمت</strong><small>تا تأیید مخزن، ساخت و ویرایش غیرفعال است.</small></span></section> : <section className="proposal-storage-error" role="alert" data-testid="service-comparison-ledger-read-error"><CircleHelp size={19} /><span data-testid="service-comparison-storage-error"><strong>وضعیت مقایسه‌های خدمت قابل تأیید نیست</strong><small>این وضعیت خالی نیست؛ ساخت و ویرایش تا بازیابی موفق قفل می‌ماند.</small></span></section>}<div className="project-proposals-toolbar"><span><strong>—</strong><small>وضعیت نامشخص</small></span><button ref={addButtonRef} className="primary-button" type="button" disabled data-testid="service-comparison-add"><Plus size={17} /> مقایسه جدید</button></div></main></MobileScroll></div>;
+  }
+
+  return <div className="chida-app project-proposals-view comparisons-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="service-proposal-comparisons-view"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="service-comparisons-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>مقایسه‌های خدمت</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><LayoutGrid size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>مقایسه خدمات</h1><p>دامنه کار، زمان و شرایط هر مجری را کنار هم ببین.</p></div></section><section className="proposal-honesty-banner"><ShieldCheck size={18} /><span><strong>تصمیم با شماست</strong><small>پاسخ‌ها را خودتان ثبت کرده‌اید و چیدا هیچ مجری‌ای را خودکار انتخاب نمی‌کند.</small></span></section><div className="project-proposals-toolbar"><span><strong>{orderedComparisons.length.toLocaleString("fa-IR")}</strong><small>مقایسه</small></span><button ref={addButtonRef} className="primary-button" type="button" onClick={openCreate} disabled={storageLocked || eligibleGroups.length === 0} data-testid="service-comparison-add"><Plus size={17} /> مقایسه جدید</button></div>{eligibleGroups.length === 0 ? <p className="proposal-prerequisite-note" data-testid="service-comparison-prerequisite-note">برای مقایسه جدید، دست‌کم دو پیشنهاد خدمتِ جاری باید به همان نسخهٔ دقیق یک درخواست وصل باشند.</p> : null}{orderedComparisons.length ? <div className="project-proposals-list comparison-list">{orderedComparisons.map((comparison) => { const revision = comparison.revisions.find((item) => item.id === comparison.currentRevisionId)!; const status = comparisonEffectiveStatus(comparison); return <button className="proposal-card comparison-card" type="button" key={comparison.id} data-service-comparison-id={comparison.id} onClick={() => { setSelectedId(comparison.id); setPreviewRevisionId(comparison.currentRevisionId); setLiveMessage(""); window.requestAnimationFrame(() => detailHeadingRef.current?.focus()); }} data-testid="service-comparison-card"><span className="proposal-card-icon"><LayoutGrid size={20} /></span><span className="proposal-card-copy"><span><small>{status === "current" ? "جاری" : "نیازمند بازبینی"}</small><small>{formatProjectFileDate(comparison.updatedAt)}</small></span><strong>{comparison.requestSnapshot.scope ?? "خدمت درخواستی"}</strong><em>{revision.inputs.length.toLocaleString("fa-IR")} پیشنهاد · {revision.summary.status === "ready-for-human-decision" ? "آمادهٔ تصمیم انسانی" : "نیازمند روشن‌سازی"}</em><small>نسخهٔ {revision.version.toLocaleString("fa-IR")}</small></span><ArrowRight size={17} /></button>; })}</div> : <section className="proposal-empty-state" data-testid="service-comparison-ledger-empty"><LayoutGrid size={26} /><h2>مقایسه‌ای ثبت نشده</h2><p>پس از ثبت دو پیشنهاد خدمت، می‌توانی شرایط آن‌ها را کنار هم ببینی.</p></section>}</main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span></div>;
 }
 
 function builderManualNegotiationConditionImpactDomainLabel(domain: BuilderManualNegotiationConditionImpactDomain) {
@@ -19770,7 +19719,7 @@ function builderManualNegotiationConditionImpactDirectionLabel(direction: Builde
   return "از نظر شما هنوز روشن نیست";
 }
 
-function ProjectManualNegotiationConditionImpactView({ questionDraft, response, responseRevision, impact, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, storageLocked, onBack, onUpsert }: { questionDraft: BuilderNegotiationDraftRecord; response: BuilderManualNegotiationResponseRecord; responseRevision: BuilderManualNegotiationResponseRevision; impact: BuilderManualNegotiationConditionImpactRecord | null; responses: BuilderManualNegotiationResponseRecord[]; drafts: BuilderNegotiationDraftRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; onBack: () => void; onUpsert: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationConditionImpactForm) => false | "unchanged" | "created" | "updated" }) {
+function ProjectManualNegotiationConditionImpactView({ questionDraft, response, responseRevision, impact, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, proposalEnvelope, proposalDependencies, storageLocked, onBack, onUpsert }: { questionDraft: BuilderNegotiationDraftRecord; response: BuilderManualNegotiationResponseRecord; responseRevision: BuilderManualNegotiationResponseRevision; impact: BuilderManualNegotiationConditionImpactRecord | null; responses: BuilderManualNegotiationResponseRecord[]; drafts: BuilderNegotiationDraftRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; proposalEnvelope: BuilderProposalEnvelope | null; proposalDependencies: BuilderProposalDependencies | null; storageLocked: boolean; onBack: () => void; onUpsert: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationConditionImpactForm) => false | "unchanged" | "created" | "updated" }) {
   const keyboard = useKeyboard();
   const editorHeadingRef = useRef<HTMLSpanElement>(null);
   const detailHeadingRef = useRef<HTMLElement>(null);
@@ -19787,9 +19736,9 @@ function ProjectManualNegotiationConditionImpactView({ questionDraft, response, 
   const [liveMessage, setLiveMessage] = useState("");
   const previewImpactRevision = impact?.revisions.find((item) => item.id === previewRevisionId) ?? currentImpactRevision;
   const impactEffectiveStatus = impact
-    ? builderManualNegotiationConditionImpactEffectiveStatus(impact, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts)
+    ? builderManualNegotiationConditionImpactEffectiveStatus(impact, responses, drafts, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies)
     : "needs-review" as const;
-  const responseEffectiveStatus = builderManualNegotiationResponseEffectiveStatus(response, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts);
+  const responseEffectiveStatus = builderManualNegotiationResponseEffectiveStatus(response, drafts, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies);
   const responseIsCurrent = response.currentRevisionId === responseRevision.id && responseEffectiveStatus === "current";
 
   useEffect(() => {
@@ -19904,7 +19853,7 @@ function builderManualNegotiationResponseReviewOutcomeLabel(outcome: BuilderManu
   return "از نظر شما تعارض احتمالی دارد";
 }
 
-function ProjectManualNegotiationResponseReviewView({ project, questionDraft, response, responseRevision, review, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, storageLocked, onBack, onUpsert }: { project: BuilderProject; questionDraft: BuilderNegotiationDraftRecord; response: BuilderManualNegotiationResponseRecord; responseRevision: BuilderManualNegotiationResponseRevision; review: BuilderManualNegotiationResponseReviewRecord | null; responses: BuilderManualNegotiationResponseRecord[]; drafts: BuilderNegotiationDraftRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; onBack: () => void; onUpsert: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationResponseReviewForm) => false | "unchanged" | "created" | "updated" }) {
+function ProjectManualNegotiationResponseReviewView({ project, questionDraft, response, responseRevision, review, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, proposalEnvelope, proposalDependencies, storageLocked, onBack, onUpsert }: { project: BuilderProject; questionDraft: BuilderNegotiationDraftRecord; response: BuilderManualNegotiationResponseRecord; responseRevision: BuilderManualNegotiationResponseRevision; review: BuilderManualNegotiationResponseReviewRecord | null; responses: BuilderManualNegotiationResponseRecord[]; drafts: BuilderNegotiationDraftRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; proposalEnvelope: BuilderProposalEnvelope | null; proposalDependencies: BuilderProposalDependencies | null; storageLocked: boolean; onBack: () => void; onUpsert: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationResponseReviewForm) => false | "unchanged" | "created" | "updated" }) {
   const keyboard = useKeyboard();
   const editorHeadingRef = useRef<HTMLSpanElement>(null);
   const detailHeadingRef = useRef<HTMLElement>(null);
@@ -19916,9 +19865,9 @@ function ProjectManualNegotiationResponseReviewView({ project, questionDraft, re
   const [liveMessage, setLiveMessage] = useState("");
   const previewReviewRevision = review?.revisions.find((item) => item.id === previewRevisionId) ?? currentReviewRevision;
   const reviewEffectiveStatus = review
-    ? builderManualNegotiationResponseReviewEffectiveStatus(review, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts)
+    ? builderManualNegotiationResponseReviewEffectiveStatus(review, responses, drafts, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies)
     : "needs-review" as const;
-  const responseEffectiveStatus = builderManualNegotiationResponseEffectiveStatus(response, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts);
+  const responseEffectiveStatus = builderManualNegotiationResponseEffectiveStatus(response, drafts, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies);
   const responseIsCurrent = response.currentRevisionId === responseRevision.id && responseEffectiveStatus === "current";
 
   useEffect(() => {
@@ -20008,7 +19957,7 @@ function ProjectManualNegotiationResponseReviewView({ project, questionDraft, re
   return <div className="chida-app project-proposals-view manual-response-review-detail-view" dir="rtl" data-theme="dark" data-mode="fullscreen"><header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به پاسخ ثبت‌شده"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>بررسی شما</small><strong>نتیجهٔ پاسخ</strong></span><span className="project-workspace-header-spacer" /></header><MobileScroll className="project-proposals-scroll"><main className="proposal-detail-content"><section className="proposal-empty-state"><CircleHelp size={26} /><h2>ارزیابی قابل نمایش نیست</h2><p>پاسخ مبنا یا اطلاعات محلی این ارزیابی قابل تأیید نیست.</p></section></main></MobileScroll></div>;
 }
 
-function ProjectManualNegotiationResponseView({ project, questionDraft, questionRevision, response, reviews, conditionImpacts, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, storageLocked, reviewsStorageLocked, conditionImpactsStorageLocked, onBack, onCreate, onUpdate, onUpsertReview, onUpsertConditionImpact }: { project: BuilderProject; questionDraft: BuilderNegotiationDraftRecord; questionRevision: BuilderNegotiationDraftRevision; response: BuilderManualNegotiationResponseRecord | null; reviews: BuilderManualNegotiationResponseReviewRecord[]; conditionImpacts: BuilderManualNegotiationConditionImpactRecord[]; responses: BuilderManualNegotiationResponseRecord[]; drafts: BuilderNegotiationDraftRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; reviewsStorageLocked: boolean; conditionImpactsStorageLocked: boolean; onBack: () => void; onCreate: (draftId: string, draftRevisionId: string, form: BuilderManualNegotiationResponseForm) => string | null; onUpdate: (responseId: string, form: BuilderManualNegotiationResponseForm) => false | "unchanged" | "updated"; onUpsertReview: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationResponseReviewForm) => false | "unchanged" | "created" | "updated"; onUpsertConditionImpact: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationConditionImpactForm) => false | "unchanged" | "created" | "updated" }) {
+function ProjectManualNegotiationResponseView({ project, questionDraft, questionRevision, response, reviews, conditionImpacts, responses, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, proposalEnvelope, proposalDependencies, storageLocked, reviewsStorageLocked, conditionImpactsStorageLocked, onBack, onCreate, onUpdate, onUpsertReview, onUpsertConditionImpact }: { project: BuilderProject; questionDraft: BuilderNegotiationDraftRecord; questionRevision: BuilderNegotiationDraftRevision; response: BuilderManualNegotiationResponseRecord | null; reviews: BuilderManualNegotiationResponseReviewRecord[]; conditionImpacts: BuilderManualNegotiationConditionImpactRecord[]; responses: BuilderManualNegotiationResponseRecord[]; drafts: BuilderNegotiationDraftRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; proposalEnvelope: BuilderProposalEnvelope | null; proposalDependencies: BuilderProposalDependencies | null; storageLocked: boolean; reviewsStorageLocked: boolean; conditionImpactsStorageLocked: boolean; onBack: () => void; onCreate: (draftId: string, draftRevisionId: string, form: BuilderManualNegotiationResponseForm) => string | null; onUpdate: (responseId: string, form: BuilderManualNegotiationResponseForm) => false | "unchanged" | "updated"; onUpsertReview: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationResponseReviewForm) => false | "unchanged" | "created" | "updated"; onUpsertConditionImpact: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationConditionImpactForm) => false | "unchanged" | "created" | "updated" }) {
   const keyboard = useKeyboard();
   const editorHeadingRef = useRef<HTMLSpanElement>(null);
   const detailHeadingRef = useRef<HTMLElement>(null);
@@ -20024,9 +19973,9 @@ function ProjectManualNegotiationResponseView({ project, questionDraft, question
   const currentResponseRevision = response?.revisions.find((item) => item.id === response.currentRevisionId) ?? null;
   const previewResponseRevision = response?.revisions.find((item) => item.id === previewRevisionId) ?? currentResponseRevision;
   const questionIsCurrent = questionDraft.currentRevisionId === questionRevision.id
-    && builderNegotiationDraftEffectiveStatus(questionDraft, productComparisons, serviceComparisons, proposals, requests, approvals, contacts) === "current";
+    && builderNegotiationDraftEffectiveStatus(questionDraft, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies) === "current";
   const responseEffectiveStatus = response
-    ? builderManualNegotiationResponseEffectiveStatus(response, drafts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts)
+    ? builderManualNegotiationResponseEffectiveStatus(response, drafts, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies)
     : "needs-review" as const;
   const responseTextInvalid = formError === "متن پاسخی را که خودت رونویسی می‌کنی بنویس.";
 
@@ -20078,7 +20027,7 @@ function ProjectManualNegotiationResponseView({ project, questionDraft, question
     const targetResponseRevision = response.revisions.find((item) => item.id === reviewResponseRevisionId) ?? null;
     const targetReview = reviews.find((item) => item.target.manualNegotiationResponseId === response.id && item.target.manualNegotiationResponseRevisionId === reviewResponseRevisionId) ?? null;
     if (targetResponseRevision) {
-      return <ProjectManualNegotiationResponseReviewView project={project} questionDraft={questionDraft} response={response} responseRevision={targetResponseRevision} review={targetReview} responses={responses} drafts={drafts} productComparisons={productComparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} storageLocked={reviewsStorageLocked} onBack={() => { setReviewResponseRevisionId(null); window.requestAnimationFrame(() => (reviewActionRef.current ?? detailHeadingRef.current)?.focus()); }} onUpsert={onUpsertReview} />;
+      return <ProjectManualNegotiationResponseReviewView project={project} questionDraft={questionDraft} response={response} responseRevision={targetResponseRevision} review={targetReview} responses={responses} drafts={drafts} productComparisons={productComparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} proposalEnvelope={proposalEnvelope} proposalDependencies={proposalDependencies} storageLocked={reviewsStorageLocked} onBack={() => { setReviewResponseRevisionId(null); window.requestAnimationFrame(() => (reviewActionRef.current ?? detailHeadingRef.current)?.focus()); }} onUpsert={onUpsertReview} />;
     }
   }
 
@@ -20086,7 +20035,7 @@ function ProjectManualNegotiationResponseView({ project, questionDraft, question
     const targetResponseRevision = response.revisions.find((item) => item.id === conditionImpactResponseRevisionId) ?? null;
     const targetImpact = conditionImpacts.find((item) => item.target.manualNegotiationResponseId === response.id && item.target.manualNegotiationResponseRevisionId === conditionImpactResponseRevisionId) ?? null;
     if (targetResponseRevision) {
-      return <ProjectManualNegotiationConditionImpactView questionDraft={questionDraft} response={response} responseRevision={targetResponseRevision} impact={targetImpact} responses={responses} drafts={drafts} productComparisons={productComparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} storageLocked={conditionImpactsStorageLocked} onBack={() => { setConditionImpactResponseRevisionId(null); window.requestAnimationFrame(() => (conditionImpactActionRef.current ?? detailHeadingRef.current)?.focus()); }} onUpsert={onUpsertConditionImpact} />;
+      return <ProjectManualNegotiationConditionImpactView questionDraft={questionDraft} response={response} responseRevision={targetResponseRevision} impact={targetImpact} responses={responses} drafts={drafts} productComparisons={productComparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} proposalEnvelope={proposalEnvelope} proposalDependencies={proposalDependencies} storageLocked={conditionImpactsStorageLocked} onBack={() => { setConditionImpactResponseRevisionId(null); window.requestAnimationFrame(() => (conditionImpactActionRef.current ?? detailHeadingRef.current)?.focus()); }} onUpsert={onUpsertConditionImpact} />;
     }
   }
 
@@ -20136,12 +20085,12 @@ function ProjectManualNegotiationResponseView({ project, questionDraft, question
   );
 }
 
-function ProjectNegotiationDraftsView({ project, drafts, manualResponses, manualResponseReviews, manualConditionImpacts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, storageLocked, manualResponsesStorageLocked, manualResponseReviewsStorageLocked, manualConditionImpactsStorageLocked, initialTargetKey, initialDraftId, returnToOrigin, onBack, onCreate, onUpdate, onCreateManualResponse, onUpdateManualResponse, onUpsertManualResponseReview, onUpsertManualConditionImpact }: { project: BuilderProject; drafts: BuilderNegotiationDraftRecord[]; manualResponses: BuilderManualNegotiationResponseRecord[]; manualResponseReviews: BuilderManualNegotiationResponseReviewRecord[]; manualConditionImpacts: BuilderManualNegotiationConditionImpactRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; storageLocked: boolean; manualResponsesStorageLocked: boolean; manualResponseReviewsStorageLocked: boolean; manualConditionImpactsStorageLocked: boolean; initialTargetKey: string | null; initialDraftId: string | null; returnToOrigin: boolean; onBack: () => void; onCreate: (draft: BuilderNegotiationDraftForm) => string | null; onUpdate: (draftId: string, draft: BuilderNegotiationDraftForm) => false | "unchanged" | "updated"; onCreateManualResponse: (draftId: string, draftRevisionId: string, form: BuilderManualNegotiationResponseForm) => string | null; onUpdateManualResponse: (responseId: string, form: BuilderManualNegotiationResponseForm) => false | "unchanged" | "updated"; onUpsertManualResponseReview: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationResponseReviewForm) => false | "unchanged" | "created" | "updated"; onUpsertManualConditionImpact: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationConditionImpactForm) => false | "unchanged" | "created" | "updated" }) {
+function ProjectNegotiationDraftsView({ project, drafts, manualResponses, manualResponseReviews, manualConditionImpacts, productComparisons, serviceComparisons, proposals, requests, approvals, contacts, proposalEnvelope, proposalDependencies, storageLocked, manualResponsesStorageLocked, manualResponseReviewsStorageLocked, manualConditionImpactsStorageLocked, initialTargetKey, initialDraftId, returnToOrigin, onBack, onCreate, onUpdate, onCreateManualResponse, onUpdateManualResponse, onUpsertManualResponseReview, onUpsertManualConditionImpact }: { project: BuilderProject; drafts: BuilderNegotiationDraftRecord[]; manualResponses: BuilderManualNegotiationResponseRecord[]; manualResponseReviews: BuilderManualNegotiationResponseReviewRecord[]; manualConditionImpacts: BuilderManualNegotiationConditionImpactRecord[]; productComparisons: BuilderProposalComparisonRecord[]; serviceComparisons: BuilderServiceProposalComparisonRecord[]; proposals: BuilderRecordedProposalRecord[]; requests: ProjectPurchaseRequestRecord[]; approvals: ProjectApprovalRecord[]; contacts: SupplierContactRecord[]; proposalEnvelope: BuilderProposalEnvelope | null; proposalDependencies: BuilderProposalDependencies | null; storageLocked: boolean; manualResponsesStorageLocked: boolean; manualResponseReviewsStorageLocked: boolean; manualConditionImpactsStorageLocked: boolean; initialTargetKey: string | null; initialDraftId: string | null; returnToOrigin: boolean; onBack: () => void; onCreate: (draft: BuilderNegotiationDraftForm) => string | null; onUpdate: (draftId: string, draft: BuilderNegotiationDraftForm) => false | "unchanged" | "updated"; onCreateManualResponse: (draftId: string, draftRevisionId: string, form: BuilderManualNegotiationResponseForm) => string | null; onUpdateManualResponse: (responseId: string, form: BuilderManualNegotiationResponseForm) => false | "unchanged" | "updated"; onUpsertManualResponseReview: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationResponseReviewForm) => false | "unchanged" | "created" | "updated"; onUpsertManualConditionImpact: (responseId: string, responseRevisionId: string, form: BuilderManualNegotiationConditionImpactForm) => false | "unchanged" | "created" | "updated" }) {
   const keyboard = useKeyboard();
   const editorHeadingRef = useRef<HTMLSpanElement>(null);
   const detailHeadingRef = useRef<HTMLElement>(null);
   const manualResponseActionRef = useRef<HTMLButtonElement>(null);
-  const targetOptions = useMemo(() => builderNegotiationDraftTargetOptions(project.id, productComparisons, serviceComparisons, proposals, requests, approvals, contacts), [approvals, contacts, productComparisons, project.id, proposals, requests, serviceComparisons]);
+  const targetOptions = useMemo(() => builderNegotiationDraftTargetOptions(project.id, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies), [productComparisons, project.id, proposalDependencies, proposalEnvelope, proposals, serviceComparisons]);
   const initialOption = initialTargetKey ? targetOptions.find((item) => item.key === initialTargetKey) ?? null : null;
   const [selectedId, setSelectedId] = useState<string | null>(initialDraftId);
   const [previewRevisionId, setPreviewRevisionId] = useState<string | null>(null);
@@ -20222,7 +20171,7 @@ function ProjectNegotiationDraftsView({ project, drafts, manualResponses, manual
   };
 
   if (manualResponseFlow && manualResponseQuestionDraft && manualResponseQuestionRevision) {
-    return <ProjectManualNegotiationResponseView project={project} questionDraft={manualResponseQuestionDraft} questionRevision={manualResponseQuestionRevision} response={selectedManualResponse} reviews={manualResponseReviews} conditionImpacts={manualConditionImpacts} responses={manualResponses} drafts={drafts} productComparisons={productComparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} storageLocked={manualResponsesStorageLocked} reviewsStorageLocked={manualResponseReviewsStorageLocked} conditionImpactsStorageLocked={manualConditionImpactsStorageLocked} onBack={() => { setManualResponseFlow(null); window.requestAnimationFrame(() => manualResponseActionRef.current?.focus()); }} onCreate={onCreateManualResponse} onUpdate={onUpdateManualResponse} onUpsertReview={onUpsertManualResponseReview} onUpsertConditionImpact={onUpsertManualConditionImpact} />;
+    return <ProjectManualNegotiationResponseView project={project} questionDraft={manualResponseQuestionDraft} questionRevision={manualResponseQuestionRevision} response={selectedManualResponse} reviews={manualResponseReviews} conditionImpacts={manualConditionImpacts} responses={manualResponses} drafts={drafts} productComparisons={productComparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} proposalEnvelope={proposalEnvelope} proposalDependencies={proposalDependencies} storageLocked={manualResponsesStorageLocked} reviewsStorageLocked={manualResponseReviewsStorageLocked} conditionImpactsStorageLocked={manualConditionImpactsStorageLocked} onBack={() => { setManualResponseFlow(null); window.requestAnimationFrame(() => manualResponseActionRef.current?.focus()); }} onCreate={onCreateManualResponse} onUpdate={onUpdateManualResponse} onUpsertReview={onUpsertManualResponseReview} onUpsertConditionImpact={onUpsertManualConditionImpact} />;
   }
 
   if (editorOpen && formTarget) {
@@ -20242,7 +20191,7 @@ function ProjectNegotiationDraftsView({ project, drafts, manualResponses, manual
   }
 
   if (selectedDraft && previewRevision) {
-    const effectiveStatus = builderNegotiationDraftEffectiveStatus(selectedDraft, productComparisons, serviceComparisons, proposals, requests, approvals, contacts);
+    const effectiveStatus = builderNegotiationDraftEffectiveStatus(selectedDraft, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies);
     const currentPreview = previewRevision.id === selectedDraft.currentRevisionId;
     const evidence = builderNegotiationDraftTargetEvidence(project.id, selectedDraft.target, productComparisons, serviceComparisons, proposals);
     const manualResponse = manualResponses.find((item) => item.target.negotiationDraftId === selectedDraft.id && item.target.negotiationDraftRevisionId === previewRevision.id) ?? null;
@@ -20265,7 +20214,7 @@ function ProjectNegotiationDraftsView({ project, drafts, manualResponses, manual
   return (
     <div className="chida-app project-proposals-view negotiation-drafts-list-view" dir="rtl" data-theme="dark" data-mode="fullscreen" data-testid="negotiation-drafts-view">
       <header className="project-workspace-header"><button className="icon-button" type="button" onClick={onBack} aria-label="بازگشت به صندوق پیشنهادها" data-testid="negotiation-drafts-back"><ArrowRight size={21} /></button><span className="project-workspace-title"><small>صندوق پیشنهادها</small><strong>پیگیری پیشنهادها</strong></span><span className="project-workspace-header-spacer" /></header>
-      <MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><MessageSquare size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>سؤال‌ها و پاسخ‌ها</h1><p>پیگیری‌هایی که خودتان برای پیشنهادها ثبت کرده‌اید.</p></div></section><section className="proposal-trust-note"><ShieldCheck size={18} /><span><strong>هیچ پیامی از چیدا ارسال نشده است</strong><small>پاسخ‌ها هم فقط متن‌هایی هستند که خودتان ثبت کرده‌اید.</small></span></section>{storageLocked ? <section className="proposal-storage-error" role="alert" data-testid="negotiation-draft-storage-error"><CircleHelp size={19} /><span><strong>وضعیت پیگیری‌ها قابل تأیید نیست</strong><small>اطلاعات محلی کامل خوانده نشد و تغییرات فعلاً قفل است.</small></span></section> : null}{!storageLocked && orderedDrafts.length ? <div className="project-proposals-list">{orderedDrafts.map((draft) => { const revision = draft.revisions.find((item) => item.id === draft.currentRevisionId)!; const status = builderNegotiationDraftEffectiveStatus(draft, productComparisons, serviceComparisons, proposals, requests, approvals, contacts); const response = manualResponses.find((item) => item.target.negotiationDraftId === draft.id && item.target.negotiationDraftRevisionId === revision.id) ?? null; return <button className="proposal-card" type="button" key={draft.id} data-negotiation-draft-id={draft.id} onClick={() => { setSelectedId(draft.id); setPreviewRevisionId(draft.currentRevisionId); window.requestAnimationFrame(() => detailHeadingRef.current?.focus()); }} data-testid="negotiation-draft-card"><span className="proposal-card-icon"><MessageSquare size={20} /></span><span className="proposal-card-copy"><span><small>{manualResponsesStorageLocked ? "وضعیت پاسخ نامشخص" : status === "current" ? response ? "پاسخ ثبت شده" : "منتظر ثبت پاسخ" : "نیازمند بررسی دوباره"}</small><small>{formatProjectFileDate(draft.updatedAt)}</small></span><strong>{draft.target.supplierSnapshot.displayName}</strong><em>{draft.target.criterionLabel}</em><small>{revision.purpose}</small></span><ArrowRight size={17} /></button>; })}</div> : !storageLocked ? <section className="proposal-empty-state" data-testid="negotiation-draft-empty-state"><MessageSquare size={26} /><h2>هنوز پیگیری‌ای ندارید</h2><p>از داخل مقایسهٔ پیشنهادها، برای یک مورد سؤال بسازید.</p></section> : null}</main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span>
+      <MobileScroll className="project-proposals-scroll"><main className="project-proposals-content"><section className="project-proposals-heading"><span className="project-proposals-mark"><MessageSquare size={24} /></span><div><small>خصوصی · پروژهٔ {project.name}</small><h1>سؤال‌ها و پاسخ‌ها</h1><p>پیگیری‌هایی که خودتان برای پیشنهادها ثبت کرده‌اید.</p></div></section><section className="proposal-trust-note"><ShieldCheck size={18} /><span><strong>هیچ پیامی از چیدا ارسال نشده است</strong><small>پاسخ‌ها هم فقط متن‌هایی هستند که خودتان ثبت کرده‌اید.</small></span></section>{storageLocked ? <section className="proposal-storage-error" role="alert" data-testid="negotiation-draft-storage-error"><CircleHelp size={19} /><span><strong>وضعیت پیگیری‌ها قابل تأیید نیست</strong><small>اطلاعات محلی کامل خوانده نشد و تغییرات فعلاً قفل است.</small></span></section> : null}{!storageLocked && orderedDrafts.length ? <div className="project-proposals-list">{orderedDrafts.map((draft) => { const revision = draft.revisions.find((item) => item.id === draft.currentRevisionId)!; const status = builderNegotiationDraftEffectiveStatus(draft, productComparisons, serviceComparisons, proposals, proposalEnvelope, proposalDependencies); const response = manualResponses.find((item) => item.target.negotiationDraftId === draft.id && item.target.negotiationDraftRevisionId === revision.id) ?? null; return <button className="proposal-card" type="button" key={draft.id} data-negotiation-draft-id={draft.id} onClick={() => { setSelectedId(draft.id); setPreviewRevisionId(draft.currentRevisionId); window.requestAnimationFrame(() => detailHeadingRef.current?.focus()); }} data-testid="negotiation-draft-card"><span className="proposal-card-icon"><MessageSquare size={20} /></span><span className="proposal-card-copy"><span><small>{manualResponsesStorageLocked ? "وضعیت پاسخ نامشخص" : status === "current" ? response ? "پاسخ ثبت شده" : "منتظر ثبت پاسخ" : "نیازمند بررسی دوباره"}</small><small>{formatProjectFileDate(draft.updatedAt)}</small></span><strong>{draft.target.supplierSnapshot.displayName}</strong><em>{draft.target.criterionLabel}</em><small>{revision.purpose}</small></span><ArrowRight size={17} /></button>; })}</div> : !storageLocked ? <section className="proposal-empty-state" data-testid="negotiation-draft-empty-state"><MessageSquare size={26} /><h2>هنوز پیگیری‌ای ندارید</h2><p>از داخل مقایسهٔ پیشنهادها، برای یک مورد سؤال بسازید.</p></section> : null}</main></MobileScroll><span className="sr-only" aria-live="polite">{liveMessage}</span>
     </div>
   );
 }
@@ -20347,7 +20296,12 @@ type ProjectProposalsViewProps = {
   filesReadError: boolean;
   proposalStorageStatus: BuilderProposalState["status"];
   proposalStoreVersion: number | null;
+  proposalEnvelope: import("./builderProposals").BuilderProposalEnvelope | null;
+  proposalDependencies: BuilderProposalDependencies | null;
   storageLocked: boolean;
+  productComparisonState: BuilderComparisonState<BuilderProductComparisonEnvelope>;
+  serviceComparisonState: BuilderComparisonState<BuilderServiceComparisonEnvelope>;
+  comparisonReconciliationVersion: number;
   comparisonsStorageLocked: boolean;
   decisionsStorageLocked: boolean;
   serviceComparisonsStorageLocked: boolean;
@@ -20359,13 +20313,15 @@ type ProjectProposalsViewProps = {
   backLabel: string;
   onBack: () => void;
   onPrepareCommandPins: (draft: BuilderRecordedProposalDraft) => BuilderProposalCommandPins | null;
+  onPrepareProductComparisonPins: (draft: BuilderProposalComparisonDraft) => BuilderProductComparisonCommandPins | null;
+  onPrepareServiceComparisonPins: (draft: BuilderServiceProposalComparisonDraft) => BuilderServiceComparisonCommandPins | null;
   onCreate: (draft: BuilderRecordedProposalDraft, binding: BuilderProposalEditorBinding) => Promise<BuilderProposalMutationResult>;
   onUpdate: (proposalId: string, draft: BuilderRecordedProposalDraft, binding: BuilderProposalEditorBinding) => Promise<BuilderProposalMutationResult>;
-  onCreateComparison: (draft: BuilderProposalComparisonDraft) => string | null;
-  onUpdateComparison: (comparisonId: string, draft: BuilderProposalComparisonDraft) => false | "unchanged" | "updated";
+  onCreateComparison: (draft: BuilderProposalComparisonDraft, binding: BuilderProductComparisonEditorBinding) => Promise<BuilderComparisonMutationResult>;
+  onUpdateComparison: (comparisonId: string, draft: BuilderProposalComparisonDraft, binding: BuilderProductComparisonEditorBinding) => Promise<BuilderComparisonMutationResult>;
   onUpsertDecision: (comparisonId: string, revisionId: string, draft: BuilderProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated";
-  onCreateServiceComparison: (draft: BuilderServiceProposalComparisonDraft) => string | null;
-  onUpdateServiceComparison: (comparisonId: string, draft: BuilderServiceProposalComparisonDraft) => false | "unchanged" | "updated";
+  onCreateServiceComparison: (draft: BuilderServiceProposalComparisonDraft, binding: BuilderServiceComparisonEditorBinding) => Promise<BuilderComparisonMutationResult>;
+  onUpdateServiceComparison: (comparisonId: string, draft: BuilderServiceProposalComparisonDraft, binding: BuilderServiceComparisonEditorBinding) => Promise<BuilderComparisonMutationResult>;
   onUpsertServiceDecision: (comparisonId: string, revisionId: string, draft: BuilderServiceProposalComparisonDecisionDraft) => false | "unchanged" | "created" | "updated";
   onCreateNegotiationDraft: (draft: BuilderNegotiationDraftForm) => string | null;
   onUpdateNegotiationDraft: (draftId: string, draft: BuilderNegotiationDraftForm) => false | "unchanged" | "updated";
@@ -20393,7 +20349,12 @@ function ProjectProposalsView({
   filesReadError,
   proposalStorageStatus,
   proposalStoreVersion,
+  proposalEnvelope,
+  proposalDependencies,
   storageLocked,
+  productComparisonState,
+  serviceComparisonState,
+  comparisonReconciliationVersion,
   comparisonsStorageLocked,
   decisionsStorageLocked,
   serviceComparisonsStorageLocked,
@@ -20405,6 +20366,8 @@ function ProjectProposalsView({
   backLabel,
   onBack,
   onPrepareCommandPins,
+  onPrepareProductComparisonPins,
+  onPrepareServiceComparisonPins,
   onCreate,
   onUpdate,
   onCreateComparison,
@@ -20710,15 +20673,15 @@ function ProjectProposalsView({
   };
 
   if (comparisonMode === "product") {
-    return <ProjectProposalComparisonsView project={project} proposals={proposals} comparisons={comparisons} decisions={decisions} negotiationDrafts={negotiationDrafts} requests={requests} approvals={approvals} contacts={contacts} storageLocked={comparisonsStorageLocked} decisionsStorageLocked={decisionsStorageLocked} negotiationDraftsStorageLocked={negotiationDraftsStorageLocked} initialNegotiationTarget={negotiationOriginTarget?.comparisonKind === "product" ? negotiationOriginTarget : null} onBack={() => { setNegotiationOriginTarget(null); setComparisonMode(null); window.requestAnimationFrame(() => productComparisonsButtonRef.current?.focus()); }} onCreate={onCreateComparison} onUpdate={onUpdateComparison} onUpsertDecision={onUpsertDecision} onStartNegotiation={openNegotiationTarget} />;
+    return <ProjectProposalComparisonsView project={project} proposals={proposals} proposalEnvelope={proposalEnvelope} proposalDependencies={proposalDependencies} comparisonState={productComparisonState} reconciliationVersion={comparisonReconciliationVersion} comparisons={comparisons} decisions={decisions} negotiationDrafts={negotiationDrafts} requests={requests} approvals={approvals} contacts={contacts} storageLocked={comparisonsStorageLocked} decisionsStorageLocked={decisionsStorageLocked} negotiationDraftsStorageLocked={negotiationDraftsStorageLocked} initialNegotiationTarget={negotiationOriginTarget?.comparisonKind === "product" ? negotiationOriginTarget : null} onBack={() => { setNegotiationOriginTarget(null); setComparisonMode(null); window.requestAnimationFrame(() => productComparisonsButtonRef.current?.focus()); }} onPreparePins={onPrepareProductComparisonPins} onCreate={onCreateComparison} onUpdate={onUpdateComparison} onUpsertDecision={onUpsertDecision} onStartNegotiation={openNegotiationTarget} />;
   }
 
   if (comparisonMode === "service") {
-    return <ProjectServiceProposalComparisonsView project={project} proposals={proposals} comparisons={serviceComparisons} decisions={serviceDecisions} negotiationDrafts={negotiationDrafts} requests={requests} approvals={approvals} contacts={contacts} storageLocked={serviceComparisonsStorageLocked} decisionsStorageLocked={serviceDecisionsStorageLocked} negotiationDraftsStorageLocked={negotiationDraftsStorageLocked} initialNegotiationTarget={negotiationOriginTarget?.comparisonKind === "service" ? negotiationOriginTarget : null} onBack={() => { setNegotiationOriginTarget(null); setComparisonMode(null); window.requestAnimationFrame(() => serviceComparisonsButtonRef.current?.focus()); }} onCreate={onCreateServiceComparison} onUpdate={onUpdateServiceComparison} onUpsertDecision={onUpsertServiceDecision} onStartNegotiation={openNegotiationTarget} />;
+    return <ProjectServiceProposalComparisonsView project={project} proposals={proposals} proposalEnvelope={proposalEnvelope} proposalDependencies={proposalDependencies} comparisonState={serviceComparisonState} reconciliationVersion={comparisonReconciliationVersion} comparisons={serviceComparisons} decisions={serviceDecisions} negotiationDrafts={negotiationDrafts} requests={requests} approvals={approvals} contacts={contacts} storageLocked={serviceComparisonsStorageLocked} decisionsStorageLocked={serviceDecisionsStorageLocked} negotiationDraftsStorageLocked={negotiationDraftsStorageLocked} initialNegotiationTarget={negotiationOriginTarget?.comparisonKind === "service" ? negotiationOriginTarget : null} onBack={() => { setNegotiationOriginTarget(null); setComparisonMode(null); window.requestAnimationFrame(() => serviceComparisonsButtonRef.current?.focus()); }} onPreparePins={onPrepareServiceComparisonPins} onCreate={onCreateServiceComparison} onUpdate={onUpdateServiceComparison} onUpsertDecision={onUpsertServiceDecision} onStartNegotiation={openNegotiationTarget} />;
   }
 
   if (comparisonMode === "negotiation") {
-    return <ProjectNegotiationDraftsView project={project} drafts={negotiationDrafts} manualResponses={manualNegotiationResponses} manualResponseReviews={manualNegotiationResponseReviews} manualConditionImpacts={manualNegotiationConditionImpacts} productComparisons={comparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} storageLocked={negotiationDraftsStorageLocked} manualResponsesStorageLocked={manualNegotiationResponsesStorageLocked} manualResponseReviewsStorageLocked={manualNegotiationResponseReviewsStorageLocked} manualConditionImpactsStorageLocked={manualNegotiationConditionImpactsStorageLocked} initialTargetKey={negotiationInitialTargetKey} initialDraftId={negotiationInitialDraftId} returnToOrigin={Boolean(negotiationOriginTarget)} onBack={() => { const originKind = negotiationOriginTarget?.comparisonKind ?? null; setNegotiationInitialTargetKey(null); setNegotiationInitialDraftId(null); setComparisonMode(originKind); if (!originKind) window.requestAnimationFrame(() => negotiationDraftsButtonRef.current?.focus()); }} onCreate={onCreateNegotiationDraft} onUpdate={onUpdateNegotiationDraft} onCreateManualResponse={onCreateManualNegotiationResponse} onUpdateManualResponse={onUpdateManualNegotiationResponse} onUpsertManualResponseReview={onUpsertManualNegotiationResponseReview} onUpsertManualConditionImpact={onUpsertManualNegotiationConditionImpact} />;
+    return <ProjectNegotiationDraftsView project={project} drafts={negotiationDrafts} manualResponses={manualNegotiationResponses} manualResponseReviews={manualNegotiationResponseReviews} manualConditionImpacts={manualNegotiationConditionImpacts} productComparisons={comparisons} serviceComparisons={serviceComparisons} proposals={proposals} requests={requests} approvals={approvals} contacts={contacts} proposalEnvelope={proposalEnvelope} proposalDependencies={proposalDependencies} storageLocked={negotiationDraftsStorageLocked} manualResponsesStorageLocked={manualNegotiationResponsesStorageLocked} manualResponseReviewsStorageLocked={manualNegotiationResponseReviewsStorageLocked} manualConditionImpactsStorageLocked={manualNegotiationConditionImpactsStorageLocked} initialTargetKey={negotiationInitialTargetKey} initialDraftId={negotiationInitialDraftId} returnToOrigin={Boolean(negotiationOriginTarget)} onBack={() => { const originKind = negotiationOriginTarget?.comparisonKind ?? null; setNegotiationInitialTargetKey(null); setNegotiationInitialDraftId(null); setComparisonMode(originKind); if (!originKind) window.requestAnimationFrame(() => negotiationDraftsButtonRef.current?.focus()); }} onCreate={onCreateNegotiationDraft} onUpdate={onUpdateNegotiationDraft} onCreateManualResponse={onCreateManualNegotiationResponse} onUpdateManualResponse={onUpdateManualNegotiationResponse} onUpsertManualResponseReview={onUpsertManualNegotiationResponseReview} onUpsertManualConditionImpact={onUpsertManualNegotiationConditionImpact} />;
   }
 
   if (proposalStorageStatus === "ready" && revisionDiffOpen && selectedProposal) {

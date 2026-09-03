@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
 
 const expectedProjectStages = [
   "طراحی و اخذ مجوز",
@@ -294,13 +295,64 @@ function bgF6LegacyProposalFromCanonical(record: Record<string, any>) {
   return legacy;
 }
 
+function bgF6LegacyComparisonFromCanonical(record: Record<string, any>, legacyProposals: Array<Record<string, any>>) {
+  const target = {
+    requestId: record.target.requestId,
+    requestVersion: record.target.requestVersion,
+    reviewRevisionId: record.target.reviewRevisionId,
+    reviewRevisionFingerprint: record.target.reviewRevisionFingerprint,
+    requestKind: record.target.requestKind,
+  };
+  const revisions = record.revisions.map((revision: Record<string, any>) => {
+    const inputs = revision.inputs.map((input: Record<string, any>) => {
+      const legacyProposal = legacyProposals.find((proposal) => proposal.id === input.proposalId);
+      const legacyRevision = legacyProposal?.revisions.find((item: Record<string, any>) => item.id === input.proposalRevisionId && item.version === input.proposalVersion);
+      if (!legacyRevision) throw new Error(`BG-F6 cannot derive legacy Comparison input ${input.proposalId}:${input.proposalRevisionId}`);
+      const { proposalRevisionSnapshot: _snapshot, ...legacyInput } = input;
+      return { ...legacyInput, proposalRevisionFingerprint: legacyRevision.fingerprint };
+    });
+    const payload = record.objectType === "builder-product-proposal-comparison"
+      ? { id: revision.id, version: revision.version, createdAt: revision.createdAt, inputs, results: structuredClone(revision.results), recommendation: structuredClone(revision.recommendation) }
+      : { id: revision.id, version: revision.version, createdAt: revision.createdAt, inputs, results: structuredClone(revision.results), summary: structuredClone(revision.summary) };
+    return {
+      ...payload,
+      fingerprint: bgF6LegacyFingerprint({ projectId: record.projectId, target, requestSnapshot: record.requestSnapshot, revision: payload }),
+    };
+  });
+  const common = {
+    schemaVersion: 1,
+    id: record.id,
+    projectId: record.projectId,
+    purpose: record.purpose,
+    target,
+    requestSnapshot: structuredClone(record.requestSnapshot),
+    currentRevisionId: record.currentRevisionId,
+    visibility: record.visibility,
+    localStatus: record.localStatus,
+    externalEffect: record.externalEffect,
+    networkUsed: false,
+    aiUsed: false,
+    version: record.version,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    history: record.history.map((event: Record<string, any>) => ({ id: event.id, type: event.type, actor: "شما", at: event.at, version: event.version })),
+    revisions,
+  };
+  return record.objectType === "builder-service-proposal-comparison" ? { ...common, scoringUsed: false } : common;
+}
+
 function bgF6RewriteHistoricalDownstream(rawByKey: Record<string, string | null>, legacyRecords: Array<Record<string, any>>) {
   const legacyRevisionFingerprints = new Map<string, string>();
   for (const record of legacyRecords) {
     for (const revision of record.revisions) legacyRevisionFingerprints.set(`${record.id}:${revision.version}:${revision.id}`, revision.fingerprint);
   }
   const replacementForProposal = (value: Record<string, any>) => legacyRevisionFingerprints.get(`${value.proposalId}:${value.proposalVersion}:${value.proposalRevisionId}`) ?? value.proposalRevisionFingerprint;
-  const parsed = Object.fromEntries(Object.entries(rawByKey).map(([key, raw]) => [key, raw === null ? null : JSON.parse(raw)])) as Record<string, any[] | null>;
+  const parsed = Object.fromEntries(Object.entries(rawByKey).map(([key, raw]) => {
+    if (raw === null) return [key, null];
+    const value = JSON.parse(raw);
+    if (!Array.isArray(value)) throw new Error(`BG-F6 historical downstream transformer accepts v1 arrays only: ${key}`);
+    return [key, value];
+  })) as Record<string, any[] | null>;
   const comparisonFingerprints = new Map<string, string>();
 
   for (const key of ["productComparisons", "serviceComparisons"] as const) {
@@ -375,14 +427,28 @@ async function seedBgF6LegacyAuthorityFromCanonical(page: Page, options: { rewri
     manualResponseReviews: manualNegotiationResponseReviewStorageKey,
     manualConditionImpacts: manualNegotiationConditionImpactStorageKey,
   } as const;
-  const rewritten = options.rewriteDownstream
-    ? bgF6RewriteHistoricalDownstream(await page.evaluate((keys) => Object.fromEntries(Object.entries(keys).map(([name, key]) => [name, window.localStorage.getItem(key)])), downstreamKeys), legacyRecords)
+  const comparisonSources = options.rewriteDownstream ? await Promise.all([
+    readBgF7ComparisonAuthority(page, "product"),
+    readBgF7ComparisonAuthority(page, "service"),
+  ]) : null;
+  const downstreamSource = options.rewriteDownstream
+    ? await page.evaluate((keys) => Object.fromEntries(Object.entries(keys).map(([name, key]) => [name, window.localStorage.getItem(key)])), downstreamKeys)
     : null;
-  await page.evaluate(({ legacyKey, canonicalKey, markerKey, raw, keys, downstream }) => {
+  if (downstreamSource && comparisonSources) {
+    downstreamSource.productComparisons = JSON.stringify((comparisonSources[0].envelope?.records ?? []).map((record: Record<string, any>) => bgF6LegacyComparisonFromCanonical(record, legacyRecords)));
+    downstreamSource.serviceComparisons = JSON.stringify((comparisonSources[1].envelope?.records ?? []).map((record: Record<string, any>) => bgF6LegacyComparisonFromCanonical(record, legacyRecords)));
+  }
+  const rewritten = downstreamSource ? bgF6RewriteHistoricalDownstream(downstreamSource, legacyRecords) : null;
+  await page.evaluate(({ legacyKey, canonicalKey, markerKey, raw, keys, comparisonKeys, downstream }) => {
     window.localStorage.setItem(legacyKey, raw);
     window.localStorage.removeItem(canonicalKey);
     window.localStorage.removeItem(markerKey);
     if (downstream) {
+      for (const selected of Object.values(comparisonKeys)) {
+        window.localStorage.removeItem(selected.canonical);
+        window.localStorage.removeItem(selected.marker);
+        window.localStorage.removeItem(selected.incident);
+      }
       for (const [name, key] of Object.entries(keys)) {
         const value = downstream[name];
         if (value === null) window.localStorage.removeItem(key);
@@ -395,6 +461,7 @@ async function seedBgF6LegacyAuthorityFromCanonical(page: Page, options: { rewri
     markerKey: builderProposalsMarkerTestStorageKey,
     raw: legacyRaw,
     keys: downstreamKeys,
+    comparisonKeys: bgF7ComparisonKeys,
     downstream: rewritten,
   });
   return { legacyRaw, legacyRecords };
@@ -666,7 +733,7 @@ async function buildBgF6UpdateCommandFromRecord(
   return fixture;
 }
 
-async function dispatchBgF6StorageEvent(page: Page, key: string, oldValue: string | null, newValue: string | null) {
+async function dispatchBuilderStorageEvent(page: Page, key: string, oldValue: string | null, newValue: string | null) {
   await page.evaluate(({ storageKey, priorValue, nextValue }) => {
     window.dispatchEvent(new StorageEvent("storage", {
       key: storageKey,
@@ -831,7 +898,7 @@ async function parseBgF6PersistedEnvelope(page: Page, dependencies: any) {
   }, { currentDependencies: dependencies, canonicalKey: builderProposalsTestStorageKey });
 }
 
-async function holdBgF6WriteLock(page: Page) {
+async function holdProcurementWriteLock(page: Page) {
   const lockName = await page.evaluate(async () => (await import("/src/procurementDispatch.ts")).procurementDispatchWriteLockName);
   await page.evaluate((name) => {
     void navigator.locks.request(name, { mode: "exclusive" }, () => new Promise<void>((resolve) => {
@@ -857,6 +924,107 @@ async function holdBgF6WriteLock(page: Page) {
       }
     },
   };
+}
+
+async function installBgF7ComparisonResultBarrier(page: Page) {
+  await page.evaluate(() => {
+    const lockPrototype = Object.getPrototypeOf(navigator.locks) as { request: (...args: any[]) => Promise<any> };
+    const nativeRequest = lockPrototype.request;
+    Object.defineProperties(window, {
+      __bgF7ComparisonResultReady: { value: false, writable: true, configurable: true },
+      __bgF7ReleaseComparisonResult: { value: null, writable: true, configurable: true },
+    });
+    let intercepted = false;
+    lockPrototype.request = async function (...args: any[]) {
+      const result = await nativeRequest.apply(this, args);
+      if (!intercepted && ["created", "updated", "unchanged"].includes(result?.status)) {
+        intercepted = true;
+        lockPrototype.request = nativeRequest;
+        (window as any).__bgF7ComparisonResultReady = true;
+        await new Promise<void>((resolve) => {
+          (window as any).__bgF7ReleaseComparisonResult = resolve;
+        });
+      }
+      return result;
+    };
+  });
+}
+
+async function waitForBgF7ComparisonResult(page: Page) {
+  await expect.poll(() => page.evaluate(() => Boolean((window as any).__bgF7ComparisonResultReady))).toBe(true);
+}
+
+async function releaseBgF7ComparisonResult(page: Page) {
+  await page.evaluate(() => (window as any).__bgF7ReleaseComparisonResult?.());
+}
+
+async function installBgF7CommittedComparisonReadbackFault(page: Page, canonicalKey: string) {
+  await page.evaluate((key) => {
+    const lockPrototype = Object.getPrototypeOf(navigator.locks) as { request: (...args: any[]) => Promise<any> };
+    const nativeRequest = lockPrototype.request;
+    const nativeGet = Storage.prototype.getItem;
+    Object.defineProperties(window, {
+      __bgF7DependencyDriftNativeGetItem: { value: nativeGet, configurable: true },
+      __bgF7DependencyDriftLockPrototype: { value: lockPrototype, configurable: true },
+      __bgF7DependencyDriftNativeLockRequest: { value: nativeRequest, configurable: true },
+      __bgF7DependencyDriftFaultTriggered: { value: false, writable: true, configurable: true },
+    });
+    let intercepted = false;
+    lockPrototype.request = async function (...args: any[]) {
+      const result = await nativeRequest.apply(this, args);
+      if (!intercepted && ["created", "updated"].includes(result?.status)) {
+        intercepted = true;
+        lockPrototype.request = nativeRequest;
+        Storage.prototype.getItem = function (storageKey: string) {
+          const value = nativeGet.call(this, storageKey);
+          return this === window.localStorage && storageKey === key ? `${value ?? ""} ` : value;
+        };
+        (window as any).__bgF7DependencyDriftFaultTriggered = true;
+      }
+      return result;
+    };
+  }, canonicalKey);
+}
+
+async function restoreBgF7CommittedComparisonReadbackFault(page: Page) {
+  await page.evaluate(() => {
+    const faultWindow = window as Window & {
+      __bgF7DependencyDriftNativeGetItem?: typeof Storage.prototype.getItem;
+      __bgF7DependencyDriftLockPrototype?: { request: (...args: any[]) => Promise<any> };
+      __bgF7DependencyDriftNativeLockRequest?: (...args: any[]) => Promise<any>;
+    };
+    if (faultWindow.__bgF7DependencyDriftNativeGetItem) Storage.prototype.getItem = faultWindow.__bgF7DependencyDriftNativeGetItem;
+    if (faultWindow.__bgF7DependencyDriftLockPrototype && faultWindow.__bgF7DependencyDriftNativeLockRequest) {
+      faultWindow.__bgF7DependencyDriftLockPrototype.request = faultWindow.__bgF7DependencyDriftNativeLockRequest;
+    }
+    delete (window as any).__bgF7DependencyDriftNativeGetItem;
+    delete (window as any).__bgF7DependencyDriftLockPrototype;
+    delete (window as any).__bgF7DependencyDriftNativeLockRequest;
+    delete (window as any).__bgF7DependencyDriftFaultTriggered;
+  });
+}
+
+async function installBgF7ComparisonPrewriteFault(page: Page, canonicalKey: string) {
+  await page.evaluate((key) => {
+    const nativeGet = Storage.prototype.getItem;
+    const nativeSet = Storage.prototype.setItem;
+    const priorRaw = nativeGet.call(window.localStorage, key);
+    Object.defineProperty(window, "__bgF7NoReceiptNativeSetItem", { value: nativeSet, configurable: true });
+    Storage.prototype.setItem = function (storageKey: string, value: string) {
+      if (this === window.localStorage && storageKey === key && value !== priorRaw) {
+        throw new DOMException("BG-F7 injected pre-write failure", "QuotaExceededError");
+      }
+      nativeSet.call(this, storageKey, value);
+    };
+  }, canonicalKey);
+}
+
+async function restoreBgF7ComparisonPrewriteFault(page: Page) {
+  await page.evaluate(() => {
+    const faultWindow = window as Window & { __bgF7NoReceiptNativeSetItem?: typeof Storage.prototype.setItem };
+    if (faultWindow.__bgF7NoReceiptNativeSetItem) Storage.prototype.setItem = faultWindow.__bgF7NoReceiptNativeSetItem;
+    delete (window as any).__bgF7NoReceiptNativeSetItem;
+  });
 }
 
 async function installBackwardBrowserClock(page: Page) {
@@ -1332,7 +1500,15 @@ async function createCompleteServiceComparisonWithDecision(page: Page) {
   await page.getByTestId("service-comparison-decision-reason").fill("نسخه نخست تصمیم برای ادامه بررسی مجری ب");
   await page.getByTestId("service-comparison-decision-save").click();
   await expect(page.getByTestId("service-comparison-decision-history")).toBeVisible();
-  return prerequisites;
+  const authority = await readBgF7ComparisonAuthority(page, "service");
+  const comparison = authority.envelope?.records.find((record: any) => {
+    const revision = record.revisions.find((item: any) => item.id === record.currentRevisionId);
+    return revision?.inputs.some((input: any) => input.proposalId === prerequisites.firstProposal.id)
+      && revision.inputs.some((input: any) => input.proposalId === prerequisites.secondProposal.id);
+  });
+  const comparisonRevision = comparison?.revisions.find((revision: any) => revision.id === comparison.currentRevisionId);
+  if (!comparison || !comparisonRevision) throw new Error("BG-F7 canonical Service Comparison fixture is unavailable");
+  return { ...prerequisites, comparison, comparisonRevision };
 }
 
 const negotiationDraftStorageKey = "chida-prototype-builder-negotiation-drafts:v1";
@@ -1348,28 +1524,36 @@ async function commercialSourceStoreBytes(page: Page) {
     contacts: window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2"),
     proposals: window.localStorage.getItem(proposalKey),
     productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
+    productComparisonsCanonical: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v2"),
+    productComparisonsMarker: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v2:cutover:v1"),
     productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
     serviceComparisons: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"),
+    serviceComparisonsCanonical: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v2"),
+    serviceComparisonsMarker: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v2:cutover:v1"),
     serviceDecisions: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"),
   }), { approvalKey: bgF4ApprovalCanonicalStorageKey, proposalKey: builderProposalsTestStorageKey });
 }
 
 async function readBgF6LineageDownstreamBytes(page: Page) {
-  return page.evaluate(({ negotiationKey, responseKey, reviewKey, impactKey }) => ({
-    productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
-    productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
-    serviceComparisons: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"),
-    serviceDecisions: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"),
-    negotiations: window.localStorage.getItem(negotiationKey),
-    manualResponses: window.localStorage.getItem(responseKey),
-    manualResponseReviews: window.localStorage.getItem(reviewKey),
-    manualConditionImpacts: window.localStorage.getItem(impactKey),
-  }), {
-    negotiationKey: negotiationDraftStorageKey,
-    responseKey: manualNegotiationResponseStorageKey,
-    reviewKey: manualNegotiationResponseReviewStorageKey,
-    impactKey: manualNegotiationConditionImpactStorageKey,
-  });
+  const [authority, descendants] = await Promise.all([
+    readBgF7ComparisonAuthorityTriplets(page),
+    page.evaluate(({ productDecisionKey, serviceDecisionKey, negotiationKey, responseKey, reviewKey, impactKey }) => ({
+      productDecision: window.localStorage.getItem(productDecisionKey),
+      serviceDecision: window.localStorage.getItem(serviceDecisionKey),
+      negotiation: window.localStorage.getItem(negotiationKey),
+      manualResponse: window.localStorage.getItem(responseKey),
+      manualResponseReview: window.localStorage.getItem(reviewKey),
+      manualConditionImpact: window.localStorage.getItem(impactKey),
+    }), {
+      productDecisionKey: bgF7ComparisonKeys.product.decision,
+      serviceDecisionKey: bgF7ComparisonKeys.service.decision,
+      negotiationKey: negotiationDraftStorageKey,
+      responseKey: manualNegotiationResponseStorageKey,
+      reviewKey: manualNegotiationResponseReviewStorageKey,
+      impactKey: manualNegotiationConditionImpactStorageKey,
+    }),
+  ]);
+  return { authority, descendants };
 }
 
 function serviceNegotiationDraftStart(page: Page, criterionId: ServiceComparisonCriterionId, proposalId: string) {
@@ -1402,8 +1586,8 @@ async function createExactServiceNegotiationDraft(page: Page, values: { purpose:
 }) {
   const prerequisites = await createCompleteServiceComparisonWithDecision(page);
   const sourceStoresBeforeDraft = await commercialSourceStoreBytes(page);
-  const comparison = JSON.parse(sourceStoresBeforeDraft.serviceComparisons ?? "[]")[0];
-  const comparisonRevision = comparison.revisions.find((revision: { id: string }) => revision.id === comparison.currentRevisionId);
+  const comparison = prerequisites.comparison;
+  const comparisonRevision = prerequisites.comparisonRevision;
   const proposal = (await readBgF6CanonicalProposalRecords(page))
     .find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
   const proposalRevision = proposal.revisions.find((revision: { id: string }) => revision.id === proposal.currentRevisionId);
@@ -1612,7 +1796,15 @@ async function createExactProductComparisonWithDecision(page: Page) {
   await page.getByTestId("comparison-decision-reason").fill("نسخهٔ نخست تصمیم برای ادامهٔ بررسی پیشنهاد ب");
   await page.getByTestId("comparison-decision-save").click();
   await expect(page.getByTestId("comparison-decision-history")).toBeVisible();
-  return { firstSupplier, secondSupplier, firstProposal, secondProposal };
+  const authority = await readBgF7ComparisonAuthority(page, "product");
+  const comparison = authority.envelope?.records.find((record: any) => {
+    const revision = record.revisions.find((item: any) => item.id === record.currentRevisionId);
+    return revision?.inputs.some((input: any) => input.proposalId === firstProposal.id)
+      && revision.inputs.some((input: any) => input.proposalId === secondProposal.id);
+  });
+  const comparisonRevision = comparison?.revisions.find((revision: any) => revision.id === comparison.currentRevisionId);
+  if (!comparison || !comparisonRevision) throw new Error("BG-F7 canonical Product Comparison fixture is unavailable");
+  return { firstSupplier, secondSupplier, firstProposal, secondProposal, comparison, comparisonRevision };
 }
 
 async function openSavedProjectMemory(page: Page) {
@@ -5635,6 +5827,19 @@ test("mock source answer is explicit, read-only, traceable, and isolated from pr
   });
   page.on("pageerror", (error) => consoleFailures.push(`pageerror: ${error.message}`));
   await enterBuilderHome(page);
+  await expect.poll(() => page.evaluate((stores) => stores.every(({ canonical, marker }) => {
+    const canonicalRaw = window.localStorage.getItem(canonical);
+    const markerRaw = window.localStorage.getItem(marker);
+    if (canonicalRaw === null || markerRaw === null) return false;
+    try {
+      return JSON.parse(markerRaw).state === "committed";
+    } catch {
+      return false;
+    }
+  }), [
+    { canonical: "chida-prototype-builder-proposal-comparisons:v2", marker: "chida-prototype-builder-proposal-comparisons:v2:cutover:v1" },
+    { canonical: "chida-prototype-builder-service-proposal-comparisons:v2", marker: "chida-prototype-builder-service-proposal-comparisons:v2:cutover:v1" },
+  ])).toBe(true);
   await page.getByTestId("composer-input").fill("این پیش‌نویس باید باقی بماند");
 
   const storageBefore = await page.evaluate(() => JSON.stringify(
@@ -16208,15 +16413,16 @@ test("T7-B1 builds an exact product comparison without mutating its sources and 
     expect(await resultCard.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
   }
 
-  const comparisonStoreBeforeDecision = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
-  const comparisons = JSON.parse(comparisonStoreBeforeDecision ?? "[]");
+  const comparisonAuthorityBeforeDecision = await readBgF7ComparisonAuthority(page, "product");
+  const comparisonStoreBeforeDecision = comparisonAuthorityBeforeDecision.canonicalRaw;
+  const comparisons = comparisonAuthorityBeforeDecision.envelope?.records ?? [];
   expect(comparisons).toHaveLength(1);
   const comparison = comparisons[0];
   const comparisonRevision = comparison.revisions[0];
   const firstResult = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === firstProposal.id);
   const secondResult = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === secondProposal.id);
   expect(comparison).toMatchObject({
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: firstProposal.projectId,
     purpose: "compare-builder-recorded-product-proposals",
     target: {
@@ -16285,7 +16491,7 @@ test("T7-B1 builds an exact product comparison without mutating its sources and 
   await page.getByTestId("comparison-decision-save").click();
   await expect(page.getByTestId("comparison-decision-history")).toBeVisible();
 
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonStoreBeforeDecision);
+  expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(comparisonStoreBeforeDecision);
   const decisionStoreBeforeReload = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"));
   const decisions = JSON.parse(decisionStoreBeforeReload ?? "[]");
   expect(decisions).toHaveLength(1);
@@ -16332,7 +16538,7 @@ test("T7-B1 builds an exact product comparison without mutating its sources and 
   await page.getByTestId("comparison-card").click();
   await expect(page.getByTestId("comparison-recommendation")).toContainText(secondSupplier);
   await expect(page.getByTestId("comparison-decision-history")).toContainText("ادامهٔ بررسی با یک پیشنهاد");
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonStoreBeforeDecision);
+  expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(comparisonStoreBeforeDecision);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionStoreBeforeReload);
   expect(externalRequests).toEqual([]);
   page.off("request", requestListener);
@@ -16341,7 +16547,7 @@ test("T7-B1 builds an exact product comparison without mutating its sources and 
 test("T7-B1 canonicalizes a temporary 201-digit decimal coefficient before enforcing the result limit", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const boundarySubtotal = "9".repeat(199);
-  const canonicalBoundaryTotal = `1${"0".repeat(199)}`;
+  const canonicalBoundaryTotal = `1${"9".repeat(198)}8`;
   const { firstSupplier, secondSupplier } = await createTwoCurrentProductProposalsForComparison(page, { firstTotalPrice: boundarySubtotal });
   const proposals = await readBgF6CanonicalProposalRecords(page);
   const firstProposal = proposals.find((proposal: { supplierSnapshot: { displayName: string } }) => proposal.supplierSnapshot.displayName === firstSupplier);
@@ -16349,36 +16555,39 @@ test("T7-B1 canonicalizes a temporary 201-digit decimal coefficient before enfor
   await openProposalSecondaryView(page, "proposal-comparisons-entry");
   await page.getByTestId("comparison-add").click();
   const firstEditor = comparisonSupplierEditor(page, firstSupplier);
-  await firstEditor.getByTestId(/^comparison-tax-mode-/).selectOption("fixed");
-  await firstEditor.getByTestId(/^comparison-tax-value-/).fill("۰٫۵");
-  await firstEditor.getByTestId(/^comparison-tax-assumption-/).fill("نیم تومان مبلغ ثابت برای آزمون مرزی");
-  await firstEditor.getByTestId(/^comparison-transport-mode-/).selectOption("fixed");
-  await firstEditor.getByTestId(/^comparison-transport-value-/).fill("۰٫۵");
-  await firstEditor.getByTestId(/^comparison-transport-assumption-/).fill("نیم تومان حمل ثابت برای آزمون مرزی");
+  await firstEditor.getByTestId(/^comparison-tax-mode-/).selectOption("rate");
+  await firstEditor.getByTestId(/^comparison-tax-value-/).fill("۱۰۰");
+  await firstEditor.getByTestId(/^comparison-tax-assumption-/).fill("صد درصد مبلغ برای آزمون مرزی");
+  await firstEditor.getByTestId(/^comparison-transport-mode-/).selectOption("included");
+  await firstEditor.getByTestId(/^comparison-transport-assumption-/).fill("حمل داخل مبلغ اعلامی");
 
   const secondEditor = comparisonSupplierEditor(page, secondSupplier);
   await secondEditor.getByTestId(/^comparison-tax-mode-/).selectOption("included");
   await secondEditor.getByTestId(/^comparison-tax-assumption-/).fill("داخل مبلغ اعلامی");
   await secondEditor.getByTestId(/^comparison-transport-mode-/).selectOption("included");
   await secondEditor.getByTestId(/^comparison-transport-assumption-/).fill("داخل مبلغ اعلامی");
+  const liveBoundaryTotal = firstEditor.getByTestId(/^comparison-live-total-/);
+  await expect(liveBoundaryTotal).toContainText("فرمول مبلغ کامل");
+  const localizedBoundaryTotal = canonicalBoundaryTotal.replace(/\d/g, (digit) => "۰۱۲۳۴۵۶۷۸۹"[Number(digit)]);
+  expect((await liveBoundaryTotal.textContent())?.replace(/[٬,\s]/g, "")).toContain(`${localizedBoundaryTotal}تومان`);
   await page.getByTestId("comparison-save").click();
   await expect(page.getByTestId("comparison-detail")).toBeVisible();
 
-  const comparisons = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1") ?? "[]"));
+  const comparisons = (await readBgF7ComparisonAuthority(page, "product")).envelope?.records ?? [];
   const firstResult = comparisons[0].revisions[0].results.find((result: { proposalId: string }) => result.proposalId === firstProposal.id);
   expect(firstResult).toMatchObject({
     subtotal: boundarySubtotal,
-    taxAmount: "0.5",
-    transportAmount: "0.5",
+    taxAmount: boundarySubtotal,
+    transportAmount: "0",
     normalizedTotal: canonicalBoundaryTotal,
     coverage: "complete",
     missingReasons: [],
   });
   expect(firstResult.normalizedTotal).toHaveLength(200);
-  expect(firstResult.normalizedTotal).toMatch(/^10{199}$/);
+  expect(firstResult.normalizedTotal).toMatch(/^19{198}8$/);
 });
 
-test("T7-B1 keeps unknown comparison data incomplete and rolls back a failed comparison write", async ({ page }) => {
+test("T7-B1 keeps unknown comparison data incomplete and preserves its draft after a failed comparison write", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const { secondSupplier } = await createTwoCurrentProductProposalsForComparison(page);
   const sourceStoresBeforeComparison = await page.evaluate(() => ({
@@ -16396,19 +16605,22 @@ test("T7-B1 keeps unknown comparison data incomplete and rolls back a failed com
   await expect(secondEditor.getByTestId(/^comparison-adjusted-unit-/)).toHaveValue("کیلوگرم");
   await secondEditor.getByTestId(/^comparison-assumption-/).fill("۵۰۰۰ کیلوگرم برابر مقدار پنج تن درخواست است");
   await expect(page.getByTestId("comparison-recommendation-preview")).toContainText("داده برای جمع‌بندی کافی نیست");
+  const comparisonStoreBeforeFailedWrite = (await readBgF7ComparisonAuthority(page, "product")).canonicalRaw;
+  expect(comparisonStoreBeforeFailedWrite).not.toBeNull();
 
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
     Object.defineProperty(window, "__comparisonNativeSetItem", { value: nativeSetItem, configurable: true });
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-builder-proposal-comparisons:v1") throw new DOMException("Comparison write failed", "QuotaExceededError");
+      if (this === window.localStorage && key === "chida-prototype-builder-proposal-comparisons:v2") throw new DOMException("Comparison write failed", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
   });
   await page.getByTestId("comparison-save").click();
   await expect(page.getByTestId("comparison-editor")).toBeVisible();
-  await expect(page.getByTestId("comparison-form-error")).toContainText("مقایسه ثبت نشد");
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBeNull();
+  await expect(page.getByTestId("comparison-form-error")).toContainText("مقایسه ذخیره نشد");
+  await expect(secondEditor.getByTestId(/^comparison-adjusted-quantity-/)).toHaveValue("۵۰۰۰");
+  expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(comparisonStoreBeforeFailedWrite);
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v2"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
@@ -16423,8 +16635,7 @@ test("T7-B1 keeps unknown comparison data incomplete and rolls back a failed com
   await expect(page.getByTestId("comparison-detail")).toBeVisible();
   await expect(page.getByTestId("comparison-recommendation")).toContainText("دادهٔ ناکافی برای جمع‌بندی");
 
-  const comparisonStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
-  const comparison = JSON.parse(comparisonStore ?? "[]")[0];
+  const comparison = (await readBgF7ComparisonAuthority(page, "product")).envelope?.records[0];
   const revision = comparison.revisions[0];
   expect(revision.recommendation).toMatchObject({
     criterion: "lowest-complete-normalized-total",
@@ -16457,9 +16668,10 @@ test("T7-B1 keeps unknown comparison data incomplete and rolls back a failed com
 test("T7-B1 keeps no-op bytes stable, versions real comparison edits, and marks stale proposal lineage for review", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const { firstSupplier } = await createExactProductComparisonWithDecision(page);
-  const comparisonV1Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
+  const comparisonV1Authority = await readBgF7ComparisonAuthority(page, "product");
+  const comparisonV1Store = comparisonV1Authority.canonicalRaw;
   const decisionV1Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"));
-  const comparisonV1 = JSON.parse(comparisonV1Store ?? "[]")[0];
+  const comparisonV1 = comparisonV1Authority.envelope?.records[0];
   const decisionV1 = JSON.parse(decisionV1Store ?? "[]")[0];
   expect(comparisonV1.version).toBe(1);
   expect(decisionV1.version).toBe(1);
@@ -16468,7 +16680,7 @@ test("T7-B1 keeps no-op bytes stable, versions real comparison edits, and marks 
   await expect(page.getByTestId("comparison-editor-title")).toBeFocused();
   await page.getByTestId("comparison-save").click();
   await expect(page.getByTestId("comparison-detail")).toBeVisible();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonV1Store);
+  expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(comparisonV1Store);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
 
   await page.getByTestId("comparison-edit").click();
@@ -16477,8 +16689,9 @@ test("T7-B1 keeps no-op bytes stable, versions real comparison edits, and marks 
   await page.getByTestId("comparison-save").click();
   await expect(page.getByTestId("comparison-detail-hero")).toContainText("جاری");
 
-  const comparisonV2Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
-  const comparisonV2 = JSON.parse(comparisonV2Store ?? "[]")[0];
+  const comparisonV2Authority = await readBgF7ComparisonAuthority(page, "product");
+  const comparisonV2Store = comparisonV2Authority.canonicalRaw;
+  const comparisonV2 = comparisonV2Authority.envelope?.records[0];
   expect(comparisonV2Store).not.toBe(comparisonV1Store);
   expect(comparisonV2.version).toBe(2);
   expect(comparisonV2.history.map((event: { type: string }) => event.type)).toEqual(["created", "updated"]);
@@ -16496,7 +16709,7 @@ test("T7-B1 keeps no-op bytes stable, versions real comparison edits, and marks 
   await page.getByTestId("comparison-revision-select").selectOption(comparisonV1.revisions[0].id);
   await expect(page.getByTestId("comparison-detail-hero")).toContainText("نسخه قدیمی · فقط مشاهده");
   await expect(page.getByTestId("comparison-decision-history")).toContainText("نسخهٔ نخست تصمیم برای ادامهٔ بررسی پیشنهاد ب");
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonV2Store);
+  expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(comparisonV2Store);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
 
   await page.getByTestId("comparison-detail-back").click();
@@ -16514,7 +16727,7 @@ test("T7-B1 keeps no-op bytes stable, versions real comparison edits, and marks 
   await page.getByTestId("comparison-card").click();
   await expect(page.getByTestId("comparison-detail-hero")).toContainText("نیازمند بررسی");
   await expect(page.getByTestId("comparison-decision-save")).toBeDisabled();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(comparisonV2Store);
+  expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(comparisonV2Store);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
 });
 
@@ -16522,15 +16735,15 @@ test("T7-B1 fail-closes tampered comparison results and distinguishes an unreada
   await page.setViewportSize({ width: 390, height: 844 });
   const { firstSupplier } = await createExactProductComparisonWithDecision(page);
   const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v2"));
-  const validComparisonStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"));
+  const validComparisonStore = (await readBgF7ComparisonAuthority(page, "product")).canonicalRaw;
   const validDecisionStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"));
 
   const tamperedComparisonStore = await page.evaluate(() => {
-    const key = "chida-prototype-builder-proposal-comparisons:v1";
-    const records = JSON.parse(window.localStorage.getItem(key) ?? "[]");
-    records[0].revisions[0].results[0].lines[0].calculation.formula = "۱ + ۱ = ۳";
-    records[0].revisions[0].results[0].normalizedTotal = "1";
-    window.localStorage.setItem(key, JSON.stringify(records));
+    const key = "chida-prototype-builder-proposal-comparisons:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    envelope.records[0].revisions[0].results[0].lines[0].calculation.formula = "۱ + ۱ = ۳";
+    envelope.records[0].revisions[0].results[0].normalizedTotal = "1";
+    window.localStorage.setItem(key, JSON.stringify(envelope));
     return window.localStorage.getItem(key);
   });
 
@@ -16550,10 +16763,10 @@ test("T7-B1 fail-closes tampered comparison results and distinguishes an unreada
   await expect(page.getByTestId("comparison-card")).toHaveCount(0);
   await expect(page.getByTestId("comparison-add")).toBeDisabled();
   await expect(page.getByText("مقایسه‌ای ثبت نشده", { exact: true })).toHaveCount(0);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(tamperedComparisonStore);
+  expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(tamperedComparisonStore);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v2"))).toBe(proposalStore);
 
-  await page.evaluate((validStore) => window.localStorage.setItem("chida-prototype-builder-proposal-comparisons:v1", validStore!), validComparisonStore);
+  await page.evaluate((validStore) => window.localStorage.setItem("chida-prototype-builder-proposal-comparisons:v2", validStore!), validComparisonStore);
   await page.addInitScript(() => {
     const nativeGetItem = Storage.prototype.getItem;
     Object.defineProperty(window, "__comparisonDecisionNativeGetItem", { value: nativeGetItem, configurable: true });
@@ -16576,7 +16789,7 @@ test("T7-B1 fail-closes tampered comparison results and distinguishes an unreada
   await expect(page.getByTestId("comparison-decision-save")).toHaveCount(0);
   await expect(page.getByText("ثبت نشده", { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v2"))).toBe(proposalStore);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"))).toBe(validComparisonStore);
+  expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(validComparisonStore);
   expect(await page.evaluate(() => (window as Window & { __comparisonDecisionNativeGetItem: typeof Storage.prototype.getItem }).__comparisonDecisionNativeGetItem.call(window.localStorage, "chida-prototype-builder-proposal-comparison-decisions:v1"))).toBe(validDecisionStore);
 });
 
@@ -16588,7 +16801,7 @@ test("T7-B2 stores a traceable qualitative service matrix and keeps the human de
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
     approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
     dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
-    productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
+    productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v2"),
     productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
   }));
   const requestAndApproval = {
@@ -16619,11 +16832,12 @@ test("T7-B2 stores a traceable qualitative service matrix and keeps the human de
   await expect(page.getByTestId("service-comparison-detail-hero")).toBeFocused();
   await expect(page.getByTestId("service-comparison-summary")).toContainText("نامزد خودکار ندارد");
 
-  const comparisonStoreBeforeDecision = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"));
-  const comparison = JSON.parse(comparisonStoreBeforeDecision ?? "[]")[0];
+  const comparisonAuthorityBeforeDecision = await readBgF7ComparisonAuthority(page, "service");
+  const comparisonStoreBeforeDecision = comparisonAuthorityBeforeDecision.canonicalRaw;
+  const comparison = comparisonAuthorityBeforeDecision.envelope?.records[0];
   const revision = comparison.revisions[0];
   expect(comparison).toMatchObject({
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: requestAndApproval.request.projectId,
     purpose: "compare-builder-recorded-service-proposals",
     target: {
@@ -16701,7 +16915,7 @@ test("T7-B2 stores a traceable qualitative service matrix and keeps the human de
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
     approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
     dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
-    productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
+    productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v2"),
     productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
   }))).toEqual(sourceStoresBeforeComparison);
 
@@ -16710,7 +16924,7 @@ test("T7-B2 stores a traceable qualitative service matrix and keeps the human de
   await page.getByTestId("service-comparison-decision-reason").fill("شرایط زمانی مجری ب مناسب تر است اما تصمیم هنوز سفارش نیست");
   await page.getByTestId("service-comparison-decision-save").click();
   await expect(page.getByTestId("service-comparison-decision-history")).toContainText("شرایط زمانی مجری ب مناسب تر است");
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonStoreBeforeDecision);
+  expect((await readBgF7ComparisonAuthority(page, "service")).canonicalRaw).toBe(comparisonStoreBeforeDecision);
   const decisionStoreBeforeReload = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"));
   const decision = JSON.parse(decisionStoreBeforeReload ?? "[]")[0];
   expect(decision).toMatchObject({
@@ -16747,21 +16961,21 @@ test("T7-B2 stores a traceable qualitative service matrix and keeps the human de
   await expect(page.locator('[data-testid="service-comparison-criterion-card"][data-criterion="scope"]')).toContainText(firstServiceComparisonAssessments.scope.declaredValue);
   await expect(page.locator('[data-testid="service-comparison-criterion-card"][data-criterion="scope"]')).toContainText(secondServiceComparisonAssessments.scope.declaredValue);
   await expect(page.getByTestId("service-comparison-decision-history")).toContainText("شرایط زمانی مجری ب مناسب تر است");
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonStoreBeforeDecision);
+  expect((await readBgF7ComparisonAuthority(page, "service")).canonicalRaw).toBe(comparisonStoreBeforeDecision);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(decisionStoreBeforeReload);
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v2"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
     approvals: window.localStorage.getItem("chida-prototype-project-approvals:v2"),
     dispatch: window.localStorage.getItem("chida-prototype-project-dispatch-drafts:v2"),
-    productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
+    productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v2"),
     productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
   }))).toEqual(sourceStoresBeforeComparison);
   expect(externalRequests).toEqual([]);
   page.off("request", requestListener);
 });
 
-test("T7-B2 preserves a declared value with unknown assessment and rolls back a failed service comparison write", async ({ page }) => {
+test("T7-B2 preserves a declared value with unknown assessment and preserves its draft after a failed service comparison write", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const { firstSupplier, firstProposal } = await createTwoCurrentServiceProposalsForComparison(page);
   const sourceStoresBeforeComparison = await page.evaluate(() => ({
@@ -16784,19 +16998,22 @@ test("T7-B2 preserves a declared value with unknown assessment and rolls back a 
   await scopeEditor.getByTestId("service-comparison-declared-value").fill("مجری گفته اجرای کامل را می پذیرد");
   await scopeEditor.getByTestId("service-comparison-assessment-rationale").fill("جزئیات زیرسازی هنوز برای ارزیابی انطباق روشن نیست");
   await expect(page.getByTestId("service-comparison-coverage-preview")).toContainText("۲۰ معیار نیازمند روشن‌سازی");
+  const comparisonStoreBeforeFailedWrite = (await readBgF7ComparisonAuthority(page, "service")).canonicalRaw;
+  expect(comparisonStoreBeforeFailedWrite).not.toBeNull();
 
   await page.evaluate(() => {
     const nativeSetItem = Storage.prototype.setItem;
     Object.defineProperty(window, "__serviceComparisonNativeSetItem", { value: nativeSetItem, configurable: true });
     Storage.prototype.setItem = function setItem(key: string, value: string) {
-      if (this === window.localStorage && key === "chida-prototype-builder-service-proposal-comparisons:v1") throw new DOMException("Service comparison write failed", "QuotaExceededError");
+      if (this === window.localStorage && key === "chida-prototype-builder-service-proposal-comparisons:v2") throw new DOMException("Service comparison write failed", "QuotaExceededError");
       return nativeSetItem.call(this, key, value);
     };
   });
   await page.getByTestId("service-comparison-save").click();
   await expect(page.getByTestId("service-comparison-editor")).toBeVisible();
-  await expect(page.getByTestId("service-comparison-form-error")).toContainText("مقایسه ثبت نشد");
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBeNull();
+  await expect(page.getByTestId("service-comparison-form-error")).toContainText("مقایسه ذخیره نشد");
+  await expect(scopeEditor.getByTestId("service-comparison-declared-value")).toHaveValue("مجری گفته اجرای کامل را می پذیرد");
+  expect((await readBgF7ComparisonAuthority(page, "service")).canonicalRaw).toBe(comparisonStoreBeforeFailedWrite);
   expect(await page.evaluate(() => ({
     proposals: window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v2"),
     requests: window.localStorage.getItem("chida-prototype-project-purchase-requests:v1"),
@@ -16811,7 +17028,7 @@ test("T7-B2 preserves a declared value with unknown assessment and rolls back a 
   await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
   await expect(page.getByTestId("service-comparison-summary")).toContainText("۲۰ معیار نیازمند روشن‌سازی");
 
-  const comparison = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1") ?? "[]")[0]);
+  const comparison = (await readBgF7ComparisonAuthority(page, "service")).envelope?.records[0];
   const revision = comparison.revisions[0];
   const firstInput = revision.inputs.find((input: { proposalId: string }) => input.proposalId === firstProposal.id);
   expect(firstInput.criteria.find((criterion: { criterionId: string }) => criterion.criterionId === "scope")).toEqual({
@@ -16844,9 +17061,10 @@ test("T7-B2 preserves a declared value with unknown assessment and rolls back a 
 test("T7-B2 keeps no-op bytes stable, versions a real matrix edit, and invalidates stale service proposal lineage", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const { firstSupplier } = await createCompleteServiceComparisonWithDecision(page);
-  const comparisonV1Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"));
+  const comparisonV1Authority = await readBgF7ComparisonAuthority(page, "service");
+  const comparisonV1Store = comparisonV1Authority.canonicalRaw;
   const decisionV1Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"));
-  const comparisonV1 = JSON.parse(comparisonV1Store ?? "[]")[0];
+  const comparisonV1 = comparisonV1Authority.envelope?.records[0];
   const decisionV1 = JSON.parse(decisionV1Store ?? "[]")[0];
   expect(comparisonV1.version).toBe(1);
   expect(decisionV1.version).toBe(1);
@@ -16855,15 +17073,16 @@ test("T7-B2 keeps no-op bytes stable, versions a real matrix edit, and invalidat
   await expect(page.getByTestId("service-comparison-editor-title")).toBeFocused();
   await page.getByTestId("service-comparison-save").click();
   await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonV1Store);
+  expect((await readBgF7ComparisonAuthority(page, "service")).canonicalRaw).toBe(comparisonV1Store);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
 
   await page.getByTestId("service-comparison-edit").click();
   await serviceComparisonAssessmentEditor(page, "scope", firstSupplier).getByTestId("service-comparison-declared-value").fill("آماده سازی ترمیم و اجرای کامل عایق دولایه");
   await page.getByTestId("service-comparison-save").click();
   await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("جاری");
-  const comparisonV2Store = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"));
-  const comparisonV2 = JSON.parse(comparisonV2Store ?? "[]")[0];
+  const comparisonV2Authority = await readBgF7ComparisonAuthority(page, "service");
+  const comparisonV2Store = comparisonV2Authority.canonicalRaw;
+  const comparisonV2 = comparisonV2Authority.envelope?.records[0];
   expect(comparisonV2Store).not.toBe(comparisonV1Store);
   expect(comparisonV2.version).toBe(2);
   expect(comparisonV2.history.map((event: { type: string }) => event.type)).toEqual(["created", "updated"]);
@@ -16877,7 +17096,7 @@ test("T7-B2 keeps no-op bytes stable, versions a real matrix edit, and invalidat
   await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نسخه قدیمی · فقط مشاهده");
   await expect(page.getByTestId("service-comparison-decision-history")).toContainText("نسخه نخست تصمیم برای ادامه بررسی مجری ب");
   await expect(page.getByTestId("service-comparison-decision-save")).toBeDisabled();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonV2Store);
+  expect((await readBgF7ComparisonAuthority(page, "service")).canonicalRaw).toBe(comparisonV2Store);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
 
   await page.getByTestId("service-comparison-detail-back").click();
@@ -16895,7 +17114,7 @@ test("T7-B2 keeps no-op bytes stable, versions a real matrix edit, and invalidat
   await page.getByTestId("service-comparison-card").click();
   await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("نیازمند بررسی");
   await expect(page.getByTestId("service-comparison-decision-save")).toBeDisabled();
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(comparisonV2Store);
+  expect((await readBgF7ComparisonAuthority(page, "service")).canonicalRaw).toBe(comparisonV2Store);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(decisionV1Store);
 });
 
@@ -16903,15 +17122,15 @@ test("T7-B2 fail-closes a tampered service matrix and distinguishes an unreadabl
   await page.setViewportSize({ width: 390, height: 844 });
   const { firstSupplier } = await createCompleteServiceComparisonWithDecision(page);
   const proposalStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v2"));
-  const validComparisonStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"));
+  const validComparisonStore = (await readBgF7ComparisonAuthority(page, "service")).canonicalRaw;
   const validDecisionStore = await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"));
 
   const tamperedComparisonStore = await page.evaluate(() => {
-    const key = "chida-prototype-builder-service-proposal-comparisons:v1";
-    const records = JSON.parse(window.localStorage.getItem(key) ?? "[]");
-    records[0].revisions[0].results[0].counts.aligned = 999;
-    records[0].revisions[0].summary.candidateProposalId = records[0].revisions[0].inputs[0].proposalId;
-    window.localStorage.setItem(key, JSON.stringify(records));
+    const key = "chida-prototype-builder-service-proposal-comparisons:v2";
+    const envelope = JSON.parse(window.localStorage.getItem(key) ?? "null");
+    envelope.records[0].revisions[0].results[0].counts.aligned = 999;
+    envelope.records[0].revisions[0].summary.candidateProposalId = envelope.records[0].revisions[0].inputs[0].proposalId;
+    window.localStorage.setItem(key, JSON.stringify(envelope));
     return window.localStorage.getItem(key);
   });
 
@@ -16931,10 +17150,10 @@ test("T7-B2 fail-closes a tampered service matrix and distinguishes an unreadabl
   await expect(page.getByTestId("service-comparison-card")).toHaveCount(0);
   await expect(page.getByTestId("service-comparison-add")).toBeDisabled();
   await expect(page.getByText("ماتریسی ثبت نشده", { exact: true })).toHaveCount(0);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(tamperedComparisonStore);
+  expect((await readBgF7ComparisonAuthority(page, "service")).canonicalRaw).toBe(tamperedComparisonStore);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v2"))).toBe(proposalStore);
 
-  await page.evaluate((validStore) => window.localStorage.setItem("chida-prototype-builder-service-proposal-comparisons:v1", validStore!), validComparisonStore);
+  await page.evaluate((validStore) => window.localStorage.setItem("chida-prototype-builder-service-proposal-comparisons:v2", validStore!), validComparisonStore);
   await page.addInitScript(() => {
     const nativeGetItem = Storage.prototype.getItem;
     Object.defineProperty(window, "__serviceComparisonDecisionNativeGetItem", { value: nativeGetItem, configurable: true });
@@ -16957,7 +17176,7 @@ test("T7-B2 fail-closes a tampered service matrix and distinguishes an unreadabl
   await expect(page.getByTestId("service-comparison-decision-save")).toHaveCount(0);
   await expect(page.getByText("ثبت نشده", { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-recorded-proposals:v2"))).toBe(proposalStore);
-  expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"))).toBe(validComparisonStore);
+  expect((await readBgF7ComparisonAuthority(page, "service")).canonicalRaw).toBe(validComparisonStore);
   expect(await page.evaluate(() => (window as Window & { __serviceComparisonDecisionNativeGetItem: typeof Storage.prototype.getItem }).__serviceComparisonDecisionNativeGetItem.call(window.localStorage, "chida-prototype-builder-service-proposal-comparison-decisions:v1"))).toBe(validDecisionStore);
 });
 
@@ -16965,8 +17184,8 @@ test("T8-A1 also pins a product-line question to the exact compared proposal rev
   await page.setViewportSize({ width: 390, height: 844 });
   const prerequisites = await createExactProductComparisonWithDecision(page);
   const sourceStoresBeforeDraft = await commercialSourceStoreBytes(page);
-  const comparison = JSON.parse(sourceStoresBeforeDraft.productComparisons ?? "[]")[0];
-  const comparisonRevision = comparison.revisions.find((revision: { id: string }) => revision.id === comparison.currentRevisionId);
+  const comparison = prerequisites.comparison;
+  const comparisonRevision = prerequisites.comparisonRevision;
   const proposal = (JSON.parse(sourceStoresBeforeDraft.proposals ?? "{\"records\":[]}").records ?? []).find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
   const proposalRevision = proposal.revisions.find((revision: { id: string }) => revision.id === proposal.currentRevisionId);
   const line = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === proposal.id).lines[0];
@@ -17379,8 +17598,8 @@ test("T8-A2 supports the same exact-response contract for a product-line questio
   await page.setViewportSize({ width: 390, height: 844 });
   const prerequisites = await createExactProductComparisonWithDecision(page);
   const sourceStoresBeforeResponse = await commercialSourceStoreBytes(page);
-  const comparison = JSON.parse(sourceStoresBeforeResponse.productComparisons ?? "[]")[0];
-  const comparisonRevision = comparison.revisions.find((revision: { id: string }) => revision.id === comparison.currentRevisionId);
+  const comparison = prerequisites.comparison;
+  const comparisonRevision = prerequisites.comparisonRevision;
   const proposal = (JSON.parse(sourceStoresBeforeResponse.proposals ?? "{\"records\":[]}").records ?? []).find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
   const line = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === proposal.id).lines[0];
   const start = await openProductComparisonLineForNegotiation(page, proposal.id, line.requestItemId);
@@ -17597,7 +17816,7 @@ test("T8-A2 makes a response historical after an upstream comparison revision wi
   await page.getByTestId("service-comparison-save").click();
   await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("جاری");
   const sourceStoresAfterInvalidation = await commercialSourceStoreBytes(page);
-  expect(sourceStoresAfterInvalidation.serviceComparisons).not.toBe(created.sourceStoresBeforeDraft.serviceComparisons);
+  expect(sourceStoresAfterInvalidation.serviceComparisonsCanonical).not.toBe(created.sourceStoresBeforeDraft.serviceComparisonsCanonical);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), manualNegotiationResponseStorageKey)).toBe(created.responseStore);
 
   await page.getByTestId("service-comparison-detail-back").click();
@@ -17877,8 +18096,8 @@ test("T8-A3 applies the same exact-review contract to a product response and kee
   await page.setViewportSize({ width: 390, height: 844 });
   const prerequisites = await createExactProductComparisonWithDecision(page);
   const sourceStoresBeforeReview = await commercialSourceStoreBytes(page);
-  const comparison = JSON.parse(sourceStoresBeforeReview.productComparisons ?? "[]")[0];
-  const comparisonRevision = comparison.revisions.find((revision: { id: string }) => revision.id === comparison.currentRevisionId);
+  const comparison = prerequisites.comparison;
+  const comparisonRevision = prerequisites.comparisonRevision;
   const proposal = (JSON.parse(sourceStoresBeforeReview.proposals ?? "{\"records\":[]}").records ?? []).find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
   const line = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === proposal.id).lines[0];
   await (await openProductComparisonLineForNegotiation(page, proposal.id, line.requestItemId)).click();
@@ -18001,8 +18220,8 @@ test("T8-A4 applies the same exact-response contract to a product impact and kee
   await page.setViewportSize({ width: 390, height: 844 });
   const prerequisites = await createExactProductComparisonWithDecision(page);
   const commercialStoresBeforeImpact = await commercialSourceStoreBytes(page);
-  const comparison = JSON.parse(commercialStoresBeforeImpact.productComparisons ?? "[]")[0];
-  const comparisonRevision = comparison.revisions.find((revision: { id: string }) => revision.id === comparison.currentRevisionId);
+  const comparison = prerequisites.comparison;
+  const comparisonRevision = prerequisites.comparisonRevision;
   const proposal = (JSON.parse(commercialStoresBeforeImpact.proposals ?? "{\"records\":[]}").records ?? []).find((item: { id: string }) => item.id === prerequisites.firstProposal.id);
   const line = comparisonRevision.results.find((result: { proposalId: string }) => result.proposalId === proposal.id).lines[0];
   await (await openProductComparisonLineForNegotiation(page, proposal.id, line.requestItemId)).click();
@@ -18239,8 +18458,12 @@ test("T8-A4 fail-closes a tampered impact fingerprint without hiding or rewritin
     contacts: created.sourceStoresBeforeImpact.contacts,
     proposals: created.sourceStoresBeforeImpact.proposals,
     productComparisons: created.sourceStoresBeforeImpact.productComparisons,
+    productComparisonsCanonical: created.sourceStoresBeforeImpact.productComparisonsCanonical,
+    productComparisonsMarker: created.sourceStoresBeforeImpact.productComparisonsMarker,
     productDecisions: created.sourceStoresBeforeImpact.productDecisions,
     serviceComparisons: created.sourceStoresBeforeImpact.serviceComparisons,
+    serviceComparisonsCanonical: created.sourceStoresBeforeImpact.serviceComparisonsCanonical,
+    serviceComparisonsMarker: created.sourceStoresBeforeImpact.serviceComparisonsMarker,
     serviceDecisions: created.sourceStoresBeforeImpact.serviceDecisions,
   });
   expect(created.externalRequests).toEqual([]);
@@ -18293,8 +18516,12 @@ test("T8-A4 keeps an old impact historical after a response correction and creat
     contacts: created.sourceStoresBeforeImpact.contacts,
     proposals: created.sourceStoresBeforeImpact.proposals,
     productComparisons: created.sourceStoresBeforeImpact.productComparisons,
+    productComparisonsCanonical: created.sourceStoresBeforeImpact.productComparisonsCanonical,
+    productComparisonsMarker: created.sourceStoresBeforeImpact.productComparisonsMarker,
     productDecisions: created.sourceStoresBeforeImpact.productDecisions,
     serviceComparisons: created.sourceStoresBeforeImpact.serviceComparisons,
+    serviceComparisonsCanonical: created.sourceStoresBeforeImpact.serviceComparisonsCanonical,
+    serviceComparisonsMarker: created.sourceStoresBeforeImpact.serviceComparisonsMarker,
     serviceDecisions: created.sourceStoresBeforeImpact.serviceDecisions,
   });
   expect(created.externalRequests).toEqual([]);
@@ -19141,7 +19368,10 @@ test("T8-UX1 keeps exact request quantity and declared-total comparison availabl
   await page.getByTestId("comparison-save").click();
   await expect(page.getByTestId("comparison-detail")).toBeVisible();
 
-  const comparison = await page.evaluate(() => JSON.parse(window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1") ?? "[]")[0]);
+  const comparisonAuthority = await readBgF7ComparisonAuthority(page, "product");
+  expect(comparisonAuthority.envelope).not.toBeNull();
+  const comparison = comparisonAuthority.envelope?.records[0];
+  if (!comparison) throw new Error("T8-UX1 canonical Product Comparison is unavailable");
   const comparisonRevision = comparison.revisions.find((item: { id: string }) => item.id === comparison.currentRevisionId);
   const input = comparisonRevision.inputs.find((item: { proposalId: string }) => item.proposalId === source.proposal.id);
   const result = comparisonRevision.results.find((item: { proposalId: string }) => item.proposalId === source.proposal.id);
@@ -20700,13 +20930,25 @@ test.describe("BG-F6 builder proposal authority", () => {
   test("BG-F6 migration canonicalizes product and service proposals with SHA revisions while preserving Request FNV lineage", async ({ page }) => {
     const legacyRaw = await seedBgF6LegacyProductAndServiceProposals(page);
     const legacyRecords = JSON.parse(legacyRaw);
-    const downstreamRawBefore = await page.evaluate(() => ({
-      productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
-      productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
-      serviceComparisons: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"),
-      serviceDecisions: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"),
-      negotiations: window.localStorage.getItem("chida-prototype-builder-negotiation-drafts:v1"),
-    }));
+    const downstreamKeys = {
+      productComparisonsLegacy: bgF7ComparisonKeys.product.legacy,
+      productComparisonsCanonical: bgF7ComparisonKeys.product.canonical,
+      productComparisonsMarker: bgF7ComparisonKeys.product.marker,
+      serviceComparisonsLegacy: bgF7ComparisonKeys.service.legacy,
+      serviceComparisonsCanonical: bgF7ComparisonKeys.service.canonical,
+      serviceComparisonsMarker: bgF7ComparisonKeys.service.marker,
+      productDecisions: "chida-prototype-builder-proposal-comparison-decisions:v1",
+      serviceDecisions: "chida-prototype-builder-service-proposal-comparison-decisions:v1",
+      negotiations: "chida-prototype-builder-negotiation-drafts:v1",
+    } as const;
+    const snapshotDownstream = () => page.evaluate((keys) => Object.fromEntries(
+      Object.entries(keys).map(([name, key]) => [name, window.localStorage.getItem(key)]),
+    ), downstreamKeys);
+    const downstreamRawBefore = await snapshotDownstream();
+    expect(downstreamRawBefore.productComparisonsCanonical).not.toBeNull();
+    expect(downstreamRawBefore.productComparisonsMarker).not.toBeNull();
+    expect(downstreamRawBefore.serviceComparisonsCanonical).not.toBeNull();
+    expect(downstreamRawBefore.serviceComparisonsMarker).not.toBeNull();
 
     expect(await importBuilderProposals(page)).toEqual(expect.arrayContaining([
       "createBuilderProposalDependencies",
@@ -20735,13 +20977,7 @@ test.describe("BG-F6 builder proposal authority", () => {
         return module.builderProposalRevisionFingerprintMatches(record, currentRevision, legacyFingerprint);
       }, { record: canonical, currentRevision: revision, legacyFingerprint: legacy.revisions.find((candidate: any) => candidate.id === legacy.currentRevisionId).fingerprint })).toBe(true);
     }
-    expect(await page.evaluate(() => ({
-      productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
-      productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
-      serviceComparisons: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparisons:v1"),
-      serviceDecisions: window.localStorage.getItem("chida-prototype-builder-service-proposal-comparison-decisions:v1"),
-      negotiations: window.localStorage.getItem("chida-prototype-builder-negotiation-drafts:v1"),
-    }))).toEqual(downstreamRawBefore);
+    expect(await snapshotDownstream()).toEqual(downstreamRawBefore);
   });
 
   test("BG-F6 migration commits an empty authority and ignores a later v1 array", async ({ page }) => {
@@ -20781,6 +21017,7 @@ test.describe("BG-F6 builder proposal authority", () => {
     test.slow();
     await createExactProductComparisonWithDecision(page);
     await createExactServiceNegotiationDraft(page);
+    await seedBgF6LegacyAuthorityFromCanonical(page, { rewriteDownstream: true });
     const before = await page.evaluate(() => ({
       productComparisons: window.localStorage.getItem("chida-prototype-builder-proposal-comparisons:v1"),
       productDecisions: window.localStorage.getItem("chida-prototype-builder-proposal-comparison-decisions:v1"),
@@ -20834,8 +21071,6 @@ test.describe("BG-F6 builder proposal authority", () => {
     await page.getByTestId("manual-condition-impact-save").click();
     await expect(page.getByTestId("manual-condition-impact-detail")).toBeVisible();
     await seedBgF6LegacyAuthorityFromCanonical(page, { rewriteDownstream: true });
-    const downstreamBefore = await readBgF6LineageDownstreamBytes(page);
-    expect(Object.values(downstreamBefore)).not.toContain(null);
     page.off("request", service.requestListener);
 
     const legacyRaw = await page.evaluate((key) => window.localStorage.getItem(key), legacyBuilderProposalsTestStorageKey);
@@ -20845,6 +21080,17 @@ test.describe("BG-F6 builder proposal authority", () => {
     expect(migrated).toMatchObject({ status: "ready", envelope: { schemaVersion: 2 } });
     const canonicalBefore = await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsTestStorageKey);
     expect(canonicalBefore).not.toBeNull();
+    const comparisonContext = { authority: dependencies.authority, dependencies };
+    const [productComparisonState, serviceComparisonState] = await Promise.all([
+      initializeBgF7ComparisonState(page, "product", comparisonContext),
+      initializeBgF7ComparisonState(page, "service", comparisonContext),
+    ]);
+    expect(productComparisonState.status).toBe("ready");
+    expect(serviceComparisonState.status).toBe("ready");
+    const downstreamBefore = await readBgF6LineageDownstreamBytes(page);
+    expect(Object.values(downstreamBefore.descendants)).not.toContain(null);
+    expect(downstreamBefore.authority.product).toMatchObject({ legacyRaw: expect.any(String), canonicalRaw: expect.any(String), markerRaw: expect.any(String) });
+    expect(downstreamBefore.authority.service).toMatchObject({ legacyRaw: expect.any(String), canonicalRaw: expect.any(String), markerRaw: expect.any(String) });
     await page.evaluate((key) => window.localStorage.removeItem(key), legacyBuilderProposalsTestStorageKey);
     expect((await initializeBuilderProposalState(page, dependencies)).status).toBe("ready");
     expect(await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsTestStorageKey)).toBe(canonicalBefore);
@@ -23067,7 +23313,7 @@ test.describe("BG-F6 builder proposal authority", () => {
     await expectBgF6CommandExecutor(page);
     const secondPage = await context.newPage();
     await secondPage.goto("/");
-    const held = await holdBgF6WriteLock(page);
+    const held = await holdProcurementWriteLock(page);
     try {
       const firstPromise = executeBgF6CommandWithNoWriteProbe(page, first.command, prepared.dependencies);
       const secondPromise = executeBgF6CommandWithNoWriteProbe(secondPage, second.command, prepared.dependencies);
@@ -23116,7 +23362,7 @@ test.describe("BG-F6 builder proposal authority", () => {
     });
     const secondPage = await context.newPage();
     await secondPage.goto("/");
-    const held = await holdBgF6WriteLock(page);
+    const held = await holdProcurementWriteLock(page);
     try {
       const firstPromise = executeBgF6CommandWithNoWriteProbe(page, first.command, prepared.dependencies);
       const secondPromise = executeBgF6CommandWithNoWriteProbe(secondPage, second.command, prepared.dependencies);
@@ -23152,7 +23398,7 @@ test.describe("BG-F6 builder proposal authority", () => {
     await secondPage.evaluate((dependencies) => {
       (window as any).__bgF6QueuedDependencies = dependencies;
     }, prepared.dependencies);
-    const held = await holdBgF6WriteLock(page);
+    const held = await holdProcurementWriteLock(page);
     try {
       const pending = secondPage.evaluate(async ({ command, canonicalKey, markerKey }) => {
         const module = await import("/src/builderProposals.ts");
@@ -23634,10 +23880,10 @@ test.describe("BG-F6 builder proposal authority", () => {
             canonicalKey: builderProposalsTestStorageKey,
             markerKey: builderProposalsMarkerTestStorageKey,
           });
-          const held = await holdBgF6WriteLock(lockPage);
+          const held = await holdProcurementWriteLock(lockPage);
           try {
             const eventValue = await page.evaluate((key) => window.localStorage.getItem(key), target.key);
-            await dispatchBgF6StorageEvent(page, target.key, eventValue, eventValue);
+            await dispatchBuilderStorageEvent(page, target.key, eventValue, eventValue);
             await expect(page.getByTestId("proposal-storage-loading")).toBeVisible();
             await expect(page.getByTestId("proposal-editor")).toBeVisible();
             await expect(page.getByTestId("proposal-save")).toBeDisabled();
@@ -23744,9 +23990,9 @@ test.describe("BG-F6 builder proposal authority", () => {
 
     const lockPage = await context.newPage();
     await lockPage.goto("/");
-    const held = await holdBgF6WriteLock(lockPage);
+    const held = await holdProcurementWriteLock(lockPage);
     let faultInstalled = false;
-    let retryHeld: Awaited<ReturnType<typeof holdBgF6WriteLock>> | null = null;
+    let retryHeld: Awaited<ReturnType<typeof holdProcurementWriteLock>> | null = null;
     try {
       await page.evaluate((canonicalKey) => {
         const nativeGet = Storage.prototype.getItem;
@@ -23794,7 +24040,7 @@ test.describe("BG-F6 builder proposal authority", () => {
 
       await page.getByTestId("proposal-line-unit-price-0").fill("4100000");
       await expect(page.getByTestId("proposal-line-unit-price-0")).toHaveValue("4100000");
-      retryHeld = await holdBgF6WriteLock(lockPage);
+      retryHeld = await holdProcurementWriteLock(lockPage);
       await page.getByTestId("proposal-save").click();
       await expect(page.getByTestId("proposal-save")).toBeDisabled();
       await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, retryHeld!.lockName)).toBe(1);
@@ -24218,7 +24464,7 @@ test.describe("BG-F6 builder proposal authority", () => {
         };
       }, builderProposalsTestStorageKey);
       upstreamProbeInstalled = true;
-      await dispatchBgF6StorageEvent(page, "chida-prototype-project-files:v1", fileMutation.beforeRaw, fileMutation.afterRaw);
+      await dispatchBuilderStorageEvent(page, "chida-prototype-project-files:v1", fileMutation.beforeRaw, fileMutation.afterRaw);
       await expect.poll(() => page.evaluate(() => (window as Window & { __bgF6DependencyUpstreamCanonicalReads?: number }).__bgF6DependencyUpstreamCanonicalReads ?? 0)).toBeGreaterThan(0);
       await page.evaluate(() => new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()))));
       await page.evaluate(() => {
@@ -24398,11 +24644,11 @@ test.describe("BG-F6 builder proposal authority", () => {
       const filesRaw = await page.evaluate(() => window.localStorage.getItem("chida-prototype-project-files:v1"));
       const metadataOnlyRaw = JSON.stringify(JSON.parse(filesRaw ?? "[]").map((item: any) => item.id === file.id ? { ...item, storageMode: "metadata-only" } : item));
       await page.evaluate((raw) => window.localStorage.setItem("chida-prototype-project-files:v1", raw), metadataOnlyRaw);
-      await dispatchBgF6StorageEvent(page, "chida-prototype-project-files:v1", filesRaw, metadataOnlyRaw);
+      await dispatchBuilderStorageEvent(page, "chida-prototype-project-files:v1", filesRaw, metadataOnlyRaw);
       await expect(page.getByTestId("proposal-reference-availability")).toHaveAttribute("data-availability", "metadata-only");
 
       await page.evaluate((raw) => window.localStorage.setItem("chida-prototype-project-files:v1", raw!), filesRaw);
-      await dispatchBgF6StorageEvent(page, "chida-prototype-project-files:v1", metadataOnlyRaw, filesRaw);
+      await dispatchBuilderStorageEvent(page, "chida-prototype-project-files:v1", metadataOnlyRaw, filesRaw);
       await expect(page.getByTestId("proposal-reference-availability")).toHaveAttribute("data-availability", "available");
 
       await page.evaluate(() => {
@@ -24413,14 +24659,14 @@ test.describe("BG-F6 builder proposal authority", () => {
         };
       });
       idbFaultInstalled = true;
-      await dispatchBgF6StorageEvent(page, "chida-prototype-project-files:v1", filesRaw, filesRaw);
+      await dispatchBuilderStorageEvent(page, "chida-prototype-project-files:v1", filesRaw, filesRaw);
       await expect(page.getByTestId("proposal-reference-availability")).toHaveAttribute("data-availability", "read-error");
       await page.evaluate(() => {
         const faultWindow = window as Window & { __bgF6NativeIndexedDbOpen?: IDBFactory["open"] };
         if (faultWindow.__bgF6NativeIndexedDbOpen) IDBFactory.prototype.open = faultWindow.__bgF6NativeIndexedDbOpen;
       });
       idbFaultInstalled = false;
-      await dispatchBgF6StorageEvent(page, "chida-prototype-project-files:v1", filesRaw, filesRaw);
+      await dispatchBuilderStorageEvent(page, "chida-prototype-project-files:v1", filesRaw, filesRaw);
       await expect(page.getByTestId("proposal-reference-availability")).toHaveAttribute("data-availability", "available");
 
       const canonicalBeforeUpdate = await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsTestStorageKey);
@@ -24431,21 +24677,21 @@ test.describe("BG-F6 builder proposal authority", () => {
       });
       expect((await executeBgF6Command(page, externalUpdate.command, prepared.dependencies)).status).toBe("updated");
       const canonicalAfterUpdate = await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsTestStorageKey);
-      await dispatchBgF6StorageEvent(page, builderProposalsTestStorageKey, canonicalBeforeUpdate, canonicalAfterUpdate);
+      await dispatchBuilderStorageEvent(page, builderProposalsTestStorageKey, canonicalBeforeUpdate, canonicalAfterUpdate);
       await expect(page.getByTestId("proposal-detail-reference-details")).toContainText("رونویسی نسخهٔ دوم پس از رویداد v2");
 
       const legacyRaw = await page.evaluate((key) => window.localStorage.getItem(key), legacyBuilderProposalsTestStorageKey);
       await page.evaluate((key) => window.localStorage.setItem(key, "{BG-F6 ignored committed v1"), legacyBuilderProposalsTestStorageKey);
-      await dispatchBgF6StorageEvent(page, legacyBuilderProposalsTestStorageKey, legacyRaw, "{BG-F6 ignored committed v1");
+      await dispatchBuilderStorageEvent(page, legacyBuilderProposalsTestStorageKey, legacyRaw, "{BG-F6 ignored committed v1");
       await expect(page.getByTestId("proposal-detail")).toBeVisible();
       await expect(page.getByTestId("proposal-detail-reference-details")).toContainText("پیش‌فاکتور فرمان BG-F6.pdf");
 
       const markerRaw = await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsMarkerTestStorageKey);
       await page.evaluate((key) => window.localStorage.setItem(key, "{BG-F6 UI broken v2"), builderProposalsTestStorageKey);
-      await dispatchBgF6StorageEvent(page, builderProposalsMarkerTestStorageKey, markerRaw, markerRaw);
+      await dispatchBuilderStorageEvent(page, builderProposalsMarkerTestStorageKey, markerRaw, markerRaw);
       await expect(page.getByTestId("proposal-storage-error")).toBeVisible();
       await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: builderProposalsTestStorageKey, raw: canonicalAfterUpdate });
-      await dispatchBgF6StorageEvent(page, builderProposalsMarkerTestStorageKey, markerRaw, markerRaw);
+      await dispatchBuilderStorageEvent(page, builderProposalsMarkerTestStorageKey, markerRaw, markerRaw);
       await expect(page.getByTestId("proposal-card")).toHaveCount(2);
       await page.locator(`[data-proposal-id="${attachedFixture.command.proposalId}"]`).click();
       await openProposalDetailReference(page);
@@ -24465,14 +24711,14 @@ test.describe("BG-F6 builder proposal authority", () => {
         });
         database.close();
       }, file.id);
-      await dispatchBgF6StorageEvent(page, "chida-prototype-project-files:v1", filesRaw, filesRaw);
+      await dispatchBuilderStorageEvent(page, "chida-prototype-project-files:v1", filesRaw, filesRaw);
       await expect(page.getByTestId("proposal-detail")).toBeVisible();
       await expect(page.getByTestId("proposal-reference-availability")).toHaveAttribute("data-availability", "blob-missing");
       await expect(page.getByTestId("proposal-reference-availability")).toContainText(/در دسترس نیست|پیدا نشد/);
 
       const filesWithoutReference = JSON.stringify(JSON.parse(filesRaw ?? "[]").filter((item: any) => item.id !== file.id));
       await page.evaluate((raw) => window.localStorage.setItem("chida-prototype-project-files:v1", raw), filesWithoutReference);
-      await dispatchBgF6StorageEvent(page, "chida-prototype-project-files:v1", filesRaw, filesWithoutReference);
+      await dispatchBuilderStorageEvent(page, "chida-prototype-project-files:v1", filesRaw, filesWithoutReference);
       await expect(page.getByTestId("proposal-detail")).toBeVisible();
       await expect(page.getByTestId("proposal-detail-reference-details")).toContainText("پیش‌فاکتور فرمان BG-F6.pdf");
       await expect(page.getByTestId("proposal-reference-availability")).toHaveAttribute("data-availability", "metadata-missing");
@@ -24486,6 +24732,5278 @@ test.describe("BG-F6 builder proposal authority", () => {
           if (faultWindow.__bgF6NativeIndexedDbOpen) IDBFactory.prototype.open = faultWindow.__bgF6NativeIndexedDbOpen;
         });
       }
+      page.off("request", requestListener);
+    }
+  });
+});
+
+const bgF7FrozenBaseTitles = [
+  "BG-F7 migration canonicalizes product and service Comparisons while preserving descendant FNV bytes",
+  "BG-F7 migration preserves user actor provenance and marks transfer only through v1 origin",
+  "BG-F7 migration accepts mixed FNV and SHA Proposal pins across one Comparison history",
+  "BG-F7 migration preserves a valid historical Comparison after Proposal head advancement",
+  "BG-F7 migration preserves independent same-target Comparisons and non-head descendant pins",
+  "BG-F7 cutover resumes a valid pending Comparison marker to committed",
+  "BG-F7 cutover resumes a valid verified Comparison marker to committed",
+  "BG-F7 cutover rejects source identity dependency and candidate drift before commit with zero authority",
+  "BG-F7 empty cutover never resurrects a later v1 Comparison array",
+  "BG-F7 canonical marker and future-schema corruption never fall back to v1",
+  "BG-F7 parser accepts every exact capacity boundary and rejects one-over values extra keys and noncanonical identities or timestamps",
+  "BG-F7 parser rejects duplicate identities cross-project records and impossible chronology",
+  "BG-F7 golden vectors bind every revision event record receipt report envelope and marker",
+  "BG-F7 migration report replays every source index and every live receipt folds to the exact final envelope",
+  "BG-F7 rejects an out-of-order receipt chain even when timestamps tie",
+  "BG-F7 writer replay rejects structurally impossible coherent rehash and derived-result mismatch",
+  "BG-F7 parser preserves the 200-digit decimal boundary and rejects oversized canonical values",
+  "BG-F7 no-op keeps exact bytes while a semantic update appends one revision",
+  "BG-F7 idempotency replays an exact committed attempt after version and dependency drift and rejects every changed command field",
+  "BG-F7 concurrent creates from one store version produce one winner and preserve both records after explicit retry",
+  "BG-F7 concurrent updates to one Comparison produce one winner and one explicit conflict",
+  "BG-F7 product and service commands both succeed under the shared procurement lock",
+  "BG-F7 one-ledger cutover failure leaves the other ledger ready",
+  "BG-F7 queued Comparison rereads every Proposal dependency and writes nothing after lineage changes",
+  "BG-F7 migration and live writers clamp timestamps against backward clocks and newer dependency dates",
+  "BG-F7 pre-write storage failure leaves the exact preimage untouched",
+  "BG-F7 readback mismatch restores exact prior bytes",
+  "BG-F7 rollback collision never overwrites a competing writer",
+  "BG-F7 rollback failure returns rollback-failure and locks the ledger as read-error",
+  "BG-F7 missing Web Locks writes nothing",
+  "BG-F7 UI distinguishes loading read-error and empty while preserving a stale draft",
+  "BG-F7 reconciliation invalidates bindings for every watched key and ignores unrelated storage events",
+  "BG-F7 UI replays one ambiguous receipt without duplication",
+  "BG-F7 UI isolates product and service Comparisons to the active project",
+  "BG-F7 product corruption leaves service ready and writable while service corruption leaves product ready and writable",
+  "BG-F7 new Product Decision pins canonical Comparison SHA while an existing FNV target stays byte-stable on update",
+  "BG-F7 new Service Decision pins canonical Comparison SHA while an existing FNV target stays byte-stable on update",
+  "BG-F7 new Product Negotiation pins canonical Comparison SHA while an existing FNV target stays byte-stable on update",
+  "BG-F7 new Service Negotiation pins canonical Comparison SHA while an existing FNV target stays byte-stable on update",
+  "BG-F7 UI keeps technical authority details collapsed and makes no external request",
+] as const;
+
+if (
+  bgF7FrozenBaseTitles.length !== 40
+  || new Set(bgF7FrozenBaseTitles).size !== 40
+) {
+  throw new Error("BG-F7 frozen title manifest must contain 40 unique entries");
+}
+
+function compareCodePoints(left: string, right: string): number {
+  const leftIterator = left[Symbol.iterator]();
+  const rightIterator = right[Symbol.iterator]();
+  while (true) {
+    const leftPoint = leftIterator.next();
+    const rightPoint = rightIterator.next();
+    if (leftPoint.done || rightPoint.done) {
+      if (leftPoint.done && rightPoint.done) return 0;
+      return leftPoint.done ? -1 : 1;
+    }
+    const leftValue = leftPoint.value.codePointAt(0)!;
+    const rightValue = rightPoint.value.codePointAt(0)!;
+    if (leftValue !== rightValue) return leftValue < rightValue ? -1 : 1;
+  }
+}
+
+function stableBgF7OracleJson(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) {
+    return `[${Array.from({ length: value.length }, (_, index) => stableBgF7OracleJson(value[index])).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const fields: string[] = [];
+    for (const [key, item] of Object.entries(value as Record<string, unknown>).sort(([left], [right]) => compareCodePoints(left, right))) {
+      fields.push(`${JSON.stringify(key)}:${stableBgF7OracleJson(item)}`);
+    }
+    return `{${fields.join(",")}}`;
+  }
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value) as string;
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value) as string;
+  throw new TypeError("BG-F7 SHA oracle requires a JSON value");
+}
+
+function bgF7OracleSha256(value: unknown): `sha256-${string}` {
+  return `sha256-${createHash("sha256").update(stableBgF7OracleJson(value)).digest("hex")}`;
+}
+
+function bgF7OracleRawSha256(
+  raw: string,
+): `sha256-${string}` {
+  return `sha256-${createHash("sha256").update(raw).digest("hex")}`;
+}
+
+function bgF7DeterministicComparisonCommandId(
+  kind: BgF7ComparisonKind,
+  entity: "revision" | "event",
+  action: "create-comparison" | "update-comparison",
+  comparisonId: string,
+  idempotencyKey: string,
+  resultingVersion: number,
+) {
+  const prefix = kind === "product"
+    ? entity === "revision" ? "builder-proposal-comparison-revision-" : "builder-proposal-comparison-event-"
+    : entity === "revision" ? "builder-service-proposal-comparison-revision-" : "builder-service-proposal-comparison-event-";
+  return `${prefix}${bgF7OracleSha256({
+    schemaVersion: 1,
+    entity,
+    kind,
+    action,
+    comparisonId,
+    idempotencyKey,
+    resultingVersion,
+  })}`;
+}
+
+function bgF7OracleProposalSha256(value: unknown): `sha256-${string}` {
+  return `sha256-${createHash("sha256").update(JSON.stringify(stableBgF7LegacyValue(value))).digest("hex")}`;
+}
+
+function stableBgF7LegacyValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableBgF7LegacyValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, stableBgF7LegacyValue(item)]),
+    );
+  }
+  return value;
+}
+
+function bgF7LegacyFnvHash(value: unknown): `fnv1a-${string}` {
+  const serialized = JSON.stringify(stableBgF7LegacyValue(value));
+  let hash = 2166136261;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= serialized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function bgF7LegacyRevisionValue(record: Record<string, any>, revision: Record<string, any>, claims: Array<Record<string, any>>) {
+  const inputs = revision.inputs.map((input: Record<string, any>, index: number) => {
+    const { proposalRevisionSnapshot: _snapshot, ...legacyInput } = input;
+    return { ...legacyInput, proposalRevisionFingerprint: claims[index].claimedFingerprint };
+  });
+  const payload = revision.kind === "product"
+    ? { id: revision.id, version: revision.version, createdAt: revision.createdAt, inputs, results: revision.results, recommendation: revision.recommendation }
+    : { id: revision.id, version: revision.version, createdAt: revision.createdAt, inputs, results: revision.results, summary: revision.summary };
+  return {
+    ...payload,
+    fingerprint: bgF7LegacyFnvHash({ projectId: record.projectId, target: record.target, requestSnapshot: record.requestSnapshot, revision: payload }),
+  };
+}
+
+function bgF7LegacyRecordValue(record: Record<string, any>) {
+  const sourceVersion = record.legacyEvidence.sourceRecordVersion;
+  const revisions = record.revisions.slice(0, sourceVersion).map((revision: Record<string, any>, index: number) =>
+    bgF7LegacyRevisionValue(record, revision, record.legacyEvidence.revisionLinks[index].proposalFingerprintClaims));
+  const common = {
+    schemaVersion: 1,
+    id: record.id,
+    projectId: record.projectId,
+    purpose: record.purpose,
+    target: record.target,
+    requestSnapshot: record.requestSnapshot,
+    currentRevisionId: revisions.at(-1).id,
+    visibility: record.visibility,
+    localStatus: record.localStatus,
+    externalEffect: record.externalEffect,
+    networkUsed: record.networkUsed,
+    aiUsed: record.aiUsed,
+    version: sourceVersion,
+    createdAt: record.legacyEvidence.sourceCreatedAt,
+    updatedAt: record.legacyEvidence.sourceUpdatedAt,
+    history: record.history.slice(0, sourceVersion).map((event: Record<string, any>) => ({
+      id: event.id,
+      type: event.type,
+      actor: event.actor,
+      at: event.at,
+      version: event.version,
+    })),
+    revisions,
+  };
+  return record.objectType === "builder-service-proposal-comparison"
+    ? { ...common, scoringUsed: record.scoringUsed }
+    : common;
+}
+
+function bgF7DraftFromRevision(record: Record<string, any>, revision: Record<string, any>) {
+  const requestKey = [record.target.requestId, record.target.requestVersion, record.target.reviewRevisionId, record.target.reviewRevisionFingerprint].join(":");
+  if (revision.kind === "product") {
+    return {
+      requestKey,
+      proposals: revision.inputs.map((input: Record<string, any>) => ({
+        proposalId: input.proposalId,
+        selected: true,
+        lineAdjustments: input.lineAdjustments.map((adjustment: Record<string, any>) => ({
+          proposalLineId: adjustment.proposalLineId,
+          requestItemId: adjustment.requestItemId,
+          basis: adjustment.basis,
+          adjustedQuantity: adjustment.adjustedQuantity ?? "",
+          adjustedQuantityUnit: adjustment.adjustedQuantityUnit ?? "",
+          assumption: adjustment.assumption ?? "",
+        })),
+        taxMode: input.taxTreatment.mode,
+        taxValue: input.taxTreatment.value ?? "",
+        taxAssumption: input.taxTreatment.assumption ?? "",
+        transportMode: input.transportTreatment.mode,
+        transportValue: input.transportTreatment.value ?? "",
+        transportAssumption: input.transportTreatment.assumption ?? "",
+      })),
+    };
+  }
+  return {
+    requestKey,
+    proposals: revision.inputs.map((input: Record<string, any>) => ({
+      proposalId: input.proposalId,
+      selected: true,
+      criteria: input.criteria.map((criterion: Record<string, any>) => ({
+        criterionId: criterion.criterionId,
+        declaredValue: criterion.declaredValue ?? "",
+        assessment: criterion.assessment,
+        rationale: criterion.rationale ?? "",
+      })),
+    })),
+  };
+}
+
+function bgF7ReceiptPayloadHash(record: Record<string, any>, revision: Record<string, any>, receipt: Record<string, any>) {
+  return bgF7OracleSha256({
+    inputSchemaVersion: 1,
+    kind: receipt.kind,
+    action: receipt.action,
+    projectId: receipt.projectId,
+    comparisonId: receipt.recordId,
+    draft: bgF7DraftFromRevision(record, revision),
+    pins: receipt.commandPins,
+    expectedStoreVersion: receipt.expectedStoreVersion,
+    ...(receipt.action === "update-comparison" ? { expectedComparisonVersion: receipt.expectedRecordVersion } : {}),
+  });
+}
+
+async function bgF7MigrationReportId(report: Record<string, any>) {
+  return `${report.store}-migration:${await bgF7OracleSha256({
+    store: report.store,
+    sourceGeneration: report.sourceGeneration,
+    sourceKey: report.sourceKey,
+    sourceRawHash: report.sourceRawHash,
+    dependencySnapshotHash: report.dependencySnapshotHash,
+    identityBindingHash: report.identityBindingHash,
+    migratedAt: report.migratedAt,
+  })}`;
+}
+
+async function bgF7RebindFixtureInputsAndPins(
+  fixture: Record<string, any>,
+  recomputeProposalFingerprint = true,
+) {
+  for (const revision of fixture.record.revisions) {
+    for (const input of revision.inputs) {
+      if (recomputeProposalFingerprint) {
+        input.proposalRevisionSnapshot.fingerprint = await bgF7OracleProposalSha256(bgF7WithoutFingerprint(input.proposalRevisionSnapshot));
+      }
+      input.proposalRevisionFingerprint = input.proposalRevisionSnapshot.fingerprint;
+      input.supplierSnapshot = structuredClone(input.proposalRevisionSnapshot.supplierSnapshot);
+    }
+  }
+  for (const receipt of fixture.envelope.idempotencyReceipts) {
+    const revision = fixture.record.revisions.find((item: Record<string, any>) => item.id === receipt.revisionId)!;
+    const requestSnapshot = revision.inputs[0].proposalRevisionSnapshot.requestSnapshot;
+    receipt.commandPins.target = structuredClone(revision.target);
+    receipt.commandPins.requestSnapshotHash = await bgF7OracleSha256({ schemaVersion: 1, kind: fixture.kind, projectId: receipt.projectId, target: revision.target, requestSnapshot });
+    if (fixture.kind === "service") {
+      receipt.commandPins.serviceRequestSnapshotHash = await bgF7OracleSha256({ schemaVersion: 1, kind: "service", projectId: receipt.projectId, target: revision.target, serviceRequestSnapshot: fixture.record.requestSnapshot });
+    }
+    receipt.commandPins.proposalPins = await Promise.all(revision.inputs.map(async (input: Record<string, any>) => ({
+      proposalId: input.proposalId,
+      proposalVersion: input.proposalVersion,
+      proposalRevisionId: input.proposalRevisionId,
+      proposalRevisionFingerprint: input.proposalRevisionFingerprint,
+      proposalRevisionSnapshotHash: await bgF7OracleSha256({
+        schemaVersion: 1,
+        proposalId: input.proposalId,
+        proposalVersion: input.proposalVersion,
+        proposalRevisionId: input.proposalRevisionId,
+        proposalRevisionFingerprint: input.proposalRevisionFingerprint,
+        proposalRevisionSnapshot: input.proposalRevisionSnapshot,
+      }),
+    })));
+    receipt.commandPins.expectedDependencySnapshotHash = await bgF7OracleSha256({
+      schemaVersion: 1,
+      kind: fixture.kind,
+      projectId: receipt.projectId,
+      identityBindingHash: receipt.commandPins.identityBindingHash,
+      authorizationContextHash: receipt.commandPins.authorizationContextHash,
+      proposalStoreVersion: receipt.commandPins.proposalStoreVersion,
+      proposalEnvelopeFingerprint: receipt.commandPins.proposalEnvelopeFingerprint,
+      proposalDependencySnapshotHash: receipt.commandPins.proposalDependencySnapshotHash,
+      target: receipt.commandPins.target,
+      requestSnapshotHash: receipt.commandPins.requestSnapshotHash,
+      serviceRequestSnapshotHash: fixture.kind === "service" ? receipt.commandPins.serviceRequestSnapshotHash : null,
+      proposalPins: receipt.commandPins.proposalPins,
+    });
+    receipt.expectedDependencySnapshotHash = receipt.commandPins.expectedDependencySnapshotHash;
+    const event = fixture.record.history.find((item: Record<string, any>) => item.id === receipt.eventId)!;
+    event.dependencySnapshotHash = receipt.expectedDependencySnapshotHash;
+  }
+  await bgF7RehashFixture(fixture);
+  for (const receipt of fixture.envelope.idempotencyReceipts) {
+    const revision = fixture.record.revisions.find((item: Record<string, any>) => item.id === receipt.revisionId)!;
+    receipt.payloadHash = await bgF7ReceiptPayloadHash(fixture.record, revision, receipt);
+    const event = fixture.record.history.find((item: Record<string, any>) => item.id === receipt.eventId)!;
+    event.commandPayloadHash = receipt.payloadHash;
+  }
+  await bgF7RehashFixture(fixture);
+}
+
+type BgF7ComparisonKind = "product" | "service";
+
+type BgF7ComparisonKeys = {
+  legacy: string;
+  canonical: string;
+  marker: string;
+  incident: string;
+  decision: string;
+};
+
+const bgF7ComparisonKeys: Record<BgF7ComparisonKind, BgF7ComparisonKeys> = {
+  product: {
+    legacy: "chida-prototype-builder-proposal-comparisons:v1",
+    canonical: "chida-prototype-builder-proposal-comparisons:v2",
+    marker: "chida-prototype-builder-proposal-comparisons:v2:cutover:v1",
+    incident: "chida-prototype-builder-proposal-comparisons:v2:rollback-incident:v1",
+    decision: "chida-prototype-builder-proposal-comparison-decisions:v1",
+  },
+  service: {
+    legacy: "chida-prototype-builder-service-proposal-comparisons:v1",
+    canonical: "chida-prototype-builder-service-proposal-comparisons:v2",
+    marker: "chida-prototype-builder-service-proposal-comparisons:v2:cutover:v1",
+    incident: "chida-prototype-builder-service-proposal-comparisons:v2:rollback-incident:v1",
+    decision: "chida-prototype-builder-service-proposal-comparison-decisions:v1",
+  },
+};
+
+const bgF7ProductStorageKey = bgF7ComparisonKeys.product.canonical;
+const bgF7ProductMarkerKey = bgF7ComparisonKeys.product.marker;
+const bgF7ServiceStorageKey = bgF7ComparisonKeys.service.canonical;
+const bgF7ServiceMarkerKey = bgF7ComparisonKeys.service.marker;
+const bgF7TestAuthority = {
+  identityBindingHash: `sha256-${"1".repeat(64)}`,
+  snapshotHash: `sha256-${"2".repeat(64)}`,
+  projectIds: ["project-bg-f7"],
+  authorizationHashes: { "project-bg-f7": `sha256-${"3".repeat(64)}` },
+};
+const bgF7CriterionDefinitions = [
+  ["scope", "scope"],
+  ["location", "location"],
+  ["size-or-volume", "sizeOrVolume"],
+  ["qualification", "qualification"],
+  ["timing", "timing"],
+  ["method", "method"],
+  ["in-scope", "inScope"],
+  ["out-of-scope", "outOfScope"],
+  ["warranty", "warranty"],
+  ["payment-terms", "paymentTerms"],
+] as const;
+
+async function bgF7Final<T extends Record<string, unknown>>(value: T) {
+  return { ...value, fingerprint: await bgF7OracleSha256(value) };
+}
+
+function bgF7WithoutFingerprint(value: Record<string, any>) {
+  const { fingerprint: _fingerprint, ...payload } = value;
+  return payload;
+}
+
+async function bgF7RehashFixture(fixture: Record<string, any>) {
+  for (const record of fixture.envelope.records) {
+    for (const revision of record.revisions) revision.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(revision));
+    for (const event of record.history) event.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(event));
+    if (record.legacyEvidence) record.legacyEvidence.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record.legacyEvidence));
+    record.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record));
+  }
+  for (const receipt of fixture.envelope.idempotencyReceipts) receipt.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(receipt));
+  for (const report of fixture.envelope.migrationReports) report.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(report));
+  fixture.envelope.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(fixture.envelope));
+  fixture.canonicalRaw = JSON.stringify(fixture.envelope);
+}
+
+async function createBgF7Fixture(
+  kind: "product" | "service",
+  options: { inputCount?: number; recordId?: string; productDecimal?: string; treatmentAssumption?: string; compact?: boolean } = {},
+) {
+  const store = kind === "product" ? "builder-product-comparison" : "builder-service-comparison";
+  const storageKey = kind === "product" ? bgF7ProductStorageKey : bgF7ServiceStorageKey;
+  const markerKey = kind === "product" ? bgF7ProductMarkerKey : bgF7ServiceMarkerKey;
+  const inputCount = options.inputCount ?? 2;
+  const recordId = options.recordId ?? (options.compact ? "c" : `${kind}-comparison-bg-f7`);
+  const migrationAt = "2026-09-02T00:00:00.000Z";
+  const verifiedAt = "2026-09-02T00:00:01.000Z";
+  const committedAt = "2026-09-02T00:00:02.000Z";
+  const liveAt = "2026-09-02T00:00:03.000Z";
+  const liveIdempotencyKey = `${kind}:create:bg-f7`;
+  const target = {
+    requestId: options.compact ? "r" : `${kind}-request-bg-f7`,
+    requestVersion: 1,
+    reviewRevisionId: options.compact ? "rr" : `${kind}-request-revision-bg-f7`,
+    reviewRevisionFingerprint: "fnv1a-1234abcd",
+    requestKind: kind,
+  };
+  const productRequestSnapshot = {
+    requestKind: "product",
+    title: options.compact ? "م" : "محصول نمونه BG-F7",
+    items: [{ id: options.compact ? "i" : "request-item-bg-f7", name: options.compact ? "ک" : "کالا", quantity: "1", unit: "عدد" }],
+    service: null,
+  };
+  const serviceRequestSnapshot = {
+    id: options.compact ? "s" : "service-spec-bg-f7",
+    scope: "اجرای کامل",
+    location: "تهران",
+    sizeOrVolume: "۱۰۰ مترمربع",
+    qualification: "صلاحیت معتبر",
+    timing: "ده روز",
+    method: "اجرای دستی",
+    inScope: "مصالح",
+    outOfScope: "داربست",
+    warranty: "یک سال",
+    paymentTerms: "مرحله‌ای",
+  };
+  const requestSnapshot = kind === "product" ? productRequestSnapshot : serviceRequestSnapshot;
+  const proposalRequestSnapshot = kind === "product" ? productRequestSnapshot : {
+    requestKind: "service",
+    title: options.compact ? "خ" : "خدمت نمونه BG-F7",
+    items: [],
+    service: { id: serviceRequestSnapshot.id, scope: serviceRequestSnapshot.scope, location: serviceRequestSnapshot.location },
+  };
+  const decimal = options.productDecimal ?? "10";
+  const inputs: Record<string, any>[] = [];
+  const results: Record<string, any>[] = [];
+  for (let index = 0; index < inputCount; index += 1) {
+    const ordinal = index + 1;
+    const proposalId = options.compact ? `p${ordinal}` : `${kind}-proposal-bg-f7-${ordinal}`;
+    const proposalRevisionId = options.compact ? `${proposalId}:r1` : `${proposalId}:revision:1`;
+    const line = {
+      id: options.compact ? `${proposalId}:l` : `${proposalId}:line:1`,
+      requestItemId: kind === "product" ? productRequestSnapshot.items[0].id : null,
+      serviceSpecId: kind === "service" ? serviceRequestSnapshot.id : null,
+      requestLabel: kind === "product" ? productRequestSnapshot.items[0].name : serviceRequestSnapshot.scope,
+      status: "quoted",
+      quantity: "1",
+      unit: kind === "product" ? "عدد" : null,
+      unitPrice: kind === "product" ? decimal : null,
+      totalPrice: kind === "product" ? decimal : null,
+      currency: "تومان",
+      tax: null,
+      transport: null,
+      minimumOrder: null,
+      leadTime: null,
+      validity: null,
+      paymentTerms: kind === "service" ? "مرحله‌ای" : null,
+      notes: null,
+    };
+    const supplierSnapshot = {
+      supplierContactId: options.compact ? `${proposalId}:s` : `${proposalId}:supplier`,
+      supplierContactVersion: 1,
+      displayName: options.compact ? `ت${ordinal}` : `تأمین‌کننده ${ordinal}`,
+      category: options.compact ? "د" : kind === "product" ? "محصول" : "خدمت",
+      tehranCoverage: options.compact ? "ت" : "تهران",
+      responseCapability: kind,
+      networkStatus: "خارج از شبکه چیدا",
+    };
+    const proposalTarget = {
+      ...target,
+      requestDependencyFingerprint: `sha256-${"4".repeat(64)}`,
+      contentApprovalId: options.compact ? "a" : `${kind}-approval-bg-f7`,
+      contentApprovalVersion: 1,
+      contentApprovalRevisionId: options.compact ? "ar" : `${kind}-approval-revision-bg-f7`,
+      contentApprovalFingerprint: `sha256-${"5".repeat(64)}`,
+    };
+    const proposalRevisionWithoutFingerprint = {
+      id: proposalRevisionId,
+      version: 1,
+      createdAt: "2026-09-01T23:59:00.000Z",
+      target: proposalTarget,
+      requestSnapshot: proposalRequestSnapshot,
+      supplierSnapshot,
+      contactPin: {
+        supplierContactId: supplierSnapshot.supplierContactId,
+        supplierContactVersion: 1,
+        supplierContactRevisionId: options.compact ? `${proposalId}:cr` : `${proposalId}:contact-revision:1`,
+        supplierContactRevisionFingerprint: `sha256-${"6".repeat(64)}`,
+      },
+      reference: {
+        kind: "unattached",
+        projectFileId: null,
+        projectFileVersion: null,
+        fileSnapshot: null,
+        metadataFingerprint: null,
+        contentPersisted: false,
+        extractionPerformed: false,
+      },
+      declaredAt: null,
+      transcript: options.compact ? null : `رونویسی ${ordinal}`,
+      notes: null,
+      lines: [line],
+    };
+    const proposalRevisionSnapshot = await bgF7Final(proposalRevisionWithoutFingerprint);
+    if (kind === "product") {
+      inputs.push({
+        proposalId,
+        proposalVersion: 1,
+        proposalRevisionId,
+        proposalRevisionFingerprint: proposalRevisionSnapshot.fingerprint,
+        proposalRevisionSnapshot,
+        supplierSnapshot,
+        lineAdjustments: [{
+          proposalLineId: line.id,
+          requestItemId: line.requestItemId,
+          basis: "declared-total",
+          adjustedQuantity: null,
+          adjustedQuantityUnit: null,
+          assumption: null,
+          source: "فرض ثبت‌شده توسط سازنده",
+        }],
+        taxTreatment: {
+          mode: "included",
+          value: null,
+          assumption: options.treatmentAssumption ?? "مالیات داخل مبلغ است",
+          source: "فرض ثبت‌شده توسط سازنده",
+        },
+        transportTreatment: {
+          mode: "included",
+          value: null,
+          assumption: "حمل داخل مبلغ است",
+          source: "فرض ثبت‌شده توسط سازنده",
+        },
+      });
+      results.push({
+        proposalId,
+        supplierDisplayName: supplierSnapshot.displayName,
+        lines: [{
+          proposalLineId: line.id,
+          requestItemId: line.requestItemId,
+          requestLabel: line.requestLabel,
+          declaredSnapshot: line,
+          calculation: {
+            formulaVersion: "normalized-product-line-v1",
+            formula: `قیمت کل اعلامی ${decimal} تومان`,
+            basisAmount: decimal,
+            normalizedLineTotal: decimal,
+            status: "complete",
+            missingReasons: [],
+            source: "محاسبهٔ قطعی محلی چیدا",
+            rounding: "none",
+          },
+        }],
+        subtotal: decimal,
+        taxAmount: "0",
+        transportAmount: "0",
+        normalizedTotal: decimal,
+        coverage: "complete",
+        missingReasons: [],
+        source: "محاسبهٔ قطعی محلی چیدا",
+      });
+    } else {
+      const criteria = bgF7CriterionDefinitions.map(([criterionId]) => ({
+        criterionId,
+        declaredValue: null,
+        assessment: "unknown",
+        rationale: null,
+        declaredSource: "رونویسی تکمیلی سازنده برای مقایسه",
+        assessmentSource: "ارزیابی سازنده",
+      }));
+      inputs.push({
+        proposalId,
+        proposalVersion: 1,
+        proposalRevisionId,
+        proposalRevisionFingerprint: proposalRevisionSnapshot.fingerprint,
+        proposalRevisionSnapshot,
+        proposalLineId: line.id,
+        serviceSpecId: serviceRequestSnapshot.id,
+        supplierSnapshot,
+        criteria,
+      });
+      results.push({
+        proposalId,
+        supplierDisplayName: supplierSnapshot.displayName,
+        declaredCommercialSnapshot: line,
+        criteria: criteria.map((criterion) => ({
+          ...criterion,
+          requestValue: serviceRequestSnapshot[bgF7CriterionDefinitions.find(([id]) => id === criterion.criterionId)![1]],
+          status: "unknown",
+        })),
+        counts: { aligned: 0, partial: 0, different: 0, unknown: 10, notApplicable: 0 },
+        coverage: "incomplete",
+        source: "ماتریس ساختاریافتهٔ محلی چیدا",
+      });
+    }
+  }
+  const revision = await bgF7Final({
+    schemaVersion: 2,
+    kind,
+    comparisonId: recordId,
+    projectId: "project-bg-f7",
+    scopeId: "project-bg-f7",
+    target,
+    id: bgF7DeterministicComparisonCommandId(kind, "revision", "create-comparison", recordId, liveIdempotencyKey, 1),
+    version: 1,
+    createdAt: liveAt,
+    inputs,
+    results,
+    ...(kind === "product" ? {
+      recommendation: {
+        criterion: "lowest-complete-normalized-total",
+        status: inputCount > 1 ? "tie" : "conditional",
+        candidateProposalId: inputCount > 1 ? null : inputs[0]?.proposalId ?? null,
+        tiedProposalIds: inputCount > 1 ? inputs.map((input) => input.proposalId) : [],
+        reason: inputCount > 1 ? "کمترین مبلغ هم‌سطح بین چند پیشنهاد برابر است؛ نامزد یکتا وجود ندارد." : "بر اساس معیار صریح «کمترین مبلغ هم‌سطح» و فقط با فرض‌های ثبت‌شده، این گزینه رقم کمتری دارد؛ این نتیجه بهترین یا انتخاب نهایی نیست.",
+        source: "جمع‌بندی قاعده‌محور محلی",
+      },
+    } : {
+      summary: {
+        formulaVersion: "service-coverage-v1",
+        criterion: "all-service-criteria-reviewed",
+        status: "needs-clarification",
+        candidateProposalId: null,
+        unknownCount: inputCount * 10,
+        reasonCode: "criteria-need-clarification",
+        reason: "حداقل یک معیار در پیشنهادهای انتخاب‌شده هنوز نامشخص است؛ پیش از تصمیم انسانی روشن‌سازی لازم است.",
+        source: "جمع‌بندی قاعده‌محور محلی",
+      },
+    }),
+  });
+  let dependencySnapshotHash = await bgF7OracleSha256({ schemaVersion: 1, kind, projectId: "project-bg-f7", inputs: inputs.map((input) => input.proposalRevisionFingerprint) });
+  let payloadHash = `sha256-${"0".repeat(64)}`;
+  const event = await bgF7Final({
+    schemaVersion: 1,
+    kind,
+    comparisonId: recordId,
+    projectId: "project-bg-f7",
+    scopeId: "project-bg-f7",
+    id: bgF7DeterministicComparisonCommandId(kind, "event", "create-comparison", recordId, liveIdempotencyKey, 1),
+    type: "created",
+    actor: "شما",
+    actorPrincipalId: "local-builder-account",
+    origin: "live-command",
+    at: liveAt,
+    version: 1,
+    revisionId: revision.id,
+    authorizationContextHash: bgF7TestAuthority.authorizationHashes["project-bg-f7"],
+    dependencySnapshotHash,
+    idempotencyKey: liveIdempotencyKey,
+    commandPayloadHash: payloadHash,
+  });
+  const record = await bgF7Final({
+    schemaVersion: 2,
+    objectType: kind === "product" ? "builder-product-proposal-comparison" : "builder-service-proposal-comparison",
+    id: recordId,
+    projectId: "project-bg-f7",
+    ownerPrincipalType: "account",
+    ownerPrincipalId: "local-builder-account",
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: "project-bg-f7",
+    custodianService: "Comparison Domain Service",
+    sensitivity: "private",
+    purpose: kind === "product" ? "compare-builder-recorded-product-proposals" : "compare-builder-recorded-service-proposals",
+    target,
+    requestSnapshot,
+    currentRevisionId: revision.id,
+    visibility: "خصوصی پروژه",
+    localStatus: "ثبت محلی",
+    externalEffect: "none",
+    networkUsed: false,
+    aiUsed: false,
+    ...(kind === "service" ? { scoringUsed: false } : {}),
+    version: 1,
+    createdAt: liveAt,
+    updatedAt: liveAt,
+    history: [event],
+    revisions: [revision],
+    legacyEvidence: null,
+  });
+  const proposalPins = await Promise.all(inputs.map(async (input) => ({
+    proposalId: input.proposalId,
+    proposalVersion: input.proposalVersion,
+    proposalRevisionId: input.proposalRevisionId,
+    proposalRevisionFingerprint: input.proposalRevisionFingerprint,
+    proposalRevisionSnapshotHash: await bgF7OracleSha256({
+      schemaVersion: 1,
+      proposalId: input.proposalId,
+      proposalVersion: input.proposalVersion,
+      proposalRevisionId: input.proposalRevisionId,
+      proposalRevisionFingerprint: input.proposalRevisionFingerprint,
+      proposalRevisionSnapshot: input.proposalRevisionSnapshot,
+    }),
+  })));
+  const requestSnapshotHash = await bgF7OracleSha256({ schemaVersion: 1, kind, projectId: "project-bg-f7", target, requestSnapshot: inputs[0]?.proposalRevisionSnapshot.requestSnapshot });
+  const commandPins = {
+    schemaVersion: 1,
+    kind,
+    authorizationContextHash: bgF7TestAuthority.authorizationHashes["project-bg-f7"],
+    identityBindingHash: bgF7TestAuthority.identityBindingHash,
+    proposalStoreVersion: 1,
+    proposalEnvelopeFingerprint: `sha256-${"7".repeat(64)}`,
+    proposalDependencySnapshotHash: `sha256-${"8".repeat(64)}`,
+    target,
+    requestSnapshotHash,
+    ...(kind === "service" ? { serviceRequestSnapshotHash: await bgF7OracleSha256({ schemaVersion: 1, kind: "service", projectId: "project-bg-f7", target, serviceRequestSnapshot }) } : {}),
+    proposalPins,
+    expectedDependencySnapshotHash: dependencySnapshotHash,
+  };
+  dependencySnapshotHash = await bgF7OracleSha256({
+    schemaVersion: 1,
+    kind,
+    projectId: "project-bg-f7",
+    identityBindingHash: commandPins.identityBindingHash,
+    authorizationContextHash: commandPins.authorizationContextHash,
+    proposalStoreVersion: commandPins.proposalStoreVersion,
+    proposalEnvelopeFingerprint: commandPins.proposalEnvelopeFingerprint,
+    proposalDependencySnapshotHash: commandPins.proposalDependencySnapshotHash,
+    target: commandPins.target,
+    requestSnapshotHash: commandPins.requestSnapshotHash,
+    serviceRequestSnapshotHash: kind === "service" ? commandPins.serviceRequestSnapshotHash : null,
+    proposalPins: commandPins.proposalPins,
+  });
+  commandPins.expectedDependencySnapshotHash = dependencySnapshotHash;
+  event.dependencySnapshotHash = dependencySnapshotHash;
+  event.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(event));
+  record.history[0] = event;
+  record.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record));
+  const receipt = await bgF7Final({
+    schemaVersion: 1,
+    position: 1,
+    key: liveIdempotencyKey,
+    kind,
+    action: "create-comparison",
+    payloadHash,
+    projectId: "project-bg-f7",
+    recordId,
+    expectedStoreVersion: 1,
+    expectedRecordVersion: null,
+    commandPins,
+    expectedDependencySnapshotHash: dependencySnapshotHash,
+    result: "created",
+    resultingStoreVersion: 2,
+    resultingRecordVersion: 1,
+    eventId: event.id,
+    revisionId: revision.id,
+    authorizationContextHash: bgF7TestAuthority.authorizationHashes["project-bg-f7"],
+    recordedAt: liveAt,
+  });
+  payloadHash = await bgF7ReceiptPayloadHash(record, revision, receipt);
+  receipt.payloadHash = payloadHash;
+  receipt.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(receipt));
+  event.commandPayloadHash = payloadHash;
+  event.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(event));
+  record.history[0] = event;
+  record.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record));
+  const migrationDependencyHash = await bgF7OracleSha256({ migration: kind, authority: bgF7TestAuthority.snapshotHash });
+  const sourceGeneration = "none";
+  const sourceRawHash = null;
+  const reportWithoutId = {
+    schemaVersion: 1,
+    store,
+    sourceGeneration,
+    sourceKey: null,
+    sourceRawHash,
+    dependencySnapshotHash: migrationDependencyHash,
+    identityBindingHash: bgF7TestAuthority.identityBindingHash,
+    migratedAt: migrationAt,
+    recordCount: 0,
+    migratedRecordFingerprints: [],
+    migratedRevisionCount: 0,
+  };
+  const report = await bgF7Final({ ...reportWithoutId, id: await bgF7MigrationReportId(reportWithoutId) });
+  const initialEnvelope = await bgF7Final({
+    schemaVersion: 2,
+    fingerprintVersion: kind === "product" ? "builder-product-comparison-domain-v2" : "builder-service-comparison-domain-v2",
+    storeVersion: 1,
+    records: [],
+    idempotencyReceipts: [],
+    migrationReports: [report],
+    updatedAt: migrationAt,
+  });
+  const initialRaw = JSON.stringify(initialEnvelope);
+  const envelope = await bgF7Final({
+    ...bgF7WithoutFingerprint(initialEnvelope),
+    storeVersion: 2,
+    records: [record],
+    idempotencyReceipts: [receipt],
+    updatedAt: liveAt,
+  });
+  const canonicalRaw = JSON.stringify(envelope);
+  const candidateRawHash = await bgF7OracleRawSha256(initialRaw);
+  const marker = await bgF7Final({
+    schemaVersion: 1,
+    store,
+    state: "committed",
+    migrationId: report.id,
+    sourceGeneration,
+    sourceKey: null,
+    sourceRawHash,
+    dependencySnapshotHash: report.dependencySnapshotHash,
+    identityBindingHash: bgF7TestAuthority.identityBindingHash,
+    migrationAt,
+    verifiedAt,
+    committedAt,
+    canonicalRawHash: candidateRawHash,
+    candidateRawHash,
+  });
+  return { kind, store, storageKey, markerKey, initialEnvelope, initialRaw, envelope, canonicalRaw, marker, record, revision, event, receipt, report };
+}
+
+async function readBgF7Fixture(page: Page, fixture: Record<string, any>) {
+  if (fixture.canonicalRaw.length > 1_000_000) {
+    const compressedCanonicalRaw = gzipSync(Buffer.from(fixture.canonicalRaw)).toString("base64");
+    await page.evaluate(({ compressedCanonicalRaw, markerRaw, storageKey, markerKey, kind, authority }) => {
+      (window as any).__bgF7LargeFixture = { compressedCanonicalRaw, markerRaw, storageKey, markerKey, kind, authority };
+    }, {
+      compressedCanonicalRaw,
+      markerRaw: JSON.stringify(fixture.marker),
+      storageKey: fixture.storageKey,
+      markerKey: fixture.markerKey,
+      kind: fixture.kind,
+      authority: fixture.authority ?? bgF7TestAuthority,
+    });
+    return page.evaluate(async () => {
+      const injected = (window as any).__bgF7LargeFixture;
+      const compressedBytes = Uint8Array.from(atob(injected.compressedCanonicalRaw), (character) => character.charCodeAt(0));
+      const canonicalRaw = await new Response(new Blob([compressedBytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+      const nativeGetItem = Storage.prototype.getItem;
+      Storage.prototype.getItem = function (key: string) {
+        if (this === window.localStorage && key === injected.storageKey) return canonicalRaw;
+        if (this === window.localStorage && key === injected.markerKey) return injected.markerRaw;
+        return nativeGetItem.call(this, key);
+      };
+      try {
+        const module = await import("/src/builderProposalComparisons.ts");
+        const state = injected.kind === "product"
+          ? module.readBuilderProductComparisonState({ authority: injected.authority, dependencies: null })
+          : module.readBuilderServiceComparisonState({ authority: injected.authority, dependencies: null });
+        (window as any).__bgF7RetainedCanonicalRaw = canonicalRaw;
+        return {
+          status: state.status,
+          dependencyStatus: state.dependencyStatus,
+          reason: state.status === "read-error" ? state.reason : null,
+        };
+      } finally {
+        Storage.prototype.getItem = nativeGetItem;
+        delete (window as any).__bgF7LargeFixture;
+      }
+    });
+  }
+  return page.evaluate(async ({ canonicalRaw, markerRaw, storageKey, markerKey, kind, authority }) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function (key: string) {
+      if (this === window.localStorage && key === storageKey) return canonicalRaw;
+      if (this === window.localStorage && key === markerKey) return markerRaw;
+      return nativeGetItem.call(this, key);
+    };
+    try {
+      const module = await import("/src/builderProposalComparisons.ts");
+      const state = kind === "product"
+        ? module.readBuilderProductComparisonState({ authority, dependencies: null })
+        : module.readBuilderServiceComparisonState({ authority, dependencies: null });
+      return {
+        status: state.status,
+        dependencyStatus: state.dependencyStatus,
+        reason: state.status === "read-error" ? state.reason : null,
+      };
+    } finally {
+      Storage.prototype.getItem = nativeGetItem;
+    }
+  }, {
+    canonicalRaw: fixture.canonicalRaw,
+    markerRaw: JSON.stringify(fixture.marker),
+    storageKey: fixture.storageKey,
+    markerKey: fixture.markerKey,
+    kind: fixture.kind,
+    authority: fixture.authority ?? bgF7TestAuthority,
+  });
+}
+
+async function readBgF7ExtendedReceiptCapacityFixture(
+  page: Page,
+  fixture: Record<string, any>,
+  previousEnvelopeFingerprint: string,
+) {
+  const expectedRawHash = await bgF7OracleRawSha256(fixture.canonicalRaw);
+  return page.evaluate(async ({ recordRaw, receiptRaw, previousEnvelopeFingerprint, nextEnvelopeFingerprint, markerRaw, storageKey, markerKey, authority, expectedRawHash }) => {
+    let canonicalRaw = (window as any).__bgF7RetainedCanonicalRaw as string;
+    canonicalRaw = canonicalRaw.replace('"storeVersion":10001,"records":', '"storeVersion":10002,"records":');
+    canonicalRaw = canonicalRaw.replace('],"idempotencyReceipts":[', `,${recordRaw}],"idempotencyReceipts":[`);
+    canonicalRaw = canonicalRaw.replace('],"migrationReports":[', `,${receiptRaw}],"migrationReports":[`);
+    const priorSuffix = `,"fingerprint":"${previousEnvelopeFingerprint}"}`;
+    if (!canonicalRaw.endsWith(priorSuffix)) return { status: "fixture-reconstruction-mismatch", dependencyStatus: "read-error", reason: "old-envelope-fingerprint-not-found" };
+    canonicalRaw = `${canonicalRaw.slice(0, -priorSuffix.length)},"fingerprint":"${nextEnvelopeFingerprint}"}`;
+    const module = await import("/src/builderProposalComparisons.ts");
+    if (module.builderComparisonRawHash(canonicalRaw) !== expectedRawHash) {
+      return { status: "fixture-reconstruction-mismatch", dependencyStatus: "read-error", reason: "extended-raw-hash-mismatch" };
+    }
+    const nativeGetItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function (key: string) {
+      if (this === window.localStorage && key === storageKey) return canonicalRaw;
+      if (this === window.localStorage && key === markerKey) return markerRaw;
+      return nativeGetItem.call(this, key);
+    };
+    try {
+      const state = module.readBuilderProductComparisonState({ authority, dependencies: null });
+      return {
+        status: state.status,
+        dependencyStatus: state.dependencyStatus,
+        reason: state.status === "read-error" ? state.reason : null,
+      };
+    } finally {
+      Storage.prototype.getItem = nativeGetItem;
+      delete (window as any).__bgF7RetainedCanonicalRaw;
+    }
+  }, {
+    recordRaw: JSON.stringify(fixture.envelope.records.at(-1)),
+    receiptRaw: JSON.stringify(fixture.envelope.idempotencyReceipts.at(-1)),
+    previousEnvelopeFingerprint,
+    nextEnvelopeFingerprint: fixture.envelope.fingerprint,
+    markerRaw: JSON.stringify(fixture.marker),
+    storageKey: fixture.storageKey,
+    markerKey: fixture.markerKey,
+    authority: fixture.authority,
+    expectedRawHash,
+  });
+}
+
+async function createBgF7MigratedFixture(
+  kind: "product" | "service",
+  recordCount: number,
+  recordsPerProject = 100,
+) {
+  const fixture = await createBgF7Fixture(kind, { compact: true });
+  const migrationAt = fixture.revision.createdAt;
+  const projectIds = Array.from(
+    { length: Math.ceil(recordCount / recordsPerProject) },
+    (_, index) => `p${String(index).padStart(4, "0")}`,
+  );
+  const authority = {
+    ...bgF7TestAuthority,
+    projectIds,
+    authorizationHashes: Object.fromEntries(projectIds.map((projectId, index) => [
+      projectId,
+      `sha256-${((index % 9) + 1).toString().repeat(64)}`,
+    ])),
+  };
+  const records = await Promise.all(Array.from({ length: recordCount }, async (_, sourceIndex) => {
+    const record = structuredClone(fixture.record);
+    const projectId = projectIds[Math.floor(sourceIndex / recordsPerProject)];
+    const recordId = `c${String(sourceIndex).padStart(4, "0")}`;
+    const revisionId = `${recordId}:r1`;
+    const eventId = `${recordId}:e1`;
+    record.id = recordId;
+    record.projectId = projectId;
+    record.scopeId = projectId;
+    record.currentRevisionId = revisionId;
+    record.createdAt = migrationAt;
+    record.updatedAt = migrationAt;
+    record.version = 1;
+    const revision = record.revisions[0];
+    revision.comparisonId = recordId;
+    revision.projectId = projectId;
+    revision.scopeId = projectId;
+    revision.id = revisionId;
+    revision.version = 1;
+    revision.createdAt = migrationAt;
+    revision.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(revision));
+    const event = record.history[0];
+    event.comparisonId = recordId;
+    event.projectId = projectId;
+    event.scopeId = projectId;
+    event.id = eventId;
+    event.type = "created";
+    event.origin = "v1-migration";
+    event.at = migrationAt;
+    event.version = 1;
+    event.revisionId = revisionId;
+    event.authorizationContextHash = authority.authorizationHashes[projectId];
+    event.dependencySnapshotHash = fixture.report.dependencySnapshotHash;
+    event.idempotencyKey = null;
+    event.commandPayloadHash = null;
+    event.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(event));
+    const proposalFingerprintClaims = revision.inputs.map((input: any) => ({
+      proposalId: input.proposalId,
+      proposalRevisionId: input.proposalRevisionId,
+      claimedFingerprint: input.proposalRevisionFingerprint,
+    }));
+    const legacyRevision = bgF7LegacyRevisionValue(record, revision, proposalFingerprintClaims);
+    record.legacyEvidence = await bgF7Final({
+      schemaVersion: 1,
+      kind,
+      sourceKey: kind === "product" ? "chida-prototype-builder-proposal-comparisons:v1" : "chida-prototype-builder-service-proposal-comparisons:v1",
+      comparisonId: recordId,
+      projectId,
+      sourceGeneration: "v1-array",
+      sourceIndex,
+      sourceRecordHash: `sha256-${"0".repeat(64)}`,
+      sourceRecordVersion: 1,
+      sourceCreatedAt: migrationAt,
+      sourceUpdatedAt: migrationAt,
+      revisionLinks: [{
+        revisionId,
+        revisionVersion: 1,
+        sourceRevisionValueHash: await bgF7OracleSha256(legacyRevision),
+        proposalFingerprintClaims,
+        legacyFingerprint: legacyRevision.fingerprint,
+        canonicalFingerprint: revision.fingerprint,
+      }],
+    });
+    record.legacyEvidence.sourceRecordHash = await bgF7OracleSha256(bgF7LegacyRecordValue(record));
+    record.legacyEvidence.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record.legacyEvidence));
+    record.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record));
+    return record;
+  }));
+  const sourceRawHash = await bgF7OracleRawSha256(`[${kind}:${recordCount}:v1-source]`);
+  const reportWithoutId = {
+    ...bgF7WithoutFingerprint(fixture.report),
+    sourceGeneration: "v1-array",
+    sourceKey: kind === "product" ? "chida-prototype-builder-proposal-comparisons:v1" : "chida-prototype-builder-service-proposal-comparisons:v1",
+    sourceRawHash,
+    identityBindingHash: authority.identityBindingHash,
+    migratedAt: migrationAt,
+    recordCount,
+    migratedRecordFingerprints: records.map((record) => record.fingerprint),
+    migratedRevisionCount: recordCount,
+  };
+  const report = await bgF7Final({ ...reportWithoutId, id: await bgF7MigrationReportId(reportWithoutId) });
+  const envelope = await bgF7Final({
+    ...bgF7WithoutFingerprint(fixture.envelope),
+    storeVersion: 1,
+    records,
+    idempotencyReceipts: [],
+    migrationReports: [report],
+    updatedAt: migrationAt,
+  });
+  const canonicalRaw = JSON.stringify(envelope);
+  const candidateRawHash = await bgF7OracleRawSha256(canonicalRaw);
+  const marker = await bgF7Final({
+    ...bgF7WithoutFingerprint(fixture.marker),
+    migrationId: report.id,
+    sourceGeneration: "v1-array",
+    sourceKey: report.sourceKey,
+    sourceRawHash,
+    dependencySnapshotHash: report.dependencySnapshotHash,
+    identityBindingHash: authority.identityBindingHash,
+    migrationAt,
+    verifiedAt: migrationAt,
+    committedAt: migrationAt,
+    canonicalRawHash: candidateRawHash,
+    candidateRawHash,
+  });
+  return { ...fixture, authority, report, envelope, canonicalRaw, marker, record: records[0] };
+}
+
+async function bgF7RefinalizeMigratedFixture(fixture: Record<string, any>) {
+  for (const record of fixture.envelope.records) {
+    record.legacyEvidence.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record.legacyEvidence));
+    record.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record));
+  }
+  const recordsBySourceIndex = [...fixture.envelope.records]
+    .sort((left, right) => left.legacyEvidence.sourceIndex - right.legacyEvidence.sourceIndex);
+  fixture.report.migratedRecordFingerprints = recordsBySourceIndex.map((record) => record.fingerprint);
+  fixture.report.migratedRevisionCount = recordsBySourceIndex
+    .reduce((total, record) => total + record.legacyEvidence.sourceRecordVersion, 0);
+  fixture.report.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(fixture.report));
+  fixture.envelope.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(fixture.envelope));
+  fixture.canonicalRaw = JSON.stringify(fixture.envelope);
+  const candidateRawHash = await bgF7OracleRawSha256(fixture.canonicalRaw);
+  fixture.marker.canonicalRawHash = candidateRawHash;
+  fixture.marker.candidateRawHash = candidateRawHash;
+  fixture.marker.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(fixture.marker));
+  return fixture;
+}
+
+async function duplicateBgF7MigratedIdentityAcrossRecords(
+  fixture: Record<string, any>,
+  identity: "revision" | "event",
+) {
+  const first = fixture.envelope.records[0];
+  const second = fixture.envelope.records[1];
+  if (!first || !second) throw new Error("BG-F7 cross-record identity fixture needs two records");
+  const revision = second.revisions[0];
+  const event = second.history[0];
+  const link = second.legacyEvidence.revisionLinks[0];
+  if (identity === "revision") {
+    revision.id = first.revisions[0].id;
+    second.currentRevisionId = revision.id;
+    event.revisionId = revision.id;
+    link.revisionId = revision.id;
+    revision.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(revision));
+    link.canonicalFingerprint = revision.fingerprint;
+    const legacyRevision = bgF7LegacyRevisionValue(second, revision, link.proposalFingerprintClaims);
+    link.sourceRevisionValueHash = await bgF7OracleSha256(legacyRevision);
+    link.legacyFingerprint = legacyRevision.fingerprint;
+  } else {
+    event.id = first.history[0].id;
+  }
+  event.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(event));
+  second.legacyEvidence.sourceRecordHash = await bgF7OracleSha256(bgF7LegacyRecordValue(second));
+  return bgF7RefinalizeMigratedFixture(fixture);
+}
+
+async function createBgF7LateMigratedPrefixWithLaterLiveReceiptFixture(
+  kind: "product" | "service",
+  latePrefix = true,
+) {
+  const migrated = await createBgF7MigratedFixture(kind, 1);
+  const live = await createBgF7Fixture(kind, { recordId: `${kind}-comparison-live-bg-f7` });
+  const migratedRecord = migrated.record;
+  const migratedAt = migrated.report.migratedAt;
+  const latePrefixAt = latePrefix ? "2026-09-02T00:00:03.500Z" : migratedAt;
+  const liveAt = "2026-09-02T00:00:04.000Z";
+  migratedRecord.createdAt = latePrefixAt;
+  migratedRecord.updatedAt = latePrefixAt;
+  migratedRecord.revisions[0].createdAt = latePrefixAt;
+  migratedRecord.revisions[0].fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migratedRecord.revisions[0]));
+  migratedRecord.history[0].at = latePrefixAt;
+  migratedRecord.history[0].revisionId = migratedRecord.revisions[0].id;
+  migratedRecord.history[0].fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migratedRecord.history[0]));
+  migratedRecord.legacyEvidence.sourceCreatedAt = latePrefixAt;
+  migratedRecord.legacyEvidence.sourceUpdatedAt = latePrefixAt;
+  migratedRecord.legacyEvidence.revisionLinks[0].canonicalFingerprint = migratedRecord.revisions[0].fingerprint;
+  const claims = migratedRecord.legacyEvidence.revisionLinks[0].proposalFingerprintClaims;
+  const legacyRevision = bgF7LegacyRevisionValue(migratedRecord, migratedRecord.revisions[0], claims);
+  migratedRecord.legacyEvidence.revisionLinks[0].legacyFingerprint = legacyRevision.fingerprint;
+  migratedRecord.legacyEvidence.revisionLinks[0].sourceRevisionValueHash = await bgF7OracleSha256(legacyRevision);
+  migratedRecord.legacyEvidence.sourceRecordHash = await bgF7OracleSha256(bgF7LegacyRecordValue(migratedRecord));
+  migratedRecord.legacyEvidence.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migratedRecord.legacyEvidence));
+  migratedRecord.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migratedRecord));
+
+  live.record.createdAt = liveAt;
+  live.record.updatedAt = liveAt;
+  live.revision.createdAt = liveAt;
+  live.event.at = liveAt;
+  live.receipt.recordedAt = liveAt;
+  live.revision.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(live.revision));
+  live.event.revisionId = live.revision.id;
+  live.receipt.revisionId = live.revision.id;
+  live.receipt.eventId = live.event.id;
+  live.receipt.payloadHash = await bgF7ReceiptPayloadHash(live.record, live.revision, live.receipt);
+  live.event.commandPayloadHash = live.receipt.payloadHash;
+  live.event.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(live.event));
+  live.record.history[0] = live.event;
+  live.record.revisions[0] = live.revision;
+  live.record.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(live.record));
+  live.receipt.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(live.receipt));
+
+  const authority = {
+    ...migrated.authority,
+    projectIds: ["project-bg-f7", ...migrated.authority.projectIds].sort(compareCodePoints),
+    authorizationHashes: {
+      ...migrated.authority.authorizationHashes,
+      "project-bg-f7": bgF7TestAuthority.authorizationHashes["project-bg-f7"],
+    },
+  };
+  migrated.report.migratedRecordFingerprints = [migratedRecord.fingerprint];
+  migrated.report.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migrated.report));
+  const initialEnvelope = await bgF7Final({
+    schemaVersion: 2,
+    fingerprintVersion: kind === "product" ? "builder-product-comparison-domain-v2" : "builder-service-comparison-domain-v2",
+    storeVersion: 1,
+    records: [migratedRecord],
+    idempotencyReceipts: [],
+    migrationReports: [migrated.report],
+    updatedAt: migratedAt,
+  });
+  const initialRaw = JSON.stringify(initialEnvelope);
+  const candidateRawHash = await bgF7OracleRawSha256(initialRaw);
+  migrated.marker.canonicalRawHash = candidateRawHash;
+  migrated.marker.candidateRawHash = candidateRawHash;
+  migrated.marker.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migrated.marker));
+  migrated.envelope = await bgF7Final({
+    ...bgF7WithoutFingerprint(initialEnvelope),
+    storeVersion: 2,
+    records: [live.record, migratedRecord].sort((left, right) => compareCodePoints(left.id, right.id)),
+    idempotencyReceipts: [live.receipt],
+    updatedAt: liveAt,
+  });
+  migrated.canonicalRaw = JSON.stringify(migrated.envelope);
+  migrated.authority = authority;
+  return migrated;
+}
+
+async function collideBgF7MigratedAndLiveIdentity(
+  fixture: Record<string, any>,
+  identity: "revision" | "event",
+) {
+  const migratedRecord = fixture.envelope.records.find((record: any) => record.legacyEvidence !== null);
+  const liveRecord = fixture.envelope.records.find((record: any) => record.legacyEvidence === null);
+  if (!migratedRecord || !liveRecord) throw new Error("BG-F7 migrated/live collision fixture is incomplete");
+  const migratedRevision = migratedRecord.revisions[0];
+  const migratedEvent = migratedRecord.history[0];
+  const liveRevision = liveRecord.revisions[0];
+  const liveEvent = liveRecord.history[0];
+  const link = migratedRecord.legacyEvidence.revisionLinks[0];
+  if (identity === "revision") {
+    migratedRevision.id = liveRevision.id;
+    migratedRecord.currentRevisionId = liveRevision.id;
+    migratedEvent.revisionId = liveRevision.id;
+    link.revisionId = liveRevision.id;
+    migratedRevision.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migratedRevision));
+    link.canonicalFingerprint = migratedRevision.fingerprint;
+    const legacyRevision = bgF7LegacyRevisionValue(migratedRecord, migratedRevision, link.proposalFingerprintClaims);
+    link.sourceRevisionValueHash = await bgF7OracleSha256(legacyRevision);
+    link.legacyFingerprint = legacyRevision.fingerprint;
+  } else {
+    migratedEvent.id = liveEvent.id;
+  }
+  migratedEvent.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migratedEvent));
+  migratedRecord.legacyEvidence.sourceRecordHash = await bgF7OracleSha256(bgF7LegacyRecordValue(migratedRecord));
+  migratedRecord.legacyEvidence.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migratedRecord.legacyEvidence));
+  migratedRecord.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migratedRecord));
+  fixture.report.migratedRecordFingerprints = [migratedRecord.fingerprint];
+  fixture.report.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(fixture.report));
+  const initialEnvelope = await bgF7Final({
+    ...bgF7WithoutFingerprint(fixture.envelope),
+    storeVersion: 1,
+    records: [migratedRecord],
+    idempotencyReceipts: [],
+    migrationReports: [fixture.report],
+    updatedAt: fixture.report.migratedAt,
+  });
+  const initialRawHash = await bgF7OracleRawSha256(JSON.stringify(initialEnvelope));
+  fixture.marker.canonicalRawHash = initialRawHash;
+  fixture.marker.candidateRawHash = initialRawHash;
+  fixture.marker.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(fixture.marker));
+  fixture.envelope = await bgF7Final({
+    ...bgF7WithoutFingerprint(fixture.envelope),
+    records: [liveRecord, migratedRecord].sort((left, right) => compareCodePoints(left.id, right.id)),
+    migrationReports: [fixture.report],
+  });
+  fixture.canonicalRaw = JSON.stringify(fixture.envelope);
+  return fixture;
+}
+
+async function createBgF7RevisionCapacityFixture(kind: "product" | "service", version: number) {
+  const fixture = await createBgF7MigratedFixture(kind, 1);
+  const record = fixture.envelope.records[0];
+  for (let revisionVersion = 2; revisionVersion <= version; revisionVersion += 1) {
+    const revision = structuredClone(record.revisions[0]);
+    revision.id = `${record.id}:revision:${revisionVersion}`;
+    revision.version = revisionVersion;
+    if (kind === "product") {
+      revision.inputs[0].taxTreatment.assumption = `مالیات داخل مبلغ است ${revisionVersion}`;
+    } else {
+      revision.inputs[0].criteria[0].rationale = `بازبینی نسخه ${revisionVersion}`;
+      revision.results[0].criteria[0].rationale = `بازبینی نسخه ${revisionVersion}`;
+    }
+    revision.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(revision));
+    const event = structuredClone(record.history[0]);
+    event.id = `${record.id}:event:${revisionVersion}`;
+    event.type = "updated";
+    event.version = revisionVersion;
+    event.revisionId = revision.id;
+    event.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(event));
+    record.revisions.push(revision);
+    record.history.push(event);
+    const proposalFingerprintClaims = revision.inputs.map((input: any) => ({
+      proposalId: input.proposalId,
+      proposalRevisionId: input.proposalRevisionId,
+      claimedFingerprint: input.proposalRevisionFingerprint,
+    }));
+    const legacyRevision = bgF7LegacyRevisionValue(record, revision, proposalFingerprintClaims);
+    record.legacyEvidence.revisionLinks.push({
+      revisionId: revision.id,
+      revisionVersion,
+      sourceRevisionValueHash: await bgF7OracleSha256(legacyRevision),
+      proposalFingerprintClaims,
+      legacyFingerprint: legacyRevision.fingerprint,
+      canonicalFingerprint: revision.fingerprint,
+    });
+  }
+  record.version = version;
+  record.currentRevisionId = record.revisions.at(-1).id;
+  record.legacyEvidence.sourceRecordVersion = version;
+  record.legacyEvidence.sourceRecordHash = await bgF7OracleSha256(bgF7LegacyRecordValue(record));
+  record.legacyEvidence.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record.legacyEvidence));
+  record.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record));
+  fixture.report.migratedRecordFingerprints = [record.fingerprint];
+  fixture.report.migratedRevisionCount = version;
+  fixture.report.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(fixture.report));
+  fixture.envelope.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(fixture.envelope));
+  fixture.canonicalRaw = JSON.stringify(fixture.envelope);
+  const candidateRawHash = await bgF7OracleRawSha256(fixture.canonicalRaw);
+  fixture.marker.canonicalRawHash = candidateRawHash;
+  fixture.marker.candidateRawHash = candidateRawHash;
+  fixture.marker.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(fixture.marker));
+  return fixture;
+}
+
+async function createBgF7ReceiptCapacityFixture(receiptCount: number) {
+  const fixture = await createBgF7Fixture("product", { compact: true });
+  const recordCount = Math.ceil(receiptCount / 100);
+  const projectIds = Array.from(
+    { length: Math.ceil(recordCount / 100) },
+    (_, index) => `p${String(index).padStart(2, "0")}`,
+  );
+  const authority = {
+    ...bgF7TestAuthority,
+    projectIds,
+    authorizationHashes: Object.fromEntries(projectIds.map((projectId, index) => [
+      projectId,
+      `sha256-${((index % 8) + 1).toString().repeat(64)}`,
+    ])),
+  };
+  const commandPinsByProject = new Map<string, Record<string, any>>();
+  for (const projectId of projectIds) {
+    const target = structuredClone(fixture.revision.target);
+    const requestSnapshot = fixture.revision.inputs[0].proposalRevisionSnapshot.requestSnapshot;
+    const proposalPins = await Promise.all(fixture.revision.inputs.map(async (input: Record<string, any>) => ({
+      proposalId: input.proposalId,
+      proposalVersion: input.proposalVersion,
+      proposalRevisionId: input.proposalRevisionId,
+      proposalRevisionFingerprint: input.proposalRevisionFingerprint,
+      proposalRevisionSnapshotHash: await bgF7OracleSha256({
+        schemaVersion: 1,
+        proposalId: input.proposalId,
+        proposalVersion: input.proposalVersion,
+        proposalRevisionId: input.proposalRevisionId,
+        proposalRevisionFingerprint: input.proposalRevisionFingerprint,
+        proposalRevisionSnapshot: input.proposalRevisionSnapshot,
+      }),
+    })));
+    const requestSnapshotHash = await bgF7OracleSha256({ schemaVersion: 1, kind: "product", projectId, target, requestSnapshot });
+    const pinsWithoutExpected = {
+      schemaVersion: 1,
+      kind: "product",
+      authorizationContextHash: authority.authorizationHashes[projectId],
+      identityBindingHash: authority.identityBindingHash,
+      proposalStoreVersion: 1,
+      proposalEnvelopeFingerprint: `sha256-${"7".repeat(64)}`,
+      proposalDependencySnapshotHash: `sha256-${"8".repeat(64)}`,
+      target,
+      requestSnapshotHash,
+      proposalPins,
+    };
+    commandPinsByProject.set(projectId, {
+      ...pinsWithoutExpected,
+      expectedDependencySnapshotHash: await bgF7OracleSha256({
+        schemaVersion: 1,
+        kind: "product",
+        projectId,
+        identityBindingHash: pinsWithoutExpected.identityBindingHash,
+        authorizationContextHash: pinsWithoutExpected.authorizationContextHash,
+        proposalStoreVersion: pinsWithoutExpected.proposalStoreVersion,
+        proposalEnvelopeFingerprint: pinsWithoutExpected.proposalEnvelopeFingerprint,
+        proposalDependencySnapshotHash: pinsWithoutExpected.proposalDependencySnapshotHash,
+        target,
+        requestSnapshotHash,
+        serviceRequestSnapshotHash: null,
+        proposalPins,
+      }),
+    });
+  }
+
+  const records: Record<string, any>[] = [];
+  const receipts: Record<string, any>[] = [];
+  const revisionsToHash: Record<string, any>[] = [];
+  const eventsToHash: Record<string, any>[] = [];
+  let position = 0;
+  for (let recordIndex = 0; recordIndex < recordCount; recordIndex += 1) {
+    const projectId = projectIds[Math.floor(recordIndex / 100)];
+    const recordId = `c${String(recordIndex).padStart(3, "0")}`;
+    const versionsForRecord = Math.min(100, receiptCount - position);
+    const revisions: Record<string, any>[] = [];
+    const history: Record<string, any>[] = [];
+    const commandPins = commandPinsByProject.get(projectId)!;
+    for (let version = 1; version <= versionsForRecord; version += 1) {
+      position += 1;
+      const key = `k${position}`;
+      const action = version === 1 ? "create-comparison" as const : "update-comparison" as const;
+      const revisionId = bgF7DeterministicComparisonCommandId("product", "revision", action, recordId, key, version);
+      const eventId = bgF7DeterministicComparisonCommandId("product", "event", action, recordId, key, version);
+      const payloadHash = `sha256-${(position % 10).toString().repeat(64)}`;
+      const revision = structuredClone(fixture.revision);
+      revision.comparisonId = recordId;
+      revision.projectId = projectId;
+      revision.scopeId = projectId;
+      revision.id = revisionId;
+      revision.version = version;
+      revision.inputs[0].taxTreatment.assumption = `مالیات داخل مبلغ است ${version}`;
+      revisions.push(revision);
+      revisionsToHash.push(revision);
+      const event = {
+        ...bgF7WithoutFingerprint(fixture.event),
+        comparisonId: recordId,
+        projectId,
+        scopeId: projectId,
+        id: eventId,
+        type: version === 1 ? "created" : "updated",
+        version,
+        revisionId,
+        authorizationContextHash: authority.authorizationHashes[projectId],
+        dependencySnapshotHash: commandPins.expectedDependencySnapshotHash,
+        idempotencyKey: key,
+        commandPayloadHash: payloadHash,
+        fingerprint: "",
+      };
+      history.push(event);
+      eventsToHash.push(event);
+      receipts.push({
+        ...bgF7WithoutFingerprint(fixture.receipt),
+        position,
+        key,
+        action,
+        payloadHash,
+        projectId,
+        recordId,
+        expectedStoreVersion: position,
+        expectedRecordVersion: version === 1 ? null : version - 1,
+        commandPins,
+        expectedDependencySnapshotHash: commandPins.expectedDependencySnapshotHash,
+        result: version === 1 ? "created" : "updated",
+        resultingStoreVersion: position + 1,
+        resultingRecordVersion: version,
+        eventId,
+        revisionId,
+        authorizationContextHash: authority.authorizationHashes[projectId],
+        fingerprint: "",
+      });
+    }
+    records.push({
+      ...bgF7WithoutFingerprint(fixture.record),
+      id: recordId,
+      projectId,
+      scopeId: projectId,
+      currentRevisionId: revisions.at(-1)!.id,
+      version: versionsForRecord,
+      history,
+      revisions,
+      legacyEvidence: null,
+      fingerprint: "",
+    });
+  }
+  for (const revision of revisionsToHash) revision.fingerprint = bgF7OracleSha256(bgF7WithoutFingerprint(revision));
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+  for (const receipt of receipts) {
+    const record = recordsById.get(receipt.recordId)!;
+    const revision = record.revisions[receipt.resultingRecordVersion - 1];
+    const event = record.history[receipt.resultingRecordVersion - 1];
+    receipt.payloadHash = bgF7ReceiptPayloadHash(record, revision, receipt);
+    event.commandPayloadHash = receipt.payloadHash;
+  }
+  for (const event of eventsToHash) event.fingerprint = bgF7OracleSha256(bgF7WithoutFingerprint(event));
+  for (const receipt of receipts) receipt.fingerprint = bgF7OracleSha256(bgF7WithoutFingerprint(receipt));
+  for (const record of records) record.fingerprint = bgF7OracleSha256(bgF7WithoutFingerprint(record));
+  const envelope = await bgF7Final({
+    ...bgF7WithoutFingerprint(fixture.envelope),
+    storeVersion: receiptCount + 1,
+    records,
+    idempotencyReceipts: receipts,
+    updatedAt: fixture.receipt.recordedAt,
+  });
+  return {
+    ...fixture,
+    authority,
+    envelope,
+    canonicalRaw: JSON.stringify(envelope),
+    record: records[0],
+    receipt: receipts[0],
+  };
+}
+
+async function extendBgF7ReceiptCapacityFixtureTo10_001(fixture: Record<string, any>) {
+  const projectId = "p01";
+  fixture.authority.projectIds.push(projectId);
+  fixture.authority.authorizationHashes[projectId] = `sha256-${"2".repeat(64)}`;
+  const target = structuredClone(fixture.revision.target);
+  const requestSnapshot = fixture.revision.inputs[0].proposalRevisionSnapshot.requestSnapshot;
+  const proposalPins = await Promise.all(fixture.revision.inputs.map(async (input: Record<string, any>) => ({
+    proposalId: input.proposalId,
+    proposalVersion: input.proposalVersion,
+    proposalRevisionId: input.proposalRevisionId,
+    proposalRevisionFingerprint: input.proposalRevisionFingerprint,
+    proposalRevisionSnapshotHash: await bgF7OracleSha256({
+      schemaVersion: 1,
+      proposalId: input.proposalId,
+      proposalVersion: input.proposalVersion,
+      proposalRevisionId: input.proposalRevisionId,
+      proposalRevisionFingerprint: input.proposalRevisionFingerprint,
+      proposalRevisionSnapshot: input.proposalRevisionSnapshot,
+    }),
+  })));
+  const requestSnapshotHash = await bgF7OracleSha256({ schemaVersion: 1, kind: "product", projectId, target, requestSnapshot });
+  const pinsWithoutExpected = {
+    schemaVersion: 1,
+    kind: "product",
+    authorizationContextHash: fixture.authority.authorizationHashes[projectId],
+    identityBindingHash: fixture.authority.identityBindingHash,
+    proposalStoreVersion: 1,
+    proposalEnvelopeFingerprint: `sha256-${"7".repeat(64)}`,
+    proposalDependencySnapshotHash: `sha256-${"8".repeat(64)}`,
+    target,
+    requestSnapshotHash,
+    proposalPins,
+  };
+  const commandPins = {
+    ...pinsWithoutExpected,
+    expectedDependencySnapshotHash: await bgF7OracleSha256({
+      schemaVersion: 1,
+      kind: "product",
+      projectId,
+      identityBindingHash: pinsWithoutExpected.identityBindingHash,
+      authorizationContextHash: pinsWithoutExpected.authorizationContextHash,
+      proposalStoreVersion: pinsWithoutExpected.proposalStoreVersion,
+      proposalEnvelopeFingerprint: pinsWithoutExpected.proposalEnvelopeFingerprint,
+      proposalDependencySnapshotHash: pinsWithoutExpected.proposalDependencySnapshotHash,
+      target,
+      requestSnapshotHash,
+      serviceRequestSnapshotHash: null,
+      proposalPins,
+    }),
+  };
+  const position = 10_001;
+  const recordId = "c100";
+  const revisionId = `${recordId}:r1`;
+  const eventId = `${recordId}:e1`;
+  const key = `k${position}`;
+  const payloadHash = `sha256-${"1".repeat(64)}`;
+  const revision = structuredClone(fixture.revision);
+  revision.comparisonId = recordId;
+  revision.projectId = projectId;
+  revision.scopeId = projectId;
+  revision.id = revisionId;
+  revision.version = 1;
+  revision.inputs[0].taxTreatment.assumption = "مالیات داخل مبلغ است 1";
+  revision.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(revision));
+  const event = await bgF7Final({
+    ...bgF7WithoutFingerprint(fixture.event),
+    comparisonId: recordId,
+    projectId,
+    scopeId: projectId,
+    id: eventId,
+    type: "created",
+    version: 1,
+    revisionId,
+    authorizationContextHash: fixture.authority.authorizationHashes[projectId],
+    dependencySnapshotHash: commandPins.expectedDependencySnapshotHash,
+    idempotencyKey: key,
+    commandPayloadHash: payloadHash,
+  });
+  const receipt = await bgF7Final({
+    ...bgF7WithoutFingerprint(fixture.receipt),
+    position,
+    key,
+    action: "create-comparison",
+    payloadHash,
+    projectId,
+    recordId,
+    expectedStoreVersion: position,
+    expectedRecordVersion: null,
+    commandPins,
+    expectedDependencySnapshotHash: commandPins.expectedDependencySnapshotHash,
+    result: "created",
+    resultingStoreVersion: position + 1,
+    resultingRecordVersion: 1,
+    eventId,
+    revisionId,
+    authorizationContextHash: fixture.authority.authorizationHashes[projectId],
+  });
+  const record = await bgF7Final({
+    ...bgF7WithoutFingerprint(fixture.record),
+    id: recordId,
+    projectId,
+    scopeId: projectId,
+    currentRevisionId: revisionId,
+    version: 1,
+    history: [event],
+    revisions: [revision],
+    legacyEvidence: null,
+  });
+  receipt.payloadHash = await bgF7ReceiptPayloadHash(record, revision, receipt);
+  event.commandPayloadHash = receipt.payloadHash;
+  receipt.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(receipt));
+  event.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(event));
+  record.history[0] = event;
+  record.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(record));
+  fixture.envelope.records.push(record);
+  fixture.envelope.idempotencyReceipts.push(receipt);
+  fixture.envelope.storeVersion = position + 1;
+  fixture.envelope.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(fixture.envelope));
+  fixture.canonicalRaw = JSON.stringify(fixture.envelope);
+  return fixture;
+}
+
+const bgF7GoldenDigests = {
+  productRevision: "sha256-3c8711646705b1e074ffea517d307fcff1a6baf4cff2ef7393ca0c2f87774b81",
+  productEvent: "sha256-a3d2afb630bd6729eeb740bef138396a73805bc79a97f40b6594517aa19b13a7",
+  productRecord: "sha256-9c797a9fcfc62e11fab3e46b8f5775f47dda868b6b1c9292df57e4115f45ab5f",
+  productReceipt: "sha256-0bfab8836c3fd78ab494663476075ba95d19f693a040a0fca9813bcc0b706841",
+  productReport: "sha256-06e230ae0b2b488872f7593b4efcb2b66751f0a8cd7e397a2e6ad7d103729526",
+  productEnvelope: "sha256-20e245dce9383cf48926644918bb26e35ce150796360cc94887c5f0fdf37a730",
+  productPendingMarker: "sha256-5873ce73fe75c6c273767030c75c899f6a557f6b3449dcbc6e784fd24a7cc1ad",
+  productVerifiedMarker: "sha256-171e17687d0d5fe68b97ef31dea8ff19a787b7112eb0c79d5b21f716dd09162c",
+  productCommittedMarker: "sha256-8d4528661088accb2708aceec0384c08f4adfb7e9692f27d35b5c11a53dfcd9b",
+  serviceRevision: "sha256-bacae9c9f8949cdaeae8925df08c00db2f7a9df4953235718408b0076877143e",
+  serviceEvent: "sha256-29be284524bec173d8b80feb8e17ad770e3cb4e2fecc0fef034050fd66f28e22",
+  serviceRecord: "sha256-807ed0b7bd2b796a3245b44f83c54df86f5d3234d9929c05302adb7d7b62cdb7",
+  serviceReceipt: "sha256-39d7e11136107734ee2f0931586038ad3261613f62783fdf8cc4e67114374fdf",
+  serviceReport: "sha256-7ed68fdda67f4fb46410cce99a8474637b308c9feb657de572edb3aa0cf14235",
+  serviceEnvelope: "sha256-f7ace2628b6c52a10cf5c2c1bc1724e2549fe7d62db9b283ef4d97e69c7aee58",
+  servicePendingMarker: "sha256-44e0b4dbf180a3bbb0c63c1421bec1e834c11e7743d5f7adfa8561150bf99191",
+  serviceVerifiedMarker: "sha256-f6f42edb5e46c4e5ee7eaa723b7d6cfe7773b5a6f500b7f04a4d78202f708a32",
+  serviceCommittedMarker: "sha256-e3c372a77fb884c4a2cafa2f14a5eeb4d471f4b3e4fec84997e26c099dbaba99",
+  codePointOrder: "sha256-fa24d5d0fca2094cb9a2aae3ca3c16e4b6049aa629866643b93eb99966a032e5",
+  astralCodePointOrder: "sha256-94065525f1ea09913315f5a3f2cb846d9dda91a016d4726a60b4d99a53e50788",
+  integerKeyOrder: "sha256-b71e124675fc80e7314688bffdb68e83515851fb51474125db9a0c4c8aca3808",
+  rawString: "sha256-acd9afb998b6bdbad1cdef30a67f36cb08aefb204008bc2272fe733441091494",
+} as const;
+
+const bgF7DescendantKeys = {
+  productDecision: bgF7ComparisonKeys.product.decision,
+  serviceDecision: bgF7ComparisonKeys.service.decision,
+  negotiation: negotiationDraftStorageKey,
+  manualResponse: manualNegotiationResponseStorageKey,
+  responseReview: manualNegotiationResponseReviewStorageKey,
+  conditionImpact: manualNegotiationConditionImpactStorageKey,
+} as const;
+
+async function readBgF7ComparisonAuthority(page: Page, kind: BgF7ComparisonKind) {
+  const keys = bgF7ComparisonKeys[kind];
+  return page.evaluate(async ({ selectedKeys, selectedKind }) => {
+    const module = await import("/src/builderProposalComparisons.ts");
+    const legacyRaw = window.localStorage.getItem(selectedKeys.legacy);
+    const canonicalRaw = window.localStorage.getItem(selectedKeys.canonical);
+    const markerRaw = window.localStorage.getItem(selectedKeys.marker);
+    let envelope: Record<string, any> | null = null;
+    if (canonicalRaw !== null) {
+      try {
+        const parsed = JSON.parse(canonicalRaw);
+        const { fingerprint, ...payload } = parsed;
+        const keys = ["schemaVersion", "fingerprintVersion", "storeVersion", "records", "idempotencyReceipts", "migrationReports", "updatedAt", "fingerprint"];
+        if (parsed && !Array.isArray(parsed)
+          && Object.keys(parsed).sort((left, right) => left < right ? -1 : left > right ? 1 : 0).join("|") === keys.sort((left, right) => left < right ? -1 : left > right ? 1 : 0).join("|")
+          && parsed.schemaVersion === 2
+          && parsed.fingerprintVersion === `builder-${selectedKind}-comparison-domain-v2`
+          && Number.isSafeInteger(parsed.storeVersion) && parsed.storeVersion >= 1
+          && Array.isArray(parsed.records) && Array.isArray(parsed.idempotencyReceipts) && Array.isArray(parsed.migrationReports)
+          && module.builderComparisonHash(payload) === fingerprint) envelope = parsed;
+      } catch {
+        envelope = null;
+      }
+    }
+    return { legacyRaw, canonicalRaw, markerRaw, envelope, records: envelope?.records ?? null };
+  }, { selectedKeys: keys, selectedKind: kind });
+}
+
+async function seedBgF7ComparisonV1(page: Page, kind: BgF7ComparisonKind, records: Array<Record<string, any>>) {
+  const keys = bgF7ComparisonKeys[kind];
+  const raw = JSON.stringify(records);
+  await page.evaluate(({ selectedKeys, sourceRaw }) => {
+    window.localStorage.setItem(selectedKeys.legacy, sourceRaw);
+    window.localStorage.removeItem(selectedKeys.canonical);
+    window.localStorage.removeItem(selectedKeys.marker);
+  }, { selectedKeys: keys, sourceRaw: raw });
+  return raw;
+}
+
+async function readBgF7ComparisonAuthorityTriplets(page: Page) {
+  const [product, service] = await Promise.all([
+    readBgF7ComparisonAuthority(page, "product"),
+    readBgF7ComparisonAuthority(page, "service"),
+  ]);
+  return {
+    product: { legacyRaw: product.legacyRaw, canonicalRaw: product.canonicalRaw, markerRaw: product.markerRaw },
+    service: { legacyRaw: service.legacyRaw, canonicalRaw: service.canonicalRaw, markerRaw: service.markerRaw },
+  };
+}
+
+async function snapshotBgF7DescendantBytes(page: Page) {
+  const snapshot = await page.evaluate((keys) => Object.fromEntries(
+    Object.entries(keys).map(([name, key]) => [name, window.localStorage.getItem(key)]),
+  ), bgF7DescendantKeys);
+  if (Object.values(snapshot).some((raw) => raw === null)) throw new Error("BG-F7 descendant byte snapshot requires six non-null stores");
+  return snapshot as Record<keyof typeof bgF7DescendantKeys, string>;
+}
+
+async function ensureBgF7DescendantBytes(page: Page) {
+  await page.evaluate((keys) => {
+    for (const [name, key] of Object.entries(keys)) {
+      if (window.localStorage.getItem(key) === null) window.localStorage.setItem(key, JSON.stringify([{ fixture: `bg-f7-descendant:${name}` }]));
+    }
+  }, bgF7DescendantKeys);
+  return snapshotBgF7DescendantBytes(page);
+}
+
+async function prepareBgF7MigrationSource(
+  page: Page,
+  options: { product?: boolean; service?: boolean; productSecondRevision?: boolean; serviceSecondRevision?: boolean } = { product: true },
+) {
+  const product = options.product ?? false;
+  const service = options.service ?? false;
+  if (!product && !service) {
+    await enterBuilderHome(page);
+  }
+  if (product) {
+    const created = await createExactProductComparisonWithDecision(page);
+    if (options.productSecondRevision) {
+      await page.getByTestId("comparison-edit").click();
+      await comparisonSupplierEditor(page, created.firstSupplier).getByTestId(/^comparison-transport-value-/).fill("۱۵۰۰۰۰۰");
+      await page.getByTestId("comparison-save").click();
+      await expect(page.getByTestId("comparison-detail-hero")).toContainText("جاری");
+    }
+  }
+  if (service) {
+    const created = await createCompleteServiceComparisonWithDecision(page);
+    if (options.serviceSecondRevision) {
+      await page.getByTestId("service-comparison-edit").click();
+      await serviceComparisonAssessmentEditor(page, "scope", created.firstSupplier).getByTestId("service-comparison-declared-value").fill("آماده سازی ترمیم و اجرای کامل عایق دولایه");
+      await page.getByTestId("service-comparison-save").click();
+      await expect(page.getByTestId("service-comparison-detail-hero")).toContainText("جاری");
+    }
+  }
+  const preMigrationProposalAuthority = await page.evaluate(({ canonicalKey, markerKey }) => ({
+    canonicalRaw: window.localStorage.getItem(canonicalKey),
+    markerRaw: window.localStorage.getItem(markerKey),
+  }), { canonicalKey: builderProposalsTestStorageKey, markerKey: builderProposalsMarkerTestStorageKey });
+  if (preMigrationProposalAuthority.canonicalRaw === null || preMigrationProposalAuthority.markerRaw === null) {
+    throw new Error("BG-F7 live Proposal authority fixture is incomplete");
+  }
+  const { legacyRecords } = await seedBgF6LegacyAuthorityFromCanonical(page, { rewriteDownstream: true });
+  const dependencies = await createBuilderProposalTestDependencies(page);
+  const proposalState = await initializeBuilderProposalState(page, dependencies);
+  expect(proposalState.status).toBe("ready");
+  if (proposalState.status !== "ready") throw new Error("BG-F7 Proposal authority did not initialize");
+  const descendants = await ensureBgF7DescendantBytes(page);
+  const authorities = await readBgF7ComparisonAuthorityTriplets(page);
+  return { dependencies, proposalState, preMigrationProposalAuthority, descendants, authorities, legacyRecords };
+}
+
+async function createBgF7StaleProposalDependencies(page: Page, dependencies: any) {
+  return page.evaluate(async (currentDependencies) => {
+    const module = await import("/src/builderProposals.ts");
+    const withoutFingerprint = ({ fingerprint: _fingerprint, ...value }: Record<string, any>) => value;
+    return module.createBuilderProposalDependencies({
+      authority: currentDependencies.authority,
+      requestRevisions: currentDependencies.requestRevisions.map((request: any) => ({ ...withoutFingerprint(request), isCurrentReadyForReview: false })),
+      contentApprovals: currentDependencies.contentApprovals.map((approval: any) => ({ ...withoutFingerprint(approval), isCurrent: false })),
+      contacts: currentDependencies.contacts.map((contact: any) => ({ ...withoutFingerprint(contact), isCurrent: false })),
+      files: currentDependencies.files.map(withoutFingerprint),
+    });
+  }, dependencies);
+}
+
+async function initializeBgF7ComparisonState(page: Page, kind: BgF7ComparisonKind, context: unknown) {
+  return page.evaluate(async ({ selectedKind, currentContext }) => {
+    const module = await import("/src/builderProposalComparisons.ts");
+    const initializer = selectedKind === "product"
+      ? module.initializeBuilderProductComparisons
+      : module.initializeBuilderServiceComparisons;
+    if (typeof initializer !== "function") throw new TypeError(`BG-F7 missing ${selectedKind} initializer`);
+    const readContext = currentContext && (currentContext as any).schemaVersion === 1
+      ? { authority: (currentContext as any).authority, dependencies: currentContext }
+      : currentContext;
+    return initializer(() => readContext as any);
+  }, { selectedKind: kind, currentContext: context });
+}
+
+type BgF7ComparisonCommandOptions = {
+  action?: "create-comparison" | "update-comparison";
+  comparisonId?: string;
+  idempotencyKey?: string;
+  expectedStoreVersion?: number;
+  expectedComparisonVersion?: number;
+  draftOverrides?: Record<string, unknown>;
+};
+
+type BgF7ComparisonStorageFault =
+  | "pre-write"
+  | "incident-pre-write"
+  | "crash-after-prepared"
+  | "primary-write-then-read-throw"
+  | "readback-mismatch"
+  | "rollback-collision"
+  | "rollback-write-failure"
+  | "rollback-readback-failure"
+  | "committed-resolved-write-then-throw"
+  | "committed-resolved-readback-throw"
+  | "committed-resolved-readback-mismatch"
+  | "rolled-back-resolved-write-then-throw"
+  | "rolled-back-resolved-readback-throw"
+  | "rolled-back-resolved-readback-mismatch";
+
+async function createBgF7ComparisonContext(
+  page: Page,
+  kind: BgF7ComparisonKind,
+): Promise<unknown> {
+  const prepared = await prepareBgF7MigrationSource(page, {
+    product: kind === "product",
+    service: kind === "service",
+  });
+  return {
+    authority: prepared.dependencies.authority,
+    dependencies: prepared.dependencies,
+  };
+}
+
+async function buildBgF7ComparisonCommand(
+  page: Page,
+  kind: BgF7ComparisonKind,
+  context: unknown,
+  options: BgF7ComparisonCommandOptions = {},
+): Promise<{ command: unknown; resolved: unknown }> {
+  return page.evaluate(async ({ selectedKind, currentContext, commandOptions }) => {
+    const module = await import("/src/builderProposalComparisons.ts");
+    const state = selectedKind === "product"
+      ? module.readBuilderProductComparisonState(currentContext as any)
+      : module.readBuilderServiceComparisonState(currentContext as any);
+    if (state.status !== "ready") throw new Error(`BG-F7 ${selectedKind} command fixture has no ready authority`);
+    const existing = state.envelope.records[0];
+    if (!existing) throw new Error(`BG-F7 ${selectedKind} command fixture has no migrated Comparison`);
+    const baseDraft = selectedKind === "product"
+      ? module.builderProposalComparisonDraftFromRecord(existing as any)
+      : module.builderServiceProposalComparisonDraftFromRecord(existing as any);
+    const draft = {
+      ...structuredClone(baseDraft),
+      ...(commandOptions.draftOverrides ?? {}),
+    } as any;
+    const pins = selectedKind === "product"
+      ? module.builderProductComparisonCommandPinsForDraft(existing.projectId, draft, currentContext as any)
+      : module.builderServiceComparisonCommandPinsForDraft(existing.projectId, draft, currentContext as any);
+    if (!pins) throw new Error(`BG-F7 ${selectedKind} command fixture could not resolve exact pins`);
+    const action = commandOptions.action ?? "create-comparison";
+    const comparisonId = commandOptions.comparisonId
+      ?? (action === "update-comparison" ? existing.id : `builder-${selectedKind}-comparison:bg-f7-task-4`);
+    const common = {
+      inputSchemaVersion: 1 as const,
+      kind: selectedKind,
+      action,
+      projectId: existing.projectId,
+      comparisonId,
+      draft,
+      pins,
+      expectedStoreVersion: commandOptions.expectedStoreVersion ?? state.envelope.storeVersion,
+      idempotencyKey: commandOptions.idempotencyKey ?? `bg-f7:${selectedKind}:${action}:task-4`,
+    };
+    const command = action === "update-comparison"
+      ? { ...common, action, expectedComparisonVersion: commandOptions.expectedComparisonVersion ?? existing.version }
+      : common;
+    return {
+      command,
+      resolved: {
+        envelope: state.envelope,
+        existing,
+        draft,
+        pins,
+      },
+    };
+  }, { selectedKind: kind, currentContext: context, commandOptions: options });
+}
+
+function bgF7ComparisonDraftWithSemanticChange(command: any, label: string) {
+  const changed = structuredClone(command);
+  if (changed.kind === "product") {
+    changed.draft.proposals[0].taxAssumption = label;
+  } else {
+    changed.draft.proposals[0].criteria[0].rationale = label;
+  }
+  return changed;
+}
+
+function bgF7TrackedComparisonKeys(keys: BgF7ComparisonKeys) {
+  return Array.from(new Set([
+    keys.legacy,
+    keys.canonical,
+    keys.marker,
+    keys.incident,
+    keys.decision,
+    bgF7ComparisonKeys.product.canonical,
+    bgF7ComparisonKeys.product.marker,
+    bgF7ComparisonKeys.product.incident,
+    bgF7ComparisonKeys.service.canonical,
+    bgF7ComparisonKeys.service.marker,
+    bgF7ComparisonKeys.service.incident,
+    builderProposalsTestStorageKey,
+    builderProposalsMarkerTestStorageKey,
+  ]));
+}
+
+async function executeBgF7ComparisonCommandWithWriteProbe(
+  page: Page,
+  command: unknown,
+  context: unknown,
+  keys: BgF7ComparisonKeys,
+): Promise<{ result: unknown; writes: Record<string, number>; dependencyReads: number }> {
+  return page.evaluate(async ({ currentCommand, currentContext, trackedKeys }) => {
+    const module = await import("/src/builderProposalComparisons.ts");
+    const commandModule = module as typeof module & {
+      executeBuilderComparisonCommand?: (value: unknown, reader: () => unknown) => Promise<unknown>;
+    };
+    if (typeof commandModule.executeBuilderComparisonCommand !== "function") {
+      throw new TypeError("BG-F7 missing executeBuilderComparisonCommand");
+    }
+    const nativeSet = Storage.prototype.setItem;
+    const nativeRemove = Storage.prototype.removeItem;
+    const writes = Object.fromEntries(trackedKeys.map((key) => [key, 0])) as Record<string, number>;
+    let dependencyReads = 0;
+    (window as any).__bgF7ComparisonCommandContext = currentContext;
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (this === window.localStorage && key in writes) writes[key] += 1;
+      return nativeSet.call(this, key, value);
+    };
+    Storage.prototype.removeItem = function (key: string) {
+      if (this === window.localStorage && key in writes) writes[key] += 1;
+      return nativeRemove.call(this, key);
+    };
+    try {
+      const result = await commandModule.executeBuilderComparisonCommand(
+        currentCommand,
+        () => {
+          dependencyReads += 1;
+          return (window as any).__bgF7ComparisonCommandContext;
+        },
+      );
+      return { result, writes, dependencyReads };
+    } finally {
+      Storage.prototype.setItem = nativeSet;
+      Storage.prototype.removeItem = nativeRemove;
+      delete (window as any).__bgF7ComparisonCommandContext;
+    }
+  }, {
+    currentCommand: command,
+    currentContext: context,
+    trackedKeys: bgF7TrackedComparisonKeys(keys),
+  });
+}
+
+async function executeBgF7ComparisonCommandWithStorageFault(
+  page: Page,
+  command: unknown,
+  context: unknown,
+  keys: BgF7ComparisonKeys,
+  fault: BgF7ComparisonStorageFault,
+): Promise<{
+  result: unknown;
+  before: string | null;
+  after: string | null;
+  incidentAfter: string | null;
+  writes: Record<string, number>;
+}> {
+  return page.evaluate(async ({ currentCommand, currentContext, selectedKeys, trackedKeys, faultMode }) => {
+    const module = await import("/src/builderProposalComparisons.ts");
+    const commandModule = module as typeof module & {
+      executeBuilderComparisonCommand?: (value: unknown, reader: () => unknown) => Promise<unknown>;
+    };
+    if (typeof commandModule.executeBuilderComparisonCommand !== "function") {
+      throw new TypeError("BG-F7 missing executeBuilderComparisonCommand");
+    }
+    const nativeGet = Storage.prototype.getItem;
+    const nativeSet = Storage.prototype.setItem;
+    const nativeRemove = Storage.prototype.removeItem;
+    const before = nativeGet.call(window.localStorage, selectedKeys.canonical);
+    const competitorRaw = JSON.stringify({ owner: "competing-writer", test: "BG-F7 rollback collision" });
+    const writes = Object.fromEntries(trackedKeys.map((key) => [key, 0])) as Record<string, number>;
+    let candidateRaw: string | null = null;
+    let candidateWritten = false;
+    let candidateMismatchReturned = false;
+    let rollbackWritten = false;
+    let primaryReadFaultReturned = false;
+    let resolvedIncidentWritten = false;
+    let resolvedIncidentReadbackFaultReturned = false;
+    (window as any).__bgF7ComparisonCommandContext = currentContext;
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (this === window.localStorage && key in writes) writes[key] += 1;
+      if (this === window.localStorage && key === selectedKeys.incident) {
+        if (faultMode === "incident-pre-write") {
+          throw new DOMException("BG-F7 rollback incident preparation fault", "QuotaExceededError");
+        }
+        const incidentState = JSON.parse(value).state;
+        if (faultMode === "crash-after-prepared") {
+          if (incidentState === "prepared") {
+            nativeSet.call(this, key, value);
+            throw new DOMException("BG-F7 crash after prepared acknowledgement", "UnknownError");
+          }
+          throw new DOMException("BG-F7 crash before resolution acknowledgement", "UnknownError");
+        }
+        if (incidentState === "resolved" && faultMode.includes("-resolved-")) {
+          nativeSet.call(this, key, value);
+          resolvedIncidentWritten = true;
+          if (faultMode.endsWith("write-then-throw")) {
+            throw new DOMException("BG-F7 resolved incident write lost acknowledgement", "UnknownError");
+          }
+          return;
+        }
+      }
+      if (this === window.localStorage && key === selectedKeys.canonical) {
+        if (faultMode === "primary-write-then-read-throw" && value !== before) {
+          nativeSet.call(this, key, value);
+          candidateWritten = true;
+          candidateRaw = value;
+          throw new DOMException("BG-F7 primary write lost acknowledgement", "UnknownError");
+        }
+        if ((faultMode === "pre-write" || faultMode.startsWith("rolled-back-resolved-")) && value !== before) {
+          throw new DOMException("BG-F7 primary write fault", "QuotaExceededError");
+        }
+        if ((faultMode === "rollback-write-failure") && candidateWritten && value === before) {
+          throw new DOMException("BG-F7 rollback write fault", "QuotaExceededError");
+        }
+        nativeSet.call(this, key, value);
+        if (value !== before && !candidateWritten) {
+          candidateWritten = true;
+          candidateRaw = value;
+          if (faultMode === "rollback-collision") nativeSet.call(this, key, competitorRaw);
+        } else if (candidateWritten && value === before) {
+          rollbackWritten = true;
+        }
+        return;
+      }
+      return nativeSet.call(this, key, value);
+    };
+    Storage.prototype.getItem = function (key: string) {
+      const value = nativeGet.call(this, key);
+      if (this === window.localStorage && key === selectedKeys.incident && resolvedIncidentWritten && !resolvedIncidentReadbackFaultReturned) {
+        if (faultMode.endsWith("readback-throw")) {
+          resolvedIncidentReadbackFaultReturned = true;
+          throw new DOMException("BG-F7 resolved incident readback lost acknowledgement", "UnknownError");
+        }
+        if (faultMode.endsWith("readback-mismatch")) {
+          resolvedIncidentReadbackFaultReturned = true;
+          return `${value ?? ""} `;
+        }
+      }
+      if (this === window.localStorage && key === selectedKeys.canonical && candidateWritten) {
+        if (faultMode === "primary-write-then-read-throw" && !primaryReadFaultReturned) {
+          primaryReadFaultReturned = true;
+          throw new DOMException("BG-F7 primary canonical disambiguating read failed", "UnknownError");
+        }
+        if (["readback-mismatch", "rollback-write-failure", "rollback-readback-failure"].includes(faultMode)
+          && !candidateMismatchReturned) {
+          candidateMismatchReturned = true;
+          return `${value ?? ""} `;
+        }
+        if (faultMode === "rollback-readback-failure" && rollbackWritten) return `${value ?? ""} `;
+      }
+      return value;
+    };
+    Storage.prototype.removeItem = function (key: string) {
+      if (this === window.localStorage && key in writes) writes[key] += 1;
+      return nativeRemove.call(this, key);
+    };
+    try {
+      const result = await commandModule.executeBuilderComparisonCommand(
+        currentCommand,
+        () => (window as any).__bgF7ComparisonCommandContext,
+      );
+      return {
+        result,
+        before,
+        after: nativeGet.call(window.localStorage, selectedKeys.canonical),
+        incidentAfter: nativeGet.call(window.localStorage, selectedKeys.incident),
+        writes,
+        candidateRaw,
+      };
+    } finally {
+      Storage.prototype.getItem = nativeGet;
+      Storage.prototype.setItem = nativeSet;
+      Storage.prototype.removeItem = nativeRemove;
+      delete (window as any).__bgF7ComparisonCommandContext;
+    }
+  }, {
+    currentCommand: command,
+    currentContext: context,
+    selectedKeys: keys,
+    trackedKeys: bgF7TrackedComparisonKeys(keys),
+    faultMode: fault,
+  });
+}
+
+async function interruptBgF7Cutover(page: Page, kind: BgF7ComparisonKind, context: unknown, stopAfter: "pending" | "verified" | "canonical") {
+  const keys = bgF7ComparisonKeys[kind];
+  return page.evaluate(async ({ selectedKind, currentContext, selectedKeys, phase }) => {
+    const module = await import("/src/builderProposalComparisons.ts");
+    const initializer = selectedKind === "product" ? module.initializeBuilderProductComparisons : module.initializeBuilderServiceComparisons;
+    if (typeof initializer !== "function") throw new TypeError(`BG-F7 missing ${selectedKind} initializer`);
+    const readContext = currentContext && (currentContext as any).schemaVersion === 1
+      ? { authority: (currentContext as any).authority, dependencies: currentContext }
+      : currentContext;
+    const nativeSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (this === window.localStorage) {
+        if (phase === "pending" && key === selectedKeys.marker && JSON.parse(value).state === "verified") throw new DOMException("BG-F7 pending interruption", "QuotaExceededError");
+        if (phase === "verified" && key === selectedKeys.canonical) throw new DOMException("BG-F7 verified interruption", "QuotaExceededError");
+        if (phase === "canonical" && key === selectedKeys.marker && JSON.parse(value).state === "committed") throw new DOMException("BG-F7 canonical interruption", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+    try {
+      return await initializer(() => readContext as any);
+    } finally {
+      Storage.prototype.setItem = nativeSetItem;
+    }
+  }, { selectedKind: kind, currentContext: context, selectedKeys: keys, phase: stopAfter });
+}
+
+async function initializeBgF7WithPrecommitDrift(
+  page: Page,
+  kind: BgF7ComparisonKind,
+  context: any,
+  drift: "source" | "identity" | "dependency" | "historical-dependency" | "candidate",
+  proposalAuthority: { canonicalRaw: string; markerRaw: string },
+) {
+  const keys = bgF7ComparisonKeys[kind];
+  return page.evaluate(async ({ selectedKind, currentContext, selectedKeys, driftMode, proposalKeys, nextProposalAuthority }) => {
+    const module = await import("/src/builderProposalComparisons.ts");
+    const proposalModule = await import("/src/builderProposals.ts");
+    const initializer = selectedKind === "product" ? module.initializeBuilderProductComparisons : module.initializeBuilderServiceComparisons;
+    if (typeof initializer !== "function") throw new TypeError(`BG-F7 missing ${selectedKind} initializer`);
+    const readContext = currentContext && currentContext.schemaVersion === 1
+      ? { authority: currentContext.authority, dependencies: currentContext }
+      : currentContext;
+    const withoutFingerprint = ({ fingerprint: _fingerprint, ...value }: Record<string, any>) => value;
+    const changedDependencies = driftMode === "dependency"
+      ? proposalModule.createBuilderProposalDependencies({
+        authority: readContext.authority,
+        requestRevisions: readContext.dependencies.requestRevisions.map((request: any, index: number) => ({ ...withoutFingerprint(request), isCurrentReadyForReview: index === 0 ? !request.isCurrentReadyForReview : request.isCurrentReadyForReview })),
+        contentApprovals: readContext.dependencies.contentApprovals.map(withoutFingerprint),
+        contacts: readContext.dependencies.contacts.map(withoutFingerprint),
+        files: readContext.dependencies.files.map(withoutFingerprint),
+      })
+      : null;
+    let driftApplied = false;
+    const getContext = () => {
+      const markerRaw = window.localStorage.getItem(selectedKeys.marker);
+      if (!driftApplied && markerRaw && JSON.parse(markerRaw).state === "pending") {
+        driftApplied = true;
+        if (driftMode === "source") window.localStorage.setItem(selectedKeys.legacy, `${window.localStorage.getItem(selectedKeys.legacy)} `);
+        if (driftMode === "historical-dependency") {
+          window.localStorage.setItem(proposalKeys.canonical, nextProposalAuthority.canonicalRaw);
+          window.localStorage.setItem(proposalKeys.marker, nextProposalAuthority.markerRaw);
+        }
+        if (driftMode === "candidate") {
+          const marker = JSON.parse(markerRaw);
+          marker.candidateRaw = `${marker.candidateRaw} `;
+          marker.candidateRawHash = module.builderComparisonRawHash(marker.candidateRaw);
+          const { fingerprint: _fingerprint, ...payload } = marker;
+          marker.fingerprint = module.builderComparisonHash(payload);
+          window.localStorage.setItem(selectedKeys.marker, JSON.stringify(marker));
+        }
+      }
+      if (driftMode === "identity" && driftApplied) {
+        return { authority: { ...readContext.authority, identityBindingHash: `sha256-${"9".repeat(64)}` }, dependencies: readContext.dependencies };
+      }
+      if (driftMode === "dependency" && driftApplied) return { authority: readContext.authority, dependencies: changedDependencies };
+      return readContext;
+    };
+    return initializer(getContext as any);
+  }, {
+    selectedKind: kind,
+    currentContext: context,
+    selectedKeys: keys,
+    driftMode: drift,
+    proposalKeys: { canonical: builderProposalsTestStorageKey, marker: builderProposalsMarkerTestStorageKey },
+    nextProposalAuthority: proposalAuthority,
+  });
+}
+
+async function cutoverBgF7ComparisonWithExistingDescendant(
+  page: Page,
+  kind: BgF7ComparisonKind,
+  descendantStorageKey: string,
+) {
+  await seedBgF6LegacyAuthorityFromCanonical(page, { rewriteDownstream: true });
+  const descendantRaw = await page.evaluate((key) => window.localStorage.getItem(key), descendantStorageKey);
+  if (descendantRaw === null) throw new Error(`BG-F7 ${kind} descendant fixture is missing before cutover`);
+  const descendantRecords = JSON.parse(descendantRaw);
+  if (!Array.isArray(descendantRecords) || descendantRecords.length !== 1) {
+    throw new Error(`BG-F7 ${kind} descendant fixture must contain exactly one legacy record`);
+  }
+  const historicalRecord = descendantRecords[0];
+  const historicalTargetRaw = JSON.stringify(historicalRecord.target);
+  expect(historicalRecord.target.comparisonRevisionFingerprint).toMatch(/^fnv1a-[0-9a-f]{8}$/);
+
+  const dependencies = await createBuilderProposalTestDependencies(page);
+  const proposalState = await initializeBuilderProposalState(page, dependencies);
+  expect(proposalState.status).toBe("ready");
+  if (proposalState.status !== "ready") throw new Error("BG-F7 Proposal authority did not initialize for downstream cutover");
+  const context = { authority: dependencies.authority, dependencies };
+  const comparisonState: any = await initializeBgF7ComparisonState(page, kind, context);
+  expect(comparisonState.status).toBe("ready");
+  if (comparisonState.status !== "ready") throw new Error(`BG-F7 ${kind} Comparison authority did not initialize`);
+  const siblingKind: BgF7ComparisonKind = kind === "product" ? "service" : "product";
+  const siblingState: any = await initializeBgF7ComparisonState(page, siblingKind, context);
+  expect(siblingState.status).toBe("ready");
+  if (siblingState.status !== "ready") throw new Error(`BG-F7 ${siblingKind} sibling Comparison authority did not initialize`);
+  const comparison = comparisonState.envelope.records.find((record: any) => record.id === historicalRecord.target.comparisonId);
+  const comparisonRevision = comparison?.revisions.find((revision: any) => (
+    revision.id === historicalRecord.target.comparisonRevisionId
+    && revision.version === historicalRecord.target.comparisonVersion
+  ));
+  if (!comparison || !comparisonRevision) throw new Error(`BG-F7 ${kind} canonical Comparison cannot resolve the legacy descendant target`);
+  expect(comparisonRevision.fingerprint).toMatch(/^sha256-[0-9a-f]{64}$/);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), descendantStorageKey)).toBe(descendantRaw);
+  return { context, descendantRaw, historicalRecord, historicalTargetRaw, comparison, comparisonRevision };
+}
+
+async function reopenBgF7ComparisonDetail(page: Page, kind: BgF7ComparisonKind, comparisonId: string) {
+  await reloadIntoBuilderHome(page);
+  await page.getByTestId("quick-action-compare-offers").click();
+  await openProposalSecondaryView(page, kind === "product" ? "proposal-comparisons-entry" : "service-proposal-comparisons-entry");
+  const card = page.locator(kind === "product"
+    ? `[data-comparison-id="${comparisonId}"]`
+    : `[data-service-comparison-id="${comparisonId}"]`);
+  await expect(card).toBeVisible();
+  await card.click();
+  await expect(page.getByTestId(kind === "product" ? "comparison-detail" : "service-comparison-detail")).toBeVisible();
+}
+
+async function reopenBgF7NegotiationDetail(page: Page, negotiationDraftId: string) {
+  await reloadIntoBuilderHome(page);
+  await page.getByTestId("quick-action-compare-offers").click();
+  await openProposalSecondaryView(page, "negotiation-drafts-entry");
+  const card = page.locator(`[data-negotiation-draft-id="${negotiationDraftId}"]`);
+  await expect(card).toBeVisible();
+  await card.click();
+  await expect(page.getByTestId("negotiation-draft-detail")).toBeVisible();
+}
+
+async function readBgF7DescendantRecords(page: Page, storageKey: string) {
+  return page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "[]"), storageKey);
+}
+
+async function createSecondBgF7ComparisonFromDetail(
+  page: Page,
+  kind: BgF7ComparisonKind,
+  firstComparisonId: string,
+) {
+  await page.getByTestId(kind === "product" ? "comparison-detail-back" : "service-comparison-detail-back").click();
+  await page.getByTestId(kind === "product" ? "comparison-add" : "service-comparison-add").click();
+  await page.getByTestId(kind === "product" ? "comparison-save" : "service-comparison-save").click();
+  await expect(page.getByTestId(kind === "product" ? "comparison-detail" : "service-comparison-detail")).toBeVisible();
+  const records = (await readBgF7ComparisonAuthority(page, kind)).envelope?.records ?? [];
+  const second = records.find((record: any) => record.id !== firstComparisonId);
+  if (records.length !== 2 || !second) throw new Error(`BG-F7 ${kind} fixture did not create a second real Comparison`);
+  return second;
+}
+
+type BgF7FrozenCanonicalDescendantTarget = {
+  kind: BgF7ComparisonKind;
+  projectId: string;
+  canonicalRaw: string;
+  target: {
+    comparisonId: string;
+    comparisonVersion: number;
+    comparisonRevisionId: string;
+    comparisonRevisionFingerprint: string;
+  };
+};
+
+async function freezeBgF7CanonicalDescendantTarget(
+  page: Page,
+  kind: BgF7ComparisonKind,
+  comparisonId: string,
+): Promise<BgF7FrozenCanonicalDescendantTarget> {
+  const authority = await readBgF7ComparisonAuthority(page, kind);
+  if (!authority.envelope || authority.canonicalRaw === null) {
+    throw new Error(`BG-F7 ${kind} canonical Comparison authority is unavailable before the downstream write`);
+  }
+  const comparison = authority.envelope.records.find((record: any) => record.id === comparisonId);
+  const revision = comparison?.revisions.find((candidate: any) => candidate.id === comparison.currentRevisionId);
+  if (!comparison || !revision) throw new Error(`BG-F7 ${kind} second Comparison is not canonical before the downstream write`);
+  expect(revision.version).toBe(comparison.version);
+  expect(revision.fingerprint).toMatch(/^sha256-[0-9a-f]{64}$/);
+  return {
+    kind,
+    projectId: comparison.projectId,
+    canonicalRaw: authority.canonicalRaw,
+    target: {
+      comparisonId: comparison.id,
+      comparisonVersion: comparison.version,
+      comparisonRevisionId: comparison.currentRevisionId,
+      comparisonRevisionFingerprint: revision.fingerprint,
+    },
+  };
+}
+
+function expectBgF7DescendantTargetsFrozenComparison(
+  descendant: Record<string, any>,
+  frozen: BgF7FrozenCanonicalDescendantTarget,
+  options: { includeKind: boolean; includeSha: boolean },
+) {
+  expect(descendant.projectId).toBe(frozen.projectId);
+  const actual = {
+    ...(options.includeKind ? { comparisonKind: descendant.target.comparisonKind } : {}),
+    comparisonId: descendant.target.comparisonId,
+    comparisonVersion: descendant.target.comparisonVersion,
+    comparisonRevisionId: descendant.target.comparisonRevisionId,
+    ...(options.includeSha ? { comparisonRevisionFingerprint: descendant.target.comparisonRevisionFingerprint } : {}),
+  };
+  const expected = {
+    ...(options.includeKind ? { comparisonKind: frozen.kind } : {}),
+    comparisonId: frozen.target.comparisonId,
+    comparisonVersion: frozen.target.comparisonVersion,
+    comparisonRevisionId: frozen.target.comparisonRevisionId,
+    ...(options.includeSha ? { comparisonRevisionFingerprint: frozen.target.comparisonRevisionFingerprint } : {}),
+  };
+  expect(actual).toEqual(expected);
+  if (options.includeSha) expect(descendant.target.comparisonRevisionFingerprint).toMatch(/^sha256-[0-9a-f]{64}$/);
+}
+
+async function expectBgF7CanonicalRawByteStable(
+  page: Page,
+  frozen: BgF7FrozenCanonicalDescendantTarget,
+) {
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys[frozen.kind].canonical))
+    .toBe(frozen.canonicalRaw);
+}
+
+async function createBgF7ProductNegotiationDescendant(page: Page) {
+  const prerequisites = await createExactProductComparisonWithDecision(page);
+  const comparison = prerequisites.comparison;
+  const comparisonRevision = prerequisites.comparisonRevision;
+  const result = comparisonRevision?.results.find((candidate: any) => candidate.proposalId === prerequisites.firstProposal.id);
+  const line = result?.lines[0];
+  if (!comparison || !comparisonRevision || !line) throw new Error("BG-F7 Product Negotiation fixture has no exact comparison line");
+  const start = await openProductComparisonLineForNegotiation(page, prerequisites.firstProposal.id, line.requestItemId);
+  await start.click();
+  await expect(page.getByTestId("negotiation-draft-editor")).toBeVisible();
+  await page.getByTestId("negotiation-draft-purpose").fill("بررسی FNV تاریخی پیش از ادامه مذاکره محصول");
+  await page.getByTestId("negotiation-draft-message").fill("لطفاً شرط حمل این ردیف محصول را برای ثبت محلی روشن کنید.");
+  await page.getByTestId("negotiation-draft-save").click();
+  await expect(page.getByTestId("negotiation-draft-detail")).toBeVisible();
+  const records = await readBgF7DescendantRecords(page, negotiationDraftStorageKey);
+  if (records.length !== 1) throw new Error("BG-F7 Product Negotiation fixture must create exactly one draft");
+  return { ...prerequisites, comparison, comparisonRevision, criterionId: line.requestItemId, record: records[0] };
+}
+
+test.describe("BG-F7 builder comparison authority", () => {
+  test("BG-F7 Proposal currentness helper exposes one exact record result without changing Proposal bytes", async ({ page }) => {
+    await seedBgF6LegacyProductAndServiceProposals(page);
+    const dependencies = await createBuilderProposalTestDependencies(page);
+    const state = await initializeBuilderProposalState(page, dependencies);
+    expect(state.status).toBe("ready");
+    if (state.status !== "ready") throw new Error("BG-F7 Proposal seed did not initialize");
+    const record = state.envelope.records[0];
+    expect(record).toBeDefined();
+    if (!record) throw new Error("BG-F7 Proposal seed has no canonical record");
+    const before = await page.evaluate((key) => localStorage.getItem(key), builderProposalsTestStorageKey);
+
+    const result = await page.evaluate(async ({ record, dependencies }) => {
+      const module = await import("/src/builderProposals.ts");
+      const stripFingerprint = <T extends { fingerprint: string }>(
+        { fingerprint: _fingerprint, ...value }: T,
+      ) => value;
+      const staleDependencies = module.createBuilderProposalDependencies({
+        authority: dependencies.authority,
+        requestRevisions: dependencies.requestRevisions.map(stripFingerprint),
+        contentApprovals: dependencies.contentApprovals.map((approval) => ({
+          ...stripFingerprint(approval),
+          isCurrent: false,
+        })),
+        contacts: dependencies.contacts.map(stripFingerprint),
+        files: dependencies.files.map(stripFingerprint),
+      });
+      return {
+        current: module.builderProposalRecordIsCurrent(record, dependencies),
+        stale: module.builderProposalRecordIsCurrent(record, staleDependencies),
+        hasExport: typeof module.builderProposalRecordIsCurrent === "function",
+      };
+    }, { record, dependencies });
+
+    expect(result).toEqual({ current: true, stale: false, hasExport: true });
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsTestStorageKey))
+      .toBe(before);
+  });
+
+  test(bgF7FrozenBaseTitles[10], async ({ page }) => {
+    await page.goto("/");
+    const exactProjectCapacity = await createBgF7MigratedFixture("product", 100);
+    expect((await readBgF7Fixture(page, exactProjectCapacity)).status).toBe("ready");
+    const overProjectCapacity = await createBgF7MigratedFixture("product", 101, 101);
+    expect((await readBgF7Fixture(page, overProjectCapacity)).status).toBe("read-error");
+    const exactLedgerCapacity = await createBgF7MigratedFixture("product", 1000);
+    expect((await readBgF7Fixture(page, exactLedgerCapacity)).status).toBe("ready");
+    const overLedgerCapacity = await createBgF7MigratedFixture("product", 1001);
+    expect((await readBgF7Fixture(page, overLedgerCapacity)).status).toBe("read-error");
+    const exactRevisionCapacity = await createBgF7RevisionCapacityFixture("product", 100);
+    expect((await readBgF7Fixture(page, exactRevisionCapacity)).status).toBe("ready");
+    const overRevisionCapacity = await createBgF7RevisionCapacityFixture("product", 101);
+    expect((await readBgF7Fixture(page, overRevisionCapacity)).status).toBe("read-error");
+    for (const kind of ["product", "service"] as const) {
+      expect((await readBgF7Fixture(page, await createBgF7Fixture(kind))).status).toBe("ready");
+      expect((await readBgF7Fixture(page, await createBgF7Fixture(kind, { inputCount: 8 }))).status).toBe("ready");
+      expect((await readBgF7Fixture(page, await createBgF7Fixture(kind, { inputCount: 1 }))).status).toBe("read-error");
+      expect((await readBgF7Fixture(page, await createBgF7Fixture(kind, { inputCount: 9 }))).status).toBe("read-error");
+      expect((await readBgF7Fixture(page, await createBgF7Fixture(kind, { recordId: "x".repeat(300) }))).status).toBe("ready");
+      expect((await readBgF7Fixture(page, await createBgF7Fixture(kind, { recordId: "x".repeat(301) }))).status).toBe("read-error");
+      const exactText = await createBgF7Fixture(kind, { treatmentAssumption: "ا".repeat(500) });
+      if (kind === "service") {
+        exactText.revision.inputs[0].criteria[0].rationale = "ا".repeat(500);
+        exactText.revision.results[0].criteria[0].rationale = "ا".repeat(500);
+        await bgF7RebindFixtureInputsAndPins(exactText);
+      }
+      expect((await readBgF7Fixture(page, exactText)).status).toBe("ready");
+      const oversizedText = await createBgF7Fixture(kind, { treatmentAssumption: "ا".repeat(501) });
+      if (kind === "service") {
+        oversizedText.revision.inputs[0].criteria[0].rationale = "ا".repeat(501);
+        oversizedText.revision.results[0].criteria[0].rationale = "ا".repeat(501);
+      }
+      await bgF7RebindFixtureInputsAndPins(oversizedText);
+      expect((await readBgF7Fixture(page, oversizedText)).status).toBe("read-error");
+      const extraKey = await createBgF7Fixture(kind);
+      extraKey.record.unexpected = true;
+      await bgF7RehashFixture(extraKey);
+      expect((await readBgF7Fixture(page, extraKey)).status).toBe("read-error");
+      const noncanonical = await createBgF7Fixture(kind);
+      noncanonical.record.id = ` ${noncanonical.record.id}`;
+      await bgF7RehashFixture(noncanonical);
+      expect((await readBgF7Fixture(page, noncanonical)).status).toBe("read-error");
+      const invalidTimestamp = await createBgF7Fixture(kind);
+      invalidTimestamp.record.updatedAt = "2026-09-02 00:00:03Z";
+      await bgF7RehashFixture(invalidTimestamp);
+      expect((await readBgF7Fixture(page, invalidTimestamp)).status).toBe("read-error");
+    }
+  });
+
+  test(`${bgF7FrozenBaseTitles[10]} [receipt capacity]`, async ({ page }) => {
+    await page.goto("/");
+    const receiptCreateSanity = await createBgF7ReceiptCapacityFixture(1);
+    expect(await readBgF7Fixture(page, receiptCreateSanity)).toEqual({ status: "ready", dependencyStatus: "read-error", reason: null });
+    const receiptReplaySanity = await createBgF7ReceiptCapacityFixture(2);
+    expect(await readBgF7Fixture(page, receiptReplaySanity)).toEqual({ status: "ready", dependencyStatus: "read-error", reason: null });
+    const exactReceiptCapacity = await createBgF7ReceiptCapacityFixture(10_000);
+    expect(exactReceiptCapacity.envelope.records).toHaveLength(100);
+    expect(exactReceiptCapacity.envelope.records.every((record: any) => record.version === 100)).toBe(true);
+    expect(exactReceiptCapacity.envelope.idempotencyReceipts).toHaveLength(10_000);
+    expect(await readBgF7Fixture(page, exactReceiptCapacity)).toEqual({ status: "ready", dependencyStatus: "read-error", reason: null });
+    const exactReceiptEnvelopeFingerprint = exactReceiptCapacity.envelope.fingerprint;
+    const overReceiptCapacity = await extendBgF7ReceiptCapacityFixtureTo10_001(exactReceiptCapacity);
+    expect(overReceiptCapacity.envelope.records).toHaveLength(101);
+    expect(overReceiptCapacity.envelope.records.at(-1).version).toBe(1);
+    expect(overReceiptCapacity.envelope.idempotencyReceipts).toHaveLength(10_001);
+    expect((await readBgF7ExtendedReceiptCapacityFixture(page, overReceiptCapacity, exactReceiptEnvelopeFingerprint)).status).toBe("read-error");
+  });
+
+  test(bgF7FrozenBaseTitles[11], async ({ page }) => {
+    await page.goto("/");
+    const missingKey = await createBgF7Fixture("service");
+    delete missingKey.record.purpose;
+    await bgF7RehashFixture(missingKey);
+    expect((await readBgF7Fixture(page, missingKey)).status).toBe("read-error");
+
+    const duplicate = await createBgF7Fixture("product");
+    duplicate.envelope.records.push(structuredClone(duplicate.record));
+    await bgF7RehashFixture(duplicate);
+    expect((await readBgF7Fixture(page, duplicate)).status).toBe("read-error");
+
+    const crossProject = await createBgF7Fixture("service");
+    crossProject.record.projectId = "project-other";
+    await bgF7RehashFixture(crossProject);
+    expect((await readBgF7Fixture(page, crossProject)).status).toBe("read-error");
+
+    const chronology = await createBgF7Fixture("product");
+    chronology.record.createdAt = "2026-09-02T00:00:04.000Z";
+    await bgF7RehashFixture(chronology);
+    expect((await readBgF7Fixture(page, chronology)).status).toBe("read-error");
+
+    const duplicateReceipt = await createBgF7Fixture("service");
+    duplicateReceipt.envelope.idempotencyReceipts.push(structuredClone(duplicateReceipt.receipt));
+    duplicateReceipt.envelope.storeVersion = 3;
+    await bgF7RehashFixture(duplicateReceipt);
+    expect((await readBgF7Fixture(page, duplicateReceipt)).status).toBe("read-error");
+
+    const duplicateRevisionId = await createBgF7ReceiptCapacityFixture(2);
+    duplicateRevisionId.record.revisions[1].id = duplicateRevisionId.record.revisions[0].id;
+    duplicateRevisionId.record.currentRevisionId = duplicateRevisionId.record.revisions[0].id;
+    duplicateRevisionId.record.history[1].revisionId = duplicateRevisionId.record.revisions[0].id;
+    duplicateRevisionId.envelope.idempotencyReceipts[1].revisionId = duplicateRevisionId.record.revisions[0].id;
+    await bgF7RehashFixture(duplicateRevisionId);
+    expect((await readBgF7Fixture(page, duplicateRevisionId)).status).toBe("read-error");
+
+    const duplicateEventId = await createBgF7ReceiptCapacityFixture(2);
+    duplicateEventId.record.history[1].id = duplicateEventId.record.history[0].id;
+    duplicateEventId.envelope.idempotencyReceipts[1].eventId = duplicateEventId.record.history[0].id;
+    await bgF7RehashFixture(duplicateEventId);
+    expect((await readBgF7Fixture(page, duplicateEventId)).status).toBe("read-error");
+
+    const duplicateCrossRecordRevisionId = await duplicateBgF7MigratedIdentityAcrossRecords(
+      await createBgF7MigratedFixture("product", 2),
+      "revision",
+    );
+    expect((await readBgF7Fixture(page, duplicateCrossRecordRevisionId)).status).toBe("read-error");
+
+    const duplicateCrossRecordEventId = await duplicateBgF7MigratedIdentityAcrossRecords(
+      await createBgF7MigratedFixture("service", 2),
+      "event",
+    );
+    expect((await readBgF7Fixture(page, duplicateCrossRecordEventId)).status).toBe("read-error");
+
+    const productMigratedLiveBaseline = await createBgF7LateMigratedPrefixWithLaterLiveReceiptFixture("product", false);
+    expect((await readBgF7Fixture(page, productMigratedLiveBaseline)).status).toBe("ready");
+    const duplicateMigratedLiveRevisionId = await collideBgF7MigratedAndLiveIdentity(
+      await createBgF7LateMigratedPrefixWithLaterLiveReceiptFixture("product", false),
+      "revision",
+    );
+    expect((await readBgF7Fixture(page, duplicateMigratedLiveRevisionId)).status).toBe("read-error");
+
+    const serviceMigratedLiveBaseline = await createBgF7LateMigratedPrefixWithLaterLiveReceiptFixture("service", false);
+    expect((await readBgF7Fixture(page, serviceMigratedLiveBaseline)).status).toBe("ready");
+    const duplicateMigratedLiveEventId = await collideBgF7MigratedAndLiveIdentity(
+      await createBgF7LateMigratedPrefixWithLaterLiveReceiptFixture("service", false),
+      "event",
+    );
+    expect((await readBgF7Fixture(page, duplicateMigratedLiveEventId)).status).toBe("read-error");
+
+    const duplicateIdempotencyKey = await createBgF7ReceiptCapacityFixture(2);
+    duplicateIdempotencyKey.record.history[1].idempotencyKey = duplicateIdempotencyKey.record.history[0].idempotencyKey;
+    duplicateIdempotencyKey.envelope.idempotencyReceipts[1].key = duplicateIdempotencyKey.envelope.idempotencyReceipts[0].key;
+    await bgF7RehashFixture(duplicateIdempotencyKey);
+    expect((await readBgF7Fixture(page, duplicateIdempotencyKey)).status).toBe("read-error");
+
+    const wrongKind = await createBgF7Fixture("product");
+    wrongKind.revision.kind = "service";
+    await bgF7RehashFixture(wrongKind);
+    expect((await readBgF7Fixture(page, wrongKind)).status).toBe("read-error");
+
+    const wrongRequestKind = await createBgF7Fixture("product");
+    wrongRequestKind.record.target.requestKind = "service";
+    wrongRequestKind.revision.target.requestKind = "service";
+    await bgF7RehashFixture(wrongRequestKind);
+    expect((await readBgF7Fixture(page, wrongRequestKind)).status).toBe("read-error");
+
+    const repeatedSemanticRevision = await createBgF7ReceiptCapacityFixture(2);
+    repeatedSemanticRevision.record.revisions[1].inputs = structuredClone(repeatedSemanticRevision.record.revisions[0].inputs);
+    repeatedSemanticRevision.record.revisions[1].results = structuredClone(repeatedSemanticRevision.record.revisions[0].results);
+    repeatedSemanticRevision.record.revisions[1].recommendation = structuredClone(repeatedSemanticRevision.record.revisions[0].recommendation);
+    await bgF7RehashFixture(repeatedSemanticRevision);
+    expect((await readBgF7Fixture(page, repeatedSemanticRevision)).status).toBe("read-error");
+  });
+
+  test(bgF7FrozenBaseTitles[12], async ({ page }) => {
+    await page.goto("/");
+    const moduleHashes = await page.evaluate(async () => {
+      const module = await import("/src/builderProposalComparisons.ts");
+      return {
+        codePointOrder: module.builderComparisonHash({ "ä": 1, z: 2, A: { "é": 3, e: 4 } }),
+        astralCodePointOrder: module.builderComparisonHash({ "\u{10000}": "astral", "\uE000": "bmp" }),
+        integerKeyOrder: module.builderComparisonHash({ "2": "two", "10": "ten" }),
+        rawString: module.builderComparisonRawHash('{"raw":"value"}'),
+        objectString: module.builderComparisonHash('{"raw":"value"}'),
+      };
+    });
+    expect(moduleHashes.codePointOrder).toBe(bgF7GoldenDigests.codePointOrder);
+    expect(moduleHashes.astralCodePointOrder).toBe(bgF7GoldenDigests.astralCodePointOrder);
+    expect(moduleHashes.integerKeyOrder).toBe(bgF7GoldenDigests.integerKeyOrder);
+    expect(moduleHashes.rawString).toBe(bgF7GoldenDigests.rawString);
+    expect(moduleHashes.objectString).not.toBe(moduleHashes.rawString);
+    const nestedNonJsonRejections = await page.evaluate(async () => {
+      const module = await import("/src/builderProposalComparisons.ts");
+      const invalidValues: unknown[] = [
+        { nested: undefined },
+        [undefined],
+        { nested: BigInt(1) },
+        [() => "not-json"],
+        { nested: Symbol("not-json") },
+        { nested: Number.NaN },
+        [Number.POSITIVE_INFINITY],
+      ];
+      return invalidValues.map((value) => {
+        try {
+          module.builderComparisonHash(value);
+          return false;
+        } catch {
+          return true;
+        }
+      });
+    });
+    expect(nestedNonJsonRejections).toEqual(Array(7).fill(true));
+    const invalidOracleValues: unknown[] = [
+      { nested: undefined },
+      [undefined],
+      { nested: BigInt(1) },
+      [() => "not-json"],
+      { nested: Symbol("not-json") },
+      { nested: Number.NaN },
+      [Number.POSITIVE_INFINITY],
+    ];
+    for (const invalidValue of invalidOracleValues) {
+      expect(() => bgF7OracleSha256(invalidValue)).toThrow("BG-F7 SHA oracle requires a JSON value");
+    }
+
+    const utf16AuthorityFixture = await createBgF7Fixture("product");
+    const bmpProjectId = "project-\uE000";
+    const astralProjectId = "project-\u{10000}";
+    utf16AuthorityFixture.authority = {
+      ...bgF7TestAuthority,
+      projectIds: ["project-bg-f7", astralProjectId, bmpProjectId],
+      authorizationHashes: {
+        ...bgF7TestAuthority.authorizationHashes,
+        [bmpProjectId]: `sha256-${"4".repeat(64)}`,
+        [astralProjectId]: `sha256-${"5".repeat(64)}`,
+      },
+    };
+    expect(utf16AuthorityFixture.authority.projectIds).toEqual([...utf16AuthorityFixture.authority.projectIds].sort());
+    const utf16AuthorityResult = await readBgF7Fixture(page, utf16AuthorityFixture);
+    expect(utf16AuthorityResult, JSON.stringify(utf16AuthorityResult)).toMatchObject({ status: "ready" });
+    const scalarOrderedAuthorityFixture = structuredClone(utf16AuthorityFixture);
+    scalarOrderedAuthorityFixture.authority.projectIds = ["project-bg-f7", bmpProjectId, astralProjectId];
+    expect((await readBgF7Fixture(page, scalarOrderedAuthorityFixture)).status).toBe("read-error");
+
+    for (const kind of ["product", "service"] as const) {
+      const fixture = await createBgF7Fixture(kind);
+      const pendingMarker = await bgF7Final({
+        schemaVersion: 1,
+        store: fixture.store,
+        state: "pending",
+        migrationId: fixture.report.id,
+        sourceGeneration: "none",
+        sourceKey: null,
+        sourceRawHash: null,
+        dependencySnapshotHash: fixture.report.dependencySnapshotHash,
+        identityBindingHash: bgF7TestAuthority.identityBindingHash,
+        migrationAt: fixture.report.migratedAt,
+        candidateRaw: fixture.initialRaw,
+        candidateRawHash: await bgF7OracleRawSha256(fixture.initialRaw),
+      });
+      const verifiedMarker = await bgF7Final({ ...bgF7WithoutFingerprint(pendingMarker), state: "verified", verifiedAt: "2026-09-02T00:00:01.000Z" });
+      const names = ["revision", "event", "record", "receipt", "report", "envelope", "pendingMarker", "verifiedMarker", "committedMarker"] as const;
+      const values = [fixture.revision, fixture.event, fixture.record, fixture.receipt, fixture.report, fixture.envelope, pendingMarker, verifiedMarker, fixture.marker];
+      const expectedDigests = names.map((name) => bgF7GoldenDigests[`${kind}${name[0].toUpperCase()}${name.slice(1)}` as keyof typeof bgF7GoldenDigests]);
+      const productionDigests = await page.evaluate(async (items) => {
+        const module = await import("/src/builderProposalComparisons.ts");
+        return items.map((item) => {
+          const { fingerprint: _fingerprint, ...payload } = item;
+          return module.builderComparisonHash(payload);
+        });
+      }, values);
+      expect(productionDigests).toEqual(expectedDigests);
+      await Promise.all(values.map(async (value, index) => expect(await bgF7OracleSha256(bgF7WithoutFingerprint(value))).toBe(expectedDigests[index])));
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[13], async ({ page }) => {
+    await page.goto("/");
+    for (const kind of ["product", "service"] as const) {
+      const migratedFixture = await createBgF7MigratedFixture(kind, 2);
+      expect(migratedFixture.report.recordCount).toBe(2);
+      expect(migratedFixture.envelope.records.map((record: any) => record.legacyEvidence.sourceIndex)).toEqual([0, 1]);
+      expect(migratedFixture.report.migratedRecordFingerprints).toEqual(migratedFixture.envelope.records.map((record: any) => record.fingerprint));
+      expect((await readBgF7Fixture(page, migratedFixture)).status).toBe("ready");
+
+      const tamperedLegacyHashes = structuredClone(migratedFixture);
+      tamperedLegacyHashes.envelope.records[0].legacyEvidence.sourceRecordHash = `sha256-${"a".repeat(64)}`;
+      tamperedLegacyHashes.envelope.records[0].legacyEvidence.revisionLinks[0].sourceRevisionValueHash = `sha256-${"b".repeat(64)}`;
+      await bgF7RefinalizeMigratedFixture(tamperedLegacyHashes);
+      expect((await readBgF7Fixture(page, tamperedLegacyHashes)).status).toBe("read-error");
+
+      const migratedAtChangedWithStableId = structuredClone(migratedFixture);
+      migratedAtChangedWithStableId.report.migratedAt = "2026-09-02T00:00:04.000Z";
+      migratedAtChangedWithStableId.envelope.updatedAt = migratedAtChangedWithStableId.report.migratedAt;
+      migratedAtChangedWithStableId.marker.migrationAt = migratedAtChangedWithStableId.report.migratedAt;
+      migratedAtChangedWithStableId.marker.verifiedAt = migratedAtChangedWithStableId.report.migratedAt;
+      migratedAtChangedWithStableId.marker.committedAt = migratedAtChangedWithStableId.report.migratedAt;
+      await bgF7RefinalizeMigratedFixture(migratedAtChangedWithStableId);
+      expect.soft((await readBgF7Fixture(page, migratedAtChangedWithStableId)).status).toBe("read-error");
+
+      const migratedEventDependencyMismatch = structuredClone(migratedFixture);
+      migratedEventDependencyMismatch.record.history[0].dependencySnapshotHash = `sha256-${"e".repeat(64)}`;
+      migratedEventDependencyMismatch.record.history[0].fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(migratedEventDependencyMismatch.record.history[0]));
+      await bgF7RefinalizeMigratedFixture(migratedEventDependencyMismatch);
+      expect.soft((await readBgF7Fixture(page, migratedEventDependencyMismatch)).status).toBe("read-error");
+
+      const fixture = await createBgF7Fixture(kind);
+      expect(fixture.report.recordCount).toBe(0);
+      expect(fixture.envelope.storeVersion).toBe(fixture.envelope.idempotencyReceipts.length + 1);
+      expect((await readBgF7Fixture(page, fixture)).status).toBe("ready");
+      const skippedPosition = structuredClone(fixture);
+      skippedPosition.receipt.position = 2;
+      skippedPosition.envelope.idempotencyReceipts[0].position = 2;
+      await bgF7RehashFixture(skippedPosition);
+      expect((await readBgF7Fixture(page, skippedPosition)).status).toBe("read-error");
+    }
+
+    const lateMigratedPrefixWithLaterReceipt = await createBgF7LateMigratedPrefixWithLaterLiveReceiptFixture("product");
+    expect.soft((await readBgF7Fixture(page, lateMigratedPrefixWithLaterReceipt)).status).toBe("read-error");
+  });
+
+  test(bgF7FrozenBaseTitles[14], async ({ page }) => {
+    await page.goto("/");
+    const fixture = await createBgF7Fixture("product");
+    const secondReceipt = structuredClone(fixture.receipt);
+    secondReceipt.position = 2;
+    secondReceipt.key = "product:update:bg-f7";
+    secondReceipt.action = "update-comparison";
+    secondReceipt.expectedStoreVersion = 2;
+    secondReceipt.expectedRecordVersion = 1;
+    secondReceipt.result = "updated";
+    secondReceipt.resultingStoreVersion = 3;
+    secondReceipt.resultingRecordVersion = 2;
+    secondReceipt.eventId = `${fixture.record.id}:event:2`;
+    secondReceipt.revisionId = `${fixture.record.id}:revision:2`;
+    secondReceipt.recordedAt = fixture.receipt.recordedAt;
+    secondReceipt.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(secondReceipt));
+    fixture.envelope.idempotencyReceipts = [secondReceipt, fixture.receipt];
+    fixture.envelope.storeVersion = 3;
+    await bgF7RehashFixture(fixture);
+    expect((await readBgF7Fixture(page, fixture)).status).toBe("read-error");
+
+    const arbitraryPayload = await createBgF7Fixture("product");
+    arbitraryPayload.receipt.payloadHash = `sha256-${"d".repeat(64)}`;
+    arbitraryPayload.event.commandPayloadHash = arbitraryPayload.receipt.payloadHash;
+    await bgF7RehashFixture(arbitraryPayload);
+    expect.soft((await readBgF7Fixture(page, arbitraryPayload)).status).toBe("read-error");
+
+    const foreignProject = await createBgF7Fixture("service");
+    const foreignProjectId = "project-foreign";
+    foreignProject.authority = {
+      ...bgF7TestAuthority,
+      projectIds: ["project-bg-f7", foreignProjectId],
+      authorizationHashes: {
+        ...bgF7TestAuthority.authorizationHashes,
+        [foreignProjectId]: bgF7TestAuthority.authorizationHashes["project-bg-f7"],
+      },
+    };
+    foreignProject.receipt.projectId = foreignProjectId;
+    foreignProject.receipt.commandPins.requestSnapshotHash = await bgF7OracleSha256({
+      schemaVersion: 1,
+      kind: "service",
+      projectId: foreignProjectId,
+      target: foreignProject.revision.target,
+      requestSnapshot: foreignProject.revision.inputs[0].proposalRevisionSnapshot.requestSnapshot,
+    });
+    foreignProject.receipt.commandPins.serviceRequestSnapshotHash = await bgF7OracleSha256({
+      schemaVersion: 1,
+      kind: "service",
+      projectId: foreignProjectId,
+      target: foreignProject.revision.target,
+      serviceRequestSnapshot: foreignProject.record.requestSnapshot,
+    });
+    foreignProject.receipt.commandPins.expectedDependencySnapshotHash = await bgF7OracleSha256({
+      schemaVersion: 1,
+      kind: "service",
+      projectId: foreignProjectId,
+      identityBindingHash: foreignProject.receipt.commandPins.identityBindingHash,
+      authorizationContextHash: foreignProject.receipt.commandPins.authorizationContextHash,
+      proposalStoreVersion: foreignProject.receipt.commandPins.proposalStoreVersion,
+      proposalEnvelopeFingerprint: foreignProject.receipt.commandPins.proposalEnvelopeFingerprint,
+      proposalDependencySnapshotHash: foreignProject.receipt.commandPins.proposalDependencySnapshotHash,
+      target: foreignProject.receipt.commandPins.target,
+      requestSnapshotHash: foreignProject.receipt.commandPins.requestSnapshotHash,
+      serviceRequestSnapshotHash: foreignProject.receipt.commandPins.serviceRequestSnapshotHash,
+      proposalPins: foreignProject.receipt.commandPins.proposalPins,
+    });
+    foreignProject.receipt.expectedDependencySnapshotHash = foreignProject.receipt.commandPins.expectedDependencySnapshotHash;
+    foreignProject.event.dependencySnapshotHash = foreignProject.receipt.expectedDependencySnapshotHash;
+    foreignProject.receipt.payloadHash = await bgF7ReceiptPayloadHash(foreignProject.record, foreignProject.revision, foreignProject.receipt);
+    foreignProject.event.commandPayloadHash = foreignProject.receipt.payloadHash;
+    await bgF7RehashFixture(foreignProject);
+    expect.soft((await readBgF7Fixture(page, foreignProject)).status).toBe("read-error");
+  });
+
+  test(bgF7FrozenBaseTitles[15], async ({ page }) => {
+    await page.goto("/");
+    const impossible = await createBgF7Fixture("product");
+    impossible.receipt.result = "updated";
+    impossible.envelope.idempotencyReceipts[0].result = "updated";
+    await bgF7RehashFixture(impossible);
+    expect((await readBgF7Fixture(page, impossible)).status).toBe("read-error");
+
+    const productMismatch = await createBgF7Fixture("product");
+    productMismatch.revision.results[0].normalizedTotal = "11";
+    await bgF7RehashFixture(productMismatch);
+    expect((await readBgF7Fixture(page, productMismatch)).status).toBe("read-error");
+
+    const serviceMismatch = await createBgF7Fixture("service");
+    serviceMismatch.revision.summary.unknownCount = 19;
+    await bgF7RehashFixture(serviceMismatch);
+    expect((await readBgF7Fixture(page, serviceMismatch)).status).toBe("read-error");
+
+    const reordered = await createBgF7Fixture("service");
+    reordered.revision.inputs[0].criteria.reverse();
+    await bgF7RehashFixture(reordered);
+    expect((await readBgF7Fixture(page, reordered)).status).toBe("read-error");
+
+    const invalidProposalFingerprint = await createBgF7Fixture("product");
+    for (const input of invalidProposalFingerprint.revision.inputs) {
+      input.proposalRevisionSnapshot.fingerprint = `sha256-${"a".repeat(64)}`;
+    }
+    await bgF7RebindFixtureInputsAndPins(invalidProposalFingerprint, false);
+    expect.soft((await readBgF7Fixture(page, invalidProposalFingerprint)).status).toBe("read-error");
+
+    const invalidProposalReference = await createBgF7Fixture("service");
+    for (const input of invalidProposalReference.revision.inputs) {
+      const fileSnapshot = {
+        id: `${input.proposalId}:file`,
+        displayName: "ا".repeat(141),
+        originalName: "proposal.pdf",
+        mimeType: "application/pdf",
+        size: 1,
+        category: "سایر",
+        createdAt: "2026-09-01T23:58:00.000Z",
+        storageMode: "metadata-only",
+      };
+      input.proposalRevisionSnapshot.reference = {
+        kind: "project-file-metadata",
+        projectFileId: fileSnapshot.id,
+        projectFileVersion: 1,
+        fileSnapshot,
+        metadataFingerprint: await bgF7OracleProposalSha256(fileSnapshot),
+        contentPersisted: false,
+        extractionPerformed: false,
+      };
+    }
+    await bgF7RebindFixtureInputsAndPins(invalidProposalReference);
+    expect.soft((await readBgF7Fixture(page, invalidProposalReference)).status).toBe("read-error");
+
+    const invalidProposalRequestLine = await createBgF7Fixture("product");
+    for (const input of invalidProposalRequestLine.revision.inputs) {
+      input.proposalRevisionSnapshot.lines[0].requestLabel = "برچسب ساختگی";
+    }
+    for (const result of invalidProposalRequestLine.revision.results) {
+      result.lines[0].requestLabel = "برچسب ساختگی";
+      result.lines[0].declaredSnapshot.requestLabel = "برچسب ساختگی";
+    }
+    await bgF7RebindFixtureInputsAndPins(invalidProposalRequestLine);
+    expect.soft((await readBgF7Fixture(page, invalidProposalRequestLine)).status).toBe("read-error");
+
+    const canonicalProposalCap = await createBgF7Fixture("product");
+    canonicalProposalCap.record.requestSnapshot.title = "ا".repeat(4000);
+    for (const input of canonicalProposalCap.revision.inputs) {
+      input.proposalRevisionSnapshot.requestSnapshot.title = "ا".repeat(4000);
+    }
+    await bgF7RebindFixtureInputsAndPins(canonicalProposalCap);
+    expect.soft((await readBgF7Fixture(page, canonicalProposalCap)).status).toBe("ready");
+
+    const forgedCompatibilityRecord = await createBgF7MigratedFixture("product", 1);
+    const forgedRecord = forgedCompatibilityRecord.record;
+    forgedRecord.ownerPrincipalId = "fabricated-owner";
+    forgedRecord.legacyEvidence.sourceRecordHash = `sha256-${"c".repeat(64)}`;
+    forgedRecord.legacyEvidence.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(forgedRecord.legacyEvidence));
+    forgedRecord.fingerprint = await bgF7OracleSha256(bgF7WithoutFingerprint(forgedRecord));
+    const compatibilityAccepted = await page.evaluate(async ({ record, revision, claim }) => {
+      const module = await import("/src/builderProposalComparisons.ts");
+      return module.builderComparisonRevisionFingerprintMatches(record, revision, claim);
+    }, {
+      record: forgedRecord,
+      revision: forgedRecord.revisions[0],
+      claim: forgedRecord.legacyEvidence.revisionLinks[0].legacyFingerprint,
+    });
+    expect.soft(compatibilityAccepted).toBe(false);
+
+    const aliasedProposalPin = await createBgF7Fixture("product");
+    const aliasedRevision = aliasedProposalPin.revision;
+    const firstInput = aliasedRevision.inputs[0];
+    const secondInput = aliasedRevision.inputs[1];
+    secondInput.proposalVersion = firstInput.proposalVersion;
+    secondInput.proposalRevisionId = firstInput.proposalRevisionId;
+    secondInput.proposalRevisionFingerprint = firstInput.proposalRevisionFingerprint;
+    secondInput.proposalRevisionSnapshot = structuredClone(firstInput.proposalRevisionSnapshot);
+    secondInput.supplierSnapshot = structuredClone(firstInput.supplierSnapshot);
+    secondInput.lineAdjustments = structuredClone(firstInput.lineAdjustments);
+    aliasedRevision.results[1] = {
+      ...structuredClone(aliasedRevision.results[0]),
+      proposalId: secondInput.proposalId,
+    };
+    await bgF7RebindFixtureInputsAndPins(aliasedProposalPin, false);
+    const aliasedReceipt = aliasedProposalPin.receipt;
+    expect(aliasedReceipt.commandPins.proposalPins[0].proposalRevisionSnapshotHash)
+      .not.toBe(aliasedReceipt.commandPins.proposalPins[1].proposalRevisionSnapshotHash);
+    aliasedReceipt.commandPins.proposalPins[1].proposalRevisionSnapshotHash =
+      aliasedReceipt.commandPins.proposalPins[0].proposalRevisionSnapshotHash;
+    aliasedReceipt.commandPins.expectedDependencySnapshotHash = await bgF7OracleSha256({
+      schemaVersion: 1,
+      kind: "product",
+      projectId: aliasedReceipt.projectId,
+      identityBindingHash: aliasedReceipt.commandPins.identityBindingHash,
+      authorizationContextHash: aliasedReceipt.commandPins.authorizationContextHash,
+      proposalStoreVersion: aliasedReceipt.commandPins.proposalStoreVersion,
+      proposalEnvelopeFingerprint: aliasedReceipt.commandPins.proposalEnvelopeFingerprint,
+      proposalDependencySnapshotHash: aliasedReceipt.commandPins.proposalDependencySnapshotHash,
+      target: aliasedReceipt.commandPins.target,
+      requestSnapshotHash: aliasedReceipt.commandPins.requestSnapshotHash,
+      serviceRequestSnapshotHash: null,
+      proposalPins: aliasedReceipt.commandPins.proposalPins,
+    });
+    aliasedReceipt.expectedDependencySnapshotHash = aliasedReceipt.commandPins.expectedDependencySnapshotHash;
+    aliasedProposalPin.event.dependencySnapshotHash = aliasedReceipt.expectedDependencySnapshotHash;
+    aliasedReceipt.payloadHash = bgF7ReceiptPayloadHash(aliasedProposalPin.record, aliasedRevision, aliasedReceipt);
+    aliasedProposalPin.event.commandPayloadHash = aliasedReceipt.payloadHash;
+    await bgF7RehashFixture(aliasedProposalPin);
+    expect((await readBgF7Fixture(page, aliasedProposalPin)).status).toBe("read-error");
+
+    for (const entity of ["revision", "event"] as const) {
+      const arbitraryLiveId = await createBgF7Fixture("product");
+      const arbitraryId = entity === "revision"
+        ? `builder-proposal-comparison-revision-${"a".repeat(71)}`
+        : `builder-proposal-comparison-event-${"b".repeat(71)}`;
+      if (entity === "revision") {
+        arbitraryLiveId.revision.id = arbitraryId;
+        arbitraryLiveId.record.currentRevisionId = arbitraryId;
+        arbitraryLiveId.event.revisionId = arbitraryId;
+        arbitraryLiveId.receipt.revisionId = arbitraryId;
+      } else {
+        arbitraryLiveId.event.id = arbitraryId;
+        arbitraryLiveId.receipt.eventId = arbitraryId;
+      }
+      await bgF7RehashFixture(arbitraryLiveId);
+      expect.soft((await readBgF7Fixture(page, arbitraryLiveId)).status, `coherent arbitrary live ${entity} id`).toBe("read-error");
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[16], async ({ page }) => {
+    await page.goto("/");
+    const twoHundredDigits = `${"9".repeat(140)}.${"8".repeat(60)}`;
+    const percentAmount = "4".repeat(199);
+    const percentFixture = await createBgF7Fixture("product", { productDecimal: percentAmount });
+    for (const input of percentFixture.revision.inputs) {
+      input.taxTreatment = { mode: "rate", value: "100", assumption: "صد درصد مبلغ", source: "فرض ثبت‌شده توسط سازنده" };
+    }
+    const percentDerived = await page.evaluate(async (inputs) => {
+      const module = await import("/src/builderProposalComparisons.ts");
+      return module.deriveBuilderProposalComparisonPayload(inputs);
+    }, percentFixture.revision.inputs);
+    expect(percentDerived?.results).toHaveLength(2);
+    expect(percentDerived?.results.every((result: any) => result.taxAmount === percentAmount)).toBe(true);
+    expect(percentDerived?.results.every((result: any) => result.normalizedTotal === "8".repeat(199))).toBe(true);
+
+    const productWithFixedTax = async (taxValue: string) => {
+      const fixture = await createBgF7Fixture("product", { productDecimal: "0" });
+      for (const input of fixture.revision.inputs) {
+        input.taxTreatment = { mode: "fixed", value: taxValue, assumption: "مالیات ثابت ثبت شد", source: "فرض ثبت‌شده توسط سازنده" };
+      }
+      for (const result of fixture.revision.results) {
+        result.taxAmount = taxValue;
+        result.normalizedTotal = taxValue;
+      }
+      await bgF7RebindFixtureInputsAndPins(fixture);
+      return fixture;
+    };
+    const accepted = await productWithFixedTax(twoHundredDigits);
+    expect((await readBgF7Fixture(page, accepted)).status).toBe("ready");
+    const tooManyTotalDigits = await productWithFixedTax(`${"9".repeat(141)}.${"8".repeat(60)}`);
+    expect((await readBgF7Fixture(page, tooManyTotalDigits)).status).toBe("read-error");
+    const tooManyFractionalDigits = await productWithFixedTax(`1.${"8".repeat(61)}`);
+    expect((await readBgF7Fixture(page, tooManyFractionalDigits)).status).toBe("read-error");
+
+    for (const noncanonicalDecimal of ["00", "01", "1.0", "0.0"]) {
+      const noncanonical = await createBgF7Fixture("product");
+      noncanonical.record.requestSnapshot.items[0].quantity = noncanonicalDecimal;
+      for (const input of noncanonical.revision.inputs) {
+        input.proposalRevisionSnapshot.requestSnapshot.items[0].quantity = noncanonicalDecimal;
+        input.proposalRevisionSnapshot.lines[0].quantity = noncanonicalDecimal;
+      }
+      for (const result of noncanonical.revision.results) {
+        result.lines[0].declaredSnapshot.quantity = noncanonicalDecimal;
+      }
+      await bgF7RebindFixtureInputsAndPins(noncanonical);
+      expect.soft((await readBgF7Fixture(page, noncanonical)).status).toBe("read-error");
+    }
+
+    const declaredTotalRequestMismatch = await createBgF7Fixture("product");
+    declaredTotalRequestMismatch.record.requestSnapshot.items[0].quantity = "2";
+    for (const input of declaredTotalRequestMismatch.revision.inputs) {
+      input.proposalRevisionSnapshot.requestSnapshot.items[0].quantity = "2";
+    }
+    await bgF7RebindFixtureInputsAndPins(declaredTotalRequestMismatch);
+    expect.soft((await readBgF7Fixture(page, declaredTotalRequestMismatch)).status).toBe("read-error");
+
+    const draftHashResults = await page.evaluate(async () => {
+      const module = await import("/src/builderProposalComparisons.ts");
+      const adjustment = (proposalId: string) => ({
+        proposalId,
+        selected: true,
+        lineAdjustments: [{ proposalLineId: `${proposalId}:line`, requestItemId: "item", basis: "unknown", adjustedQuantity: "", adjustedQuantityUnit: "", assumption: "" }],
+        taxMode: "fixed",
+        taxValue: " ۰۱٫۵۰ ",
+        taxAssumption: "  فرض  ",
+        transportMode: "unknown",
+        transportValue: "",
+        transportAssumption: "",
+      });
+      const productRaw = { requestKey: "request", proposals: [adjustment("proposal-1"), adjustment("proposal-2")] };
+      const productCanonical = structuredClone(productRaw);
+      for (const proposal of productCanonical.proposals) {
+        proposal.taxValue = "1.5";
+        proposal.taxAssumption = "فرض";
+      }
+      const criterionIds = ["scope", "location", "size-or-volume", "qualification", "timing", "method", "in-scope", "out-of-scope", "warranty", "payment-terms"];
+      const serviceProposal = (proposalId: string) => ({
+        proposalId,
+        selected: true,
+        criteria: criterionIds.map((criterionId) => ({ criterionId, declaredValue: "  مقدار  ", assessment: "unknown", rationale: "  دلیل  " })),
+      });
+      const serviceRaw = { requestKey: "request", proposals: [serviceProposal("proposal-1"), serviceProposal("proposal-2")] };
+      const serviceCanonical = structuredClone(serviceRaw);
+      for (const proposal of serviceCanonical.proposals) for (const criterion of proposal.criteria) {
+        criterion.declaredValue = "مقدار";
+        criterion.rationale = "دلیل";
+      }
+      const malformed = [
+        { requestKey: "request", proposals: [{ unexpected: true }, { unexpected: true }] },
+        { requestKey: "request", proposals: [adjustment("proposal-1"), adjustment("proposal-1")] },
+        { requestKey: "request", proposals: [adjustment("proposal-1")] },
+        { requestKey: "request", proposals: [adjustment("proposal-1"), { ...adjustment("proposal-2"), taxMode: "bogus" }] },
+        { requestKey: "request", proposals: [adjustment("proposal-1"), { ...adjustment("proposal-2"), taxAssumption: "ا".repeat(501) }] },
+      ];
+      const sparse: any[] = [];
+      sparse.length = 2;
+      return {
+        productRaw: module.builderProductComparisonNormalizedDraftHash(productRaw),
+        productCanonical: module.builderProductComparisonNormalizedDraftHash(productCanonical),
+        serviceRaw: module.builderServiceComparisonNormalizedDraftHash(serviceRaw),
+        serviceCanonical: module.builderServiceComparisonNormalizedDraftHash(serviceCanonical),
+        malformed: malformed.map((draft) => module.builderProductComparisonNormalizedDraftHash(draft)),
+        sparse: module.builderProductComparisonNormalizedDraftHash({ requestKey: "request", proposals: sparse }),
+        serviceWrongCount: module.builderServiceComparisonNormalizedDraftHash({ requestKey: "request", proposals: [serviceProposal("proposal-1")] }),
+      };
+    });
+    expect.soft(draftHashResults.productRaw).toBe(draftHashResults.productCanonical);
+    expect.soft(draftHashResults.serviceRaw).toBe(draftHashResults.serviceCanonical);
+    expect.soft(draftHashResults.malformed).toEqual([null, null, null, null, null]);
+    expect.soft(draftHashResults.sparse).toBeNull();
+    expect.soft(draftHashResults.serviceWrongCount).toBeNull();
+  });
+
+  test(bgF7FrozenBaseTitles[0], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    const before = await snapshotBgF7DescendantBytes(page);
+    const product = await initializeBgF7ComparisonState(page, "product", prepared.dependencies);
+    expect(await snapshotBgF7DescendantBytes(page)).toEqual(before);
+    const service = await initializeBgF7ComparisonState(page, "service", prepared.dependencies);
+    expect(await snapshotBgF7DescendantBytes(page)).toEqual(before);
+    expect(product.status, JSON.stringify(product)).toBe("ready");
+    expect(product).toMatchObject({ dependencyStatus: "current", envelope: { schemaVersion: 2, storeVersion: 1 } });
+    expect(service.status, JSON.stringify(service)).toBe("ready");
+    expect(service).toMatchObject({ dependencyStatus: "current", envelope: { schemaVersion: 2, storeVersion: 1 } });
+    const authority = await readBgF7ComparisonAuthorityTriplets(page);
+    expect(authority.product.legacyRaw).toBe(prepared.authorities.product.legacyRaw);
+    expect(authority.service.legacyRaw).toBe(prepared.authorities.service.legacyRaw);
+    const normalRead = await page.evaluate(async (dependencies) => {
+      const module = await import("/src/builderProposalComparisons.ts");
+      const context = { authority: dependencies.authority, dependencies };
+      return {
+        product: module.readBuilderProductComparisonState(context),
+        service: module.readBuilderServiceComparisonState(context),
+      };
+    }, prepared.dependencies);
+    expect(normalRead.product.status).toBe("ready");
+    expect(normalRead.service.status).toBe("ready");
+    expect(await snapshotBgF7DescendantBytes(page)).toEqual(before);
+    expect(product.envelope.records[0].legacyEvidence.revisionLinks[0].legacyFingerprint).toMatch(/^fnv1a-[0-9a-f]{8}$/);
+    expect(service.envelope.records[0].legacyEvidence.revisionLinks[0].legacyFingerprint).toMatch(/^fnv1a-[0-9a-f]{8}$/);
+  });
+
+  test(bgF7FrozenBaseTitles[1], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    for (const kind of ["product", "service"] as const) {
+      const state = await initializeBgF7ComparisonState(page, kind, prepared.dependencies);
+      expect(state.status, kind).toBe("ready");
+      expect(state.envelope.records[0].history, kind).not.toHaveLength(0);
+      expect(state.envelope.records[0].history.every((event: any) => event.actor === "شما"
+        && event.origin === "v1-migration"
+        && event.actorPrincipalId === "local-builder-account"
+        && event.idempotencyKey === null
+        && event.commandPayloadHash === null), kind).toBe(true);
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[2], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    const proposalById = new Map(prepared.proposalState.envelope.records.map((record: any) => [record.id, record]));
+    for (const kind of ["product", "service"] as const) {
+      const source = JSON.parse(prepared.authorities[kind].legacyRaw!);
+      const revision = source[0].revisions[0];
+      const secondProposal = proposalById.get(revision.inputs[1].proposalId) as any;
+      const canonicalRevision = secondProposal.revisions.find((item: any) => item.id === revision.inputs[1].proposalRevisionId);
+      expect(revision.inputs[0].proposalRevisionFingerprint, kind).toMatch(/^fnv1a-/);
+      revision.inputs[1].proposalRevisionFingerprint = canonicalRevision.fingerprint;
+      revision.fingerprint = bgF6LegacyFingerprint({ projectId: source[0].projectId, target: source[0].target, requestSnapshot: source[0].requestSnapshot, revision: bgF6WithoutFingerprint(revision) });
+      await seedBgF7ComparisonV1(page, kind, source);
+      const state = await initializeBgF7ComparisonState(page, kind, prepared.dependencies);
+      expect(state.status, kind).toBe("ready");
+      const claims = state.envelope.records[0].legacyEvidence.revisionLinks[0].proposalFingerprintClaims.map((claim: any) => claim.claimedFingerprint);
+      expect(claims, kind).toEqual([expect.stringMatching(/^fnv1a-/), canonicalRevision.fingerprint]);
+      expect(state.envelope.records[0].revisions[0].inputs.every((input: any) => /^sha256-/.test(input.proposalRevisionFingerprint)), kind).toBe(true);
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[3], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    const sources = {
+      product: JSON.parse(prepared.authorities.product.legacyRaw!),
+      service: JSON.parse(prepared.authorities.service.legacyRaw!),
+    };
+    let proposalState = prepared.proposalState;
+    for (const kind of ["product", "service"] as const) {
+      const input = sources[kind][0].revisions[0].inputs[0];
+      const proposal = proposalState.envelope.records.find((record: any) => record.id === input.proposalId);
+      const update = await buildBgF6UpdateCommandFromRecord(page, prepared.dependencies, proposal, {
+        idempotencyKey: `bg-f7:historical-proposal:${kind}:update`,
+        expectedStoreVersion: proposalState.envelope.storeVersion,
+        notes: `نسخهٔ تازه ${kind} پس از ثبت مقایسهٔ تاریخی`,
+      });
+      update.command.pins = {
+        requestDependencyFingerprint: proposal.target.requestDependencyFingerprint,
+        contentApprovalFingerprint: proposal.target.contentApprovalFingerprint,
+        supplierContactRevisionFingerprint: proposal.contactPin.supplierContactRevisionFingerprint,
+        fileMetadataFingerprint: proposal.reference.metadataFingerprint,
+        expectedDependencySnapshotHash: prepared.dependencies.snapshotHash,
+      };
+      expect((await executeBgF6Command(page, update.command, prepared.dependencies)).status, kind).toBe("updated");
+      proposalState = await readBuilderProposalState(page, prepared.dependencies);
+      expect(proposalState.status, kind).toBe("ready");
+    }
+
+    const staleDependencies = await createBgF7StaleProposalDependencies(page, prepared.dependencies);
+    expect(await readBuilderProposalState(page, staleDependencies)).toMatchObject({ status: "ready", dependencyStatus: "stale" });
+    for (const kind of ["product", "service"] as const) {
+      const state = await initializeBgF7ComparisonState(page, kind, staleDependencies);
+      const sourceInput = sources[kind][0].revisions[0].inputs[0];
+      expect(state, kind).toMatchObject({ status: "ready", dependencyStatus: "current" });
+      expect(state.envelope.records[0].revisions[0].inputs[0], kind).toMatchObject({ proposalId: sourceInput.proposalId, proposalVersion: sourceInput.proposalVersion, proposalRevisionId: sourceInput.proposalRevisionId });
+      const effectiveStatus = await page.evaluate(async ({ selectedKind, comparison, proposals, dependencies }) => {
+        const module = await import("/src/builderProposalComparisons.ts");
+        return selectedKind === "product"
+          ? module.builderProductComparisonEffectiveStatus(comparison, proposals, dependencies)
+          : module.builderServiceComparisonEffectiveStatus(comparison, proposals, dependencies);
+      }, { selectedKind: kind, comparison: state.envelope.records[0], proposals: proposalState.envelope, dependencies: staleDependencies });
+      expect(effectiveStatus, kind).toBe("needs-review");
+    }
+
+    const comparisonAuthorityBefore = await readBgF7ComparisonAuthorityTriplets(page);
+    await page.evaluate(({ canonicalKey, markerKey, authority }) => {
+      window.localStorage.setItem(canonicalKey, authority.canonicalRaw);
+      window.localStorage.setItem(markerKey, authority.markerRaw);
+    }, { canonicalKey: builderProposalsTestStorageKey, markerKey: builderProposalsMarkerTestStorageKey, authority: prepared.preMigrationProposalAuthority });
+    const transplantedProposalState = await readBuilderProposalState(page, prepared.dependencies);
+    expect(transplantedProposalState).toMatchObject({ status: "ready", dependencyStatus: "current" });
+    for (const kind of ["product", "service"] as const) {
+      const comparison = (await readBgF7ComparisonAuthority(page, kind)).records![0];
+      const input = comparison.revisions[0].inputs[0];
+      const transplantedProposal = transplantedProposalState.envelope.records.find((record: any) => record.id === input.proposalId);
+      const transplantedRevision = transplantedProposal.revisions.find((revision: any) => revision.id === input.proposalRevisionId && revision.version === input.proposalVersion);
+      expect(transplantedProposal.legacyEvidence, kind).toBeNull();
+      expect(transplantedRevision, kind).toEqual(input.proposalRevisionSnapshot);
+      expect(await initializeBgF7ComparisonState(page, kind, prepared.dependencies), kind).toMatchObject({ status: "ready", dependencyStatus: "read-error" });
+      expect((await readBgF7ComparisonAuthorityTriplets(page))[kind], kind).toEqual(comparisonAuthorityBefore[kind]);
+    }
+
+    await page.evaluate(({ canonicalKey, markerKey }) => {
+      window.localStorage.removeItem(canonicalKey);
+      window.localStorage.removeItem(markerKey);
+    }, { canonicalKey: builderProposalsTestStorageKey, markerKey: builderProposalsMarkerTestStorageKey });
+    for (const kind of ["product", "service"] as const) {
+      expect(await initializeBgF7ComparisonState(page, kind, prepared.dependencies), kind).toMatchObject({ status: "ready", dependencyStatus: "read-error" });
+      expect((await readBgF7ComparisonAuthorityTriplets(page))[kind], kind).toEqual(comparisonAuthorityBefore[kind]);
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[4], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true, productSecondRevision: true, serviceSecondRevision: true });
+    for (const kind of ["product", "service"] as const) {
+      const source = JSON.parse(prepared.authorities[kind].legacyRaw!);
+      const first = source[0];
+      const duplicate = structuredClone(first);
+      duplicate.id = `${first.id}:independent`;
+      duplicate.history.forEach((event: any, index: number) => { event.id = `${duplicate.id}:event:${index + 1}`; });
+      duplicate.revisions.forEach((revision: any, index: number) => {
+        revision.id = `${duplicate.id}:revision:${index + 1}`;
+        revision.fingerprint = bgF6LegacyFingerprint({ projectId: duplicate.projectId, target: duplicate.target, requestSnapshot: duplicate.requestSnapshot, revision: bgF6WithoutFingerprint(revision) });
+      });
+      duplicate.currentRevisionId = duplicate.revisions.at(-1).id;
+      await seedBgF7ComparisonV1(page, kind, [first, duplicate]);
+      const descendantName = kind === "product" ? "productDecision" : "serviceDecision";
+      const decisionBefore = (await snapshotBgF7DescendantBytes(page))[descendantName];
+      const decision = JSON.parse(decisionBefore)[0];
+      expect(decision.target.comparisonVersion, kind).toBe(1);
+      expect(first.version, kind).toBe(2);
+      const state = await initializeBgF7ComparisonState(page, kind, prepared.dependencies);
+      expect(state.status, kind).toBe("ready");
+      expect(state.envelope.records.map((record: any) => record.id), kind).toEqual([first.id, duplicate.id].sort(compareCodePoints));
+      expect((await snapshotBgF7DescendantBytes(page))[descendantName], kind).toBe(decisionBefore);
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[5], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    for (const kind of ["product", "service"] as const) {
+      const interrupted = await interruptBgF7Cutover(page, kind, prepared.dependencies, "pending");
+      expect(interrupted.status).toBe("read-error");
+      expect(JSON.parse((await readBgF7ComparisonAuthority(page, kind)).markerRaw!).state).toBe("pending");
+      const resumed = await initializeBgF7ComparisonState(page, kind, prepared.dependencies);
+      expect(resumed.status).toBe("ready");
+      expect(JSON.parse((await readBgF7ComparisonAuthority(page, kind)).markerRaw!).state).toBe("committed");
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[6], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    for (const kind of ["product", "service"] as const) {
+      for (const crashPoint of ["verified", "canonical"] as const) {
+        await page.evaluate((keys) => {
+          window.localStorage.removeItem(keys.canonical);
+          window.localStorage.removeItem(keys.marker);
+        }, bgF7ComparisonKeys[kind]);
+        const interrupted = await interruptBgF7Cutover(page, kind, prepared.dependencies, crashPoint);
+        expect(interrupted.status).toBe("read-error");
+        const partial = await readBgF7ComparisonAuthority(page, kind);
+        const verifiedMarker = JSON.parse(partial.markerRaw!);
+        expect(verifiedMarker.state).toBe("verified");
+        expect(partial.canonicalRaw, `${kind}:${crashPoint}`).toBe(crashPoint === "verified" ? null : verifiedMarker.candidateRaw);
+        const resumed = await initializeBgF7ComparisonState(page, kind, prepared.dependencies);
+        expect(resumed.status).toBe("ready");
+      }
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[7], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    const originalProposal = await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsTestStorageKey);
+    const originalProposalMarker = await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsMarkerTestStorageKey);
+    for (const kind of ["product", "service"] as const) {
+      const originalSource = prepared.authorities[kind].legacyRaw!;
+      for (const drift of ["source", "identity", "dependency", "historical-dependency", "candidate"] as const) {
+        await page.evaluate(({ keys, sourceRaw, proposalKey, proposalMarkerKey, proposalRaw, proposalMarkerRaw }) => {
+          window.localStorage.setItem(keys.legacy, sourceRaw);
+          window.localStorage.removeItem(keys.canonical);
+          window.localStorage.removeItem(keys.marker);
+          if (proposalRaw !== null) window.localStorage.setItem(proposalKey, proposalRaw);
+          if (proposalMarkerRaw !== null) window.localStorage.setItem(proposalMarkerKey, proposalMarkerRaw);
+        }, { keys: bgF7ComparisonKeys[kind], sourceRaw: originalSource, proposalKey: builderProposalsTestStorageKey, proposalMarkerKey: builderProposalsMarkerTestStorageKey, proposalRaw: originalProposal, proposalMarkerRaw: originalProposalMarker });
+        const result = await initializeBgF7WithPrecommitDrift(page, kind, prepared.dependencies, drift, prepared.preMigrationProposalAuthority);
+        expect(result.status, `${kind}:${drift}`).toBe("read-error");
+        expect((await readBgF7ComparisonAuthority(page, kind)).canonicalRaw, `${kind}:${drift}`).toBeNull();
+      }
+      await page.evaluate(({ keys, sourceRaw, proposalKeys, proposalAuthority }) => {
+        window.localStorage.setItem(keys.legacy, sourceRaw);
+        window.localStorage.removeItem(keys.canonical);
+        window.localStorage.removeItem(keys.marker);
+        window.localStorage.setItem(proposalKeys.canonical, proposalAuthority.canonicalRaw);
+        window.localStorage.setItem(proposalKeys.marker, proposalAuthority.markerRaw);
+      }, {
+        keys: bgF7ComparisonKeys[kind],
+        sourceRaw: originalSource,
+        proposalKeys: { canonical: builderProposalsTestStorageKey, marker: builderProposalsMarkerTestStorageKey },
+        proposalAuthority: prepared.preMigrationProposalAuthority,
+      });
+      expect((await initializeBgF7ComparisonState(page, kind, prepared.dependencies)).status, `${kind}:fresh-historical-evidence`).toBe("read-error");
+      const freshRejected = await readBgF7ComparisonAuthority(page, kind);
+      expect(freshRejected.canonicalRaw, `${kind}:fresh-historical-evidence`).toBeNull();
+      expect(freshRejected.markerRaw, `${kind}:fresh-historical-evidence`).toBeNull();
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[8], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    for (const kind of ["product", "service"] as const) {
+      const lateSource = prepared.authorities[kind].legacyRaw!;
+      await page.evaluate((keys) => {
+        window.localStorage.removeItem(keys.legacy);
+        window.localStorage.removeItem(keys.canonical);
+        window.localStorage.removeItem(keys.marker);
+      }, bgF7ComparisonKeys[kind]);
+      const initial = await initializeBgF7ComparisonState(page, kind, prepared.dependencies);
+      expect(initial, kind).toMatchObject({ status: "ready", envelope: { records: [] } });
+      const committed = await readBgF7ComparisonAuthority(page, kind);
+      await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF7ComparisonKeys[kind].legacy, raw: lateSource });
+      const reread = await initializeBgF7ComparisonState(page, kind, prepared.dependencies);
+      expect(reread, kind).toMatchObject({ status: "ready", envelope: { records: [] } });
+      expect((await readBgF7ComparisonAuthority(page, kind)).canonicalRaw, kind).toBe(committed.canonicalRaw);
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[9], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    for (const kind of ["product", "service"] as const) {
+      expect((await initializeBgF7ComparisonState(page, kind, prepared.dependencies)).status, kind).toBe("ready");
+      const valid = await readBgF7ComparisonAuthority(page, kind);
+      for (const mode of ["canonical", "marker", "future"] as const) {
+        const tampered = await page.evaluate(async ({ keys, canonicalRaw, markerRaw, corruption }) => {
+          const module = await import("/src/builderProposalComparisons.ts");
+          window.localStorage.setItem(keys.canonical, canonicalRaw!);
+          window.localStorage.setItem(keys.marker, markerRaw!);
+          if (corruption === "canonical") window.localStorage.setItem(keys.canonical, "{broken");
+          if (corruption === "marker") window.localStorage.setItem(keys.marker, "{broken");
+          if (corruption === "future") {
+            const envelope = JSON.parse(canonicalRaw!);
+            envelope.schemaVersion = 3;
+            const { fingerprint: _envelopeFingerprint, ...envelopePayload } = envelope;
+            envelope.fingerprint = module.builderComparisonHash(envelopePayload);
+            const nextCanonicalRaw = JSON.stringify(envelope);
+            const marker = JSON.parse(markerRaw!);
+            marker.canonicalRawHash = module.builderComparisonRawHash(nextCanonicalRaw);
+            marker.candidateRawHash = module.builderComparisonRawHash(nextCanonicalRaw);
+            const { fingerprint: _markerFingerprint, ...markerPayload } = marker;
+            marker.fingerprint = module.builderComparisonHash(markerPayload);
+            window.localStorage.setItem(keys.canonical, nextCanonicalRaw);
+            window.localStorage.setItem(keys.marker, JSON.stringify(marker));
+          }
+          return {
+            legacyRaw: window.localStorage.getItem(keys.legacy),
+            canonicalRaw: window.localStorage.getItem(keys.canonical),
+            markerRaw: window.localStorage.getItem(keys.marker),
+          };
+        }, { keys: bgF7ComparisonKeys[kind], canonicalRaw: valid.canonicalRaw, markerRaw: valid.markerRaw, corruption: mode });
+        const state = await initializeBgF7ComparisonState(page, kind, prepared.dependencies);
+        expect(state.status, `${kind}:${mode}`).toBe("read-error");
+        const after = await readBgF7ComparisonAuthority(page, kind);
+        expect({ legacyRaw: after.legacyRaw, canonicalRaw: after.canonicalRaw, markerRaw: after.markerRaw }, `${kind}:${mode}`).toEqual(tampered);
+        expect(after.legacyRaw, `${kind}:${mode}`).toBe(prepared.authorities[kind].legacyRaw);
+      }
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[22], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    const originalSources = {
+      product: prepared.authorities.product.legacyRaw!,
+      service: prepared.authorities.service.legacyRaw!,
+    };
+    for (const failedKind of ["product", "service"] as const) {
+      const healthyKind = failedKind === "product" ? "service" : "product";
+      await page.evaluate(({ keys, sources }) => {
+        for (const kind of ["product", "service"] as const) {
+          window.localStorage.setItem(keys[kind].legacy, sources[kind]);
+          window.localStorage.removeItem(keys[kind].canonical);
+          window.localStorage.removeItem(keys[kind].marker);
+        }
+      }, { keys: bgF7ComparisonKeys, sources: originalSources });
+      expect((await initializeBgF7ComparisonState(page, healthyKind, prepared.dependencies)).status, healthyKind).toBe("ready");
+      const healthyBefore = (await readBgF7ComparisonAuthorityTriplets(page))[healthyKind];
+      await seedBgF7ComparisonV1(page, failedKind, [{ malformed: true }]);
+      expect((await initializeBgF7ComparisonState(page, failedKind, prepared.dependencies)).status, failedKind).toBe("read-error");
+      expect((await readBgF7ComparisonAuthorityTriplets(page))[healthyKind], healthyKind).toEqual(healthyBefore);
+      expect((await initializeBgF7ComparisonState(page, healthyKind, prepared.dependencies)).status, healthyKind).toBe("ready");
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[17], async ({ page }) => {
+    const currentContext: any = await createBgF7ComparisonContext(page, "product");
+    const initialized: any = await initializeBgF7ComparisonState(page, "product", currentContext);
+    expect(initialized).toMatchObject({ status: "ready", envelope: { storeVersion: 1 } });
+    const fixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      action: "update-comparison",
+      idempotencyKey: "bg-f7:task-4:no-op",
+    });
+    const before = await readBgF7ComparisonAuthority(page, "product");
+    const unchanged: any = await executeBgF7ComparisonCommandWithWriteProbe(
+      page,
+      fixture.command,
+      currentContext,
+      bgF7ComparisonKeys.product,
+    );
+    expect(unchanged.result).toMatchObject({ status: "unchanged", recordId: fixture.command.comparisonId });
+    expect(Object.values(unchanged.writes).every((count) => count === 0)).toBe(true);
+    expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(before.canonicalRaw);
+
+    const semantic = bgF7ComparisonDraftWithSemanticChange(fixture.command, "فرض تازه و معنادار Task 4");
+    semantic.idempotencyKey = "bg-f7:task-4:semantic-update";
+    const updated: any = await executeBgF7ComparisonCommandWithWriteProbe(
+      page,
+      semantic,
+      currentContext,
+      bgF7ComparisonKeys.product,
+    );
+    expect(updated.result).toMatchObject({ status: "updated", recordId: fixture.command.comparisonId });
+    const record = updated.result.envelope.records.find((item: any) => item.id === fixture.command.comparisonId);
+    expect(record).toMatchObject({ version: 2 });
+    expect(record.revisions).toHaveLength(2);
+    expect(record.history).toHaveLength(2);
+    expect(updated.result.envelope.idempotencyReceipts).toHaveLength(1);
+    expect(updated.writes[bgF7ComparisonKeys.product.canonical]).toBe(1);
+    expect(updated.writes[bgF7ComparisonKeys.product.marker]).toBe(0);
+    expect(updated.writes[bgF7ComparisonKeys.product.legacy]).toBe(0);
+    expect(updated.writes[bgF7ComparisonKeys.service.canonical]).toBe(0);
+  });
+
+  test(bgF7FrozenBaseTitles[18], async ({ page }) => {
+    const currentContext: any = await createBgF7ComparisonContext(page, "product");
+    await initializeBgF7ComparisonState(page, "product", currentContext);
+    const fixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      action: "update-comparison",
+      idempotencyKey: "bg-f7:task-4:idempotency",
+    });
+    const command = bgF7ComparisonDraftWithSemanticChange(fixture.command, "attempt قطعی و گم‌شدهٔ Task 4");
+    const first: any = await executeBgF7ComparisonCommandWithWriteProbe(
+      page,
+      command,
+      currentContext,
+      bgF7ComparisonKeys.product,
+    );
+    expect(first.result.status).toBe("updated");
+    const firstRecord = first.result.envelope.records.find((item: any) => item.id === command.comparisonId);
+    const firstRevision = firstRecord.revisions.at(-1);
+    const firstEvent = firstRecord.history.at(-1);
+    const firstReceipt = first.result.envelope.idempotencyReceipts.at(-1);
+    expect(firstRevision.id).toBe(`builder-proposal-comparison-revision-${bgF7OracleSha256({
+      schemaVersion: 1,
+      entity: "revision",
+      kind: "product",
+      action: command.action,
+      comparisonId: command.comparisonId,
+      idempotencyKey: command.idempotencyKey,
+      resultingVersion: firstRecord.version,
+    })}`);
+    expect(firstEvent.id).toBe(`builder-proposal-comparison-event-${bgF7OracleSha256({
+      schemaVersion: 1,
+      entity: "event",
+      kind: "product",
+      action: command.action,
+      comparisonId: command.comparisonId,
+      idempotencyKey: command.idempotencyKey,
+      resultingVersion: firstRecord.version,
+    })}`);
+    const committedRaw = (await readBgF7ComparisonAuthority(page, "product")).canonicalRaw;
+    void first.result;
+
+    const staleDependencies = await createBgF7StaleProposalDependencies(page, currentContext.dependencies);
+    const driftedContext = { authority: currentContext.authority, dependencies: staleDependencies };
+    const replay: any = await executeBgF7ComparisonCommandWithWriteProbe(
+      page,
+      command,
+      driftedContext,
+      bgF7ComparisonKeys.product,
+    );
+    expect(replay.result.status).toBe("updated");
+    expect(Object.values(replay.writes).every((count) => count === 0)).toBe(true);
+    expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(committedRaw);
+    const replayRecord = replay.result.envelope.records.find((item: any) => item.id === command.comparisonId);
+    const replayReceipt = replay.result.envelope.idempotencyReceipts.at(-1);
+    expect({
+      revisionId: replayRecord.revisions.at(-1).id,
+      eventId: replayRecord.history.at(-1).id,
+      receiptPosition: replayReceipt.position,
+      recordVersion: replayRecord.version,
+    }).toEqual({
+      revisionId: firstRevision.id,
+      eventId: firstEvent.id,
+      receiptPosition: firstReceipt.position,
+      recordVersion: firstRecord.version,
+    });
+    expect(replay.result.envelope.idempotencyReceipts.filter((receipt: any) => receipt.key === command.idempotencyKey)).toHaveLength(1);
+
+    const mutations: Array<{ name: string; mutate: (value: any) => void }> = [
+      { name: "input schema", mutate: (value) => { value.inputSchemaVersion = 2; } },
+      { name: "kind", mutate: (value) => { value.kind = "service"; } },
+      { name: "action", mutate: (value) => { value.action = "create-comparison"; delete value.expectedComparisonVersion; } },
+      { name: "project id", mutate: (value) => { value.projectId = "project-bg-f7-foreign"; } },
+      { name: "comparison id", mutate: (value) => { value.comparisonId = `${value.comparisonId}:foreign`; } },
+      { name: "normalized draft", mutate: (value) => { value.draft.proposals[0].taxAssumption = "payload دیگر"; } },
+      { name: "pins", mutate: (value) => { value.pins.proposalEnvelopeFingerprint = `sha256-${"a".repeat(64)}`; } },
+      { name: "expected store version", mutate: (value) => { value.expectedStoreVersion += 1; } },
+      { name: "expected record version", mutate: (value) => { value.expectedComparisonVersion += 1; } },
+    ];
+    for (const mutation of mutations) {
+      const changed = structuredClone(command);
+      mutation.mutate(changed);
+      const outcome: any = await executeBgF7ComparisonCommandWithWriteProbe(
+        page,
+        changed,
+        driftedContext,
+        bgF7ComparisonKeys.product,
+      );
+      expect(outcome.result.status, mutation.name).toBe("idempotency-payload-mismatch");
+      expect(Object.values(outcome.writes).every((count) => count === 0), mutation.name).toBe(true);
+    }
+
+    const freshUnsupportedSchema = structuredClone(command);
+    freshUnsupportedSchema.inputSchemaVersion = 2;
+    freshUnsupportedSchema.idempotencyKey = "bg-f7:task-4:unsupported-schema:fresh";
+    const unsupported: any = await executeBgF7ComparisonCommandWithWriteProbe(
+      page,
+      freshUnsupportedSchema,
+      currentContext,
+      bgF7ComparisonKeys.product,
+    );
+    expect(unsupported.result.status).toBe("schema-invalid");
+    expect(Object.values(unsupported.writes).every((count) => count === 0)).toBe(true);
+    const unsupportedProbe = await page.evaluate(async ({ currentCommand, readContext }) => {
+      const module = await import("/src/builderProposalComparisons.ts");
+      let dependencyReads = 0;
+      const result = await module.executeBuilderComparisonCommand(currentCommand, () => {
+        dependencyReads += 1;
+        return readContext as any;
+      });
+      return { result, dependencyReads };
+    }, { currentCommand: freshUnsupportedSchema, readContext: currentContext });
+    expect(unsupportedProbe.result.status).toBe("schema-invalid");
+    expect(unsupportedProbe.dependencyReads).toBe(0);
+
+    const reservedProjectFixture: any = await createBgF7Fixture("product");
+    const reservedProjectId = "__proto__";
+    const reservedAuthorizationHash = `sha256-${"6".repeat(64)}`;
+    reservedProjectFixture.authority = {
+      ...bgF7TestAuthority,
+      projectIds: [reservedProjectId],
+      authorizationHashes: Object.fromEntries([[reservedProjectId, reservedAuthorizationHash]]),
+    };
+    reservedProjectFixture.record.projectId = reservedProjectId;
+    reservedProjectFixture.record.scopeId = reservedProjectId;
+    for (const revision of reservedProjectFixture.record.revisions) {
+      revision.projectId = reservedProjectId;
+      revision.scopeId = reservedProjectId;
+    }
+    for (const event of reservedProjectFixture.record.history) {
+      event.projectId = reservedProjectId;
+      event.scopeId = reservedProjectId;
+      event.authorizationContextHash = reservedAuthorizationHash;
+    }
+    for (const receipt of reservedProjectFixture.envelope.idempotencyReceipts) {
+      receipt.projectId = reservedProjectId;
+      receipt.authorizationContextHash = reservedAuthorizationHash;
+      receipt.commandPins.authorizationContextHash = reservedAuthorizationHash;
+    }
+    await bgF7RebindFixtureInputsAndPins(reservedProjectFixture);
+    const reservedReceipt = reservedProjectFixture.envelope.idempotencyReceipts[0];
+    const reservedRevision = reservedProjectFixture.record.revisions[0];
+    const reservedReplayCommand = {
+      inputSchemaVersion: 1,
+      kind: "product",
+      action: "create-comparison",
+      projectId: reservedProjectId,
+      comparisonId: reservedProjectFixture.record.id,
+      draft: bgF7DraftFromRevision(reservedProjectFixture.record, reservedRevision),
+      pins: structuredClone(reservedReceipt.commandPins),
+      expectedStoreVersion: reservedReceipt.expectedStoreVersion,
+      idempotencyKey: reservedReceipt.key,
+    };
+    expect(await bgF7OracleSha256({
+      inputSchemaVersion: reservedReplayCommand.inputSchemaVersion,
+      kind: reservedReplayCommand.kind,
+      action: reservedReplayCommand.action,
+      projectId: reservedReplayCommand.projectId,
+      comparisonId: reservedReplayCommand.comparisonId,
+      draft: reservedReplayCommand.draft,
+      pins: reservedReplayCommand.pins,
+      expectedStoreVersion: reservedReplayCommand.expectedStoreVersion,
+    })).toBe(reservedReceipt.payloadHash);
+    const reservedReplay = await page.evaluate(async ({ fixture, command, keys }) => {
+      window.localStorage.setItem(keys.canonical, fixture.canonicalRaw);
+      window.localStorage.setItem(keys.marker, JSON.stringify(fixture.marker));
+      window.localStorage.removeItem(keys.incident);
+      const before = {
+        canonicalRaw: window.localStorage.getItem(keys.canonical),
+        markerRaw: window.localStorage.getItem(keys.marker),
+        incidentRaw: window.localStorage.getItem(keys.incident),
+      };
+      const module = await import("/src/builderProposalComparisons.ts");
+      const nativeSet = Storage.prototype.setItem;
+      const nativeRemove = Storage.prototype.removeItem;
+      const writes: Record<string, number> = Object.fromEntries(Object.values(keys).map((key) => [key, 0]));
+      let dependencyReads = 0;
+      Storage.prototype.setItem = function (key: string, value: string) {
+        if (this === window.localStorage && Object.prototype.hasOwnProperty.call(writes, key)) writes[key] += 1;
+        return nativeSet.call(this, key, value);
+      };
+      Storage.prototype.removeItem = function (key: string) {
+        if (this === window.localStorage && Object.prototype.hasOwnProperty.call(writes, key)) writes[key] += 1;
+        return nativeRemove.call(this, key);
+      };
+      try {
+        const result = await module.replayBuilderComparisonCommand(command, () => {
+          dependencyReads += 1;
+          throw new Error("reserved project receipt replay must not read dependencies");
+        });
+        return {
+          result,
+          writes,
+          dependencyReads,
+          before,
+          after: {
+            canonicalRaw: window.localStorage.getItem(keys.canonical),
+            markerRaw: window.localStorage.getItem(keys.marker),
+            incidentRaw: window.localStorage.getItem(keys.incident),
+          },
+        };
+      } finally {
+        Storage.prototype.setItem = nativeSet;
+        Storage.prototype.removeItem = nativeRemove;
+      }
+    }, { fixture: reservedProjectFixture, command: reservedReplayCommand, keys: bgF7ComparisonKeys.product });
+    expect(reservedReplay.result).toMatchObject({ status: "created", recordId: reservedReplayCommand.comparisonId });
+    expect(reservedReplay.dependencyReads).toBe(0);
+    expect(Object.values(reservedReplay.writes).every((count) => count === 0)).toBe(true);
+    expect(reservedReplay.after).toEqual(reservedReplay.before);
+  });
+
+  test(bgF7FrozenBaseTitles[19], async ({ page, context }) => {
+    const currentContext: any = await createBgF7ComparisonContext(page, "product");
+    await initializeBgF7ComparisonState(page, "product", currentContext);
+    const first: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      action: "create-comparison",
+      comparisonId: "builder-product-comparison:bg-f7-concurrent-a",
+      idempotencyKey: "bg-f7:task-4:concurrent-create:a",
+    });
+    const second: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      action: "create-comparison",
+      comparisonId: "builder-product-comparison:bg-f7-concurrent-b",
+      idempotencyKey: "bg-f7:task-4:concurrent-create:b",
+    });
+    const secondPage = await context.newPage();
+    await secondPage.goto("/");
+    const held = await holdProcurementWriteLock(page);
+    try {
+      const firstPromise = executeBgF7ComparisonCommandWithWriteProbe(page, first.command, currentContext, bgF7ComparisonKeys.product);
+      await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, held.lockName)).toBe(1);
+      const secondPromise = executeBgF7ComparisonCommandWithWriteProbe(secondPage, second.command, currentContext, bgF7ComparisonKeys.product);
+      await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, held.lockName)).toBe(2);
+      await held.release();
+      const [firstResult, secondResult]: any[] = await Promise.all([firstPromise, secondPromise]);
+      expect(firstResult.result.status).toBe("created");
+      expect(secondResult.result.status).toBe("version-conflict");
+      expect(Object.values(secondResult.writes).every((count) => count === 0)).toBe(true);
+
+      const retry = structuredClone(second.command);
+      retry.expectedStoreVersion = firstResult.result.envelope.storeVersion;
+      const retried: any = await executeBgF7ComparisonCommandWithWriteProbe(secondPage, retry, currentContext, bgF7ComparisonKeys.product);
+      expect(retried.result.status).toBe("created");
+      const ids = retried.result.envelope.records.map((record: any) => record.id);
+      expect(ids).toContain(first.command.comparisonId);
+      expect(ids).toContain(second.command.comparisonId);
+      expect(retried.result.envelope.idempotencyReceipts.map((receipt: any) => receipt.key)).toEqual([
+        first.command.idempotencyKey,
+        second.command.idempotencyKey,
+      ]);
+    } finally {
+      await held.release();
+      await secondPage.close();
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[20], async ({ page, context }) => {
+    const currentContext: any = await createBgF7ComparisonContext(page, "product");
+    await initializeBgF7ComparisonState(page, "product", currentContext);
+    const firstFixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      action: "update-comparison",
+      idempotencyKey: "bg-f7:task-4:concurrent-update:a",
+    });
+    const secondFixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      action: "update-comparison",
+      idempotencyKey: "bg-f7:task-4:concurrent-update:b",
+    });
+    const first = bgF7ComparisonDraftWithSemanticChange(firstFixture.command, "ویرایش هم‌زمان قطعی الف");
+    const second = bgF7ComparisonDraftWithSemanticChange(secondFixture.command, "ویرایش هم‌زمان قطعی ب");
+    const secondPage = await context.newPage();
+    await secondPage.goto("/");
+    const held = await holdProcurementWriteLock(page);
+    try {
+      const firstPromise = executeBgF7ComparisonCommandWithWriteProbe(page, first, currentContext, bgF7ComparisonKeys.product);
+      await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, held.lockName)).toBe(1);
+      const secondPromise = executeBgF7ComparisonCommandWithWriteProbe(secondPage, second, currentContext, bgF7ComparisonKeys.product);
+      await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, held.lockName)).toBe(2);
+      await held.release();
+      const [firstResult, secondResult]: any[] = await Promise.all([firstPromise, secondPromise]);
+      expect(firstResult.result.status).toBe("updated");
+      expect(secondResult.result.status).toBe("version-conflict");
+      expect(Object.values(secondResult.writes).every((count) => count === 0)).toBe(true);
+      const state: any = await initializeBgF7ComparisonState(page, "product", currentContext);
+      const record = state.envelope.records.find((item: any) => item.id === first.comparisonId);
+      expect(record).toMatchObject({ version: 2 });
+      expect(record.revisions).toHaveLength(2);
+      expect(record.revisions.at(-1).inputs[0].taxTreatment.assumption).toBe("ویرایش هم‌زمان قطعی الف");
+    } finally {
+      await held.release();
+      await secondPage.close();
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[21], async ({ page, context }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    const currentContext = { authority: prepared.dependencies.authority, dependencies: prepared.dependencies };
+    await initializeBgF7ComparisonState(page, "product", currentContext);
+    await initializeBgF7ComparisonState(page, "service", currentContext);
+    const sharedKey = "bg-f7:task-4:shared-cross-ledger-key";
+    const product: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "builder-product-comparison:bg-f7-shared-lock",
+      idempotencyKey: sharedKey,
+    });
+    const service: any = await buildBgF7ComparisonCommand(page, "service", currentContext, {
+      comparisonId: "builder-service-comparison:bg-f7-shared-lock",
+      idempotencyKey: sharedKey,
+    });
+    const secondPage = await context.newPage();
+    await secondPage.goto("/");
+    const held = await holdProcurementWriteLock(page);
+    try {
+      const productPromise = executeBgF7ComparisonCommandWithWriteProbe(page, product.command, currentContext, bgF7ComparisonKeys.product);
+      await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, held.lockName)).toBe(1);
+      const servicePromise = executeBgF7ComparisonCommandWithWriteProbe(secondPage, service.command, currentContext, bgF7ComparisonKeys.service);
+      await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, held.lockName)).toBe(2);
+      await held.release();
+      const [productResult, serviceResult]: any[] = await Promise.all([productPromise, servicePromise]);
+      expect(productResult.result.status).toBe("created");
+      expect(serviceResult.result.status).toBe("created");
+      expect(productResult.result.envelope.idempotencyReceipts.at(-1).key).toBe(sharedKey);
+      expect(serviceResult.result.envelope.idempotencyReceipts.at(-1).key).toBe(sharedKey);
+      expect(productResult.writes[bgF7ComparisonKeys.service.canonical]).toBe(0);
+      expect(serviceResult.writes[bgF7ComparisonKeys.product.canonical]).toBe(0);
+    } finally {
+      await held.release();
+      await secondPage.close();
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[23], async ({ page, context }) => {
+    const currentContext: any = await createBgF7ComparisonContext(page, "product");
+    await initializeBgF7ComparisonState(page, "product", currentContext);
+    const fixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "builder-product-comparison:bg-f7-queued-lineage",
+      idempotencyKey: "bg-f7:task-4:queued-lineage",
+    });
+    const comparisonBefore = await readBgF7ComparisonAuthority(page, "product");
+    const proposalBefore = await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsTestStorageKey);
+    const proposalState: any = await readBuilderProposalState(page, currentContext.dependencies);
+    const proposalId = fixture.resolved.existing.revisions.at(-1).inputs[0].proposalId;
+    const proposal = proposalState.envelope.records.find((record: any) => record.id === proposalId);
+    const proposalUpdate = await buildBgF6UpdateCommandFromRecord(page, currentContext.dependencies, proposal, {
+      idempotencyKey: "bg-f7:task-4:queued-proposal-update",
+      expectedStoreVersion: proposalState.envelope.storeVersion,
+      notes: "lineage تازه پیش از اجرای Comparison صف‌شده",
+    });
+    proposalUpdate.command.pins = {
+      requestDependencyFingerprint: proposal.target.requestDependencyFingerprint,
+      contentApprovalFingerprint: proposal.target.contentApprovalFingerprint,
+      supplierContactRevisionFingerprint: proposal.contactPin.supplierContactRevisionFingerprint,
+      fileMetadataFingerprint: proposal.reference.metadataFingerprint,
+      expectedDependencySnapshotHash: currentContext.dependencies.snapshotHash,
+    };
+    expect((await executeBgF6Command(page, proposalUpdate.command, currentContext.dependencies)).status).toBe("updated");
+    const proposalAfter = await page.evaluate((key) => window.localStorage.getItem(key), builderProposalsTestStorageKey);
+    expect(proposalAfter).not.toBe(proposalBefore);
+    await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: builderProposalsTestStorageKey, raw: proposalBefore });
+
+    const secondPage = await context.newPage();
+    await secondPage.goto("/");
+    const held = await holdProcurementWriteLock(page);
+    try {
+      const pending = executeBgF7ComparisonCommandWithWriteProbe(secondPage, fixture.command, currentContext, bgF7ComparisonKeys.product);
+      await expect.poll(() => page.evaluate(async (name) => (await navigator.locks.query()).pending.filter((lock) => lock.name === name).length, held.lockName)).toBe(1);
+      await page.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: builderProposalsTestStorageKey, raw: proposalAfter });
+      await held.release();
+      const outcome: any = await pending;
+      expect(outcome.result.status).toBe("dependency-invalid");
+      expect(Object.values(outcome.writes).every((count) => count === 0)).toBe(true);
+      expect((await readBgF7ComparisonAuthority(page, "product")).canonicalRaw).toBe(comparisonBefore.canonicalRaw);
+      expect((await readBgF7ComparisonAuthority(page, "product")).markerRaw).toBe(comparisonBefore.markerRaw);
+    } finally {
+      await held.release();
+      await secondPage.close();
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[24], async ({ page }) => {
+    const baseContext: any = await createBgF7ComparisonContext(page, "product");
+    const futureArchivedAt = "2099-12-31T23:59:58.000Z";
+    const futureSourceModifiedAt = "2099-12-31T23:59:59.000Z";
+    const currentContext: any = await page.evaluate(async ({ context, archivedAt, sourceModifiedAt }) => {
+      const module = await import("/src/builderProposals.ts");
+      const withoutFingerprint = ({ fingerprint: _fingerprint, ...value }: Record<string, any>) => value;
+      const contact = withoutFingerprint(context.dependencies.contacts[0]);
+      const archivedContact = {
+        ...contact,
+        supplierContactId: "bg-f7-timestamp-archived-contact",
+        supplierContactRevisionId: "bg-f7-timestamp-archived-contact-revision",
+        status: "archived",
+        archivedAt,
+        isCurrent: true,
+      };
+      const file = context.dependencies.files[0]
+        ? {
+          ...withoutFingerprint(context.dependencies.files[0]),
+          id: "bg-f7-timestamp-modified-file",
+          sourceModifiedAt,
+        }
+        : {
+          id: "bg-f7-timestamp-modified-file",
+          projectId: context.authority.projectIds[0],
+          displayName: "سند زمان‌دار BG-F7",
+          originalName: "bg-f7-timestamp.pdf",
+          mimeType: "application/pdf",
+          size: 1,
+          category: "سایر",
+          source: "انتخاب مستقیم از دستگاه",
+          status: "ثبت محلی",
+          version: 1,
+          projectStage: "اسکلت بندی",
+          visibility: "خصوصی پروژه",
+          storageMode: "metadata-only",
+          sourceModifiedAt,
+          createdAt: "2026-09-02T00:00:00.000Z",
+        };
+      const dependencies = module.createBuilderProposalDependencies({
+        authority: context.authority,
+        requestRevisions: context.dependencies.requestRevisions.map(withoutFingerprint),
+        contentApprovals: context.dependencies.contentApprovals.map(withoutFingerprint),
+        contacts: [...context.dependencies.contacts.map(withoutFingerprint), archivedContact],
+        files: [...context.dependencies.files.map(withoutFingerprint), file],
+      });
+      return { authority: context.authority, dependencies };
+    }, { context: baseContext, archivedAt: futureArchivedAt, sourceModifiedAt: futureSourceModifiedAt });
+    await installBackwardBrowserClock(page);
+    const initialized: any = await initializeBgF7ComparisonState(page, "product", currentContext);
+    expect(initialized.status).toBe("ready");
+    const marker = JSON.parse((await readBgF7ComparisonAuthority(page, "product")).markerRaw!);
+    const proposalState: any = await readBuilderProposalState(page, currentContext.dependencies);
+    const dependencyDates = [
+      ...currentContext.dependencies.requestRevisions.map((item: any) => item.revisionCreatedAt),
+      ...currentContext.dependencies.contentApprovals.map((item: any) => item.updatedAt),
+      ...currentContext.dependencies.contacts.map((item: any) => item.revisionCreatedAt),
+      ...currentContext.dependencies.contacts.flatMap((item: any) => item.archivedAt ? [item.archivedAt] : []),
+      ...currentContext.dependencies.files.map((item: any) => item.createdAt),
+      ...currentContext.dependencies.files.flatMap((item: any) => item.sourceModifiedAt ? [item.sourceModifiedAt] : []),
+      ...proposalState.envelope.records.flatMap((record: any) => record.revisions.map((revision: any) => revision.createdAt)),
+    ];
+    const dependencyMaximum = Math.max(...dependencyDates.map((value: string) => Date.parse(value)));
+    expect(Date.parse(marker.migrationAt)).toBeGreaterThanOrEqual(dependencyMaximum);
+
+    const fixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      action: "update-comparison",
+      idempotencyKey: "bg-f7:task-4:backward-clock-live",
+    });
+    const command = bgF7ComparisonDraftWithSemanticChange(fixture.command, "timestamp clamp زندهٔ Task 4");
+    const previousUpdatedAt = fixture.resolved.envelope.updatedAt;
+    const outcome: any = await executeBgF7ComparisonCommandWithWriteProbe(page, command, currentContext, bgF7ComparisonKeys.product);
+    expect(outcome.result.status).toBe("updated");
+    const receipt = outcome.result.envelope.idempotencyReceipts.at(-1);
+    expect(Date.parse(receipt.recordedAt)).toBeGreaterThanOrEqual(Math.max(
+      Date.parse(marker.committedAt),
+      Date.parse(previousUpdatedAt),
+      dependencyMaximum,
+    ));
+    const record = outcome.result.envelope.records.find((item: any) => item.id === command.comparisonId);
+    expect(record.revisions.at(-1).createdAt).toBe(receipt.recordedAt);
+    expect(record.history.at(-1).at).toBe(receipt.recordedAt);
+  });
+
+  test(bgF7FrozenBaseTitles[25], async ({ page, context }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    const currentContext: any = { authority: prepared.dependencies.authority, dependencies: prepared.dependencies };
+    await initializeBgF7ComparisonState(page, "product", currentContext);
+    await initializeBgF7ComparisonState(page, "service", currentContext);
+    const emptyProductFixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "builder-product-comparison:bg-f7-empty-first-create",
+      idempotencyKey: "bg-f7:task-4:empty-first-create:product",
+      expectedStoreVersion: 1,
+    });
+    const emptyServiceFixture: any = await buildBgF7ComparisonCommand(page, "service", currentContext, {
+      comparisonId: "builder-service-comparison:bg-f7-empty-first-create",
+      idempotencyKey: "bg-f7:task-4:empty-first-create:service",
+      expectedStoreVersion: 1,
+    });
+    const fixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "builder-product-comparison:bg-f7-pre-write",
+      idempotencyKey: "bg-f7:task-4:pre-write",
+    });
+    const outcome: any = await executeBgF7ComparisonCommandWithStorageFault(
+      page,
+      fixture.command,
+      currentContext,
+      bgF7ComparisonKeys.product,
+      "pre-write",
+    );
+    expect(outcome.result.status).toBe("write-failure");
+    expect(outcome.after).toBe(outcome.before);
+    expect(outcome.writes[bgF7ComparisonKeys.product.marker]).toBe(0);
+    expect(outcome.writes[bgF7ComparisonKeys.product.legacy]).toBe(0);
+    expect(outcome.writes[bgF7ComparisonKeys.service.canonical]).toBe(0);
+
+    const incidentFixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "builder-product-comparison:bg-f7-incident-pre-write",
+      idempotencyKey: "bg-f7:task-4:incident-pre-write",
+    });
+    const incidentFailure: any = await executeBgF7ComparisonCommandWithStorageFault(
+      page,
+      incidentFixture.command,
+      currentContext,
+      bgF7ComparisonKeys.product,
+      "incident-pre-write",
+    );
+    expect(incidentFailure.result.status).toBe("write-failure");
+    expect(incidentFailure.after).toBe(incidentFailure.before);
+    expect(incidentFailure.writes[bgF7ComparisonKeys.product.canonical]).toBe(0);
+    expect(incidentFailure.writes[bgF7ComparisonKeys.product.incident]).toBe(1);
+    const incidentExports = await page.evaluate(async () => {
+      const module = await import("/src/builderProposalComparisons.ts");
+      return {
+        product: (module as any).builderProductComparisonsRollbackIncidentKey,
+        service: (module as any).builderServiceComparisonsRollbackIncidentKey,
+      };
+    });
+    expect(incidentExports).toEqual({
+      product: bgF7ComparisonKeys.product.incident,
+      service: bgF7ComparisonKeys.service.incident,
+    });
+
+    const crashFixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "builder-product-comparison:bg-f7-crash-after-prepared",
+      idempotencyKey: "bg-f7:task-4:crash-after-prepared",
+    });
+    const unrelatedFixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "builder-product-comparison:bg-f7-unrelated-crash-recovery",
+      idempotencyKey: "bg-f7:task-4:unrelated-crash-recovery",
+    });
+    const crashWindow: any = await executeBgF7ComparisonCommandWithStorageFault(
+      page,
+      crashFixture.command,
+      currentContext,
+      bgF7ComparisonKeys.product,
+      "crash-after-prepared",
+    );
+    expect(crashWindow.result.status).toBe("read-failure");
+    expect(crashWindow.after).toBe(crashWindow.before);
+    expect(JSON.parse(crashWindow.incidentAfter).state).toBe("prepared");
+
+    const secondPage = await context.newPage();
+    await secondPage.goto("/");
+    try {
+      expect(await initializeBgF7ComparisonState(secondPage, "product", currentContext)).toMatchObject({ status: "read-error" });
+      const unrelated: any = await executeBgF7ComparisonCommandWithWriteProbe(
+        secondPage,
+        unrelatedFixture.command,
+        currentContext,
+        bgF7ComparisonKeys.product,
+      );
+      expect(unrelated.result.status).toBe("read-failure");
+      expect(Object.values(unrelated.writes).every((count) => count === 0)).toBe(true);
+      const preparedRawBeforeMismatch = await secondPage.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.incident);
+      const mismatchedCommand = bgF7ComparisonDraftWithSemanticChange(crashFixture.command, "payload mismatch must not clear prepared incident");
+      const mismatch: any = await executeBgF7ComparisonCommandWithWriteProbe(
+        secondPage,
+        mismatchedCommand,
+        currentContext,
+        bgF7ComparisonKeys.product,
+      );
+      expect(mismatch.result.status).toBe("idempotency-payload-mismatch");
+      expect(Object.values(mismatch.writes).every((count) => count === 0)).toBe(true);
+      expect(await secondPage.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.incident))
+        .toBe(preparedRawBeforeMismatch);
+
+      await page.reload();
+      const recovered: any = await executeBgF7ComparisonCommandWithWriteProbe(
+        page,
+        crashFixture.command,
+        currentContext,
+        bgF7ComparisonKeys.product,
+      );
+      expect(recovered.result.status).toBe("created");
+      expect(recovered.writes[bgF7ComparisonKeys.product.canonical]).toBe(1);
+      expect(JSON.parse((await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.incident))!)).toMatchObject({
+        state: "resolved",
+        resolution: "committed",
+      });
+      expect(await initializeBgF7ComparisonState(secondPage, "product", currentContext)).toMatchObject({ status: "ready" });
+
+      for (const [kind, emptyFixture] of [
+        ["product", emptyProductFixture],
+        ["service", emptyServiceFixture],
+      ] as const) {
+        const selectedKeys = bgF7ComparisonKeys[kind];
+        await page.evaluate((keys) => {
+          window.localStorage.removeItem(keys.legacy);
+          window.localStorage.removeItem(keys.canonical);
+          window.localStorage.removeItem(keys.marker);
+          window.localStorage.removeItem(keys.incident);
+        }, selectedKeys);
+        const emptyState: any = await initializeBgF7ComparisonState(page, kind, currentContext);
+        expect(emptyState.status, `${kind}:empty-cutover`).toBe("ready");
+        expect(emptyState.envelope.records, `${kind}:empty-cutover`).toEqual([]);
+        expect(emptyState.envelope.idempotencyReceipts, `${kind}:empty-cutover`).toEqual([]);
+        expect(emptyState.envelope.migrationReports[0].sourceGeneration, `${kind}:empty-cutover`).toBe("none");
+
+        const emptyCrash: any = await executeBgF7ComparisonCommandWithStorageFault(
+          page,
+          emptyFixture.command,
+          currentContext,
+          selectedKeys,
+          "crash-after-prepared",
+        );
+        expect(emptyCrash.result.status, `${kind}:crash`).toBe("read-failure");
+        expect(emptyCrash.after, `${kind}:crash`).toBe(emptyCrash.before);
+        expect(JSON.parse(emptyCrash.incidentAfter).state, `${kind}:crash`).toBe("prepared");
+
+        await secondPage.reload();
+        expect(await initializeBgF7ComparisonState(secondPage, kind, currentContext), `${kind}:blocked-after-reload`)
+          .toMatchObject({ status: "read-error" });
+        const incidentBeforeRejectedCommands = await secondPage.evaluate((key) => window.localStorage.getItem(key), selectedKeys.incident);
+        const unrelatedCommand = {
+          ...structuredClone(emptyFixture.command),
+          comparisonId: `${emptyFixture.command.comparisonId}:unrelated`,
+          idempotencyKey: `${emptyFixture.command.idempotencyKey}:unrelated`,
+        };
+        const unrelated: any = await executeBgF7ComparisonCommandWithWriteProbe(
+          secondPage,
+          unrelatedCommand,
+          currentContext,
+          selectedKeys,
+        );
+        expect(unrelated.result.status, `${kind}:unrelated`).toBe("read-failure");
+        expect(unrelated.dependencyReads, `${kind}:unrelated`).toBe(0);
+        expect(Object.values(unrelated.writes).every((count) => count === 0), `${kind}:unrelated`).toBe(true);
+
+        const unsupportedCommand = { ...structuredClone(emptyFixture.command), inputSchemaVersion: 2 };
+        const unsupported: any = await executeBgF7ComparisonCommandWithWriteProbe(
+          secondPage,
+          unsupportedCommand,
+          currentContext,
+          selectedKeys,
+        );
+        expect(unsupported.result.status, `${kind}:unsupported-same-key`).toBe("idempotency-payload-mismatch");
+        expect(unsupported.dependencyReads, `${kind}:unsupported-same-key`).toBe(0);
+        expect(Object.values(unsupported.writes).every((count) => count === 0), `${kind}:unsupported-same-key`).toBe(true);
+
+        const payloadMismatch: any = await executeBgF7ComparisonCommandWithWriteProbe(
+          secondPage,
+          bgF7ComparisonDraftWithSemanticChange(emptyFixture.command, `${kind}:empty-payload-mismatch`),
+          currentContext,
+          selectedKeys,
+        );
+        expect(payloadMismatch.result.status, `${kind}:payload-mismatch`).toBe("idempotency-payload-mismatch");
+        expect(payloadMismatch.dependencyReads, `${kind}:payload-mismatch`).toBe(0);
+        expect(Object.values(payloadMismatch.writes).every((count) => count === 0), `${kind}:payload-mismatch`).toBe(true);
+        expect(await secondPage.evaluate((key) => window.localStorage.getItem(key), selectedKeys.incident), `${kind}:incident-stable`)
+          .toBe(incidentBeforeRejectedCommands);
+
+        await secondPage.reload();
+        const emptyRecovery: any = await executeBgF7ComparisonCommandWithWriteProbe(
+          secondPage,
+          emptyFixture.command,
+          currentContext,
+          selectedKeys,
+        );
+        expect(emptyRecovery.result.status, `${kind}:exact-retry`).toBe("created");
+        expect(emptyRecovery.writes[selectedKeys.canonical], `${kind}:exact-retry`).toBe(1);
+        await page.reload();
+        expect(await initializeBgF7ComparisonState(page, kind, currentContext), `${kind}:ready-after-recovery`)
+          .toMatchObject({ status: "ready" });
+      }
+    } finally {
+      await secondPage.close();
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[26], async ({ page, context }) => {
+    const currentContext: any = await createBgF7ComparisonContext(page, "product");
+    await initializeBgF7ComparisonState(page, "product", currentContext);
+    const fixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "builder-product-comparison:bg-f7-readback",
+      idempotencyKey: "bg-f7:task-4:readback",
+    });
+    const outcome: any = await executeBgF7ComparisonCommandWithStorageFault(
+      page,
+      fixture.command,
+      currentContext,
+      bgF7ComparisonKeys.product,
+      "readback-mismatch",
+    );
+    expect(outcome.result.status).toBe("write-failure");
+    expect(outcome.after).toBe(outcome.before);
+    expect(outcome.writes[bgF7ComparisonKeys.product.canonical]).toBe(2);
+    expect(outcome.writes[bgF7ComparisonKeys.product.marker]).toBe(0);
+
+    const resolutionFaults = [
+      { resolution: "committed", fault: "committed-resolved-write-then-throw" },
+      { resolution: "committed", fault: "committed-resolved-readback-throw" },
+      { resolution: "committed", fault: "committed-resolved-readback-mismatch" },
+      { resolution: "rolled-back", fault: "rolled-back-resolved-write-then-throw" },
+      { resolution: "rolled-back", fault: "rolled-back-resolved-readback-throw" },
+      { resolution: "rolled-back", fault: "rolled-back-resolved-readback-mismatch" },
+    ] as const;
+    const secondPage = await context.newPage();
+    await secondPage.goto("/");
+    try {
+      const primaryAmbiguityFixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+        comparisonId: "builder-product-comparison:bg-f7-primary-write-read-ambiguity",
+        idempotencyKey: "bg-f7:task-4:primary-write-read-ambiguity",
+      });
+      const primaryAmbiguity: any = await executeBgF7ComparisonCommandWithStorageFault(
+        page,
+        primaryAmbiguityFixture.command,
+        currentContext,
+        bgF7ComparisonKeys.product,
+        "primary-write-then-read-throw",
+      );
+      expect(primaryAmbiguity.result.status).toBe("read-failure");
+      expect(primaryAmbiguity.after).not.toBe(primaryAmbiguity.before);
+      expect(JSON.parse(primaryAmbiguity.incidentAfter)).toMatchObject({ state: "prepared" });
+
+      await secondPage.reload();
+      expect(await initializeBgF7ComparisonState(secondPage, "product", currentContext))
+        .toMatchObject({ status: "read-error" });
+      const primaryRecovery: any = await executeBgF7ComparisonCommandWithWriteProbe(
+        secondPage,
+        primaryAmbiguityFixture.command,
+        currentContext,
+        bgF7ComparisonKeys.product,
+      );
+      expect(primaryRecovery.result.status).toBe("created");
+      expect(primaryRecovery.writes[bgF7ComparisonKeys.product.canonical]).toBe(0);
+      expect(primaryRecovery.dependencyReads).toBe(0);
+      await page.reload();
+      expect(await initializeBgF7ComparisonState(page, "product", currentContext)).toMatchObject({ status: "ready" });
+
+      for (const [index, resolutionFault] of resolutionFaults.entries()) {
+        const acknowledgedFixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+          comparisonId: `builder-product-comparison:bg-f7-resolution-ack-${index}`,
+          idempotencyKey: `bg-f7:task-4:resolution-ack-${index}`,
+        });
+        const lostAcknowledgement: any = await executeBgF7ComparisonCommandWithStorageFault(
+          page,
+          acknowledgedFixture.command,
+          currentContext,
+          bgF7ComparisonKeys.product,
+          resolutionFault.fault,
+        );
+        expect(lostAcknowledgement.result.status, resolutionFault.fault).toBe("read-failure");
+        expect(JSON.parse(lostAcknowledgement.incidentAfter), resolutionFault.fault).toMatchObject({
+          state: "resolved",
+          resolution: resolutionFault.resolution,
+        });
+        expect(lostAcknowledgement.after === lostAcknowledgement.before, resolutionFault.fault)
+          .toBe(resolutionFault.resolution === "rolled-back");
+        expect(await initializeBgF7ComparisonState(page, "product", currentContext), resolutionFault.fault)
+          .toMatchObject({ status: "ready" });
+
+        await secondPage.reload();
+        expect(await initializeBgF7ComparisonState(secondPage, "product", currentContext), resolutionFault.fault)
+          .toMatchObject({ status: "ready" });
+        const retry: any = await executeBgF7ComparisonCommandWithWriteProbe(
+          secondPage,
+          acknowledgedFixture.command,
+          currentContext,
+          bgF7ComparisonKeys.product,
+        );
+        expect(retry.result.status, resolutionFault.fault).toBe("created");
+        expect(retry.writes[bgF7ComparisonKeys.product.canonical], resolutionFault.fault)
+          .toBe(resolutionFault.resolution === "committed" ? 0 : 1);
+      }
+    } finally {
+      await secondPage.close();
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[27], async ({ page }) => {
+    const currentContext: any = await createBgF7ComparisonContext(page, "product");
+    await initializeBgF7ComparisonState(page, "product", currentContext);
+    const fixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "builder-product-comparison:bg-f7-rollback-collision",
+      idempotencyKey: "bg-f7:task-4:rollback-collision",
+    });
+    const outcome: any = await executeBgF7ComparisonCommandWithStorageFault(
+      page,
+      fixture.command,
+      currentContext,
+      bgF7ComparisonKeys.product,
+      "rollback-collision",
+    );
+    expect(outcome.result.status).toBe("read-failure");
+    expect(outcome.after).not.toBe(outcome.before);
+    expect(JSON.parse(outcome.after)).toEqual({ owner: "competing-writer", test: "BG-F7 rollback collision" });
+    expect(outcome.writes[bgF7ComparisonKeys.product.canonical]).toBe(1);
+    expect(outcome.writes[bgF7ComparisonKeys.product.marker]).toBe(0);
+  });
+
+  test(bgF7FrozenBaseTitles[28], async ({ page, context }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    const currentContext = { authority: prepared.dependencies.authority, dependencies: prepared.dependencies };
+    await initializeBgF7ComparisonState(page, "product", currentContext);
+    await initializeBgF7ComparisonState(page, "service", currentContext);
+    const product: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "builder-product-comparison:bg-f7-rollback-write-failure",
+      idempotencyKey: "bg-f7:task-4:rollback-write-failure",
+    });
+    const service: any = await buildBgF7ComparisonCommand(page, "service", currentContext, {
+      comparisonId: "builder-service-comparison:bg-f7-sibling-write",
+      idempotencyKey: "bg-f7:task-4:sibling-write",
+    });
+    const writeFailure: any = await executeBgF7ComparisonCommandWithStorageFault(
+      page,
+      product.command,
+      currentContext,
+      bgF7ComparisonKeys.product,
+      "rollback-write-failure",
+    );
+    expect(writeFailure.result.status).toBe("rollback-failure");
+    expect(await initializeBgF7ComparisonState(page, "product", currentContext)).toMatchObject({ status: "read-error" });
+    expect(await initializeBgF7ComparisonState(page, "service", currentContext)).toMatchObject({ status: "ready" });
+
+    const secondPage = await context.newPage();
+    await secondPage.goto("/");
+    try {
+      expect(await initializeBgF7ComparisonState(secondPage, "product", currentContext)).toMatchObject({ status: "read-error" });
+      await page.reload();
+      expect(await initializeBgF7ComparisonState(page, "product", currentContext)).toMatchObject({ status: "read-error" });
+
+      const siblingWrite: any = await executeBgF7ComparisonCommandWithWriteProbe(
+        secondPage,
+        service.command,
+        currentContext,
+        bgF7ComparisonKeys.service,
+      );
+      expect(siblingWrite.result.status).toBe("created");
+      expect(siblingWrite.writes[bgF7ComparisonKeys.product.canonical]).toBe(0);
+      expect(await initializeBgF7ComparisonState(secondPage, "service", currentContext)).toMatchObject({ status: "ready" });
+
+      const recovered: any = await executeBgF7ComparisonCommandWithWriteProbe(
+        secondPage,
+        product.command,
+        currentContext,
+        bgF7ComparisonKeys.product,
+      );
+      expect(recovered.result.status).toBe("created");
+      expect(recovered.writes[bgF7ComparisonKeys.product.canonical]).toBe(0);
+      expect(recovered.writes[bgF7ComparisonKeys.product.incident]).toBe(1);
+      const resolvedIncidentRaw = await secondPage.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.incident);
+      expect(JSON.parse(resolvedIncidentRaw!).state).toBe("resolved");
+      await page.reload();
+      expect(await initializeBgF7ComparisonState(page, "product", currentContext)).toMatchObject({ status: "ready" });
+
+      await secondPage.evaluate((key) => window.localStorage.setItem(key, "{}"), bgF7ComparisonKeys.product.incident);
+      expect(await initializeBgF7ComparisonState(secondPage, "product", currentContext)).toMatchObject({ status: "read-error" });
+      expect(await initializeBgF7ComparisonState(secondPage, "service", currentContext)).toMatchObject({ status: "ready" });
+      await secondPage.evaluate(({ key, raw }) => window.localStorage.setItem(key, raw), { key: bgF7ComparisonKeys.product.incident, raw: resolvedIncidentRaw! });
+
+      const serviceFailureFixture: any = await buildBgF7ComparisonCommand(secondPage, "service", currentContext, {
+        comparisonId: "builder-service-comparison:bg-f7-rollback-readback-failure",
+        idempotencyKey: "bg-f7:task-4:rollback-readback-failure",
+      });
+      const unrelatedServiceFixture: any = await buildBgF7ComparisonCommand(secondPage, "service", currentContext, {
+        comparisonId: "builder-service-comparison:bg-f7-unrelated-after-incident",
+        idempotencyKey: "bg-f7:task-4:unrelated-after-incident",
+      });
+      const readbackFailure: any = await executeBgF7ComparisonCommandWithStorageFault(
+        secondPage,
+        serviceFailureFixture.command,
+        currentContext,
+        bgF7ComparisonKeys.service,
+        "rollback-readback-failure",
+      );
+      expect(readbackFailure.result.status).toBe("rollback-failure");
+      await secondPage.reload();
+      expect(await initializeBgF7ComparisonState(secondPage, "service", currentContext)).toMatchObject({ status: "read-error" });
+      expect(await initializeBgF7ComparisonState(secondPage, "product", currentContext)).toMatchObject({ status: "ready" });
+      const unrelatedBlocked: any = await executeBgF7ComparisonCommandWithWriteProbe(
+        secondPage,
+        unrelatedServiceFixture.command,
+        currentContext,
+        bgF7ComparisonKeys.service,
+      );
+      expect(unrelatedBlocked.result.status).toBe("read-failure");
+      expect(Object.values(unrelatedBlocked.writes).every((count) => count === 0)).toBe(true);
+      const restoredRecovery: any = await executeBgF7ComparisonCommandWithWriteProbe(
+        secondPage,
+        serviceFailureFixture.command,
+        currentContext,
+        bgF7ComparisonKeys.service,
+      );
+      expect(restoredRecovery.result.status).toBe("created");
+      expect(restoredRecovery.writes[bgF7ComparisonKeys.service.canonical]).toBe(1);
+      expect(await initializeBgF7ComparisonState(secondPage, "service", currentContext)).toMatchObject({ status: "ready" });
+      expect(writeFailure.writes[bgF7ComparisonKeys.service.canonical]).toBe(0);
+      expect(readbackFailure.writes[bgF7ComparisonKeys.product.canonical]).toBe(0);
+    } finally {
+      await secondPage.close();
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[29], async ({ page }) => {
+    const prepared = await prepareBgF7MigrationSource(page, { product: true, service: true });
+    const currentContext: any = { authority: prepared.dependencies.authority, dependencies: prepared.dependencies };
+    await initializeBgF7ComparisonState(page, "product", currentContext);
+    await initializeBgF7ComparisonState(page, "service", currentContext);
+    const fixture: any = await buildBgF7ComparisonCommand(page, "product", currentContext, {
+      comparisonId: "x".repeat(300),
+      idempotencyKey: "k".repeat(300),
+    });
+    const serviceFixture: any = await buildBgF7ComparisonCommand(page, "service", currentContext, {
+      comparisonId: "builder-service-comparison:bg-f7-exact-arrays",
+      idempotencyKey: "bg-f7:task-4:exact-arrays",
+    });
+    const outcome = await page.evaluate(async ({ command, serviceCommand, readContext, selectedKeys }) => {
+      const module = await import("/src/builderProposalComparisons.ts");
+      const commandModule = module as typeof module & {
+        executeBuilderComparisonCommand?: (value: unknown, reader: () => unknown) => Promise<any>;
+      };
+      if (typeof commandModule.executeBuilderComparisonCommand !== "function") {
+        throw new TypeError("BG-F7 missing executeBuilderComparisonCommand");
+      }
+      const originalLocks = window.navigator.locks;
+      const nativeGet = Storage.prototype.getItem;
+      const nativeSet = Storage.prototype.setItem;
+      const nativeRemove = Storage.prototype.removeItem;
+      let dependencyReads = 0;
+      let storageReads = 0;
+      let writes = 0;
+      Storage.prototype.getItem = function (key: string) {
+        if (this === window.localStorage) storageReads += 1;
+        return nativeGet.call(this, key);
+      };
+      Storage.prototype.setItem = function (key: string, value: string) {
+        if (this === window.localStorage) writes += 1;
+        return nativeSet.call(this, key, value);
+      };
+      Storage.prototype.removeItem = function (key: string) {
+        if (this === window.localStorage) writes += 1;
+        return nativeRemove.call(this, key);
+      };
+      try {
+        Object.defineProperty(window.navigator, "locks", { configurable: true, value: undefined });
+        const valid = await commandModule.executeBuilderComparisonCommand(command, () => {
+          dependencyReads += 1;
+          return readContext;
+        });
+        const malformed = structuredClone(command);
+        delete malformed.draft;
+        const malformedResult = await commandModule.executeBuilderComparisonCommand(malformed, () => {
+          dependencyReads += 1;
+          return readContext;
+        });
+        const oversizedId = { ...structuredClone(command), comparisonId: "x".repeat(301) };
+        const oversizedIdResult = await commandModule.executeBuilderComparisonCommand(oversizedId, () => {
+          dependencyReads += 1;
+          return readContext;
+        });
+        const oversizedKey = { ...structuredClone(command), idempotencyKey: "k".repeat(301) };
+        const oversizedKeyResult = await commandModule.executeBuilderComparisonCommand(oversizedKey, () => {
+          dependencyReads += 1;
+          return readContext;
+        });
+        const malformedArrays: any[] = [];
+        for (const [baseCommand, path] of [
+          [command, "draft-proposals"],
+          [command, "product-line-adjustments"],
+          [command, "proposal-pins"],
+          [serviceCommand, "service-criteria"],
+        ] as const) {
+          for (const propertyKind of ["named", "symbol"] as const) {
+            const malformedArray = structuredClone(baseCommand);
+            const array = path === "draft-proposals"
+              ? malformedArray.draft.proposals
+              : path === "product-line-adjustments"
+                ? malformedArray.draft.proposals[0].lineAdjustments
+                : path === "proposal-pins"
+                  ? malformedArray.pins.proposalPins
+                  : malformedArray.draft.proposals[0].criteria;
+            if (propertyKind === "named") Object.defineProperty(array, "unexpected", { enumerable: true, value: true });
+            else array[Symbol("unexpected")] = true;
+            malformedArrays.push({
+              path,
+              propertyKind,
+              result: await commandModule.executeBuilderComparisonCommand(malformedArray, () => {
+                dependencyReads += 1;
+                return readContext;
+              }),
+            });
+          }
+        }
+        return {
+          valid,
+          malformedResult,
+          oversizedIdResult,
+          oversizedKeyResult,
+          malformedArrays,
+          dependencyReads,
+          storageReads,
+          writes,
+          canonicalRaw: nativeGet.call(window.localStorage, selectedKeys.canonical),
+          markerRaw: nativeGet.call(window.localStorage, selectedKeys.marker),
+        };
+      } finally {
+        Object.defineProperty(window.navigator, "locks", { configurable: true, value: originalLocks });
+        Storage.prototype.getItem = nativeGet;
+        Storage.prototype.setItem = nativeSet;
+        Storage.prototype.removeItem = nativeRemove;
+      }
+    }, { command: fixture.command, serviceCommand: serviceFixture.command, readContext: currentContext, selectedKeys: bgF7ComparisonKeys.product });
+    expect(outcome.valid.status).toBe("lock-unavailable");
+    expect(outcome.malformedResult.status).toBe("schema-invalid");
+    expect(outcome.oversizedIdResult.status).toBe("schema-invalid");
+    expect(outcome.oversizedKeyResult.status).toBe("schema-invalid");
+    expect(outcome.malformedArrays.map((item: any) => [item.path, item.propertyKind, item.result.status])).toEqual([
+      ["draft-proposals", "named", "schema-invalid"],
+      ["draft-proposals", "symbol", "schema-invalid"],
+      ["product-line-adjustments", "named", "schema-invalid"],
+      ["product-line-adjustments", "symbol", "schema-invalid"],
+      ["proposal-pins", "named", "schema-invalid"],
+      ["proposal-pins", "symbol", "schema-invalid"],
+      ["service-criteria", "named", "schema-invalid"],
+      ["service-criteria", "symbol", "schema-invalid"],
+    ]);
+    expect(outcome.dependencyReads).toBe(0);
+    expect(outcome.storageReads).toBe(0);
+    expect(outcome.writes).toBe(0);
+    const after = await readBgF7ComparisonAuthority(page, "product");
+    expect(outcome.canonicalRaw).toBe(after.canonicalRaw);
+    expect(outcome.markerRaw).toBe(after.markerRaw);
+  });
+
+  test(bgF7FrozenBaseTitles[35], async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const { comparison } = await createExactProductComparisonWithDecision(page);
+    if (!comparison) throw new Error("BG-F7 Product Decision fixture has no Comparison");
+    const secondComparison = await createSecondBgF7ComparisonFromDetail(page, "product", comparison.id);
+    const cutover = await cutoverBgF7ComparisonWithExistingDescendant(page, "product", bgF7ComparisonKeys.product.decision);
+    const frozenTarget = await freezeBgF7CanonicalDescendantTarget(page, "product", secondComparison.id);
+
+    await reopenBgF7ComparisonDetail(page, "product", comparison.id);
+    await expect(page.getByTestId("comparison-decision-history")).toContainText("نسخهٔ نخست تصمیم برای ادامهٔ بررسی پیشنهاد ب");
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.decision)).toBe(cutover.descendantRaw);
+
+    await page.getByTestId("comparison-decision-reason").fill("نسخهٔ دوم تصمیم تاریخی با حفظ اتصال خام FNV");
+    await page.getByTestId("comparison-decision-save").click();
+    await expect(page.getByTestId("comparison-decision-history")).toContainText("نسخهٔ دوم تصمیم تاریخی با حفظ اتصال خام FNV");
+    const afterHistoricalUpdate = await readBgF7DescendantRecords(page, bgF7ComparisonKeys.product.decision);
+    const historicalDecision = afterHistoricalUpdate.find((record: any) => record.id === cutover.historicalRecord.id);
+    expect(historicalDecision.version).toBe(2);
+    expect(JSON.stringify(historicalDecision.target)).toBe(cutover.historicalTargetRaw);
+    expect(historicalDecision.target.comparisonRevisionFingerprint).toMatch(/^fnv1a-[0-9a-f]{8}$/);
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+
+    await page.getByTestId("comparison-detail-back").click();
+    await page.locator(`[data-comparison-id="${secondComparison.id}"]`).click();
+    await page.getByTestId("comparison-decision-outcome").selectOption("needs-clarification");
+    await page.getByTestId("comparison-decision-reason").fill("تصمیم تازه برای نسخهٔ canonical مقایسه محصول");
+    await page.getByTestId("comparison-decision-save").click();
+    await expect(page.getByTestId("comparison-decision-history")).toContainText("تصمیم تازه برای نسخهٔ canonical مقایسه محصول");
+
+    const finalDecisionRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.decision);
+    if (finalDecisionRaw === null) throw new Error("BG-F7 Product Decision store disappeared after the fresh write");
+    const finalDecisions = JSON.parse(finalDecisionRaw);
+    const freshDecision = finalDecisions.find((record: any) => record.id !== cutover.historicalRecord.id);
+    expect(finalDecisions).toHaveLength(2);
+    expect(JSON.stringify(finalDecisions.find((record: any) => record.id === cutover.historicalRecord.id).target)).toBe(cutover.historicalTargetRaw);
+    if (!freshDecision) throw new Error("BG-F7 fresh Product Decision was not persisted");
+    expectBgF7DescendantTargetsFrozenComparison(freshDecision, frozenTarget, { includeKind: false, includeSha: false });
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+
+    await reopenBgF7ComparisonDetail(page, "product", frozenTarget.target.comparisonId);
+    await expect(page.getByTestId("comparison-decision-history")).toContainText("تصمیم تازه برای نسخهٔ canonical مقایسه محصول");
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.decision)).toBe(finalDecisionRaw);
+    const reloadedDecisions = await readBgF7DescendantRecords(page, bgF7ComparisonKeys.product.decision);
+    const reloadedFreshDecision = reloadedDecisions.find((record: any) => record.id === freshDecision.id);
+    if (!reloadedFreshDecision) throw new Error("BG-F7 fresh Product Decision was not readable after reload");
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+    expectBgF7DescendantTargetsFrozenComparison(reloadedFreshDecision, frozenTarget, { includeKind: false, includeSha: true });
+  });
+
+  test(bgF7FrozenBaseTitles[36], async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const { comparison } = await createCompleteServiceComparisonWithDecision(page);
+    if (!comparison) throw new Error("BG-F7 Service Decision fixture has no Comparison");
+    const secondComparison = await createSecondBgF7ComparisonFromDetail(page, "service", comparison.id);
+    const cutover = await cutoverBgF7ComparisonWithExistingDescendant(page, "service", bgF7ComparisonKeys.service.decision);
+    const frozenTarget = await freezeBgF7CanonicalDescendantTarget(page, "service", secondComparison.id);
+
+    await reopenBgF7ComparisonDetail(page, "service", comparison.id);
+    await expect(page.getByTestId("service-comparison-decision-history")).toContainText("نسخه نخست تصمیم برای ادامه بررسی مجری ب");
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.service.decision)).toBe(cutover.descendantRaw);
+
+    await page.getByTestId("service-comparison-decision-reason").fill("نسخهٔ دوم تصمیم تاریخی خدمت با حفظ اتصال خام FNV");
+    await page.getByTestId("service-comparison-decision-save").click();
+    await expect(page.getByTestId("service-comparison-decision-history")).toContainText("نسخهٔ دوم تصمیم تاریخی خدمت با حفظ اتصال خام FNV");
+    const afterHistoricalUpdate = await readBgF7DescendantRecords(page, bgF7ComparisonKeys.service.decision);
+    const historicalDecision = afterHistoricalUpdate.find((record: any) => record.id === cutover.historicalRecord.id);
+    expect(historicalDecision.version).toBe(2);
+    expect(JSON.stringify(historicalDecision.target)).toBe(cutover.historicalTargetRaw);
+    expect(historicalDecision.target.comparisonRevisionFingerprint).toMatch(/^fnv1a-[0-9a-f]{8}$/);
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+
+    await page.getByTestId("service-comparison-detail-back").click();
+    await page.locator(`[data-service-comparison-id="${secondComparison.id}"]`).click();
+    await page.getByTestId("service-comparison-decision-outcome").selectOption("needs-clarification");
+    await page.getByTestId("service-comparison-decision-reason").fill("تصمیم تازه برای نسخهٔ canonical مقایسه خدمت");
+    await page.getByTestId("service-comparison-decision-save").click();
+    await expect(page.getByTestId("service-comparison-decision-history")).toContainText("تصمیم تازه برای نسخهٔ canonical مقایسه خدمت");
+
+    const finalDecisionRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.service.decision);
+    if (finalDecisionRaw === null) throw new Error("BG-F7 Service Decision store disappeared after the fresh write");
+    const finalDecisions = JSON.parse(finalDecisionRaw);
+    const freshDecision = finalDecisions.find((record: any) => record.id !== cutover.historicalRecord.id);
+    expect(finalDecisions).toHaveLength(2);
+    expect(JSON.stringify(finalDecisions.find((record: any) => record.id === cutover.historicalRecord.id).target)).toBe(cutover.historicalTargetRaw);
+    if (!freshDecision) throw new Error("BG-F7 fresh Service Decision was not persisted");
+    expectBgF7DescendantTargetsFrozenComparison(freshDecision, frozenTarget, { includeKind: false, includeSha: false });
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+
+    await reopenBgF7ComparisonDetail(page, "service", frozenTarget.target.comparisonId);
+    await expect(page.getByTestId("service-comparison-decision-history")).toContainText("تصمیم تازه برای نسخهٔ canonical مقایسه خدمت");
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.service.decision)).toBe(finalDecisionRaw);
+    const reloadedDecisions = await readBgF7DescendantRecords(page, bgF7ComparisonKeys.service.decision);
+    const reloadedFreshDecision = reloadedDecisions.find((record: any) => record.id === freshDecision.id);
+    if (!reloadedFreshDecision) throw new Error("BG-F7 fresh Service Decision was not readable after reload");
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+    expectBgF7DescendantTargetsFrozenComparison(reloadedFreshDecision, frozenTarget, { includeKind: false, includeSha: true });
+  });
+
+  test(bgF7FrozenBaseTitles[37], async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const created = await createBgF7ProductNegotiationDescendant(page);
+    await page.getByTestId("negotiation-draft-detail-back").click();
+    await expect(page.getByTestId("comparison-detail")).toBeVisible();
+    const secondComparison = await createSecondBgF7ComparisonFromDetail(page, "product", created.comparison.id);
+    const cutover = await cutoverBgF7ComparisonWithExistingDescendant(page, "product", negotiationDraftStorageKey);
+    const frozenTarget = await freezeBgF7CanonicalDescendantTarget(page, "product", secondComparison.id);
+
+    await reopenBgF7NegotiationDetail(page, cutover.historicalRecord.id);
+    await expect(page.getByTestId("negotiation-draft-detail")).toContainText("لطفاً شرط حمل این ردیف محصول را برای ثبت محلی روشن کنید.");
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(cutover.descendantRaw);
+
+    await page.getByTestId("negotiation-draft-edit").click();
+    await page.getByTestId("negotiation-draft-message").fill("لطفاً شرط حمل و زمان تحویل این ردیف محصول را جداگانه روشن کنید.");
+    await page.getByTestId("negotiation-draft-save").click();
+    await expect(page.getByTestId("negotiation-draft-detail")).toContainText("شرط حمل و زمان تحویل");
+    const afterHistoricalUpdate = await readBgF7DescendantRecords(page, negotiationDraftStorageKey);
+    const historicalDraft = afterHistoricalUpdate.find((record: any) => record.id === cutover.historicalRecord.id);
+    expect(historicalDraft.version).toBe(2);
+    expect(JSON.stringify(historicalDraft.target)).toBe(cutover.historicalTargetRaw);
+    expect(historicalDraft.target.comparisonRevisionFingerprint).toMatch(/^fnv1a-[0-9a-f]{8}$/);
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+
+    await page.getByTestId("negotiation-draft-detail-back").click();
+    await page.getByTestId("negotiation-drafts-back").click();
+    await openProposalSecondaryView(page, "proposal-comparisons-entry");
+    await page.locator(`[data-comparison-id="${secondComparison.id}"]`).click();
+    const start = await openProductComparisonLineForNegotiation(page, created.firstProposal.id, created.criterionId);
+    await start.click();
+    await expect(page.getByTestId("negotiation-draft-editor")).toBeVisible();
+    await page.getByTestId("negotiation-draft-purpose").fill("پرسش تازه از نسخهٔ canonical مقایسه محصول");
+    await page.getByTestId("negotiation-draft-message").fill("این پیش‌نویس تازه باید به SHA همان نسخهٔ مقایسه متصل شود.");
+    await page.getByTestId("negotiation-draft-save").click();
+    await expect(page.getByTestId("negotiation-draft-detail")).toBeVisible();
+
+    const finalDraftRaw = await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey);
+    if (finalDraftRaw === null) throw new Error("BG-F7 Product Negotiation store disappeared after the fresh write");
+    const finalDrafts = JSON.parse(finalDraftRaw);
+    const freshDraft = finalDrafts.find((record: any) => record.id !== cutover.historicalRecord.id);
+    expect(finalDrafts).toHaveLength(2);
+    expect(JSON.stringify(finalDrafts.find((record: any) => record.id === cutover.historicalRecord.id).target)).toBe(cutover.historicalTargetRaw);
+    if (!freshDraft) throw new Error("BG-F7 fresh Product Negotiation draft was not persisted");
+    expectBgF7DescendantTargetsFrozenComparison(freshDraft, frozenTarget, { includeKind: true, includeSha: false });
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+
+    await reopenBgF7NegotiationDetail(page, freshDraft.id);
+    await expect(page.getByTestId("negotiation-draft-detail")).toContainText("این پیش‌نویس تازه باید به SHA همان نسخهٔ مقایسه متصل شود.");
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(finalDraftRaw);
+    const reloadedDrafts = await readBgF7DescendantRecords(page, negotiationDraftStorageKey);
+    const reloadedFreshDraft = reloadedDrafts.find((record: any) => record.id === freshDraft.id);
+    if (!reloadedFreshDraft) throw new Error("BG-F7 fresh Product Negotiation draft was not readable after reload");
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+    expectBgF7DescendantTargetsFrozenComparison(reloadedFreshDraft, frozenTarget, { includeKind: true, includeSha: true });
+  });
+
+  test(bgF7FrozenBaseTitles[38], async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const created = await createExactServiceNegotiationDraft(page);
+    await page.getByTestId("negotiation-draft-detail-back").click();
+    await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
+    const secondComparison = await createSecondBgF7ComparisonFromDetail(page, "service", created.comparison.id);
+    const cutover = await cutoverBgF7ComparisonWithExistingDescendant(page, "service", negotiationDraftStorageKey);
+    const frozenTarget = await freezeBgF7CanonicalDescendantTarget(page, "service", secondComparison.id);
+
+    await reopenBgF7NegotiationDetail(page, cutover.historicalRecord.id);
+    await expect(page.getByTestId("negotiation-draft-detail")).toContainText(created.values.message);
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(cutover.descendantRaw);
+
+    await page.getByTestId("negotiation-draft-edit").click();
+    await page.getByTestId("negotiation-draft-message").fill("لطفاً تاریخ تجهیز کارگاه، شروع و مدت اجرای عایق را جداگانه اعلام کنید.");
+    await page.getByTestId("negotiation-draft-save").click();
+    await expect(page.getByTestId("negotiation-draft-detail")).toContainText("تاریخ تجهیز کارگاه");
+    const afterHistoricalUpdate = await readBgF7DescendantRecords(page, negotiationDraftStorageKey);
+    const historicalDraft = afterHistoricalUpdate.find((record: any) => record.id === cutover.historicalRecord.id);
+    expect(historicalDraft.version).toBe(2);
+    expect(JSON.stringify(historicalDraft.target)).toBe(cutover.historicalTargetRaw);
+    expect(historicalDraft.target.comparisonRevisionFingerprint).toMatch(/^fnv1a-[0-9a-f]{8}$/);
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+
+    await page.getByTestId("negotiation-draft-detail-back").click();
+    await page.getByTestId("negotiation-drafts-back").click();
+    await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
+    await page.locator(`[data-service-comparison-id="${secondComparison.id}"]`).click();
+    await openServiceComparisonCriterion(page, "timing");
+    const start = serviceNegotiationDraftStart(page, "timing", created.firstProposal.id);
+    await start.click();
+    await expect(page.getByTestId("negotiation-draft-editor")).toBeVisible();
+    await page.getByTestId("negotiation-draft-purpose").fill("پرسش تازه از نسخهٔ canonical مقایسه خدمت");
+    await page.getByTestId("negotiation-draft-message").fill("این پیش‌نویس تازه باید به SHA همان نسخهٔ مقایسه خدمت متصل شود.");
+    await page.getByTestId("negotiation-draft-save").click();
+    await expect(page.getByTestId("negotiation-draft-detail")).toBeVisible();
+
+    const finalDraftRaw = await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey);
+    if (finalDraftRaw === null) throw new Error("BG-F7 Service Negotiation store disappeared after the fresh write");
+    const finalDrafts = JSON.parse(finalDraftRaw);
+    const freshDraft = finalDrafts.find((record: any) => record.id !== cutover.historicalRecord.id);
+    expect(finalDrafts).toHaveLength(2);
+    expect(JSON.stringify(finalDrafts.find((record: any) => record.id === cutover.historicalRecord.id).target)).toBe(cutover.historicalTargetRaw);
+    if (!freshDraft) throw new Error("BG-F7 fresh Service Negotiation draft was not persisted");
+    expectBgF7DescendantTargetsFrozenComparison(freshDraft, frozenTarget, { includeKind: true, includeSha: false });
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+
+    await reopenBgF7NegotiationDetail(page, freshDraft.id);
+    await expect(page.getByTestId("negotiation-draft-detail")).toContainText("این پیش‌نویس تازه باید به SHA همان نسخهٔ مقایسه خدمت متصل شود.");
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), negotiationDraftStorageKey)).toBe(finalDraftRaw);
+    const reloadedDrafts = await readBgF7DescendantRecords(page, negotiationDraftStorageKey);
+    const reloadedFreshDraft = reloadedDrafts.find((record: any) => record.id === freshDraft.id);
+    if (!reloadedFreshDraft) throw new Error("BG-F7 fresh Service Negotiation draft was not readable after reload");
+    await expectBgF7CanonicalRawByteStable(page, frozenTarget);
+    expect(created.externalRequests).toEqual([]);
+    page.off("request", created.requestListener);
+    expectBgF7DescendantTargetsFrozenComparison(reloadedFreshDraft, frozenTarget, { includeKind: true, includeSha: true });
+  });
+
+  test(bgF7FrozenBaseTitles[30], async ({ page, context }) => {
+    test.slow();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await enterBuilderHome(page);
+    const lockPage = await context.newPage();
+    await lockPage.goto("/");
+    const held = await holdProcurementWriteLock(lockPage);
+    try {
+      const removed = await page.evaluate(({ canonical, marker }) => {
+        const canonicalRaw = window.localStorage.getItem(canonical);
+        const markerRaw = window.localStorage.getItem(marker);
+        window.localStorage.removeItem(canonical);
+        window.localStorage.removeItem(marker);
+        return { canonicalRaw, markerRaw };
+      }, { canonical: bgF7ComparisonKeys.product.canonical, marker: bgF7ComparisonKeys.product.marker });
+      await dispatchBuilderStorageEvent(page, bgF7ComparisonKeys.product.canonical, removed.canonicalRaw, null);
+      await page.getByTestId("quick-action-compare-offers").click();
+      await openProposalSecondaryView(page, "proposal-comparisons-entry");
+      await expect(page.getByTestId("comparison-ledger-loading")).toBeVisible();
+      await expect(page.getByTestId("comparison-add")).toBeDisabled();
+    } finally {
+      await held.release();
+      await lockPage.close();
+    }
+    await expect(page.getByTestId("comparison-ledger-loading")).toHaveCount(0);
+    await expect(page.getByTestId("comparison-ledger-empty")).toBeVisible();
+    await expect(page.getByTestId("comparison-ledger-read-error")).toHaveCount(0);
+
+    const created = await createExactProductComparisonWithDecision(page);
+    await page.getByTestId("comparison-edit").click();
+    const preservedField = comparisonSupplierEditor(page, created.firstSupplier).getByTestId(/^comparison-transport-assumption-/);
+    await preservedField.fill("پیش‌نویس نباید با خرابی مخزن پاک شود");
+    const canonicalRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.canonical);
+    await page.evaluate((key) => window.localStorage.setItem(key, "{BG-F7 unreadable Product canonical"), bgF7ComparisonKeys.product.canonical);
+    await dispatchBuilderStorageEvent(page, bgF7ComparisonKeys.product.canonical, canonicalRaw, "{BG-F7 unreadable Product canonical");
+    await expect(page.getByTestId("comparison-ledger-read-error")).toBeVisible();
+    await expect(page.getByTestId("comparison-ledger-empty")).toHaveCount(0);
+    await expect(page.getByTestId("comparison-editor-stale")).toBeVisible();
+    await expect(page.getByTestId("comparison-save")).toBeDisabled();
+    await expect(preservedField).toHaveValue("پیش‌نویس نباید با خرابی مخزن پاک شود");
+  });
+
+  test(bgF7FrozenBaseTitles[31], async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const created = await createExactProductComparisonWithDecision(page);
+    const reconciliationKeys = [
+      legacyBuilderProposalsTestStorageKey,
+      builderProposalsTestStorageKey,
+      builderProposalsMarkerTestStorageKey,
+      projectFoundationTestStorageKey,
+      projectFoundationMarkerTestStorageKey,
+      projectFoundationIdentityTestStorageKey,
+      "chida-prototype-project-purchase-requests:v1",
+      "chida-prototype-project-purchase-requests:v1:recovery-intent:v1",
+      "chida-prototype-project-approvals:v2",
+      "chida-prototype-project-approvals:v1",
+      "chida-prototype-project-approvals:v2:cutover:v1",
+      "chida-prototype-project-approvals:v2:request-confirmation-intent:v1",
+      "chida-prototype-project-approvals:v2:dispatch-precondition-intent:v1",
+      "chida-prototype-project-supplier-contacts:v2",
+      "chida-prototype-project-supplier-contacts:v1",
+      "chida-prototype-project-supplier-contacts:v2:cutover:v1",
+      "chida-prototype-project-dispatch-drafts:v2",
+      "chida-prototype-project-dispatch-drafts:v1",
+      "chida-prototype-project-dispatch-drafts:v2:cutover:v1",
+      "chida-prototype-project-dispatch-plan-approvals:v2",
+      "chida-prototype-project-dispatch-plan-approvals:v1",
+      "chida-prototype-project-dispatch-plan-approvals:v2:cutover:v1",
+      "chida-prototype-project-dispatch-drafts:v2:plan-queue-intent:v1",
+      "chida-prototype-project-files:v1",
+      "chida-prototype-project-sources:v1:intake-intent:v1",
+      bgF7ComparisonKeys.product.legacy,
+      bgF7ComparisonKeys.product.canonical,
+      bgF7ComparisonKeys.product.marker,
+      bgF7ComparisonKeys.product.incident,
+      bgF7ComparisonKeys.service.legacy,
+      bgF7ComparisonKeys.service.canonical,
+      bgF7ComparisonKeys.service.marker,
+      bgF7ComparisonKeys.service.incident,
+    ] as const;
+
+    for (const [index, key] of reconciliationKeys.entries()) {
+      await test.step(`stales the visible draft for watched key ${key}`, async () => {
+        if (index > 0) {
+          await page.getByTestId("comparison-editor-back").click();
+          await expect(page.getByTestId("comparison-detail")).toBeVisible();
+          await page.getByTestId("comparison-edit").click();
+        } else {
+          await page.getByTestId("comparison-edit").click();
+        }
+        const preservedField = comparisonSupplierEditor(page, created.firstSupplier).getByTestId(/^comparison-transport-assumption-/);
+        const marker = `پیش‌نویس ثابت ${index.toLocaleString("fa-IR")}`;
+        await preservedField.fill(marker);
+        const eventValue = await page.evaluate((storageKey) => window.localStorage.getItem(storageKey), key);
+        await dispatchBuilderStorageEvent(page, key, eventValue, eventValue);
+        await expect(page.getByTestId("comparison-editor-stale")).toBeVisible();
+        await expect(page.getByTestId("comparison-save")).toBeDisabled();
+        await expect(preservedField).toHaveValue(marker);
+      });
+    }
+
+    await page.getByTestId("comparison-editor-back").click();
+    await page.getByTestId("comparison-edit").click();
+    const unrelatedField = comparisonSupplierEditor(page, created.firstSupplier).getByTestId(/^comparison-transport-assumption-/);
+    await unrelatedField.fill("کلید نامرتبط نباید binding را باطل کند");
+    await dispatchBuilderStorageEvent(page, "chida-prototype-bg-f7-unrelated", null, "unrelated");
+    await page.evaluate(() => new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()))));
+    await expect(page.getByTestId("comparison-editor-stale")).toHaveCount(0);
+    await expect(page.getByTestId("comparison-save")).toBeEnabled();
+    await expect(unrelatedField).toHaveValue("کلید نامرتبط نباید binding را باطل کند");
+  });
+
+  test(bgF7FrozenBaseTitles[32], async ({ page, context }) => {
+    test.setTimeout(180_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const productFixture = await createTwoCurrentProductProposalsForComparison(page);
+    await openProposalSecondaryView(page, "proposal-comparisons-entry");
+    await page.getByTestId("comparison-add").click();
+    const lockPage = await context.newPage();
+    await lockPage.goto("/");
+    const heldLock = await holdProcurementWriteLock(lockPage);
+    let lockReleased = false;
+    let faultInstalled = false;
+    try {
+      await page.evaluate((canonicalKey) => {
+        const nativeGet = Storage.prototype.getItem;
+        const nativeSet = Storage.prototype.setItem;
+        const priorRaw = nativeGet.call(window.localStorage, canonicalKey);
+        let candidateWritten = false;
+        Object.defineProperties(window, {
+          __bgF7UiNativeGetItem: { value: nativeGet, configurable: true },
+          __bgF7UiNativeSetItem: { value: nativeSet, configurable: true },
+        });
+        Storage.prototype.setItem = function (key: string, value: string) {
+          nativeSet.call(this, key, value);
+          if (this === window.localStorage && key === canonicalKey && value !== priorRaw) candidateWritten = true;
+        };
+        Storage.prototype.getItem = function (key: string) {
+          const value = nativeGet.call(this, key);
+          if (this === window.localStorage && key === canonicalKey && candidateWritten) return `${value ?? ""} `;
+          return value;
+        };
+      }, bgF7ComparisonKeys.product.canonical);
+      faultInstalled = true;
+      await page.getByTestId("comparison-save").click();
+      const pendingControls = page.getByTestId("comparison-editor").locator("button, input, select, textarea");
+      expect(await pendingControls.count()).toBeGreaterThan(3);
+      for (let index = 0; index < await pendingControls.count(); index += 1) {
+        await expect(pendingControls.nth(index), `Product editor control ${index} must be disabled while the command awaits its lock`).toBeDisabled();
+      }
+      await page.evaluate(() => {
+        const back = document.querySelector<HTMLButtonElement>('[data-testid="comparison-editor-back"]');
+        if (!back) throw new Error("BG-F7 Product editor back control is missing");
+        back.disabled = false;
+        back.click();
+      });
+      await expect(page.getByTestId("comparison-editor")).toBeVisible();
+      await heldLock.release();
+      lockReleased = true;
+      await lockPage.close();
+      await expect(page.getByTestId("comparison-form-error")).toContainText(/نتیجه|بازیابی|دوباره|ذخیره/);
+      await page.evaluate(() => {
+        const faultWindow = window as Window & { __bgF7UiNativeGetItem?: typeof Storage.prototype.getItem; __bgF7UiNativeSetItem?: typeof Storage.prototype.setItem };
+        if (faultWindow.__bgF7UiNativeGetItem) Storage.prototype.getItem = faultWindow.__bgF7UiNativeGetItem;
+        if (faultWindow.__bgF7UiNativeSetItem) Storage.prototype.setItem = faultWindow.__bgF7UiNativeSetItem;
+      });
+      faultInstalled = false;
+      const ambiguousRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.canonical);
+      const ambiguousEnvelope = JSON.parse(ambiguousRaw ?? "null");
+      expect(ambiguousEnvelope.records).toHaveLength(1);
+      expect(ambiguousEnvelope.idempotencyReceipts).toHaveLength(1);
+      await page.getByTestId("comparison-save").click();
+      await expect(page.getByTestId("comparison-detail")).toBeVisible();
+      const replayedRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.canonical);
+      expect(replayedRaw).toBe(ambiguousRaw);
+      expect(JSON.parse(replayedRaw ?? "null").records).toHaveLength(1);
+      expect(JSON.parse(replayedRaw ?? "null").idempotencyReceipts).toHaveLength(1);
+
+      const comparisonId = ambiguousEnvelope.records[0].id as string;
+      const baselineIncidentRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.incident);
+      if (replayedRaw === null || baselineIncidentRaw === null) throw new Error("BG-F7 UI replay baseline authority is incomplete");
+      await page.getByTestId("comparison-edit").click();
+      const futureSupplier = comparisonSupplierEditor(page, productFixture.firstSupplier);
+      await futureSupplier.getByTestId(/^comparison-tax-mode-/).selectOption("included");
+      await futureSupplier.getByTestId(/^comparison-tax-assumption-/).fill("نسخهٔ رقیب معتبر پس از no-op");
+      await page.getByTestId("comparison-save").click();
+      await expect(page.getByTestId("comparison-detail")).toBeVisible();
+      const competingAuthority = await page.evaluate(({ canonicalKey, incidentKey }) => ({
+        canonicalRaw: window.localStorage.getItem(canonicalKey),
+        incidentRaw: window.localStorage.getItem(incidentKey),
+      }), { canonicalKey: bgF7ComparisonKeys.product.canonical, incidentKey: bgF7ComparisonKeys.product.incident });
+      expect(competingAuthority.canonicalRaw).not.toBe(replayedRaw);
+      if (competingAuthority.canonicalRaw === null || competingAuthority.incidentRaw === null) throw new Error("BG-F7 competing Product authority is incomplete");
+      await page.evaluate(({ canonicalKey, canonicalRaw, incidentKey, incidentRaw }) => {
+        window.localStorage.setItem(incidentKey, incidentRaw);
+        window.localStorage.setItem(canonicalKey, canonicalRaw);
+      }, {
+        canonicalKey: bgF7ComparisonKeys.product.canonical,
+        canonicalRaw: replayedRaw,
+        incidentKey: bgF7ComparisonKeys.product.incident,
+        incidentRaw: baselineIncidentRaw,
+      });
+      await reopenBgF7ComparisonDetail(page, "product", comparisonId);
+      await page.getByTestId("comparison-edit").click();
+      const unchangedTaxMode = comparisonSupplierEditor(page, productFixture.firstSupplier).getByTestId(/^comparison-tax-mode-/);
+      expect(await unchangedTaxMode.inputValue()).toBe("unknown");
+      let postReadRaceInstalled = false;
+      try {
+        await page.evaluate(({ canonicalKey, canonicalRaw, incidentKey, incidentRaw }) => {
+          const lockPrototype = Object.getPrototypeOf(navigator.locks) as { request: (...args: any[]) => Promise<any> };
+          const nativeRequest = lockPrototype.request;
+          Object.defineProperties(window, {
+            __bgF7UiLockPrototype: { value: lockPrototype, configurable: true },
+            __bgF7UiNativeLockRequest: { value: nativeRequest, configurable: true },
+            __bgF7UiCompetingWriteInstalled: { value: false, writable: true, configurable: true },
+          });
+          let competingWriteInstalled = false;
+          lockPrototype.request = async function (...args: any[]) {
+            const result = await (nativeRequest as any).apply(this, args);
+            if (!competingWriteInstalled && result?.status === "unchanged") {
+              window.localStorage.setItem(incidentKey, incidentRaw);
+              window.localStorage.setItem(canonicalKey, canonicalRaw);
+              competingWriteInstalled = true;
+              (window as any).__bgF7UiCompetingWriteInstalled = true;
+            }
+            return result;
+          };
+        }, {
+          canonicalKey: bgF7ComparisonKeys.product.canonical,
+          canonicalRaw: competingAuthority.canonicalRaw,
+          incidentKey: bgF7ComparisonKeys.product.incident,
+          incidentRaw: competingAuthority.incidentRaw,
+        });
+        postReadRaceInstalled = true;
+        await page.getByTestId("comparison-save").click();
+        await expect.poll(() => page.evaluate(() => Boolean((window as any).__bgF7UiCompetingWriteInstalled))).toBe(true);
+        await expect(page.getByTestId("comparison-editor")).toBeVisible();
+        await expect(page.getByTestId("comparison-form-error")).toContainText(/نتیجه|بازیابی|دوباره|ذخیره/);
+        await expect(unchangedTaxMode).toHaveValue("unknown");
+        await expect(page.getByTestId("comparison-detail")).toHaveCount(0);
+      } finally {
+        if (postReadRaceInstalled) {
+          await page.evaluate(() => {
+            const raceWindow = window as Window & {
+              __bgF7UiLockPrototype?: { request: (...args: any[]) => Promise<any> };
+              __bgF7UiNativeLockRequest?: (...args: any[]) => Promise<any>;
+            };
+            if (raceWindow.__bgF7UiLockPrototype && raceWindow.__bgF7UiNativeLockRequest) {
+              raceWindow.__bgF7UiLockPrototype.request = raceWindow.__bgF7UiNativeLockRequest;
+            }
+          });
+        }
+      }
+
+      await reloadIntoBuilderHome(page);
+      await page.getByTestId("quick-action-compare-offers").click();
+      await openProposalSecondaryView(page, "proposal-comparisons-entry");
+      await page.getByTestId("comparison-add").click();
+
+      const productNoReceiptBaseline = await page.evaluate(({ canonicalKey, incidentKey }) => ({
+        canonicalRaw: window.localStorage.getItem(canonicalKey),
+        incidentRaw: window.localStorage.getItem(incidentKey),
+      }), { canonicalKey: bgF7ComparisonKeys.product.canonical, incidentKey: bgF7ComparisonKeys.product.incident });
+      if (productNoReceiptBaseline.canonicalRaw === null) throw new Error("BG-F7 Product no-receipt baseline authority is incomplete");
+      await installBgF7ComparisonPrewriteFault(page, bgF7ComparisonKeys.product.canonical);
+      await page.getByTestId("comparison-save").click();
+      await expect(page.getByTestId("comparison-editor")).toBeVisible();
+      await expect(page.getByTestId("comparison-form-error")).toContainText("مقایسه ذخیره نشد");
+      await restoreBgF7ComparisonPrewriteFault(page);
+      const productNoReceiptAuthority = await page.evaluate(({ canonicalKey, incidentKey }) => ({
+        canonicalRaw: window.localStorage.getItem(canonicalKey),
+        incidentRaw: window.localStorage.getItem(incidentKey),
+      }), { canonicalKey: bgF7ComparisonKeys.product.canonical, incidentKey: bgF7ComparisonKeys.product.incident });
+      expect(productNoReceiptAuthority.canonicalRaw).toBe(productNoReceiptBaseline.canonicalRaw);
+      expect(JSON.parse(productNoReceiptAuthority.canonicalRaw ?? "null").idempotencyReceipts).toHaveLength(JSON.parse(productNoReceiptBaseline.canonicalRaw).idempotencyReceipts.length);
+      expect(JSON.parse(productNoReceiptAuthority.incidentRaw ?? "null")).toMatchObject({ state: "resolved", resolution: "rolled-back" });
+      await page.evaluate((key) => window.localStorage.setItem(key, "{BG-F7 Product stale no-receipt"), bgF7ComparisonKeys.product.canonical);
+      await dispatchBuilderStorageEvent(page, bgF7ComparisonKeys.product.canonical, productNoReceiptAuthority.canonicalRaw, "{BG-F7 Product stale no-receipt");
+      await expect(page.getByTestId("comparison-ledger-read-error")).toBeVisible();
+      await expect(page.getByTestId("comparison-editor-stale")).toBeVisible();
+      await page.evaluate(({ canonicalKey, canonicalRaw, incidentKey, incidentRaw }) => {
+        window.localStorage.setItem(incidentKey, incidentRaw);
+        window.localStorage.setItem(canonicalKey, canonicalRaw);
+      }, {
+        canonicalKey: bgF7ComparisonKeys.product.canonical,
+        canonicalRaw: productNoReceiptAuthority.canonicalRaw,
+        incidentKey: bgF7ComparisonKeys.product.incident,
+        incidentRaw: productNoReceiptAuthority.incidentRaw,
+      });
+      await expect(page.getByTestId("comparison-save")).toBeEnabled();
+      await page.getByTestId("comparison-save").click();
+      await expect(page.getByTestId("comparison-editor")).toBeVisible();
+      await expect(page.getByTestId("comparison-form-error")).toContainText("نسخهٔ مقایسه یا مخزن تغییر کرده است");
+      expect(await page.evaluate(({ canonicalKey, incidentKey }) => ({
+        canonicalRaw: window.localStorage.getItem(canonicalKey),
+        incidentRaw: window.localStorage.getItem(incidentKey),
+      }), { canonicalKey: bgF7ComparisonKeys.product.canonical, incidentKey: bgF7ComparisonKeys.product.incident })).toEqual(productNoReceiptAuthority);
+
+      await reloadIntoBuilderHome(page);
+      await page.getByTestId("quick-action-compare-offers").click();
+      await openProposalSecondaryView(page, "proposal-comparisons-entry");
+      await page.getByTestId("comparison-add").click();
+      const productDependencyPage = await context.newPage();
+      let productDependencyFaultInstalled = false;
+      let productContactsRawBeforeDrift: string | null = null;
+      try {
+        await installBgF7CommittedComparisonReadbackFault(page, bgF7ComparisonKeys.product.canonical);
+        productDependencyFaultInstalled = true;
+        await page.getByTestId("comparison-save").click();
+        await expect(page.getByTestId("comparison-editor")).toBeVisible();
+        await expect(page.getByTestId("comparison-form-error")).toContainText(/نتیجه|بازیابی|دوباره|ذخیره/);
+        expect(await page.evaluate(() => Boolean((window as any).__bgF7DependencyDriftFaultTriggered))).toBe(true);
+        await restoreBgF7CommittedComparisonReadbackFault(page);
+        productDependencyFaultInstalled = false;
+        const committedBeforeProductDrift = await page.evaluate(({ canonical, marker, incident }) => ({
+          canonicalRaw: window.localStorage.getItem(canonical),
+          markerRaw: window.localStorage.getItem(marker),
+          incidentRaw: window.localStorage.getItem(incident),
+        }), bgF7ComparisonKeys.product);
+        const committedProductEnvelope = JSON.parse(committedBeforeProductDrift.canonicalRaw ?? "null");
+        expect(committedProductEnvelope.records).toHaveLength(2);
+        expect(await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), bgF7ComparisonKeys.product.incident)).toMatchObject({ state: "resolved", resolution: "committed" });
+
+        await reopenFirstPurchaseRequestDispatch(productDependencyPage);
+        productContactsRawBeforeDrift = await productDependencyPage.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2"));
+        if (productContactsRawBeforeDrift === null) throw new Error("BG-F7 Product Contact authority is unavailable before dependency drift");
+        const productContact = productDependencyPage.getByTestId("supplier-contact-card").filter({ hasText: productFixture.firstSupplier });
+        await productContact.locator("summary").click();
+        await productContact.getByTestId("supplier-contact-status").click();
+        await expect(productContact.getByTestId("supplier-contact-status")).toHaveText("بازگرداندن");
+        await expect(page.getByTestId("comparison-editor-stale")).toBeVisible();
+        await expect(page.getByTestId("comparison-supplier-editor")).toHaveCount(1);
+        await expect(page.getByTestId("comparison-recommendation-preview")).toContainText("داده برای جمع‌بندی کافی نیست");
+        await expect(page.getByTestId("comparison-save")).toBeEnabled();
+        await page.getByTestId("comparison-save").click();
+        await expect(page.getByTestId("comparison-detail")).toBeVisible();
+        expect(await page.evaluate(({ canonical, marker, incident }) => ({
+          canonicalRaw: window.localStorage.getItem(canonical),
+          markerRaw: window.localStorage.getItem(marker),
+          incidentRaw: window.localStorage.getItem(incident),
+        }), bgF7ComparisonKeys.product)).toEqual(committedBeforeProductDrift);
+      } finally {
+        if (productDependencyFaultInstalled) await restoreBgF7CommittedComparisonReadbackFault(page);
+        if (productContactsRawBeforeDrift !== null) {
+          await productDependencyPage.evaluate((raw) => window.localStorage.setItem("chida-prototype-project-supplier-contacts:v2", raw), productContactsRawBeforeDrift);
+          expect(await productDependencyPage.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2"))).toBe(productContactsRawBeforeDrift);
+        }
+        await productDependencyPage.close();
+      }
+
+      const serviceFixture = await createTwoCurrentServiceProposalsForComparison(page);
+      await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
+      await page.getByTestId("service-comparison-add").click();
+
+      const serviceNoReceiptBaseline = await page.evaluate(({ canonicalKey, incidentKey }) => ({
+        canonicalRaw: window.localStorage.getItem(canonicalKey),
+        incidentRaw: window.localStorage.getItem(incidentKey),
+      }), { canonicalKey: bgF7ComparisonKeys.service.canonical, incidentKey: bgF7ComparisonKeys.service.incident });
+      if (serviceNoReceiptBaseline.canonicalRaw === null) throw new Error("BG-F7 Service no-receipt baseline authority is incomplete");
+      await installBgF7ComparisonPrewriteFault(page, bgF7ComparisonKeys.service.canonical);
+      await page.getByTestId("service-comparison-save").click();
+      await expect(page.getByTestId("service-comparison-editor")).toBeVisible();
+      await expect(page.getByTestId("service-comparison-form-error")).toContainText("مقایسه ذخیره نشد");
+      await restoreBgF7ComparisonPrewriteFault(page);
+      const serviceNoReceiptAuthority = await page.evaluate(({ canonicalKey, incidentKey }) => ({
+        canonicalRaw: window.localStorage.getItem(canonicalKey),
+        incidentRaw: window.localStorage.getItem(incidentKey),
+      }), { canonicalKey: bgF7ComparisonKeys.service.canonical, incidentKey: bgF7ComparisonKeys.service.incident });
+      expect(serviceNoReceiptAuthority.canonicalRaw).toBe(serviceNoReceiptBaseline.canonicalRaw);
+      expect(JSON.parse(serviceNoReceiptAuthority.canonicalRaw ?? "null").idempotencyReceipts).toHaveLength(JSON.parse(serviceNoReceiptBaseline.canonicalRaw).idempotencyReceipts.length);
+      expect(JSON.parse(serviceNoReceiptAuthority.incidentRaw ?? "null")).toMatchObject({ state: "resolved", resolution: "rolled-back" });
+      await page.evaluate((key) => window.localStorage.setItem(key, "{BG-F7 Service stale no-receipt"), bgF7ComparisonKeys.service.canonical);
+      await dispatchBuilderStorageEvent(page, bgF7ComparisonKeys.service.canonical, serviceNoReceiptAuthority.canonicalRaw, "{BG-F7 Service stale no-receipt");
+      await expect(page.getByTestId("service-comparison-ledger-read-error")).toBeVisible();
+      await expect(page.getByTestId("service-comparison-editor-stale")).toBeVisible();
+      await page.evaluate(({ canonicalKey, canonicalRaw, incidentKey, incidentRaw }) => {
+        window.localStorage.setItem(incidentKey, incidentRaw);
+        window.localStorage.setItem(canonicalKey, canonicalRaw);
+      }, {
+        canonicalKey: bgF7ComparisonKeys.service.canonical,
+        canonicalRaw: serviceNoReceiptAuthority.canonicalRaw,
+        incidentKey: bgF7ComparisonKeys.service.incident,
+        incidentRaw: serviceNoReceiptAuthority.incidentRaw,
+      });
+      await expect(page.getByTestId("service-comparison-save")).toBeEnabled();
+      await page.getByTestId("service-comparison-save").click();
+      await expect(page.getByTestId("service-comparison-editor")).toBeVisible();
+      await expect(page.getByTestId("service-comparison-form-error")).toContainText("نسخهٔ مقایسه یا مخزن تغییر کرده است");
+      expect(await page.evaluate(({ canonicalKey, incidentKey }) => ({
+        canonicalRaw: window.localStorage.getItem(canonicalKey),
+        incidentRaw: window.localStorage.getItem(incidentKey),
+      }), { canonicalKey: bgF7ComparisonKeys.service.canonical, incidentKey: bgF7ComparisonKeys.service.incident })).toEqual(serviceNoReceiptAuthority);
+
+      await reloadIntoBuilderHome(page);
+      await page.getByTestId("quick-action-compare-offers").click();
+      await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
+      await page.getByTestId("service-comparison-add").click();
+      const serviceLockPage = await context.newPage();
+      await serviceLockPage.goto("/");
+      const serviceHeldLock = await holdProcurementWriteLock(serviceLockPage);
+      let serviceLockReleased = false;
+      try {
+        await page.getByTestId("service-comparison-save").click();
+        const servicePendingControls = page.getByTestId("service-comparison-editor").locator("button, input, select, textarea");
+        expect(await servicePendingControls.count()).toBeGreaterThan(3);
+        for (let index = 0; index < await servicePendingControls.count(); index += 1) {
+          await expect(servicePendingControls.nth(index), `Service editor control ${index} must be disabled while the command awaits its lock`).toBeDisabled();
+        }
+        await page.evaluate(() => {
+          const back = document.querySelector<HTMLButtonElement>('[data-testid="service-comparison-editor-back"]');
+          if (!back) throw new Error("BG-F7 Service editor back control is missing");
+          back.disabled = false;
+          back.click();
+        });
+        await expect(page.getByTestId("service-comparison-editor")).toBeVisible();
+      } finally {
+        await serviceHeldLock.release();
+        serviceLockReleased = true;
+        if (!serviceLockPage.isClosed()) await serviceLockPage.close();
+      }
+      expect(serviceLockReleased).toBe(true);
+      await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
+      expect(serviceFixture.firstProposal).toBeTruthy();
+
+      await page.getByTestId("service-comparison-edit").click();
+      await fillServiceComparisonAssessment(page, "scope", serviceFixture.firstSupplier, firstServiceComparisonAssessments.scope);
+      const serviceDependencyPage = await context.newPage();
+      let serviceDependencyFaultInstalled = false;
+      let serviceContactsRawBeforeDrift: string | null = null;
+      try {
+        await installBgF7CommittedComparisonReadbackFault(page, bgF7ComparisonKeys.service.canonical);
+        serviceDependencyFaultInstalled = true;
+        await page.getByTestId("service-comparison-save").click();
+        await expect(page.getByTestId("service-comparison-editor")).toBeVisible();
+        await expect(page.getByTestId("service-comparison-form-error")).toContainText(/نتیجه|بازیابی|دوباره|ذخیره/);
+        expect(await page.evaluate(() => Boolean((window as any).__bgF7DependencyDriftFaultTriggered))).toBe(true);
+        await restoreBgF7CommittedComparisonReadbackFault(page);
+        serviceDependencyFaultInstalled = false;
+        const committedBeforeServiceDrift = await page.evaluate(({ canonical, marker, incident }) => ({
+          canonicalRaw: window.localStorage.getItem(canonical),
+          markerRaw: window.localStorage.getItem(marker),
+          incidentRaw: window.localStorage.getItem(incident),
+        }), bgF7ComparisonKeys.service);
+        const committedServiceEnvelope = JSON.parse(committedBeforeServiceDrift.canonicalRaw ?? "null");
+        expect(committedServiceEnvelope.records).toHaveLength(1);
+        expect(committedServiceEnvelope.records[0].version).toBe(2);
+        expect(await page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), bgF7ComparisonKeys.service.incident)).toMatchObject({ state: "resolved", resolution: "committed" });
+
+        await enterBuilderHome(serviceDependencyPage);
+        await serviceDependencyPage.getByTestId("quick-action-purchase-request").click();
+        await serviceDependencyPage.keyboard.press("Escape");
+        await serviceDependencyPage.getByTestId("purchase-request-card").filter({ hasText: "خدمت" }).click();
+        await serviceDependencyPage.getByTestId("purchase-request-open-dispatch").click();
+        const serviceTechnicalDetails = serviceDependencyPage.getByTestId("dispatch-technical-details");
+        if (await serviceTechnicalDetails.getAttribute("open") === null) await serviceTechnicalDetails.locator("summary").click();
+        serviceContactsRawBeforeDrift = await serviceDependencyPage.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2"));
+        if (serviceContactsRawBeforeDrift === null) throw new Error("BG-F7 Service Contact authority is unavailable before dependency drift");
+        const serviceContact = serviceDependencyPage.getByTestId("supplier-contact-card").filter({ hasText: serviceFixture.firstSupplier });
+        await serviceContact.locator("summary").click();
+        await serviceContact.getByTestId("supplier-contact-status").click();
+        await expect(serviceContact.getByTestId("supplier-contact-status")).toHaveText("بازگرداندن");
+        await expect(page.getByTestId("service-comparison-editor-stale")).toBeVisible();
+        await expect(page.getByTestId("service-comparison-proposal-assessment")).toHaveCount(10);
+        await expect(page.getByTestId("service-comparison-coverage-preview")).toHaveCount(0);
+        await expect(page.getByTestId("service-comparison-save")).toBeEnabled();
+        await page.getByTestId("service-comparison-save").click();
+        await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
+        expect(await page.evaluate(({ canonical, marker, incident }) => ({
+          canonicalRaw: window.localStorage.getItem(canonical),
+          markerRaw: window.localStorage.getItem(marker),
+          incidentRaw: window.localStorage.getItem(incident),
+        }), bgF7ComparisonKeys.service)).toEqual(committedBeforeServiceDrift);
+      } finally {
+        if (serviceDependencyFaultInstalled) await restoreBgF7CommittedComparisonReadbackFault(page);
+        if (serviceContactsRawBeforeDrift !== null) {
+          await serviceDependencyPage.evaluate((raw) => window.localStorage.setItem("chida-prototype-project-supplier-contacts:v2", raw), serviceContactsRawBeforeDrift);
+          expect(await serviceDependencyPage.evaluate(() => window.localStorage.getItem("chida-prototype-project-supplier-contacts:v2"))).toBe(serviceContactsRawBeforeDrift);
+        }
+        await serviceDependencyPage.close();
+      }
+    } finally {
+      if (!lockReleased) await heldLock.release();
+      if (!lockPage.isClosed()) await lockPage.close();
+      if (faultInstalled) {
+        await page.evaluate(() => {
+          const faultWindow = window as Window & { __bgF7UiNativeGetItem?: typeof Storage.prototype.getItem; __bgF7UiNativeSetItem?: typeof Storage.prototype.setItem };
+          if (faultWindow.__bgF7UiNativeGetItem) Storage.prototype.getItem = faultWindow.__bgF7UiNativeGetItem;
+          if (faultWindow.__bgF7UiNativeSetItem) Storage.prototype.setItem = faultWindow.__bgF7UiNativeSetItem;
+        });
+      }
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[33], async ({ page, context }) => {
+    test.slow();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const productFixture = await createExactProductComparisonWithDecision(page);
+    const serviceFixture = await createCompleteServiceComparisonWithDecision(page);
+    await reloadIntoBuilderHome(page);
+    await addAndActivateProject(page, "پروژه دوم BG-F7");
+    await page.getByTestId("quick-action-compare-offers").click();
+    await openProposalSecondaryView(page, "proposal-comparisons-entry");
+    await expect(page.getByTestId("comparison-card")).toHaveCount(0);
+    await expect(page.getByTestId("comparison-ledger-empty")).toBeVisible();
+    await page.getByTestId("comparisons-back").click();
+    await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
+    await expect(page.getByTestId("service-comparison-card")).toHaveCount(0);
+    await expect(page.getByTestId("service-comparison-ledger-empty")).toBeVisible();
+
+    await reloadIntoBuilderHome(page);
+    await activateExistingProjectFromHome(page, /برج نیلوفر/);
+    await page.getByTestId("quick-action-compare-offers").click();
+    await openProposalSecondaryView(page, "proposal-comparisons-entry");
+    await expect(page.getByTestId("comparison-card")).toHaveCount(1);
+    await page.getByTestId("comparisons-back").click();
+    await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
+    await expect(page.getByTestId("service-comparison-card")).toHaveCount(1);
+
+    const switchPage = await context.newPage();
+    const lockPage = await context.newPage();
+    try {
+      await switchPage.setViewportSize({ width: 390, height: 844 });
+      await enterBuilderHome(switchPage);
+      await lockPage.goto("/");
+
+      await page.getByTestId("service-comparison-card").click();
+      await page.getByTestId("service-comparison-edit").click();
+      const serviceDraft = serviceComparisonAssessmentEditor(page, "scope", serviceFixture.firstSupplier)
+        .getByTestId("service-comparison-assessment-rationale");
+      await serviceDraft.fill("پیش‌نویس خدمت هنگام تعویض پروژه حفظ می‌شود");
+      await installBgF7ComparisonResultBarrier(page);
+      const serviceHeld = await holdProcurementWriteLock(lockPage);
+      await page.getByTestId("service-comparison-save").click();
+      await expect(page.getByTestId("service-comparison-save")).toBeDisabled();
+      await serviceHeld.release();
+      await waitForBgF7ComparisonResult(page);
+      const serviceCommittedBeforeProjectDrift = await page.evaluate(({ canonical, marker, incident }) => ({
+        canonicalRaw: window.localStorage.getItem(canonical),
+        markerRaw: window.localStorage.getItem(marker),
+        incidentRaw: window.localStorage.getItem(incident),
+      }), bgF7ComparisonKeys.service);
+      await activateExistingProjectFromHome(switchPage, /پروژه دوم BG-F7/);
+      await releaseBgF7ComparisonResult(page);
+      await expect(page.getByTestId("service-comparison-editor")).toBeVisible();
+      await expect(page.getByTestId("service-comparison-form-error")).toContainText("پروژه");
+      await expect(page.getByTestId("service-comparison-save")).toBeDisabled();
+      await activateExistingProjectFromHome(switchPage, /برج نیلوفر/);
+      await expect(serviceDraft).toHaveValue("پیش‌نویس خدمت هنگام تعویض پروژه حفظ می‌شود");
+      await expect(page.getByTestId("service-comparison-save")).toBeEnabled();
+      await page.getByTestId("service-comparison-save").click();
+      await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
+      expect(await page.evaluate(({ canonical, marker, incident }) => ({
+        canonicalRaw: window.localStorage.getItem(canonical),
+        markerRaw: window.localStorage.getItem(marker),
+        incidentRaw: window.localStorage.getItem(incident),
+      }), bgF7ComparisonKeys.service)).toEqual(serviceCommittedBeforeProjectDrift);
+
+      await page.getByTestId("service-comparison-detail-back").click();
+      await page.getByTestId("service-comparisons-back").click();
+      await openProposalSecondaryView(page, "proposal-comparisons-entry");
+      await page.locator(`[data-comparison-id="${productFixture.comparison.id}"]`).click();
+      await page.getByTestId("comparison-edit").click();
+      const productDraft = comparisonSupplierEditor(page, productFixture.firstSupplier)
+        .getByTestId(/^comparison-transport-assumption-/);
+      await productDraft.fill("پیش‌نویس محصول هنگام تعویض پروژه حفظ می‌شود");
+      await installBgF7ComparisonResultBarrier(page);
+      const productHeld = await holdProcurementWriteLock(lockPage);
+      await page.getByTestId("comparison-save").click();
+      await expect(page.getByTestId("comparison-save")).toBeDisabled();
+      await productHeld.release();
+      await waitForBgF7ComparisonResult(page);
+      const productCommittedBeforeProjectDrift = await page.evaluate(({ canonical, marker, incident }) => ({
+        canonicalRaw: window.localStorage.getItem(canonical),
+        markerRaw: window.localStorage.getItem(marker),
+        incidentRaw: window.localStorage.getItem(incident),
+      }), bgF7ComparisonKeys.product);
+      await activateExistingProjectFromHome(switchPage, /پروژه دوم BG-F7/);
+      await releaseBgF7ComparisonResult(page);
+      await expect(page.getByTestId("comparison-editor")).toBeVisible();
+      await expect(page.getByTestId("comparison-form-error")).toContainText("پروژه");
+      await expect(page.getByTestId("comparison-save")).toBeDisabled();
+      await activateExistingProjectFromHome(switchPage, /برج نیلوفر/);
+      await expect(productDraft).toHaveValue("پیش‌نویس محصول هنگام تعویض پروژه حفظ می‌شود");
+      await expect(page.getByTestId("comparison-save")).toBeEnabled();
+      await page.getByTestId("comparison-save").click();
+      await expect(page.getByTestId("comparison-detail")).toBeVisible();
+      expect(await page.evaluate(({ canonical, marker, incident }) => ({
+        canonicalRaw: window.localStorage.getItem(canonical),
+        markerRaw: window.localStorage.getItem(marker),
+        incidentRaw: window.localStorage.getItem(incident),
+      }), bgF7ComparisonKeys.product)).toEqual(productCommittedBeforeProjectDrift);
+    } finally {
+      await lockPage.close();
+      await switchPage.close();
+    }
+  });
+
+  test(bgF7FrozenBaseTitles[34], async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await createExactProductComparisonWithDecision(page);
+    await createCompleteServiceComparisonWithDecision(page);
+    const productRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.product.canonical);
+    const serviceRaw = await page.evaluate((key) => window.localStorage.getItem(key), bgF7ComparisonKeys.service.canonical);
+    if (productRaw === null || serviceRaw === null) throw new Error("BG-F7 independent-ledger fixture is incomplete");
+
+    await page.evaluate((key) => window.localStorage.setItem(key, "{BG-F7 corrupt Product"), bgF7ComparisonKeys.product.canonical);
+    await reloadIntoBuilderHome(page);
+    await page.getByTestId("quick-action-compare-offers").click();
+    await openProposalSecondaryView(page, "proposal-comparisons-entry");
+    await expect(page.getByTestId("comparison-ledger-read-error")).toBeVisible();
+    await page.getByTestId("comparisons-back").click();
+    await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
+    await expect(page.getByTestId("service-comparison-ledger-read-error")).toHaveCount(0);
+    await expect(page.getByTestId("service-comparison-add")).toBeEnabled();
+    await page.getByTestId("service-comparison-add").click();
+    await page.getByTestId("service-comparison-save").click();
+    await expect(page.getByTestId("service-comparison-detail")).toBeVisible();
+
+    await page.evaluate(({ productKey, productValue, serviceKey }) => {
+      window.localStorage.setItem(productKey, productValue);
+      window.localStorage.setItem(serviceKey, "{BG-F7 corrupt Service");
+    }, { productKey: bgF7ComparisonKeys.product.canonical, productValue: productRaw, serviceKey: bgF7ComparisonKeys.service.canonical });
+    await reloadIntoBuilderHome(page);
+    await page.getByTestId("quick-action-compare-offers").click();
+    await openProposalSecondaryView(page, "service-proposal-comparisons-entry");
+    await expect(page.getByTestId("service-comparison-ledger-read-error")).toBeVisible();
+    await page.getByTestId("service-comparisons-back").click();
+    await openProposalSecondaryView(page, "proposal-comparisons-entry");
+    await expect(page.getByTestId("comparison-ledger-read-error")).toHaveCount(0);
+    await expect(page.getByTestId("comparison-add")).toBeEnabled();
+    await page.getByTestId("comparison-add").click();
+    await page.getByTestId("comparison-save").click();
+    await expect(page.getByTestId("comparison-detail")).toBeVisible();
+  });
+
+  test(bgF7FrozenBaseTitles[39], async ({ page }) => {
+    test.slow();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    const appOrigin = new URL(page.url()).origin;
+    const externalRequests: string[] = [];
+    const requestListener = (request: Request) => {
+      const url = new URL(request.url());
+      if ((url.protocol === "http:" || url.protocol === "https:") && url.origin !== appOrigin) externalRequests.push(request.url());
+    };
+    page.on("request", requestListener);
+    try {
+      await createExactProductComparisonWithDecision(page);
+      const technical = page.getByTestId("comparison-technical-details");
+      await expect(technical).not.toHaveAttribute("open", "");
+      await expect(page.getByTestId("comparison-authority-boundary")).toContainText("خصوصی");
+      await expect(page.getByTestId("comparison-authority-boundary")).toContainText("ثبت دستی");
+      await expect(page.getByTestId("comparison-authority-boundary")).toContainText("بدون اثر بیرونی");
+      await expect(page.getByText(/sha256-|fnv1a-|rollback-incident|migration report/i)).toHaveCount(0);
+      expect(externalRequests).toEqual([]);
+    } finally {
       page.off("request", requestListener);
     }
   });

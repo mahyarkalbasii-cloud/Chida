@@ -776,6 +776,10 @@ function sha256(serialized: string) {
   return hash.map((word) => word.toString(16).padStart(8, "0")).join("");
 }
 
+export function procurementDispatchSha256Text(value: string): string {
+  return sha256(value);
+}
+
 function stableValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === "object") {

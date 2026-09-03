@@ -1274,6 +1274,10 @@ function revisionIsValid(value: unknown): value is BuilderRecordedProposalRevisi
   return meaningfulRevision(revision.reference, revision);
 }
 
+export function builderProposalRevisionIsCanonical(value: unknown): value is BuilderRecordedProposalRevision {
+  return revisionIsValid(value);
+}
+
 const eventKeys = ["schemaVersion", "id", "type", "actor", "actorPrincipalId", "origin", "at", "version", "revisionId", "authorizationContextHash", "dependencySnapshotHash", "idempotencyKey", "commandPayloadHash", "fingerprint"] as const;
 
 function eventIsValid(value: unknown): value is BuilderRecordedProposalEvent {
@@ -2153,47 +2157,54 @@ function currentDependenciesMatchMarker(marker: BuilderProposalPendingMarker | B
     && marker.candidateRawHash === builderProposalHash(marker.candidateRaw);
 }
 
+export function builderProposalRecordIsCurrent(
+  record: BuilderRecordedProposalRecord,
+  dependencies: BuilderProposalDependencies,
+): boolean {
+  const request = dependencies.requestRevisions.find((item) => item.projectId === record.projectId
+    && item.requestId === record.target.requestId
+    && item.requestVersion === record.target.requestVersion
+    && item.revisionId === record.target.reviewRevisionId
+    && item.revisionFingerprint === record.target.reviewRevisionFingerprint
+    && item.fingerprint === record.target.requestDependencyFingerprint);
+  const approval = dependencies.contentApprovals.find((item) => item.projectId === record.projectId
+    && item.approvalId === record.target.contentApprovalId
+    && item.approvalVersion === record.target.contentApprovalVersion
+    && item.approvalRevisionId === record.target.contentApprovalRevisionId
+    && item.approvalFingerprint === record.target.contentApprovalFingerprint
+    && item.requestId === record.target.requestId
+    && item.requestVersion === record.target.requestVersion
+    && item.requestRevisionId === record.target.reviewRevisionId
+    && item.requestRevisionFingerprint === record.target.reviewRevisionFingerprint);
+  const contact = dependencies.contacts.find((item) => item.projectId === record.projectId
+    && item.supplierContactId === record.contactPin.supplierContactId
+    && item.supplierContactVersion === record.contactPin.supplierContactVersion
+    && item.supplierContactRevisionId === record.contactPin.supplierContactRevisionId
+    && item.supplierContactRevisionFingerprint === record.contactPin.supplierContactRevisionFingerprint);
+  const file = record.reference.kind === "unattached" ? true : dependencies.files.some((item) => item.projectId === record.projectId
+    && item.id === record.reference.projectFileId
+    && item.version === 1
+    && !fileLooksLikeImage(item)
+    && item.originalName === record.reference.fileSnapshot.originalName
+    && item.mimeType === record.reference.fileSnapshot.mimeType
+    && item.size === record.reference.fileSnapshot.size
+    && item.category === record.reference.fileSnapshot.category
+    && item.createdAt === record.reference.fileSnapshot.createdAt);
+  if (!request?.isCurrentReadyForReview
+    || !approval?.isCurrent
+    || approval.status !== "approved"
+    || !contact?.isCurrent
+    || contact.status !== "active"
+    || !contactSupports(contact, record.target.requestKind)
+    || !stableEqual(record.supplierSnapshot, { supplierContactId: contact.supplierContactId, supplierContactVersion: contact.supplierContactVersion, displayName: contact.displayName, category: contact.category, tehranCoverage: contact.tehranCoverage, responseCapability: contact.responseCapability, networkStatus: "خارج از شبکه چیدا" })
+    || !file) return false;
+  return true;
+}
+
 function dependencyStatus(envelope: BuilderProposalEnvelope, dependencies: BuilderProposalDependencies): "current" | "stale" {
-  for (const record of envelope.records) {
-    const request = dependencies.requestRevisions.find((item) => item.projectId === record.projectId
-      && item.requestId === record.target.requestId
-      && item.requestVersion === record.target.requestVersion
-      && item.revisionId === record.target.reviewRevisionId
-      && item.revisionFingerprint === record.target.reviewRevisionFingerprint
-      && item.fingerprint === record.target.requestDependencyFingerprint);
-    const approval = dependencies.contentApprovals.find((item) => item.projectId === record.projectId
-      && item.approvalId === record.target.contentApprovalId
-      && item.approvalVersion === record.target.contentApprovalVersion
-      && item.approvalRevisionId === record.target.contentApprovalRevisionId
-      && item.approvalFingerprint === record.target.contentApprovalFingerprint
-      && item.requestId === record.target.requestId
-      && item.requestVersion === record.target.requestVersion
-      && item.requestRevisionId === record.target.reviewRevisionId
-      && item.requestRevisionFingerprint === record.target.reviewRevisionFingerprint);
-    const contact = dependencies.contacts.find((item) => item.projectId === record.projectId
-      && item.supplierContactId === record.contactPin.supplierContactId
-      && item.supplierContactVersion === record.contactPin.supplierContactVersion
-      && item.supplierContactRevisionId === record.contactPin.supplierContactRevisionId
-      && item.supplierContactRevisionFingerprint === record.contactPin.supplierContactRevisionFingerprint);
-    const file = record.reference.kind === "unattached" ? true : dependencies.files.some((item) => item.projectId === record.projectId
-      && item.id === record.reference.projectFileId
-      && item.version === 1
-      && !fileLooksLikeImage(item)
-      && item.originalName === record.reference.fileSnapshot.originalName
-      && item.mimeType === record.reference.fileSnapshot.mimeType
-      && item.size === record.reference.fileSnapshot.size
-      && item.category === record.reference.fileSnapshot.category
-      && item.createdAt === record.reference.fileSnapshot.createdAt);
-    if (!request?.isCurrentReadyForReview
-      || !approval?.isCurrent
-      || approval.status !== "approved"
-      || !contact?.isCurrent
-      || contact.status !== "active"
-      || !contactSupports(contact, record.target.requestKind)
-      || !stableEqual(record.supplierSnapshot, { supplierContactId: contact.supplierContactId, supplierContactVersion: contact.supplierContactVersion, displayName: contact.displayName, category: contact.category, tehranCoverage: contact.tehranCoverage, responseCapability: contact.responseCapability, networkStatus: "خارج از شبکه چیدا" })
-      || !file) return "stale";
-  }
-  return "current";
+  return envelope.records.every((record) =>
+    builderProposalRecordIsCurrent(record, dependencies)
+  ) ? "current" : "stale";
 }
 
 type ResolvedBuilderProposalCommandDependencies = {
