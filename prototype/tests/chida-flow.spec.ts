@@ -8132,6 +8132,215 @@ function makeProjectInputDispositionLedger(authority: Awaited<ReturnType<typeof 
   return { ...envelopePayload, fingerprint: projectBriefTestHash(envelopePayload) };
 }
 
+type ProjectVisitHeadFixture = {
+  kind: "manual-task" | "backbone-task" | "content-approval" | "dispatch-plan-approval" | "purchase-request" | "project-input";
+  id: string;
+  version: number;
+  state: "in-progress" | "completed" | "pending" | "approved" | "changes-requested" | "withdrawn" | "invalidated" | "draft" | "ready-for-review" | "pending-stale" | "resolved";
+  fingerprint: string;
+};
+
+type ProjectVisitFixtureVisit = {
+  projectId: string;
+  observedAt: string;
+  idempotencyKey: string;
+  heads: ProjectVisitHeadFixture[];
+};
+
+function sortProjectVisitHeads(heads: ProjectVisitHeadFixture[]) {
+  return [...heads].sort((first, second) => {
+    const firstKey = `${first.kind}\u0000${first.id}`;
+    const secondKey = `${second.kind}\u0000${second.id}`;
+    return firstKey < secondKey ? -1 : firstKey > secondKey ? 1 : 0;
+  });
+}
+
+function makeProjectVisitObservationState(projectId: string, heads: ProjectVisitHeadFixture[] = []) {
+  const canonicalHeads = sortProjectVisitHeads(heads);
+  return {
+    status: "ready" as const,
+    reason: "" as const,
+    observation: {
+      projectId,
+      observationSchemaVersion: 1 as const,
+      heads: canonicalHeads,
+      observationFingerprint: projectBriefTestHash({ projectId, observationSchemaVersion: 1, heads: canonicalHeads }),
+    },
+  };
+}
+
+function makeProjectVisitCheckpointCommand(
+  projectId: string,
+  observationFingerprint: string,
+  values: {
+    action: "record-baseline" | "mark-all-seen";
+    expectedStoreVersion: number;
+    expectedCheckpointVersion: number | null;
+    idempotencyKey: string;
+  },
+) {
+  return {
+    inputSchemaVersion: 1 as const,
+    action: values.action,
+    projectId,
+    expectedStoreVersion: values.expectedStoreVersion,
+    expectedCheckpointVersion: values.expectedCheckpointVersion,
+    expectedObservationFingerprint: observationFingerprint,
+    idempotencyKey: values.idempotencyKey,
+  };
+}
+
+function withoutTestFingerprint<T extends { fingerprint: string }>(value: T) {
+  const { fingerprint: _fingerprint, ...payload } = value;
+  return payload;
+}
+
+function makeProjectVisitCheckpointLedger(
+  authority: Awaited<ReturnType<typeof readProjectBriefTestAuthority>>,
+  visits: ProjectVisitFixtureVisit[],
+) {
+  const records: any[] = [];
+  const idempotencyReceipts: any[] = [];
+  for (let storeIndex = 0; storeIndex < visits.length; storeIndex += 1) {
+    const visit = visits[storeIndex];
+    const heads = sortProjectVisitHeads(visit.heads);
+    const checkpointId = `project-visit-checkpoint:${projectBriefTestHash({ projectId: visit.projectId }).slice(7)}`;
+    const recordIndex = records.findIndex((record) => record.id === checkpointId);
+    const previousRecord = recordIndex < 0 ? null : records[recordIndex];
+    const version = (previousRecord?.version ?? 0) + 1;
+    const action = version === 1 ? "record-baseline" as const : "mark-all-seen" as const;
+    const eventType = version === 1 ? "baseline-recorded" as const : "all-seen" as const;
+    const revisionId = `project-visit-checkpoint-revision:${projectBriefTestHash({ checkpointId, version }).slice(7)}`;
+    const eventId = `project-visit-checkpoint-event:${projectBriefTestHash({ checkpointId, version }).slice(7)}`;
+    const observationFingerprint = projectBriefTestHash({
+      projectId: visit.projectId,
+      observationSchemaVersion: 1,
+      heads,
+    });
+    const command = {
+      inputSchemaVersion: 1,
+      action,
+      projectId: visit.projectId,
+      expectedStoreVersion: storeIndex,
+      expectedCheckpointVersion: version === 1 ? null : version - 1,
+      expectedObservationFingerprint: observationFingerprint,
+      idempotencyKey: visit.idempotencyKey,
+    };
+    const payloadHash = projectBriefTestHash(command);
+    const authorizationContextHash = authority.authorizationHashes[visit.projectId];
+    const snapshot = {
+      observedAt: visit.observedAt,
+      observationSchemaVersion: 1,
+      heads,
+      observationFingerprint,
+    };
+    const revisionPayload = {
+      id: revisionId,
+      version,
+      createdAt: visit.observedAt,
+      authorizationContextHash,
+      snapshot,
+    };
+    const revision = { ...revisionPayload, fingerprint: projectBriefTestHash(revisionPayload) };
+    const eventPayload = {
+      id: eventId,
+      type: eventType,
+      actor: "شما" as const,
+      actorPrincipalId: "local-builder-account" as const,
+      at: visit.observedAt,
+      version,
+      revisionId,
+      authorizationContextHash,
+      idempotencyKey: visit.idempotencyKey,
+      commandPayloadHash: payloadHash,
+    };
+    const event = { ...eventPayload, fingerprint: projectBriefTestHash(eventPayload) };
+    const recordPayload = {
+      schemaVersion: 1,
+      objectType: "project-visit-checkpoint" as const,
+      id: checkpointId,
+      projectId: visit.projectId,
+      ownerPrincipalType: "account" as const,
+      ownerPrincipalId: "local-builder-account" as const,
+      accountSide: "builder" as const,
+      scopeType: "project_private" as const,
+      scopeId: visit.projectId,
+      custodianService: "Project Brief Domain Service" as const,
+      sensitivity: "private" as const,
+      authorizationContextHash,
+      version,
+      currentRevisionId: revisionId,
+      createdAt: previousRecord?.createdAt ?? visit.observedAt,
+      updatedAt: visit.observedAt,
+      history: [...(previousRecord?.history ?? []), event],
+      revisions: [...(previousRecord?.revisions ?? []), revision],
+    };
+    const record = { ...recordPayload, fingerprint: projectBriefTestHash(recordPayload) };
+    if (recordIndex < 0) records.push(record);
+    else records[recordIndex] = record;
+    const receiptPayload = {
+      schemaVersion: 1,
+      key: visit.idempotencyKey,
+      action,
+      payloadHash,
+      projectId: visit.projectId,
+      checkpointId,
+      expectedStoreVersion: storeIndex,
+      expectedCheckpointVersion: version === 1 ? null : version - 1,
+      expectedObservationFingerprint: observationFingerprint,
+      resultingStoreVersion: storeIndex + 1,
+      resultingCheckpointVersion: version,
+      eventId,
+      revisionId,
+      authorizationContextHash,
+      recordedAt: visit.observedAt,
+    };
+    idempotencyReceipts.push({ ...receiptPayload, fingerprint: projectBriefTestHash(receiptPayload) });
+  }
+  const envelopePayload = {
+    schemaVersion: 1,
+    fingerprintVersion: "project-visit-checkpoint-v1" as const,
+    identityBindingHash: authority.identityBindingHash,
+    storeVersion: visits.length,
+    records,
+    idempotencyReceipts,
+    updatedAt: visits.at(-1)?.observedAt ?? null,
+  };
+  return { ...envelopePayload, fingerprint: projectBriefTestHash(envelopePayload) };
+}
+
+function rehashProjectVisitCheckpointLedger(candidate: any) {
+  for (const record of candidate.records) {
+    for (let index = 0; index < record.revisions.length; index += 1) {
+      const revision = record.revisions[index];
+      const event = record.history[index];
+      const receipt = candidate.idempotencyReceipts.find((item: any) => item.revisionId === revision.id);
+      revision.fingerprint = projectBriefTestHash(withoutTestFingerprint(revision));
+      receipt.payloadHash = projectBriefTestHash({
+        inputSchemaVersion: 1,
+        action: receipt.action,
+        projectId: receipt.projectId,
+        expectedStoreVersion: receipt.expectedStoreVersion,
+        expectedCheckpointVersion: receipt.expectedCheckpointVersion,
+        expectedObservationFingerprint: receipt.expectedObservationFingerprint,
+        idempotencyKey: receipt.key,
+      });
+      event.commandPayloadHash = receipt.payloadHash;
+      event.fingerprint = projectBriefTestHash(withoutTestFingerprint(event));
+      receipt.fingerprint = projectBriefTestHash(withoutTestFingerprint(receipt));
+    }
+    record.currentRevisionId = record.revisions.at(-1).id;
+    record.version = record.revisions.length;
+    record.createdAt = record.revisions[0].createdAt;
+    record.updatedAt = record.revisions.at(-1).createdAt;
+    record.fingerprint = projectBriefTestHash(withoutTestFingerprint(record));
+  }
+  candidate.storeVersion = candidate.idempotencyReceipts.length;
+  candidate.updatedAt = candidate.idempotencyReceipts.at(-1)?.recordedAt ?? null;
+  candidate.fingerprint = projectBriefTestHash(withoutTestFingerprint(candidate));
+  return candidate;
+}
+
 test("T9-B2 reads null as byte-stable empty and rejects malformed cross-project policy-drifted ledgers", async ({ page }) => {
   await enterBuilderHome(page);
   const authority = await readProjectBriefTestAuthority(page);
@@ -9642,6 +9851,7 @@ test("T9-B3 digest adapters change independent SHA heads for every in-scope fiel
     return { initial, mutations, inputBefore, inputAfter, evidenceFirst, evidenceSecond, contentFirst, contentSecond, missingPreimage, fingerprintOnlyPreimage };
   });
   expect(result.initial.status).toBe("ready");
+  expect(result.initial.observation?.projectId).toBe("project-a");
   expect(result.initial.observation?.heads[0].fingerprint).toMatch(/^sha256-[0-9a-f]{64}$/);
   for (const mutation of result.mutations) expect(mutation.after, mutation.kind).not.toBe(mutation.before);
   expect(result.inputAfter).not.toBe(result.inputBefore);
@@ -9936,53 +10146,95 @@ test("T9-B3 live seam hashes complete parser-shaped records and materializes cur
 
 test("T9-B3 delta sorts heads groups only added and updated and fails closed on an absent baseline head", async ({ page }) => {
   await enterBuilderHome(page);
-  const result = await page.evaluate(async () => {
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const baselineHeads: ProjectVisitHeadFixture[] = [
+    { kind: "manual-task", id: "manual-a", version: 1, state: "in-progress", fingerprint: `sha256-${"1".repeat(64)}` },
+    { kind: "content-approval", id: "approval-a", version: 1, state: "pending", fingerprint: `sha256-${"2".repeat(64)}` },
+    { kind: "purchase-request", id: "request-a", version: 1, state: "draft", fingerprint: `sha256-${"3".repeat(64)}` },
+    { kind: "project-input", id: "project-document:doc-a", version: 1, state: "pending", fingerprint: `sha256-${"4".repeat(64)}` },
+  ];
+  const checkpointEnvelope = makeProjectVisitCheckpointLedger(authority, [{
+    projectId,
+    observedAt: "2026-09-03T08:00:00.000Z",
+    idempotencyKey: "delta-baseline-a",
+    heads: baselineHeads,
+  }]);
+  const result = await page.evaluate(async ({ activeProjectId, currentBaselineHeads, envelope }) => {
     const domain = await import("/src/projectBriefAuthorities.ts");
-    const baselineHeads = [
-      { kind: "manual-task" as const, id: "manual-a", version: 1, state: "in-progress" as const, fingerprint: `sha256-${"1".repeat(64)}` },
-      { kind: "content-approval" as const, id: "approval-a", version: 1, state: "pending" as const, fingerprint: `sha256-${"2".repeat(64)}` },
-      { kind: "purchase-request" as const, id: "request-a", version: 1, state: "draft" as const, fingerprint: `sha256-${"3".repeat(64)}` },
-      { kind: "project-input" as const, id: "project-document:doc-a", version: 1, state: "pending" as const, fingerprint: `sha256-${"4".repeat(64)}` },
+    const checkpointState = { status: "ready" as const, envelope, reason: "" as const };
+    const currentHeads = [
+      currentBaselineHeads[3],
+      currentBaselineHeads[2],
+      { ...currentBaselineHeads[1], fingerprint: `sha256-${"6".repeat(64)}` },
+      currentBaselineHeads[0],
+      { kind: "backbone-task" as const, id: "backbone-new", version: 1, state: "in-progress" as const, fingerprint: `sha256-${"7".repeat(64)}` },
     ];
-    const baseline = {
-      observedAt: "2026-09-03T08:00:00.000Z",
-      observationSchemaVersion: 1 as const,
-      heads: baselineHeads,
-      observationFingerprint: `sha256-${"5".repeat(64)}`,
-    };
     const current = {
+      projectId: activeProjectId,
       observationSchemaVersion: 1 as const,
-      heads: [
-        baselineHeads[3],
-        baselineHeads[2],
-        { ...baselineHeads[1], fingerprint: `sha256-${"6".repeat(64)}` },
-        baselineHeads[0],
-        { kind: "backbone-task" as const, id: "backbone-new", version: 1, state: "in-progress" as const, fingerprint: `sha256-${"7".repeat(64)}` },
-      ],
-      observationFingerprint: `sha256-${"8".repeat(64)}`,
+      heads: currentHeads,
+      observationFingerprint: domain.projectBriefHash({ projectId: activeProjectId, observationSchemaVersion: 1, heads: [...currentHeads].sort((first, second) => `${first.kind}\u0000${first.id}`.localeCompare(`${second.kind}\u0000${second.id}`)) }),
     };
-    const ready = domain.projectVisitDeltaForObservation(baseline, current);
-    const missing = domain.projectVisitDeltaForObservation(baseline, {
-      ...current,
-      heads: current.heads.filter((head) => !(head.kind === "manual-task" && head.id === "manual-a")),
-    });
+    const observationState = { status: "ready" as const, observation: current, reason: "" as const };
+    const ready = domain.projectVisitDeltaForObservation(checkpointState, observationState, activeProjectId);
+    const missingHeads = current.heads.filter((head) => !(head.kind === "manual-task" && head.id === "manual-a"));
+    const missing = domain.projectVisitDeltaForObservation(checkpointState, {
+      status: "ready" as const,
+      observation: {
+        ...current,
+        heads: missingHeads,
+        observationFingerprint: domain.projectBriefHash({ projectId: activeProjectId, observationSchemaVersion: 1, heads: [...missingHeads].sort((first, second) => `${first.kind}\u0000${first.id}`.localeCompare(`${second.kind}\u0000${second.id}`)) }),
+      },
+      reason: "" as const,
+    }, activeProjectId);
     return { ready, missing };
+  }, { activeProjectId: projectId, currentBaselineHeads: baselineHeads, envelope: checkpointEnvelope });
+  expect(result.ready).toEqual({
+    status: "ready",
+    groups: [
+      { kind: "tasks", added: 1, updated: 0 },
+      { kind: "decisions", added: 0, updated: 1 },
+      { kind: "procurement", added: 0, updated: 0 },
+      { kind: "inputs", added: 0, updated: 0 },
+    ],
+    reason: "",
   });
-  expect(result.ready.status).toBe("ready");
-  expect(result.ready.changes.map((change: { kind: string; id: string; change: string }) => `${change.kind}:${change.id}:${change.change}`)).toEqual([
-    "backbone-task:backbone-new:added",
-    "content-approval:approval-a:updated",
-  ]);
-  expect(result.ready.added.map((head: { id: string }) => head.id)).toEqual(["backbone-new"]);
-  expect(result.ready.updated.map((head: { id: string }) => head.id)).toEqual(["approval-a"]);
-  expect(result.ready.groups).toEqual([
-    { id: "tasks", label: "کارها", added: 1, updated: 0 },
-    { id: "decisions", label: "تصمیم‌ها", added: 0, updated: 1 },
-    { id: "purchases", label: "خریدها", added: 0, updated: 0 },
-    { id: "inputs", label: "اسناد و ورودی‌ها", added: 0, updated: 0 },
-  ]);
+  expect(Object.keys(result.ready).sort()).toEqual(["groups", "reason", "status"]);
+  expect(result.ready).not.toHaveProperty("added");
+  expect(result.ready).not.toHaveProperty("updated");
+  expect(result.ready).not.toHaveProperty("changes");
   expect(result.ready).not.toHaveProperty("removed");
-  expect(result.missing).toEqual({ status: "unavailable", reason: "baseline-head-missing" });
+  expect(result.missing).toEqual({ status: "unavailable", groups: [], reason: "baseline-head-missing" });
+});
+
+test("T9-B3 delta propagates checkpoint and observation state and stays project-bound", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const emptyEnvelope = makeProjectVisitCheckpointLedger(authority, []);
+  const result = await page.evaluate(async ({ activeProjectId, envelope }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const observation = domain.buildProjectBriefObservation(activeProjectId, [], { projectId: activeProjectId, heads: [] });
+    if (observation.status !== "ready") throw new Error("empty observation fixture must be ready");
+    return {
+      readError: domain.projectVisitDeltaForObservation({ status: "read-error", envelope: null, reason: "checkpoint-malformed" }, observation, activeProjectId),
+      loading: domain.projectVisitDeltaForObservation({ status: "ready", envelope, reason: "" }, { status: "loading", observation: null, reason: "tasks-loading" }, activeProjectId),
+      unavailable: domain.projectVisitDeltaForObservation({ status: "ready", envelope, reason: "" }, { status: "unavailable", observation: null, reason: "tasks-unavailable" }, activeProjectId),
+      uninitialized: domain.projectVisitDeltaForObservation({ status: "ready", envelope, reason: "" }, observation, activeProjectId),
+      selectedProjectMismatch: domain.projectVisitDeltaForObservation({ status: "ready", envelope, reason: "" }, observation, "foreign-project"),
+      runtimeProjectMismatch: domain.projectVisitDeltaForObservation({ status: "ready", envelope, reason: "" }, {
+        ...observation,
+        observation: { ...observation.observation, projectId: "foreign-project" },
+      }, activeProjectId),
+    };
+  }, { activeProjectId: projectId, envelope: emptyEnvelope });
+  expect(result.readError).toEqual({ status: "unavailable", groups: [], reason: "checkpoint-malformed" });
+  expect(result.loading).toEqual({ status: "loading", groups: [], reason: "tasks-loading" });
+  expect(result.unavailable).toEqual({ status: "unavailable", groups: [], reason: "tasks-unavailable" });
+  expect(result.uninitialized).toEqual({ status: "uninitialized", groups: [], reason: "baseline-not-recorded" });
+  expect(result.selectedProjectMismatch).toEqual({ status: "unavailable", groups: [], reason: "scope-mismatch" });
+  expect(result.runtimeProjectMismatch).toEqual({ status: "unavailable", groups: [], reason: "scope-mismatch" });
 });
 
 test("T9-B3 keeps resolved project-input heads outside the visible pending projection", async ({ page }) => {
@@ -10029,12 +10281,8 @@ test("T9-B3 keeps resolved project-input heads outside the visible pending proje
       projectInputsTerminalReason: "",
     } as any);
     if (observation.status !== "ready") throw new Error(`resolved observation failed: ${observation.reason}`);
-    const delta = domain.projectVisitDeltaForObservation({
-      observedAt: "2026-09-03T08:05:00.000Z",
-      observationSchemaVersion: 1,
-      heads: observation.observation.heads,
-      observationFingerprint: observation.observation.observationFingerprint,
-    }, observation.observation);
+    const checkpointState = domain.readProjectVisitCheckpointState(currentAuthority);
+    const delta = domain.projectVisitDeltaForObservation(checkpointState, observation, currentDependencies.projectId);
     return { mutation, state, heads, observation, delta };
   }, { currentAuthority: authority, currentDependencies: dependencies });
   expect(result.mutation.status).toBe("resolved");
@@ -10042,8 +10290,772 @@ test("T9-B3 keeps resolved project-input heads outside the visible pending proje
   expect(result.state.items).toEqual([]);
   expect(result.heads).toHaveLength(1);
   expect(result.heads?.[0]).toMatchObject({ kind: "project-input", state: "resolved" });
-  expect(result.observation.observation?.heads).toEqual(result.heads);
-  expect(result.delta).toMatchObject({ status: "ready", added: [], updated: [] });
+  expect(result.observation.observation).toMatchObject({ projectId: dependencies.projectId, heads: result.heads });
+  expect(result.delta).toEqual({ status: "uninitialized", groups: [], reason: "baseline-not-recorded" });
+});
+
+test("T9-B3 authority reads a canonical empty checkpoint state without writing", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const before = await page.evaluate(() =>
+    localStorage.getItem("chida-prototype-project-visit-checkpoints:v1"));
+  expect(before).toBeNull();
+  const result = await page.evaluate(async (currentAuthority) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    return {
+      storageKey: domain.projectVisitCheckpointsStorageKey,
+      lockName: domain.projectVisitCheckpointsWriteLockName,
+      state: domain.readProjectVisitCheckpointState(currentAuthority),
+      after: localStorage.getItem("chida-prototype-project-visit-checkpoints:v1"),
+    };
+  }, authority);
+  expect(result.storageKey).toBe("chida-prototype-project-visit-checkpoints:v1");
+  expect(result.lockName).toBe("chida-prototype-project-visit-checkpoints:v1:write");
+  expect(result.state).toMatchObject({
+    status: "ready",
+    reason: "",
+    envelope: {
+      schemaVersion: 1,
+      fingerprintVersion: "project-visit-checkpoint-v1",
+      identityBindingHash: authority.identityBindingHash,
+      storeVersion: 0,
+      records: [],
+      idempotencyReceipts: [],
+      updatedAt: null,
+    },
+  });
+  expect(result.state.envelope?.fingerprint).toBe(projectBriefTestHash({
+    schemaVersion: 1,
+    fingerprintVersion: "project-visit-checkpoint-v1",
+    identityBindingHash: authority.identityBindingHash,
+    storeVersion: 0,
+    records: [],
+    idempotencyReceipts: [],
+    updatedAt: null,
+  }));
+  expect(result.after).toBeNull();
+});
+
+test("T9-B3 authority rejects malformed strict-key forged-scope identity authorization chronology and SHA checkpoint envelopes", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const heads: ProjectVisitHeadFixture[] = [{
+    kind: "manual-task",
+    id: "manual-a",
+    version: 1,
+    state: "in-progress",
+    fingerprint: `sha256-${"1".repeat(64)}`,
+  }];
+  const valid = makeProjectVisitCheckpointLedger(authority, [{
+    projectId,
+    observedAt: "2026-09-03T08:00:00.000Z",
+    idempotencyKey: "parser-baseline-a",
+    heads,
+  }]);
+  const twoVisits = makeProjectVisitCheckpointLedger(authority, [
+    { projectId, observedAt: "2026-09-03T08:00:00.000Z", idempotencyKey: "parser-baseline-a", heads },
+    { projectId, observedAt: "2026-09-03T08:00:01.000Z", idempotencyKey: "parser-seen-a", heads },
+  ]);
+  const mutate = (source: any, change: (candidate: any) => void) => {
+    const candidate = structuredClone(source);
+    change(candidate);
+    return candidate;
+  };
+  const malformedCases = [
+    { name: "empty raw", reason: "malformed-json", raw: "" },
+    { name: "malformed JSON", reason: "malformed-json", raw: "{malformed" },
+    { name: "extra envelope key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.extra = true; }) },
+    { name: "missing envelope key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { delete candidate.fingerprintVersion; }) },
+    { name: "extra record key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].extra = true; }) },
+    { name: "missing record key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { delete candidate.records[0].sensitivity; }) },
+    { name: "extra revision key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].revisions[0].extra = true; }) },
+    { name: "missing revision key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { delete candidate.records[0].revisions[0].createdAt; }) },
+    { name: "extra event key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].history[0].extra = true; }) },
+    { name: "missing event key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { delete candidate.records[0].history[0].actor; }) },
+    { name: "extra receipt key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.idempotencyReceipts[0].extra = true; }) },
+    { name: "missing receipt key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { delete candidate.idempotencyReceipts[0].expectedObservationFingerprint; }) },
+    { name: "persisted snapshot project binding", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].revisions[0].snapshot.projectId = projectId; }) },
+    { name: "missing snapshot key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { delete candidate.records[0].revisions[0].snapshot.observedAt; }) },
+    { name: "extra observed-head key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].revisions[0].snapshot.heads[0].extra = true; }) },
+    { name: "missing observed-head key", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { delete candidate.records[0].revisions[0].snapshot.heads[0].state; }) },
+    { name: "invalid head SHA", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].revisions[0].snapshot.heads[0].fingerprint = "sha256-short"; }) },
+    { name: "invalid observation SHA", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].revisions[0].snapshot.observationFingerprint = "sha256-short"; }) },
+    { name: "invalid revision SHA", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].revisions[0].fingerprint = "sha256-short"; }) },
+    { name: "invalid event SHA", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].history[0].fingerprint = "sha256-short"; }) },
+    { name: "invalid receipt SHA", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.idempotencyReceipts[0].fingerprint = "sha256-short"; }) },
+    { name: "invalid record SHA", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].fingerprint = "sha256-short"; }) },
+    { name: "invalid envelope SHA", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.fingerprint = "sha256-short"; }) },
+    { name: "duplicate record", reason: "duplicate-record", value: mutate(valid, (candidate) => { candidate.records.push(structuredClone(candidate.records[0])); }) },
+    { name: "duplicate receipt", reason: "duplicate-receipt", value: mutate(valid, (candidate) => { candidate.idempotencyReceipts.push(structuredClone(candidate.idempotencyReceipts[0])); }) },
+    { name: "duplicate observed head", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].revisions[0].snapshot.heads.push(structuredClone(candidate.records[0].revisions[0].snapshot.heads[0])); }) },
+    { name: "non-contiguous revision", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].revisions[0].version = 2; }) },
+    { name: "wrong checkpoint id", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].id = "project-visit-checkpoint:wrong"; }) },
+    { name: "wrong revision id", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].revisions[0].id = "project-visit-checkpoint-revision:wrong"; }) },
+    { name: "wrong event id", reason: "envelope-shape-invalid", value: mutate(valid, (candidate) => { candidate.records[0].history[0].id = "project-visit-checkpoint-event:wrong"; }) },
+    { name: "wrong current revision", reason: "chronology-invalid", value: mutate(valid, (candidate) => {
+      candidate.records[0].currentRevisionId = "project-visit-checkpoint-revision:wrong";
+      candidate.records[0].fingerprint = projectBriefTestHash(withoutTestFingerprint(candidate.records[0]));
+      candidate.fingerprint = projectBriefTestHash(withoutTestFingerprint(candidate));
+    }) },
+    { name: "reversed chronology", reason: "chronology-invalid", value: mutate(twoVisits, (candidate) => {
+      const timestamp = "2026-09-03T07:59:59.000Z";
+      candidate.records[0].revisions[1].createdAt = timestamp;
+      candidate.records[0].revisions[1].snapshot.observedAt = timestamp;
+      candidate.records[0].history[1].at = timestamp;
+      candidate.idempotencyReceipts[1].recordedAt = timestamp;
+      rehashProjectVisitCheckpointLedger(candidate);
+    }) },
+    { name: "foreign record project", reason: "scope-mismatch", value: mutate(valid, (candidate) => { candidate.records[0].projectId = "foreign-project"; }) },
+    { name: "forged record scope", reason: "scope-mismatch", value: mutate(valid, (candidate) => { candidate.records[0].scopeId = "foreign-project"; }) },
+    { name: "identity drift", reason: "identity-mismatch", value: mutate(valid, (candidate) => { candidate.identityBindingHash = `sha256-${"9".repeat(64)}`; }) },
+    { name: "record authorization drift", reason: "authorization-mismatch", value: mutate(valid, (candidate) => { candidate.records[0].authorizationContextHash = `sha256-${"8".repeat(64)}`; }) },
+    { name: "receipt authorization drift", reason: "authorization-mismatch", value: mutate(valid, (candidate) => { candidate.idempotencyReceipts[0].authorizationContextHash = `sha256-${"7".repeat(64)}`; }) },
+  ];
+  const results = await page.evaluate(async ({ currentAuthority, validLedger, cases }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    localStorage.setItem(domain.projectVisitCheckpointsStorageKey, JSON.stringify(validLedger));
+    const knownGood = domain.readProjectVisitCheckpointState(currentAuthority);
+    const failures = cases.map((candidate) => {
+      const raw = "raw" in candidate ? candidate.raw! : JSON.stringify(candidate.value);
+      localStorage.setItem(domain.projectVisitCheckpointsStorageKey, raw);
+      const before = localStorage.getItem(domain.projectVisitCheckpointsStorageKey);
+      const state = domain.readProjectVisitCheckpointState(currentAuthority);
+      const after = localStorage.getItem(domain.projectVisitCheckpointsStorageKey);
+      return { name: candidate.name, state, before, after };
+    });
+    return { knownGood, failures };
+  }, { currentAuthority: authority, validLedger: valid, cases: malformedCases });
+  expect(results.knownGood).toMatchObject({ status: "ready", envelope: { storeVersion: 1 } });
+  for (let index = 0; index < malformedCases.length; index += 1) {
+    const expected = malformedCases[index];
+    const actual = results.failures[index];
+    expect(actual.state, expected.name).toMatchObject({ status: "read-error", reason: expected.reason });
+    expect(actual.after, `${expected.name} must stay byte-stable`).toBe(actual.before);
+  }
+});
+
+test("T9-B3 authority rejects coherently rehashed writer-impossible checkpoint histories", async ({ page }) => {
+  await enterBuilderHome(page);
+  const firstProjectId = await readActiveProjectId(page);
+  const secondProjectId = await addAndActivateProject(page, "پروژه دوم checkpoint parser");
+  const authority = await readProjectBriefTestAuthority(page);
+  const heads: ProjectVisitHeadFixture[] = [{
+    kind: "purchase-request",
+    id: "request-a",
+    version: 1,
+    state: "draft",
+    fingerprint: `sha256-${"2".repeat(64)}`,
+  }];
+  const valid = makeProjectVisitCheckpointLedger(authority, [
+    { projectId: firstProjectId, observedAt: "2026-09-03T08:00:00.000Z", idempotencyKey: "semantic-first-baseline", heads },
+    { projectId: secondProjectId, observedAt: "2026-09-03T08:00:01.000Z", idempotencyKey: "semantic-second-baseline", heads },
+    { projectId: firstProjectId, observedAt: "2026-09-03T08:00:02.000Z", idempotencyKey: "semantic-first-seen", heads },
+  ]);
+  const impossibleCases = [
+    {
+      name: "record order differs from first receipt order",
+      candidate: (() => {
+        const candidate = structuredClone(valid);
+        candidate.records.reverse();
+        return rehashProjectVisitCheckpointLedger(candidate);
+      })(),
+    },
+    {
+      name: "version one is mark-all-seen",
+      candidate: (() => {
+        const candidate = structuredClone(valid);
+        candidate.idempotencyReceipts[0].action = "mark-all-seen";
+        candidate.records[0].history[0].type = "all-seen";
+        return rehashProjectVisitCheckpointLedger(candidate);
+      })(),
+    },
+    {
+      name: "later revision is record-baseline",
+      candidate: (() => {
+        const candidate = structuredClone(valid);
+        candidate.idempotencyReceipts[2].action = "record-baseline";
+        candidate.records[0].history[1].type = "baseline-recorded";
+        return rehashProjectVisitCheckpointLedger(candidate);
+      })(),
+    },
+    {
+      name: "later revision has null expected checkpoint version",
+      candidate: (() => {
+        const candidate = structuredClone(valid);
+        candidate.idempotencyReceipts[2].expectedCheckpointVersion = null;
+        return rehashProjectVisitCheckpointLedger(candidate);
+      })(),
+    },
+  ];
+  const results = await page.evaluate(async ({ currentAuthority, validLedger, cases }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    localStorage.setItem(domain.projectVisitCheckpointsStorageKey, JSON.stringify(validLedger));
+    const knownGood = domain.readProjectVisitCheckpointState(currentAuthority);
+    return {
+      knownGood,
+      failures: cases.map(({ name, candidate }) => {
+        localStorage.setItem(domain.projectVisitCheckpointsStorageKey, JSON.stringify(candidate));
+        const before = localStorage.getItem(domain.projectVisitCheckpointsStorageKey);
+        const state = domain.readProjectVisitCheckpointState(currentAuthority);
+        return { name, state, before, after: localStorage.getItem(domain.projectVisitCheckpointsStorageKey) };
+      }),
+    };
+  }, { currentAuthority: authority, validLedger: valid, cases: impossibleCases });
+  expect(results.knownGood).toMatchObject({ status: "ready", envelope: { storeVersion: 3, records: [{ projectId: firstProjectId }, { projectId: secondProjectId }] } });
+  for (const failure of results.failures) {
+    expect(failure.state, failure.name).toMatchObject({ status: "read-error", reason: "semantic-replay-invalid" });
+    expect(failure.after, `${failure.name} must stay byte-stable`).toBe(failure.before);
+  }
+});
+
+test("T9-B3 checkpoint command records the first baseline and a distinct equal-head visit with one monotonic timestamp", async ({ page }) => {
+  await enterBuilderHome(page);
+  await page.clock.setFixedTime(new Date("2026-09-03T09:00:00.000Z"));
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const observation = makeProjectVisitObservationState(projectId, [{
+    kind: "manual-task",
+    id: "manual-equal-head",
+    version: 1,
+    state: "in-progress",
+    fingerprint: `sha256-${"3".repeat(64)}`,
+  }]);
+  const baselineCommand = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
+    action: "record-baseline",
+    expectedStoreVersion: 0,
+    expectedCheckpointVersion: null,
+    idempotencyKey: "visit-equal-baseline",
+  });
+  const seenCommand = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
+    action: "mark-all-seen",
+    expectedStoreVersion: 1,
+    expectedCheckpointVersion: 1,
+    idempotencyKey: "visit-equal-seen",
+  });
+  const result = await page.evaluate(async ({ currentAuthority, currentObservation, firstCommand, secondCommand }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    localStorage.removeItem(domain.projectVisitCheckpointsStorageKey);
+    const first = await domain.executeProjectVisitCheckpointCommand(firstCommand, () => currentAuthority, () => currentObservation);
+    const firstRaw = localStorage.getItem(domain.projectVisitCheckpointsStorageKey);
+    const second = await domain.executeProjectVisitCheckpointCommand(secondCommand, () => currentAuthority, () => currentObservation);
+    const secondRaw = localStorage.getItem(domain.projectVisitCheckpointsStorageKey);
+    const reread = domain.readProjectVisitCheckpointState(currentAuthority);
+    return { first, firstRaw, second, secondRaw, reread };
+  }, { currentAuthority: authority, currentObservation: observation, firstCommand: baselineCommand, secondCommand: seenCommand });
+  expect(result.first.status).toBe("recorded");
+  expect(result.second.status).toBe("recorded");
+  expect(result.firstRaw).not.toBeNull();
+  expect(result.secondRaw).not.toBe(result.firstRaw);
+  expect(result.reread).toMatchObject({ status: "ready", envelope: { storeVersion: 2 } });
+  const envelope = result.reread.envelope!;
+  expect(envelope.records).toHaveLength(1);
+  expect(envelope.idempotencyReceipts).toHaveLength(2);
+  const record = envelope.records[0];
+  const checkpointId = `project-visit-checkpoint:${projectBriefTestHash({ projectId }).slice(7)}`;
+  expect(record).toMatchObject({
+    id: checkpointId,
+    projectId,
+    version: 2,
+    currentRevisionId: `project-visit-checkpoint-revision:${projectBriefTestHash({ checkpointId, version: 2 }).slice(7)}`,
+    createdAt: "2026-09-03T09:00:00.000Z",
+    updatedAt: "2026-09-03T09:00:00.001Z",
+  });
+  expect(record.revisions).toHaveLength(2);
+  expect(record.history).toHaveLength(2);
+  expect(record.revisions.map((revision: any) => revision.id)).toEqual([
+    `project-visit-checkpoint-revision:${projectBriefTestHash({ checkpointId, version: 1 }).slice(7)}`,
+    `project-visit-checkpoint-revision:${projectBriefTestHash({ checkpointId, version: 2 }).slice(7)}`,
+  ]);
+  expect(record.history.map((event: any) => event.id)).toEqual([
+    `project-visit-checkpoint-event:${projectBriefTestHash({ checkpointId, version: 1 }).slice(7)}`,
+    `project-visit-checkpoint-event:${projectBriefTestHash({ checkpointId, version: 2 }).slice(7)}`,
+  ]);
+  expect(record.history.map((event: any) => event.type)).toEqual(["baseline-recorded", "all-seen"]);
+  expect(record.revisions[0].snapshot.heads).toEqual(record.revisions[1].snapshot.heads);
+  expect(Object.keys(record.revisions[0].snapshot).sort()).toEqual(["heads", "observationFingerprint", "observationSchemaVersion", "observedAt"]);
+  expect(record.revisions[0].snapshot).not.toHaveProperty("projectId");
+  for (const [index, timestamp] of ["2026-09-03T09:00:00.000Z", "2026-09-03T09:00:00.001Z"].entries()) {
+    expect(record.revisions[index].snapshot.observedAt).toBe(timestamp);
+    expect(record.revisions[index].createdAt).toBe(timestamp);
+    expect(record.history[index].at).toBe(timestamp);
+    expect(envelope.idempotencyReceipts[index].recordedAt).toBe(timestamp);
+  }
+  expect(envelope.updatedAt).toBe("2026-09-03T09:00:00.001Z");
+});
+
+test("T9-B3 checkpoint command replays one exact receipt after later visits and rejects every changed retry binding", async ({ page }) => {
+  await enterBuilderHome(page);
+  const firstProjectId = await readActiveProjectId(page);
+  const secondProjectId = await addAndActivateProject(page, "پروژه دوم retry checkpoint");
+  const authority = await readProjectBriefTestAuthority(page);
+  const firstObservation = makeProjectVisitObservationState(firstProjectId);
+  const changedFirstObservation = makeProjectVisitObservationState(firstProjectId, [{
+    kind: "project-input", id: "project-document:new", version: 1, state: "pending", fingerprint: `sha256-${"4".repeat(64)}`,
+  }]);
+  const secondObservation = makeProjectVisitObservationState(secondProjectId);
+  const original = makeProjectVisitCheckpointCommand(firstProjectId, firstObservation.observation.observationFingerprint, {
+    action: "record-baseline", expectedStoreVersion: 0, expectedCheckpointVersion: null, idempotencyKey: "exact-retry-key",
+  });
+  const later = makeProjectVisitCheckpointCommand(firstProjectId, firstObservation.observation.observationFingerprint, {
+    action: "mark-all-seen", expectedStoreVersion: 1, expectedCheckpointVersion: 1, idempotencyKey: "later-visit-key",
+  });
+  const result = await page.evaluate(async ({ currentAuthority, observationA, changedObservationA, observationB, originalCommand, laterCommand, otherProjectId }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    localStorage.removeItem(domain.projectVisitCheckpointsStorageKey);
+    await domain.executeProjectVisitCheckpointCommand(originalCommand, () => currentAuthority, () => observationA);
+    await domain.executeProjectVisitCheckpointCommand(laterCommand, () => currentAuthority, () => observationA);
+    const advancedRaw = localStorage.getItem(domain.projectVisitCheckpointsStorageKey);
+    let authorityReads = 0;
+    let observationReads = 0;
+    const exact = await domain.executeProjectVisitCheckpointCommand(originalCommand, () => {
+      authorityReads += 1;
+      return currentAuthority;
+    }, () => {
+      observationReads += 1;
+      return observationA;
+    });
+    const changedAction = await domain.executeProjectVisitCheckpointCommand({ ...originalCommand, action: "mark-all-seen" }, () => currentAuthority, () => observationA);
+    const changedStore = await domain.executeProjectVisitCheckpointCommand({ ...originalCommand, expectedStoreVersion: 1 }, () => currentAuthority, () => observationA);
+    const changedRecord = await domain.executeProjectVisitCheckpointCommand({ ...originalCommand, expectedCheckpointVersion: 1 }, () => currentAuthority, () => observationA);
+    const changedObservation = await domain.executeProjectVisitCheckpointCommand({
+      ...originalCommand,
+      expectedObservationFingerprint: changedObservationA.observation.observationFingerprint,
+    }, () => currentAuthority, () => changedObservationA);
+    const changedProject = await domain.executeProjectVisitCheckpointCommand({
+      ...originalCommand,
+      projectId: otherProjectId,
+      expectedObservationFingerprint: observationB.observation.observationFingerprint,
+    }, () => currentAuthority, () => observationB);
+    const staleBeforeReplay = await domain.executeProjectVisitCheckpointCommand(originalCommand, () => currentAuthority, () => changedObservationA);
+    return {
+      exact, authorityReads, observationReads, changedAction, changedStore, changedRecord,
+      changedObservation, changedProject, staleBeforeReplay, advancedRaw,
+      after: localStorage.getItem(domain.projectVisitCheckpointsStorageKey),
+    };
+  }, {
+    currentAuthority: authority,
+    observationA: firstObservation,
+    changedObservationA: changedFirstObservation,
+    observationB: secondObservation,
+    originalCommand: original,
+    laterCommand: later,
+    otherProjectId: secondProjectId,
+  });
+  expect(result.exact).toMatchObject({ status: "recorded", envelope: { storeVersion: 2 } });
+  expect(result.authorityReads).toBe(1);
+  expect(result.observationReads).toBe(1);
+  for (const mismatch of [result.changedAction, result.changedStore, result.changedRecord, result.changedObservation, result.changedProject]) {
+    expect(mismatch.status).toBe("idempotency-payload-mismatch");
+  }
+  expect(result.staleBeforeReplay.status).toBe("dependency-stale");
+  expect(result.after).toBe(result.advancedRaw);
+});
+
+test("T9-B3 checkpoint command rejects invalid scope shape stale dependencies and stale versions without writes", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const observation = makeProjectVisitObservationState(projectId);
+  const changedObservation = makeProjectVisitObservationState(projectId, [{
+    kind: "purchase-request", id: "request-stale", version: 1, state: "draft", fingerprint: `sha256-${"5".repeat(64)}`,
+  }]);
+  const baseline = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
+    action: "record-baseline", expectedStoreVersion: 0, expectedCheckpointVersion: null, idempotencyKey: "stale-seed",
+  });
+  const result = await page.evaluate(async ({ currentAuthority, currentObservation, changedCurrentObservation, baselineCommand }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    localStorage.removeItem(domain.projectVisitCheckpointsStorageKey);
+    let invalidAuthorityReads = 0;
+    let invalidObservationReads = 0;
+    const invalidShape = await domain.executeProjectVisitCheckpointCommand({ ...baselineCommand, extra: true }, () => {
+      invalidAuthorityReads += 1;
+      return currentAuthority;
+    }, () => {
+      invalidObservationReads += 1;
+      return currentObservation;
+    });
+    const foreignScope = await domain.executeProjectVisitCheckpointCommand({ ...baselineCommand, projectId: "foreign-project" }, () => currentAuthority, () => currentObservation);
+    const runtimeScope = await domain.executeProjectVisitCheckpointCommand(baselineCommand, () => currentAuthority, () => ({
+      ...currentObservation,
+      observation: { ...currentObservation.observation, projectId: "foreign-project" },
+    }));
+    const staleObservation = await domain.executeProjectVisitCheckpointCommand(baselineCommand, () => currentAuthority, () => changedCurrentObservation);
+    const unavailableObservation = await domain.executeProjectVisitCheckpointCommand(baselineCommand, () => currentAuthority, () => ({
+      status: "unavailable" as const, observation: null, reason: "tasks-read-failure",
+    }));
+    const beforeSeed = localStorage.getItem(domain.projectVisitCheckpointsStorageKey);
+    const seed = await domain.executeProjectVisitCheckpointCommand(baselineCommand, () => currentAuthority, () => currentObservation);
+    const seededRaw = localStorage.getItem(domain.projectVisitCheckpointsStorageKey);
+    const staleStore = await domain.executeProjectVisitCheckpointCommand({
+      ...baselineCommand,
+      action: "mark-all-seen",
+      expectedCheckpointVersion: 1,
+      idempotencyKey: "stale-store",
+    }, () => currentAuthority, () => currentObservation);
+    const staleRecord = await domain.executeProjectVisitCheckpointCommand({
+      ...baselineCommand,
+      action: "mark-all-seen",
+      expectedStoreVersion: 1,
+      expectedCheckpointVersion: null,
+      idempotencyKey: "stale-record",
+    }, () => currentAuthority, () => currentObservation);
+    const repeatedBaseline = await domain.executeProjectVisitCheckpointCommand({
+      ...baselineCommand,
+      expectedStoreVersion: 1,
+      expectedCheckpointVersion: 1,
+      idempotencyKey: "second-baseline-invalid",
+    }, () => currentAuthority, () => currentObservation);
+    return {
+      invalidShape, invalidAuthorityReads, invalidObservationReads, foreignScope, runtimeScope,
+      staleObservation, unavailableObservation, beforeSeed, seed, staleStore, staleRecord,
+      repeatedBaseline, seededRaw, after: localStorage.getItem(domain.projectVisitCheckpointsStorageKey),
+    };
+  }, { currentAuthority: authority, currentObservation: observation, changedCurrentObservation: changedObservation, baselineCommand: baseline });
+  expect(result.invalidShape.status).toBe("dependency-stale");
+  expect(result.invalidAuthorityReads).toBe(0);
+  expect(result.invalidObservationReads).toBe(0);
+  expect(result.foreignScope.status).toBe("scope-mismatch");
+  expect(result.runtimeScope.status).toBe("scope-mismatch");
+  expect(result.staleObservation.status).toBe("dependency-stale");
+  expect(result.unavailableObservation.status).toBe("dependency-read-failure");
+  expect(result.beforeSeed).toBeNull();
+  expect(result.seed.status).toBe("recorded");
+  expect(result.staleStore.status).toBe("version-conflict");
+  expect(result.staleRecord.status).toBe("version-conflict");
+  expect(result.repeatedBaseline.status).toBe("dependency-stale");
+  expect(result.after).toBe(result.seededRaw);
+});
+
+test("T9-B3 checkpoint command preserves prior or competing bytes across set write-then-throw readback and rollback faults", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const observation = makeProjectVisitObservationState(projectId);
+  const baseline = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
+    action: "record-baseline", expectedStoreVersion: 0, expectedCheckpointVersion: null, idempotencyKey: "fault-seed",
+  });
+  const result = await page.evaluate(async ({ currentAuthority, currentObservation, baselineCommand }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const key = domain.projectVisitCheckpointsStorageKey;
+    localStorage.removeItem(key);
+    await domain.executeProjectVisitCheckpointCommand(baselineCommand, () => currentAuthority, () => currentObservation);
+    const knownGoodRaw = localStorage.getItem(key)!;
+    const mark = (idempotencyKey: string) => domain.executeProjectVisitCheckpointCommand({
+      ...baselineCommand,
+      action: "mark-all-seen" as const,
+      expectedStoreVersion: 1,
+      expectedCheckpointVersion: 1,
+      idempotencyKey,
+    }, () => currentAuthority, () => currentObservation);
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeGetItem = Storage.prototype.getItem;
+
+    Storage.prototype.setItem = function injectedSetFailure(storageKey: string, value: string) {
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw)
+        throw new DOMException("injected set failure", "QuotaExceededError");
+      return nativeSetItem.call(this, storageKey, value);
+    };
+    const setFailure = await mark("fault-set");
+    Storage.prototype.setItem = nativeSetItem;
+    const afterSetFailure = localStorage.getItem(key);
+
+    let wroteThenThrew = false;
+    Storage.prototype.setItem = function writeThenThrow(storageKey: string, value: string) {
+      const written = nativeSetItem.call(this, storageKey, value);
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw && !wroteThenThrew) {
+        wroteThenThrew = true;
+        throw new DOMException("injected write then throw", "QuotaExceededError");
+      }
+      return written;
+    };
+    const writeThenThrow = await mark("fault-write-then-throw");
+    Storage.prototype.setItem = nativeSetItem;
+    const afterWriteThenThrow = localStorage.getItem(key);
+
+    let candidateWritten = false;
+    let mismatchSupplied = false;
+    Storage.prototype.setItem = function trackReadbackCandidate(storageKey: string, value: string) {
+      const written = nativeSetItem.call(this, storageKey, value);
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw) candidateWritten = true;
+      return written;
+    };
+    Storage.prototype.getItem = function injectReadbackMismatch(storageKey: string) {
+      if (this === localStorage && storageKey === key && candidateWritten && !mismatchSupplied) {
+        mismatchSupplied = true;
+        return "{readback-mismatch";
+      }
+      return nativeGetItem.call(this, storageKey);
+    };
+    const readbackFailure = await mark("fault-readback");
+    Storage.prototype.getItem = nativeGetItem;
+    Storage.prototype.setItem = nativeSetItem;
+    const afterReadbackFailure = localStorage.getItem(key);
+
+    nativeSetItem.call(localStorage, key, knownGoodRaw);
+    candidateWritten = false;
+    mismatchSupplied = false;
+    Storage.prototype.setItem = function failOwnedRollback(storageKey: string, value: string) {
+      if (this === localStorage && storageKey === key && candidateWritten && value === knownGoodRaw)
+        throw new DOMException("injected rollback failure", "QuotaExceededError");
+      const written = nativeSetItem.call(this, storageKey, value);
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw) candidateWritten = true;
+      return written;
+    };
+    Storage.prototype.getItem = function mismatchBeforeRollbackFailure(storageKey: string) {
+      if (this === localStorage && storageKey === key && candidateWritten && !mismatchSupplied) {
+        mismatchSupplied = true;
+        return "{readback-mismatch";
+      }
+      return nativeGetItem.call(this, storageKey);
+    };
+    const rollbackFailure = await mark("fault-rollback");
+    Storage.prototype.getItem = nativeGetItem;
+    Storage.prototype.setItem = nativeSetItem;
+    const afterRollbackFailure = localStorage.getItem(key);
+
+    nativeSetItem.call(localStorage, key, knownGoodRaw);
+    candidateWritten = false;
+    mismatchSupplied = false;
+    const competingRaw = JSON.stringify({ competing: true });
+    Storage.prototype.setItem = function trackCompetingCandidate(storageKey: string, value: string) {
+      const written = nativeSetItem.call(this, storageKey, value);
+      if (this === localStorage && storageKey === key && value !== knownGoodRaw) candidateWritten = true;
+      return written;
+    };
+    Storage.prototype.getItem = function injectCompetingBytes(storageKey: string) {
+      if (this === localStorage && storageKey === key && candidateWritten && !mismatchSupplied) {
+        mismatchSupplied = true;
+        nativeSetItem.call(localStorage, key, competingRaw);
+        return "{readback-mismatch";
+      }
+      return nativeGetItem.call(this, storageKey);
+    };
+    const competingFailure = await mark("fault-competing");
+    Storage.prototype.getItem = nativeGetItem;
+    Storage.prototype.setItem = nativeSetItem;
+    const afterCompetingFailure = localStorage.getItem(key);
+    return {
+      knownGoodRaw, setFailure, afterSetFailure, writeThenThrow, afterWriteThenThrow,
+      readbackFailure, afterReadbackFailure, rollbackFailure, afterRollbackFailure,
+      competingFailure, competingRaw, afterCompetingFailure,
+    };
+  }, { currentAuthority: authority, currentObservation: observation, baselineCommand: baseline });
+  expect(result.setFailure.status).toBe("write-failure");
+  expect(result.afterSetFailure).toBe(result.knownGoodRaw);
+  expect(result.writeThenThrow.status).toBe("write-failure");
+  expect(result.afterWriteThenThrow).toBe(result.knownGoodRaw);
+  expect(result.readbackFailure.status).toBe("read-failure");
+  expect(result.afterReadbackFailure).toBe(result.knownGoodRaw);
+  expect(result.rollbackFailure.status).toBe("write-failure");
+  expect(result.afterRollbackFailure).not.toBe(result.knownGoodRaw);
+  expect(result.competingFailure.status).toBe("write-failure");
+  expect(result.afterCompetingFailure).toBe(result.competingRaw);
+});
+
+test("T9-B3 checkpoint command rechecks fresh authority observation and candidate ownership after writing", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const observation = makeProjectVisitObservationState(projectId);
+  const changedObservation = makeProjectVisitObservationState(projectId, [{
+    kind: "content-approval", id: "approval-after-write", version: 1, state: "pending", fingerprint: `sha256-${"6".repeat(64)}`,
+  }]);
+  const baseline = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
+    action: "record-baseline", expectedStoreVersion: 0, expectedCheckpointVersion: null, idempotencyKey: "postwrite-seed",
+  });
+  const result = await page.evaluate(async ({ currentAuthority, currentObservation, changedCurrentObservation, baselineCommand }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const key = domain.projectVisitCheckpointsStorageKey;
+    localStorage.removeItem(key);
+    let seedAuthorityReads = 0;
+    let seedObservationReads = 0;
+    const seed = await domain.executeProjectVisitCheckpointCommand(baselineCommand, () => {
+      seedAuthorityReads += 1;
+      return currentAuthority;
+    }, () => {
+      seedObservationReads += 1;
+      return currentObservation;
+    });
+    const knownGoodRaw = localStorage.getItem(key);
+    const mark = (idempotencyKey: string) => ({
+      ...baselineCommand,
+      action: "mark-all-seen" as const,
+      expectedStoreVersion: 1,
+      expectedCheckpointVersion: 1,
+      idempotencyKey,
+    });
+    let authorityReads = 0;
+    const driftedAuthority = {
+      ...currentAuthority,
+      identityBindingHash: `sha256-${"9".repeat(64)}`,
+    };
+    const authorityDrift = await domain.executeProjectVisitCheckpointCommand(mark("postwrite-authority-drift"), () => {
+      authorityReads += 1;
+      return authorityReads === 1 ? currentAuthority : driftedAuthority;
+    }, () => currentObservation);
+    const afterAuthorityDrift = localStorage.getItem(key);
+    let observationReads = 0;
+    const observationDrift = await domain.executeProjectVisitCheckpointCommand(mark("postwrite-observation-drift"), () => currentAuthority, () => {
+      observationReads += 1;
+      return observationReads === 1 ? currentObservation : changedCurrentObservation;
+    });
+    return {
+      seed, seedAuthorityReads, seedObservationReads, knownGoodRaw,
+      authorityDrift, authorityReads, afterAuthorityDrift,
+      observationDrift, observationReads, afterObservationDrift: localStorage.getItem(key),
+    };
+  }, { currentAuthority: authority, currentObservation: observation, changedCurrentObservation: changedObservation, baselineCommand: baseline });
+  expect(result.seed.status).toBe("recorded");
+  expect(result.seedAuthorityReads).toBe(2);
+  expect(result.seedObservationReads).toBe(2);
+  expect(result.authorityDrift.status).toBe("read-failure");
+  expect(result.authorityReads).toBe(2);
+  expect(result.afterAuthorityDrift).toBe(result.knownGoodRaw);
+  expect(result.observationDrift.status).toBe("dependency-stale");
+  expect(result.observationReads).toBe(2);
+  expect(result.afterObservationDrift).toBe(result.knownGoodRaw);
+});
+
+test("T9-B3 serializes concurrent first baselines from two pages without a lost update", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const observation = makeProjectVisitObservationState(projectId);
+  await page.evaluate(async () => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    localStorage.removeItem(domain.projectVisitCheckpointsStorageKey);
+  });
+  const secondPage = await page.context().newPage();
+  try {
+    await secondPage.goto("/");
+    await enterBuilderHome(secondPage);
+    const lockName = "chida-prototype-project-visit-checkpoints:v1:write";
+    await page.evaluate((name) => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      (globalThis as any).__releaseCheckpointRaceLock = release;
+      void navigator.locks.request(name, async () => {
+        sessionStorage.setItem("checkpoint-race-lock", "held");
+        await held;
+      });
+    }, lockName);
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("checkpoint-race-lock"))).toBe("held");
+    for (const [candidatePage, key] of [[page, "baseline-race-a"], [secondPage, "baseline-race-b"]] as const) {
+      const command = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
+        action: "record-baseline", expectedStoreVersion: 0, expectedCheckpointVersion: null, idempotencyKey: key,
+      });
+      await candidatePage.evaluate(async ({ currentAuthority, currentObservation, currentCommand }) => {
+        const domain = await import("/src/projectBriefAuthorities.ts");
+        (globalThis as any).__checkpointRaceResult = domain.executeProjectVisitCheckpointCommand(
+          currentCommand,
+          () => currentAuthority,
+          () => currentObservation,
+        );
+      }, { currentAuthority: authority, currentObservation: observation, currentCommand: command });
+    }
+    await page.evaluate(() => (globalThis as any).__releaseCheckpointRaceLock());
+    const [firstResult, secondResult] = await Promise.all([
+      page.evaluate(() => (globalThis as any).__checkpointRaceResult),
+      secondPage.evaluate(() => (globalThis as any).__checkpointRaceResult),
+    ]);
+    expect([firstResult.status, secondResult.status].filter((status) => status === "recorded")).toHaveLength(1);
+    expect([firstResult.status, secondResult.status].filter((status) => ["version-conflict", "dependency-stale"].includes(status))).toHaveLength(1);
+    await Promise.all([page.reload(), secondPage.reload()]);
+    await Promise.all([enterBuilderHome(page), enterBuilderHome(secondPage)]);
+    const states = await Promise.all([page, secondPage].map((candidatePage) => candidatePage.evaluate(async (currentAuthority) => {
+      const domain = await import("/src/projectBriefAuthorities.ts");
+      return {
+        state: domain.readProjectVisitCheckpointState(currentAuthority),
+        raw: localStorage.getItem(domain.projectVisitCheckpointsStorageKey),
+      };
+    }, authority)));
+    expect(states[0].raw).toBe(states[1].raw);
+    for (const { state } of states) {
+      expect(state).toMatchObject({ status: "ready", envelope: { storeVersion: 1 } });
+      expect(state.envelope?.records).toHaveLength(1);
+      expect(state.envelope?.records[0]).toMatchObject({ projectId, version: 1 });
+      expect(state.envelope?.records[0].revisions).toHaveLength(1);
+      expect(state.envelope?.records[0].history).toHaveLength(1);
+      expect(state.envelope?.idempotencyReceipts).toHaveLength(1);
+    }
+  } finally {
+    await secondPage.close();
+  }
+});
+
+test("T9-B3 serializes concurrent mark-all-seen visits from two pages without a duplicate revision", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const observation = makeProjectVisitObservationState(projectId, [{
+    kind: "project-input", id: "project-document:race", version: 1, state: "pending", fingerprint: `sha256-${"7".repeat(64)}`,
+  }]);
+  const baseline = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
+    action: "record-baseline", expectedStoreVersion: 0, expectedCheckpointVersion: null, idempotencyKey: "mark-race-seed",
+  });
+  await page.evaluate(async ({ currentAuthority, currentObservation, currentCommand }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    localStorage.removeItem(domain.projectVisitCheckpointsStorageKey);
+    const seeded = await domain.executeProjectVisitCheckpointCommand(currentCommand, () => currentAuthority, () => currentObservation);
+    if (seeded.status !== "recorded") throw new Error(`checkpoint race seed failed: ${seeded.status}`);
+  }, { currentAuthority: authority, currentObservation: observation, currentCommand: baseline });
+  const secondPage = await page.context().newPage();
+  try {
+    await secondPage.goto("/");
+    await enterBuilderHome(secondPage);
+    const lockName = "chida-prototype-project-visit-checkpoints:v1:write";
+    await page.evaluate((name) => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      (globalThis as any).__releaseCheckpointMarkRaceLock = release;
+      void navigator.locks.request(name, async () => {
+        sessionStorage.setItem("checkpoint-mark-race-lock", "held");
+        await held;
+      });
+    }, lockName);
+    await expect.poll(() => page.evaluate(() => sessionStorage.getItem("checkpoint-mark-race-lock"))).toBe("held");
+    for (const [candidatePage, key] of [[page, "mark-race-a"], [secondPage, "mark-race-b"]] as const) {
+      const command = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
+        action: "mark-all-seen", expectedStoreVersion: 1, expectedCheckpointVersion: 1, idempotencyKey: key,
+      });
+      await candidatePage.evaluate(async ({ currentAuthority, currentObservation, currentCommand }) => {
+        const domain = await import("/src/projectBriefAuthorities.ts");
+        (globalThis as any).__checkpointMarkRaceResult = domain.executeProjectVisitCheckpointCommand(
+          currentCommand,
+          () => currentAuthority,
+          () => currentObservation,
+        );
+      }, { currentAuthority: authority, currentObservation: observation, currentCommand: command });
+    }
+    await page.evaluate(() => (globalThis as any).__releaseCheckpointMarkRaceLock());
+    const [firstResult, secondResult] = await Promise.all([
+      page.evaluate(() => (globalThis as any).__checkpointMarkRaceResult),
+      secondPage.evaluate(() => (globalThis as any).__checkpointMarkRaceResult),
+    ]);
+    expect([firstResult.status, secondResult.status].filter((status) => status === "recorded")).toHaveLength(1);
+    expect([firstResult.status, secondResult.status].filter((status) => ["version-conflict", "dependency-stale"].includes(status))).toHaveLength(1);
+    await Promise.all([page.reload(), secondPage.reload()]);
+    await Promise.all([enterBuilderHome(page), enterBuilderHome(secondPage)]);
+    const states = await Promise.all([page, secondPage].map((candidatePage) => candidatePage.evaluate(async (currentAuthority) => {
+      const domain = await import("/src/projectBriefAuthorities.ts");
+      return {
+        state: domain.readProjectVisitCheckpointState(currentAuthority),
+        raw: localStorage.getItem(domain.projectVisitCheckpointsStorageKey),
+      };
+    }, authority)));
+    expect(states[0].raw).toBe(states[1].raw);
+    for (const { state } of states) {
+      expect(state).toMatchObject({ status: "ready", envelope: { storeVersion: 2 } });
+      expect(state.envelope?.records).toHaveLength(1);
+      expect(state.envelope?.records[0]).toMatchObject({ projectId, version: 2 });
+      expect(state.envelope?.records[0].revisions).toHaveLength(2);
+      expect(state.envelope?.records[0].history).toHaveLength(2);
+      expect(state.envelope?.idempotencyReceipts).toHaveLength(2);
+    }
+  } finally {
+    await secondPage.close();
+  }
 });
 
 test("T9-B1 live Brief projects real work decisions and procurement without fixture copy or storage writes", async ({ page }) => {

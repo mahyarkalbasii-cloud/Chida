@@ -3,6 +3,8 @@ type Fnv1aFingerprint = `fnv1a-${string}`;
 
 export const projectInputDispositionsStorageKey = "chida-prototype-project-input-dispositions:v1";
 export const projectInputDispositionsWriteLockName = `${projectInputDispositionsStorageKey}:write`;
+export const projectVisitCheckpointsStorageKey = "chida-prototype-project-visit-checkpoints:v1";
+export const projectVisitCheckpointsWriteLockName = `${projectVisitCheckpointsStorageKey}:write`;
 
 export type ProjectBriefAuthority = {
   identityBindingHash: Sha256Fingerprint;
@@ -489,7 +491,7 @@ export type ProjectBriefObservedHead =
 
 type ProjectBriefUpstreamObservedKind = Exclude<ProjectBriefObservedKind, "project-input">;
 
-export type ProjectBriefObservationAdapter =
+export type ProjectBriefHeadAdapterState =
   | {
       status: "ready";
       kind: ProjectBriefUpstreamObservedKind;
@@ -509,53 +511,153 @@ export type ProjectBriefObservationAdapter =
     };
 
 export type ProjectBriefObservation = {
+  projectId: string;
   observationSchemaVersion: 1;
   heads: ProjectBriefObservedHead[];
   observationFingerprint: Sha256Fingerprint;
 };
 
-export type ProjectBriefObservationResult =
+export type ProjectBriefObservationState =
   | { status: "ready"; observation: ProjectBriefObservation; reason: "" }
   | { status: "loading" | "unavailable"; observation: null; reason: string };
+
+// Compatibility-only names for the Task 4 UI until Task 6 moves its imports to
+// the approved canonical public type names above.
+export type ProjectBriefObservationAdapter = ProjectBriefHeadAdapterState;
+export type ProjectBriefObservationResult = ProjectBriefObservationState;
 
 export type ProjectBriefProjectInputHeads = {
   projectId: string;
   heads: ProjectInputObservedHead[];
 };
 
-export type ProjectVisitCheckpointSnapshot = ProjectBriefObservation & {
+export type ProjectVisitCheckpointSnapshot = {
   observedAt: string;
+  observationSchemaVersion: 1;
+  heads: ProjectBriefObservedHead[];
+  observationFingerprint: Sha256Fingerprint;
 };
 
+export type ProjectVisitCheckpointRevision = {
+  id: string;
+  version: number;
+  createdAt: string;
+  authorizationContextHash: Sha256Fingerprint;
+  snapshot: ProjectVisitCheckpointSnapshot;
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectVisitCheckpointEvent = {
+  id: string;
+  type: "baseline-recorded" | "all-seen";
+  actor: "شما";
+  actorPrincipalId: "local-builder-account";
+  at: string;
+  version: number;
+  revisionId: string;
+  authorizationContextHash: Sha256Fingerprint;
+  idempotencyKey: string;
+  commandPayloadHash: Sha256Fingerprint;
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectVisitCheckpointRecord = {
+  schemaVersion: 1;
+  objectType: "project-visit-checkpoint";
+  id: string;
+  projectId: string;
+  ownerPrincipalType: "account";
+  ownerPrincipalId: "local-builder-account";
+  accountSide: "builder";
+  scopeType: "project_private";
+  scopeId: string;
+  custodianService: "Project Brief Domain Service";
+  sensitivity: "private";
+  authorizationContextHash: Sha256Fingerprint;
+  version: number;
+  currentRevisionId: string;
+  createdAt: string;
+  updatedAt: string;
+  history: ProjectVisitCheckpointEvent[];
+  revisions: ProjectVisitCheckpointRevision[];
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectVisitCheckpointReceipt = {
+  schemaVersion: 1;
+  key: string;
+  action: "record-baseline" | "mark-all-seen";
+  payloadHash: Sha256Fingerprint;
+  projectId: string;
+  checkpointId: string;
+  expectedStoreVersion: number;
+  expectedCheckpointVersion: number | null;
+  expectedObservationFingerprint: Sha256Fingerprint;
+  resultingStoreVersion: number;
+  resultingCheckpointVersion: number;
+  eventId: string;
+  revisionId: string;
+  authorizationContextHash: Sha256Fingerprint;
+  recordedAt: string;
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectVisitCheckpointEnvelope = {
+  schemaVersion: 1;
+  fingerprintVersion: "project-visit-checkpoint-v1";
+  identityBindingHash: Sha256Fingerprint;
+  storeVersion: number;
+  records: ProjectVisitCheckpointRecord[];
+  idempotencyReceipts: ProjectVisitCheckpointReceipt[];
+  updatedAt: string | null;
+  fingerprint: Sha256Fingerprint;
+};
+
+export type ProjectVisitCheckpointCommand = {
+  inputSchemaVersion: 1;
+  action: "record-baseline" | "mark-all-seen";
+  projectId: string;
+  expectedStoreVersion: number;
+  expectedCheckpointVersion: number | null;
+  expectedObservationFingerprint: Sha256Fingerprint;
+  idempotencyKey: string;
+};
+
+export type ProjectVisitCheckpointState =
+  | { status: "read-error"; envelope: null; reason: string }
+  | { status: "ready"; envelope: ProjectVisitCheckpointEnvelope; reason: "" };
+
 export type ProjectVisitDeltaGroup = {
-  id: "tasks" | "decisions" | "purchases" | "inputs";
-  label: "کارها" | "تصمیم‌ها" | "خریدها" | "اسناد و ورودی‌ها";
+  kind: "tasks" | "decisions" | "procurement" | "inputs";
   added: number;
   updated: number;
 };
 
-export type ProjectVisitDeltaChange = ProjectBriefObservedHead & {
-  change: "added" | "updated";
-};
-
-export type ProjectVisitDeltaResult =
+export type ProjectVisitDeltaState =
   | {
       status: "ready";
-      added: ProjectBriefObservedHead[];
-      updated: ProjectBriefObservedHead[];
-      changes: ProjectVisitDeltaChange[];
       groups: ProjectVisitDeltaGroup[];
       reason: "";
     }
   | {
-      status: "no-baseline";
-      added: [];
-      updated: [];
-      changes: [];
-      groups: ProjectVisitDeltaGroup[];
-      reason: "baseline-not-recorded";
-    }
-  | { status: "unavailable"; reason: string };
+      status: "loading" | "unavailable" | "uninitialized";
+      groups: [];
+      reason: string;
+    };
+
+export type ProjectVisitCheckpointMutationResult = {
+  status:
+    | "recorded"
+    | "read-failure"
+    | "dependency-read-failure"
+    | "dependency-stale"
+    | "scope-mismatch"
+    | "version-conflict"
+    | "idempotency-payload-mismatch"
+    | "write-failure"
+    | "lock-unavailable";
+  envelope: ProjectVisitCheckpointEnvelope | null;
+};
 
 export type ProjectInputDispositionState =
   | { status: "unavailable" | "read-error"; envelope: null; items: []; observedHeads: null; reason: string }
@@ -918,11 +1020,210 @@ function observedHeadsAreValid(heads: unknown): heads is ProjectBriefObservedHea
   return new Set(keys).size === keys.length;
 }
 
+const checkpointSnapshotKeys = ["observedAt", "observationSchemaVersion", "heads", "observationFingerprint"] as const;
+const checkpointRevisionKeys = ["id", "version", "createdAt", "authorizationContextHash", "snapshot", "fingerprint"] as const;
+const checkpointEventKeys = ["id", "type", "actor", "actorPrincipalId", "at", "version", "revisionId", "authorizationContextHash", "idempotencyKey", "commandPayloadHash", "fingerprint"] as const;
+const checkpointRecordKeys = ["schemaVersion", "objectType", "id", "projectId", "ownerPrincipalType", "ownerPrincipalId", "accountSide", "scopeType", "scopeId", "custodianService", "sensitivity", "authorizationContextHash", "version", "currentRevisionId", "createdAt", "updatedAt", "history", "revisions", "fingerprint"] as const;
+const checkpointReceiptKeys = ["schemaVersion", "key", "action", "payloadHash", "projectId", "checkpointId", "expectedStoreVersion", "expectedCheckpointVersion", "expectedObservationFingerprint", "resultingStoreVersion", "resultingCheckpointVersion", "eventId", "revisionId", "authorizationContextHash", "recordedAt", "fingerprint"] as const;
+const checkpointEnvelopeKeys = ["schemaVersion", "fingerprintVersion", "identityBindingHash", "storeVersion", "records", "idempotencyReceipts", "updatedAt", "fingerprint"] as const;
+
+function checkpointIdForProject(projectId: string) {
+  return `project-visit-checkpoint:${projectBriefHash({ projectId }).slice(7)}`;
+}
+
+function checkpointRevisionId(checkpointId: string, version: number) {
+  return `project-visit-checkpoint-revision:${projectBriefHash({ checkpointId, version }).slice(7)}`;
+}
+
+function checkpointEventId(checkpointId: string, version: number) {
+  return `project-visit-checkpoint-event:${projectBriefHash({ checkpointId, version }).slice(7)}`;
+}
+
+function observationFingerprintFor(projectId: string, heads: readonly ProjectBriefObservedHead[]) {
+  return projectBriefHash({ projectId, observationSchemaVersion: 1, heads });
+}
+
+function observedHeadsAreCanonical(heads: unknown): heads is ProjectBriefObservedHead[] {
+  return observedHeadsAreValid(heads) && heads.every((head, index) =>
+    index === 0 || compareObservedHeads(heads[index - 1], head) < 0);
+}
+
+function emptyCheckpointEnvelope(identityBindingHash: Sha256Fingerprint): ProjectVisitCheckpointEnvelope {
+  const payload = {
+    schemaVersion: 1 as const,
+    fingerprintVersion: "project-visit-checkpoint-v1" as const,
+    identityBindingHash,
+    storeVersion: 0,
+    records: [] as ProjectVisitCheckpointRecord[],
+    idempotencyReceipts: [] as ProjectVisitCheckpointReceipt[],
+    updatedAt: null,
+  };
+  return { ...payload, fingerprint: projectBriefHash(payload) };
+}
+
+type CheckpointParseResult =
+  | { envelope: ProjectVisitCheckpointEnvelope; reason: "" }
+  | { envelope: null; reason: string };
+
+function parseCheckpointEnvelope(value: unknown, authority: ProjectBriefAuthority): CheckpointParseResult {
+  if (!hasExactKeys(value, checkpointEnvelopeKeys)) return { envelope: null, reason: "envelope-shape-invalid" };
+  const envelope = value as ProjectVisitCheckpointEnvelope;
+  if (envelope.schemaVersion !== 1 || envelope.fingerprintVersion !== "project-visit-checkpoint-v1"
+    || !Number.isSafeInteger(envelope.storeVersion) || envelope.storeVersion < 1
+    || !Array.isArray(envelope.records) || !Array.isArray(envelope.idempotencyReceipts)
+    || !isExactTimestamp(envelope.updatedAt) || !isExactSha256(envelope.fingerprint)) return { envelope: null, reason: "envelope-shape-invalid" };
+  if (envelope.identityBindingHash !== authority.identityBindingHash) return { envelope: null, reason: "identity-mismatch" };
+  if (envelope.records.some((record) => !record || typeof record !== "object" || Array.isArray(record) || !("id" in record))) return { envelope: null, reason: "envelope-shape-invalid" };
+  if (new Set(envelope.records.map((record) => record.id)).size !== envelope.records.length) return { envelope: null, reason: "duplicate-record" };
+  if (envelope.idempotencyReceipts.some((receipt) => !receipt || typeof receipt !== "object" || Array.isArray(receipt) || !("key" in receipt))) return { envelope: null, reason: "envelope-shape-invalid" };
+  if (new Set(envelope.idempotencyReceipts.map((receipt) => receipt.key)).size !== envelope.idempotencyReceipts.length) return { envelope: null, reason: "duplicate-receipt" };
+  for (const rawRecord of envelope.records) {
+    if (typeof rawRecord.projectId === "string" && (!authority.projectIds.includes(rawRecord.projectId)
+      || typeof rawRecord.scopeId === "string" && rawRecord.scopeId !== rawRecord.projectId)) return { envelope: null, reason: "scope-mismatch" };
+    if (typeof rawRecord.projectId === "string" && typeof rawRecord.authorizationContextHash === "string"
+      && rawRecord.authorizationContextHash !== authority.authorizationHashes[rawRecord.projectId]) return { envelope: null, reason: "authorization-mismatch" };
+  }
+  for (const rawReceipt of envelope.idempotencyReceipts) {
+    if (typeof rawReceipt.projectId === "string" && !authority.projectIds.includes(rawReceipt.projectId)) return { envelope: null, reason: "scope-mismatch" };
+    if (typeof rawReceipt.projectId === "string" && typeof rawReceipt.authorizationContextHash === "string"
+      && rawReceipt.authorizationContextHash !== authority.authorizationHashes[rawReceipt.projectId]) return { envelope: null, reason: "authorization-mismatch" };
+  }
+  const envelopeTime = Date.parse(envelope.updatedAt!);
+  if (envelope.records.some((record) => isExactTimestamp(record.createdAt) && isExactTimestamp(record.updatedAt)
+    && (Date.parse(record.createdAt) > Date.parse(record.updatedAt) || Date.parse(record.updatedAt) > envelopeTime))) return { envelope: null, reason: "chronology-invalid" };
+  for (let index = 0; index < envelope.idempotencyReceipts.length; index += 1) {
+    const receipt = envelope.idempotencyReceipts[index];
+    if (isExactTimestamp(receipt.recordedAt) && (Date.parse(receipt.recordedAt) > envelopeTime
+      || index > 0 && Date.parse(receipt.recordedAt) <= Date.parse(envelope.idempotencyReceipts[index - 1].recordedAt))) return { envelope: null, reason: "chronology-invalid" };
+  }
+  if (envelope.storeVersion !== envelope.idempotencyReceipts.length || !fingerprintMatches(envelope)) return { envelope: null, reason: "envelope-shape-invalid" };
+
+  const receiptsByRevision = new Map<string, ProjectVisitCheckpointReceipt>();
+  for (let receiptIndex = 0; receiptIndex < envelope.idempotencyReceipts.length; receiptIndex += 1) {
+    const receipt = envelope.idempotencyReceipts[receiptIndex];
+    if (!hasExactKeys(receipt, checkpointReceiptKeys) || receipt.schemaVersion !== 1
+      || !isExactString(receipt.key) || !["record-baseline", "mark-all-seen"].includes(receipt.action)
+      || !isExactSha256(receipt.payloadHash) || !isExactString(receipt.projectId) || !isExactString(receipt.checkpointId)
+      || !Number.isSafeInteger(receipt.expectedStoreVersion) || receipt.expectedStoreVersion < 0
+      || receipt.expectedCheckpointVersion !== null && (!Number.isSafeInteger(receipt.expectedCheckpointVersion) || receipt.expectedCheckpointVersion < 1)
+      || !isExactSha256(receipt.expectedObservationFingerprint)
+      || receipt.expectedStoreVersion !== receiptIndex || receipt.resultingStoreVersion !== receiptIndex + 1
+      || !Number.isSafeInteger(receipt.resultingCheckpointVersion) || receipt.resultingCheckpointVersion < 1
+      || !isExactString(receipt.eventId) || !isExactString(receipt.revisionId)
+      || receipt.authorizationContextHash !== authority.authorizationHashes[receipt.projectId]
+      || !isExactTimestamp(receipt.recordedAt) || !isExactSha256(receipt.fingerprint) || !fingerprintMatches(receipt)
+      || receipt.checkpointId !== checkpointIdForProject(receipt.projectId)
+      || receipt.revisionId !== checkpointRevisionId(receipt.checkpointId, receipt.resultingCheckpointVersion)
+      || receipt.eventId !== checkpointEventId(receipt.checkpointId, receipt.resultingCheckpointVersion)) return { envelope: null, reason: "envelope-shape-invalid" };
+    const command = {
+      inputSchemaVersion: 1 as const,
+      action: receipt.action,
+      projectId: receipt.projectId,
+      expectedStoreVersion: receipt.expectedStoreVersion,
+      expectedCheckpointVersion: receipt.expectedCheckpointVersion,
+      expectedObservationFingerprint: receipt.expectedObservationFingerprint,
+      idempotencyKey: receipt.key,
+    };
+    if (receipt.payloadHash !== projectBriefHash(command)) return { envelope: null, reason: "envelope-shape-invalid" };
+    if (receiptsByRevision.has(receipt.revisionId)) return { envelope: null, reason: "duplicate-receipt" };
+    receiptsByRevision.set(receipt.revisionId, receipt);
+  }
+  if (envelope.idempotencyReceipts.at(-1)?.recordedAt !== envelope.updatedAt) return { envelope: null, reason: "chronology-invalid" };
+
+  let totalVersions = 0;
+  let priorFirstReceiptIndex = -1;
+  const recordProjectIds = new Set<string>();
+  for (const record of envelope.records) {
+    if (!hasExactKeys(record, checkpointRecordKeys) || record.schemaVersion !== 1 || record.objectType !== "project-visit-checkpoint"
+      || !isExactString(record.id) || !isExactString(record.projectId) || record.ownerPrincipalType !== "account"
+      || record.ownerPrincipalId !== "local-builder-account" || record.accountSide !== "builder" || record.scopeType !== "project_private"
+      || record.scopeId !== record.projectId || record.custodianService !== "Project Brief Domain Service" || record.sensitivity !== "private"
+      || record.authorizationContextHash !== authority.authorizationHashes[record.projectId]
+      || !Number.isSafeInteger(record.version) || record.version < 1 || !isExactString(record.currentRevisionId)
+      || !isExactTimestamp(record.createdAt) || !isExactTimestamp(record.updatedAt)
+      || !Array.isArray(record.history) || !Array.isArray(record.revisions)
+      || record.history.length !== record.version || record.revisions.length !== record.version
+      || !isExactSha256(record.fingerprint) || !fingerprintMatches(record)
+      || record.id !== checkpointIdForProject(record.projectId)) return { envelope: null, reason: "envelope-shape-invalid" };
+    if (recordProjectIds.has(record.projectId)) return { envelope: null, reason: "duplicate-record" };
+    recordProjectIds.add(record.projectId);
+    totalVersions += record.version;
+    let priorReceiptIndex = -1;
+    for (let index = 0; index < record.version; index += 1) {
+      const version = index + 1;
+      const revision = record.revisions[index];
+      const event = record.history[index];
+      if (!hasExactKeys(revision, checkpointRevisionKeys) || revision.version !== version
+        || revision.id !== checkpointRevisionId(record.id, version) || !isExactTimestamp(revision.createdAt)
+        || revision.authorizationContextHash !== record.authorizationContextHash
+        || !hasExactKeys(revision.snapshot, checkpointSnapshotKeys) || !isExactTimestamp(revision.snapshot.observedAt)
+        || revision.snapshot.observationSchemaVersion !== 1 || !observedHeadsAreCanonical(revision.snapshot.heads)
+        || !isExactSha256(revision.snapshot.observationFingerprint)
+        || revision.snapshot.observationFingerprint !== observationFingerprintFor(record.projectId, revision.snapshot.heads)
+        || revision.createdAt !== revision.snapshot.observedAt
+        || !isExactSha256(revision.fingerprint) || !fingerprintMatches(revision)
+        || !hasExactKeys(event, checkpointEventKeys) || event.version !== version
+        || event.id !== checkpointEventId(record.id, version) || !["baseline-recorded", "all-seen"].includes(event.type)
+        || event.actor !== "شما" || event.actorPrincipalId !== "local-builder-account"
+        || !isExactTimestamp(event.at) || event.at !== revision.createdAt || event.revisionId !== revision.id
+        || event.authorizationContextHash !== record.authorizationContextHash || !isExactString(event.idempotencyKey)
+        || !isExactSha256(event.commandPayloadHash) || !isExactSha256(event.fingerprint) || !fingerprintMatches(event)) return { envelope: null, reason: "envelope-shape-invalid" };
+      if (index > 0 && Date.parse(revision.createdAt) <= Date.parse(record.revisions[index - 1].createdAt)) return { envelope: null, reason: "chronology-invalid" };
+      const receipt = receiptsByRevision.get(revision.id);
+      const expectedAction = version === 1 ? "record-baseline" : "mark-all-seen";
+      const expectedEventType = version === 1 ? "baseline-recorded" : "all-seen";
+      if (!receipt || receipt.action !== expectedAction || event.type !== expectedEventType
+        || receipt.key !== event.idempotencyKey || receipt.projectId !== record.projectId || receipt.checkpointId !== record.id
+        || receipt.resultingCheckpointVersion !== version || receipt.eventId !== event.id
+        || receipt.recordedAt !== event.at || receipt.authorizationContextHash !== record.authorizationContextHash
+        || receipt.expectedCheckpointVersion !== (version === 1 ? null : version - 1)
+        || receipt.expectedObservationFingerprint !== revision.snapshot.observationFingerprint
+        || event.commandPayloadHash !== receipt.payloadHash) return { envelope: null, reason: "semantic-replay-invalid" };
+      const receiptIndex = envelope.idempotencyReceipts.indexOf(receipt);
+      if (receiptIndex <= priorReceiptIndex) return { envelope: null, reason: "semantic-replay-invalid" };
+      if (version === 1 && receiptIndex <= priorFirstReceiptIndex) return { envelope: null, reason: "semantic-replay-invalid" };
+      priorReceiptIndex = receiptIndex;
+      if (version === 1) priorFirstReceiptIndex = receiptIndex;
+    }
+    if (record.currentRevisionId !== record.revisions.at(-1)?.id || record.createdAt !== record.revisions[0].createdAt
+      || record.updatedAt !== record.revisions.at(-1)?.createdAt) return { envelope: null, reason: "chronology-invalid" };
+  }
+  if (totalVersions !== envelope.idempotencyReceipts.length) return { envelope: null, reason: "envelope-shape-invalid" };
+  return { envelope, reason: "" };
+}
+
+function checkpointStateFromRaw(raw: string | null, authority: ProjectBriefAuthority): ProjectVisitCheckpointState {
+  if (raw === null) return { status: "ready", envelope: emptyCheckpointEnvelope(authority.identityBindingHash), reason: "" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { status: "read-error", envelope: null, reason: "malformed-json" };
+  }
+  const result = parseCheckpointEnvelope(parsed, authority);
+  return result.envelope
+    ? { status: "ready", envelope: result.envelope, reason: "" }
+    : { status: "read-error", envelope: null, reason: result.reason };
+}
+
+export function readProjectVisitCheckpointState(
+  authority: ProjectBriefAuthority | null,
+): ProjectVisitCheckpointState {
+  if (!authorityIsValid(authority)) return { status: "read-error", envelope: null, reason: "identity-mismatch" };
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(projectVisitCheckpointsStorageKey);
+  } catch {
+    return { status: "read-error", envelope: null, reason: "storage-read-failure" };
+  }
+  return checkpointStateFromRaw(raw, authority);
+}
+
 export function buildProjectBriefObservation(
   projectId: string,
-  adapters: ProjectBriefObservationAdapter[],
+  adapters: ProjectBriefHeadAdapterState[],
   projectInput: ProjectBriefProjectInputHeads | null,
-): ProjectBriefObservationResult {
+): ProjectBriefObservationState {
   if (!isExactString(projectId) || !Array.isArray(adapters)) return { status: "unavailable", observation: null, reason: "observation-input-invalid" };
   const heads: ProjectBriefObservedHead[] = [];
   for (const adapter of adapters) {
@@ -975,6 +1276,7 @@ export function buildProjectBriefObservation(
   return {
     status: "ready",
     observation: {
+      projectId,
       observationSchemaVersion: 1,
       heads,
       observationFingerprint: projectBriefHash(observationPayload),
@@ -983,15 +1285,10 @@ export function buildProjectBriefObservation(
   };
 }
 
-const projectVisitDeltaGroups = [
-  { id: "tasks", label: "کارها", kinds: ["manual-task", "backbone-task"] },
-  { id: "decisions", label: "تصمیم‌ها", kinds: ["content-approval", "dispatch-plan-approval"] },
-  { id: "purchases", label: "خریدها", kinds: ["purchase-request"] },
-  { id: "inputs", label: "اسناد و ورودی‌ها", kinds: ["project-input"] },
-] as const;
+const projectVisitDeltaGroups = ["tasks", "decisions", "procurement", "inputs"] as const;
 
 function emptyProjectVisitDeltaGroups(): ProjectVisitDeltaGroup[] {
-  return projectVisitDeltaGroups.map(({ id, label }) => ({ id, label, added: 0, updated: 0 }));
+  return projectVisitDeltaGroups.map((kind) => ({ kind, added: 0, updated: 0 }));
 }
 
 function observedHeadsAreEqual(first: ProjectBriefObservedHead, second: ProjectBriefObservedHead) {
@@ -999,24 +1296,34 @@ function observedHeadsAreEqual(first: ProjectBriefObservedHead, second: ProjectB
     && first.state === second.state && first.fingerprint === second.fingerprint;
 }
 
-export function projectVisitDeltaForObservation(
+type ProjectVisitDeltaDetails =
+  | { status: "ready"; added: ProjectBriefObservedHead[]; updated: ProjectBriefObservedHead[]; reason: "" }
+  | { status: "unavailable"; reason: string };
+
+function checkpointSnapshotIsValid(snapshot: unknown, projectId: string): snapshot is ProjectVisitCheckpointSnapshot {
+  if (!hasExactKeys(snapshot, checkpointSnapshotKeys)) return false;
+  const candidate = snapshot as ProjectVisitCheckpointSnapshot;
+  return isExactTimestamp(candidate.observedAt) && candidate.observationSchemaVersion === 1
+    && observedHeadsAreCanonical(candidate.heads) && isExactSha256(candidate.observationFingerprint)
+    && candidate.observationFingerprint === observationFingerprintFor(projectId, candidate.heads);
+}
+
+function runtimeObservationIsValid(observation: unknown, projectId: string): observation is ProjectBriefObservation {
+  if (!hasExactKeys(observation, ["projectId", "observationSchemaVersion", "heads", "observationFingerprint"])) return false;
+  const candidate = observation as ProjectBriefObservation;
+  if (candidate.projectId !== projectId || candidate.observationSchemaVersion !== 1
+    || !observedHeadsAreValid(candidate.heads) || !isExactSha256(candidate.observationFingerprint)) return false;
+  const canonicalHeads = [...candidate.heads].sort(compareObservedHeads);
+  return candidate.observationFingerprint === observationFingerprintFor(projectId, canonicalHeads);
+}
+
+function detailedProjectVisitDelta(
   baseline: ProjectVisitCheckpointSnapshot | null,
   current: ProjectBriefObservation,
-): ProjectVisitDeltaResult {
-  if (baseline === null) return {
-    status: "no-baseline",
-    added: [],
-    updated: [],
-    changes: [],
-    groups: emptyProjectVisitDeltaGroups(),
-    reason: "baseline-not-recorded",
-  };
-  if (!hasExactKeys(baseline, ["observedAt", "observationSchemaVersion", "heads", "observationFingerprint"])
-    || baseline.observationSchemaVersion !== 1 || !isExactTimestamp(baseline.observedAt)
-    || !isExactSha256(baseline.observationFingerprint) || !observedHeadsAreValid(baseline.heads)
-    || !hasExactKeys(current, ["observationSchemaVersion", "heads", "observationFingerprint"])
-    || current.observationSchemaVersion !== 1 || !isExactSha256(current.observationFingerprint)
-    || !observedHeadsAreValid(current.heads)) return { status: "unavailable", reason: "observation-invalid" };
+  projectId: string,
+): ProjectVisitDeltaDetails {
+  if (baseline === null || !checkpointSnapshotIsValid(baseline, projectId)
+    || !runtimeObservationIsValid(current, projectId)) return { status: "unavailable", reason: "observation-invalid" };
 
   const baselineByKey = new Map(baseline.heads.map((head) => [`${head.kind}\u0000${head.id}`, head]));
   const currentHeads = [...current.heads].sort(compareObservedHeads);
@@ -1032,17 +1339,49 @@ export function projectVisitDeltaForObservation(
     if (!baselineHead) added.push(currentHead);
     else if (!observedHeadsAreEqual(baselineHead, currentHead)) updated.push(currentHead);
   }
-  const changes: ProjectVisitDeltaChange[] = [
-    ...added.map((head) => ({ ...head, change: "added" as const })),
-    ...updated.map((head) => ({ ...head, change: "updated" as const })),
-  ].sort(compareObservedHeads);
+  return { status: "ready", added, updated, reason: "" };
+}
+
+function deltaGroupForHead(head: ProjectBriefObservedHead): ProjectVisitDeltaGroup["kind"] | null {
+  if (head.kind === "manual-task" || head.kind === "backbone-task") return "tasks";
+  if (head.kind === "content-approval" || head.kind === "dispatch-plan-approval") return "decisions";
+  if (head.kind === "purchase-request") return "procurement";
+  if (head.kind === "project-input") return "inputs";
+  return null;
+}
+
+export function projectVisitDeltaForObservation(
+  checkpointState: ProjectVisitCheckpointState,
+  observationState: ProjectBriefObservationState,
+  projectId: string,
+): ProjectVisitDeltaState {
+  if (checkpointState.status !== "ready") return {
+    status: "unavailable",
+    groups: [],
+    reason: checkpointState.reason || "checkpoint-read-failure",
+  };
+  if (observationState.status === "loading") return { status: "loading", groups: [], reason: observationState.reason };
+  if (observationState.status !== "ready") return { status: "unavailable", groups: [], reason: observationState.reason };
+  if (!isExactString(projectId) || observationState.observation.projectId !== projectId) return { status: "unavailable", groups: [], reason: "scope-mismatch" };
+  if (!runtimeObservationIsValid(observationState.observation, projectId)) return { status: "unavailable", groups: [], reason: "observation-invalid" };
+  const projectRecords = checkpointState.envelope.records.filter((record) => record.projectId === projectId);
+  if (projectRecords.length === 0) return { status: "uninitialized", groups: [], reason: "baseline-not-recorded" };
+  if (projectRecords.length !== 1) return { status: "unavailable", groups: [], reason: "checkpoint-invalid" };
+  const baseline = projectRecords[0].revisions.at(-1)?.snapshot ?? null;
+  const details = detailedProjectVisitDelta(baseline, observationState.observation, projectId);
+  if (details.status !== "ready") return { status: "unavailable", groups: [], reason: details.reason };
   const groups = emptyProjectVisitDeltaGroups();
-  for (const change of changes) {
-    const groupIndex = projectVisitDeltaGroups.findIndex((group) => (group.kinds as readonly string[]).includes(change.kind));
-    if (groupIndex < 0) return { status: "unavailable", reason: "observation-invalid" };
-    groups[groupIndex][change.change] += 1;
+  for (const head of details.added) {
+    const group = deltaGroupForHead(head);
+    if (group === null) return { status: "unavailable", groups: [], reason: "observation-invalid" };
+    groups.find((candidate) => candidate.kind === group)!.added += 1;
   }
-  return { status: "ready", added, updated, changes, groups, reason: "" };
+  for (const head of details.updated) {
+    const group = deltaGroupForHead(head);
+    if (group === null) return { status: "unavailable", groups: [], reason: "observation-invalid" };
+    groups.find((candidate) => candidate.kind === group)!.updated += 1;
+  }
+  return { status: "ready", groups, reason: "" };
 }
 
 export type ProjectInputDispositionCommand = {
@@ -1337,6 +1676,294 @@ export async function executeProjectInputDispositionCommand(
         return { status: "read-failure", envelope: null };
       }
       return { status: command.action === "resolve-input" ? "resolved" : "reopened", envelope: committed.envelope };
+    });
+  } catch {
+    return { status: "lock-unavailable", envelope: null };
+  }
+}
+
+const checkpointCommandKeys = ["inputSchemaVersion", "action", "projectId", "expectedStoreVersion", "expectedCheckpointVersion", "expectedObservationFingerprint", "idempotencyKey"] as const;
+
+function checkpointCommandIsValid(command: ProjectVisitCheckpointCommand) {
+  return hasExactKeys(command, checkpointCommandKeys)
+    && command.inputSchemaVersion === 1 && ["record-baseline", "mark-all-seen"].includes(command.action)
+    && isExactString(command.projectId)
+    && Number.isSafeInteger(command.expectedStoreVersion) && command.expectedStoreVersion >= 0
+    && (command.expectedCheckpointVersion === null
+      || Number.isSafeInteger(command.expectedCheckpointVersion) && command.expectedCheckpointVersion >= 1)
+    && isExactSha256(command.expectedObservationFingerprint) && isExactString(command.idempotencyKey);
+}
+
+function finalizeCheckpointRevision(value: Omit<ProjectVisitCheckpointRevision, "fingerprint">): ProjectVisitCheckpointRevision {
+  return { ...value, fingerprint: projectBriefHash(value) };
+}
+
+function finalizeCheckpointEvent(value: Omit<ProjectVisitCheckpointEvent, "fingerprint">): ProjectVisitCheckpointEvent {
+  return { ...value, fingerprint: projectBriefHash(value) };
+}
+
+function finalizeCheckpointRecord(value: Omit<ProjectVisitCheckpointRecord, "fingerprint">): ProjectVisitCheckpointRecord {
+  return { ...value, fingerprint: projectBriefHash(value) };
+}
+
+function finalizeCheckpointReceipt(value: Omit<ProjectVisitCheckpointReceipt, "fingerprint">): ProjectVisitCheckpointReceipt {
+  return { ...value, fingerprint: projectBriefHash(value) };
+}
+
+function finalizeCheckpointEnvelope(value: Omit<ProjectVisitCheckpointEnvelope, "fingerprint">): ProjectVisitCheckpointEnvelope {
+  return { ...value, fingerprint: projectBriefHash(value) };
+}
+
+function nextCheckpointTimestamp(envelope: ProjectVisitCheckpointEnvelope) {
+  const now = Date.now();
+  const minimum = envelope.updatedAt === null ? now : Date.parse(envelope.updatedAt) + 1;
+  return new Date(Math.max(now, minimum)).toISOString();
+}
+
+function checkpointRecordForProject(envelope: ProjectVisitCheckpointEnvelope, projectId: string) {
+  return envelope.records.find((record) => record.projectId === projectId) ?? null;
+}
+
+function buildCheckpointCandidate(
+  current: ProjectVisitCheckpointEnvelope,
+  command: ProjectVisitCheckpointCommand,
+  observation: ProjectBriefObservation,
+  authorizationContextHash: Sha256Fingerprint,
+) {
+  const priorRecord = checkpointRecordForProject(current, command.projectId);
+  const version = (priorRecord?.version ?? 0) + 1;
+  const storeVersion = current.storeVersion + 1;
+  const timestamp = nextCheckpointTimestamp(current);
+  const checkpointId = priorRecord?.id ?? checkpointIdForProject(command.projectId);
+  const revisionId = checkpointRevisionId(checkpointId, version);
+  const eventId = checkpointEventId(checkpointId, version);
+  const heads = [...observation.heads].sort(compareObservedHeads);
+  const observationFingerprint = observationFingerprintFor(command.projectId, heads);
+  const payloadHash = projectBriefHash(command);
+  const revision = finalizeCheckpointRevision({
+    id: revisionId,
+    version,
+    createdAt: timestamp,
+    authorizationContextHash,
+    snapshot: {
+      observedAt: timestamp,
+      observationSchemaVersion: 1,
+      heads,
+      observationFingerprint,
+    },
+  });
+  const event = finalizeCheckpointEvent({
+    id: eventId,
+    type: version === 1 ? "baseline-recorded" : "all-seen",
+    actor: "شما",
+    actorPrincipalId: "local-builder-account",
+    at: timestamp,
+    version,
+    revisionId,
+    authorizationContextHash,
+    idempotencyKey: command.idempotencyKey,
+    commandPayloadHash: payloadHash,
+  });
+  const record = finalizeCheckpointRecord({
+    schemaVersion: 1,
+    objectType: "project-visit-checkpoint",
+    id: checkpointId,
+    projectId: command.projectId,
+    ownerPrincipalType: "account",
+    ownerPrincipalId: "local-builder-account",
+    accountSide: "builder",
+    scopeType: "project_private",
+    scopeId: command.projectId,
+    custodianService: "Project Brief Domain Service",
+    sensitivity: "private",
+    authorizationContextHash,
+    version,
+    currentRevisionId: revisionId,
+    createdAt: priorRecord?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+    history: [...(priorRecord?.history ?? []), event],
+    revisions: [...(priorRecord?.revisions ?? []), revision],
+  });
+  const receipt = finalizeCheckpointReceipt({
+    schemaVersion: 1,
+    key: command.idempotencyKey,
+    action: command.action,
+    payloadHash,
+    projectId: command.projectId,
+    checkpointId,
+    expectedStoreVersion: command.expectedStoreVersion,
+    expectedCheckpointVersion: command.expectedCheckpointVersion,
+    expectedObservationFingerprint: command.expectedObservationFingerprint,
+    resultingStoreVersion: storeVersion,
+    resultingCheckpointVersion: version,
+    eventId,
+    revisionId,
+    authorizationContextHash,
+    recordedAt: timestamp,
+  });
+  return finalizeCheckpointEnvelope({
+    schemaVersion: 1,
+    fingerprintVersion: "project-visit-checkpoint-v1",
+    identityBindingHash: current.identityBindingHash,
+    storeVersion,
+    records: priorRecord
+      ? current.records.map((candidate) => candidate.id === priorRecord.id ? record : candidate)
+      : [...current.records, record],
+    idempotencyReceipts: [...current.idempotencyReceipts, receipt],
+    updatedAt: timestamp,
+  });
+}
+
+async function rollbackOwnedCheckpointCandidate(previousRaw: string | null, candidateRaw: string) {
+  let currentRaw: string | null;
+  try {
+    currentRaw = window.localStorage.getItem(projectVisitCheckpointsStorageKey);
+  } catch {
+    return false;
+  }
+  if (currentRaw !== candidateRaw) return false;
+  try {
+    if (previousRaw === null) window.localStorage.removeItem(projectVisitCheckpointsStorageKey);
+    else window.localStorage.setItem(projectVisitCheckpointsStorageKey, previousRaw);
+    return window.localStorage.getItem(projectVisitCheckpointsStorageKey) === previousRaw;
+  } catch {
+    return false;
+  }
+}
+
+type FreshCheckpointObservation =
+  | { status: "ready"; observation: ProjectBriefObservation }
+  | { status: "dependency-read-failure" | "dependency-stale" | "scope-mismatch" };
+
+async function readFreshCheckpointObservation(
+  command: ProjectVisitCheckpointCommand,
+  getObservation: (projectId: string) => ProjectBriefObservationState | Promise<ProjectBriefObservationState>,
+): Promise<FreshCheckpointObservation> {
+  let state: ProjectBriefObservationState;
+  try {
+    state = await getObservation(command.projectId);
+  } catch {
+    return { status: "dependency-read-failure" };
+  }
+  if (!state || typeof state !== "object" || Array.isArray(state) || !["ready", "loading", "unavailable"].includes(state.status)) return { status: "dependency-read-failure" };
+  if (state.status !== "ready") return { status: "dependency-read-failure" };
+  if (!hasExactKeys(state, ["status", "observation", "reason"]) || state.reason !== ""
+    || !state.observation || typeof state.observation !== "object" || Array.isArray(state.observation)) return { status: "dependency-stale" };
+  if (typeof state.observation.projectId === "string" && state.observation.projectId !== command.projectId) return { status: "scope-mismatch" };
+  if (!runtimeObservationIsValid(state.observation, command.projectId)) return { status: "dependency-stale" };
+  if (state.observation.observationFingerprint !== command.expectedObservationFingerprint) return { status: "dependency-stale" };
+  return { status: "ready", observation: state.observation };
+}
+
+function checkpointReceiptMatchesCommand(receipt: ProjectVisitCheckpointReceipt, command: ProjectVisitCheckpointCommand) {
+  return receipt.key === command.idempotencyKey && receipt.action === command.action
+    && receipt.projectId === command.projectId && receipt.payloadHash === projectBriefHash(command)
+    && receipt.expectedStoreVersion === command.expectedStoreVersion
+    && receipt.expectedCheckpointVersion === command.expectedCheckpointVersion
+    && receipt.expectedObservationFingerprint === command.expectedObservationFingerprint;
+}
+
+async function checkpointFailureAfterRollback(
+  previousRaw: string | null,
+  candidateRaw: string,
+  status: Exclude<ProjectVisitCheckpointMutationResult["status"], "recorded" | "write-failure" | "lock-unavailable">,
+  current: ProjectVisitCheckpointEnvelope,
+): Promise<ProjectVisitCheckpointMutationResult> {
+  const restored = await rollbackOwnedCheckpointCandidate(previousRaw, candidateRaw);
+  return restored ? { status, envelope: current } : { status: "write-failure", envelope: null };
+}
+
+export async function executeProjectVisitCheckpointCommand(
+  command: ProjectVisitCheckpointCommand,
+  getAuthority: () => ProjectBriefAuthority | null,
+  getObservation: (projectId: string) => ProjectBriefObservationState | Promise<ProjectBriefObservationState>,
+): Promise<ProjectVisitCheckpointMutationResult> {
+  if (!checkpointCommandIsValid(command)) return { status: "dependency-stale", envelope: null };
+  if (!navigator.locks?.request) return { status: "lock-unavailable", envelope: null };
+  try {
+    return await navigator.locks.request(projectVisitCheckpointsWriteLockName, async () => {
+      let authority: ProjectBriefAuthority | null;
+      try {
+        authority = getAuthority();
+      } catch {
+        return { status: "read-failure", envelope: null } as ProjectVisitCheckpointMutationResult;
+      }
+      if (!authorityIsValid(authority)) return { status: "read-failure", envelope: null };
+      if (!authority.projectIds.includes(command.projectId)) return { status: "scope-mismatch", envelope: null };
+      const freshObservation = await readFreshCheckpointObservation(command, getObservation);
+      if (freshObservation.status !== "ready") return { status: freshObservation.status, envelope: null };
+
+      let previousRaw: string | null;
+      try {
+        previousRaw = window.localStorage.getItem(projectVisitCheckpointsStorageKey);
+      } catch {
+        return { status: "read-failure", envelope: null };
+      }
+      const currentState = checkpointStateFromRaw(previousRaw, authority);
+      if (currentState.status !== "ready") return { status: "read-failure", envelope: null };
+      const current = currentState.envelope;
+      const existingReceipt = current.idempotencyReceipts.find((receipt) => receipt.key === command.idempotencyKey);
+      if (existingReceipt) {
+        if (!checkpointReceiptMatchesCommand(existingReceipt, command)) return { status: "idempotency-payload-mismatch", envelope: current };
+        return { status: "recorded", envelope: current };
+      }
+
+      const existingRecord = checkpointRecordForProject(current, command.projectId);
+      if (current.storeVersion !== command.expectedStoreVersion
+        || (existingRecord?.version ?? null) !== command.expectedCheckpointVersion) return { status: "version-conflict", envelope: current };
+      if (!existingRecord && command.action !== "record-baseline"
+        || existingRecord && command.action !== "mark-all-seen") return { status: "dependency-stale", envelope: current };
+
+      const authorizationContextHash = authority.authorizationHashes[command.projectId];
+      const candidate = buildCheckpointCandidate(current, command, freshObservation.observation, authorizationContextHash);
+      const candidateRaw = JSON.stringify(candidate);
+      try {
+        window.localStorage.setItem(projectVisitCheckpointsStorageKey, candidateRaw);
+      } catch {
+        await rollbackOwnedCheckpointCandidate(previousRaw, candidateRaw);
+        return { status: "write-failure", envelope: current };
+      }
+      let readbackRaw: string | null;
+      try {
+        readbackRaw = window.localStorage.getItem(projectVisitCheckpointsStorageKey);
+      } catch {
+        return checkpointFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
+      }
+      if (readbackRaw !== candidateRaw) return checkpointFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
+
+      let finalAuthority: ProjectBriefAuthority | null;
+      try {
+        finalAuthority = getAuthority();
+      } catch {
+        return checkpointFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
+      }
+      if (!authorityIsValid(finalAuthority)
+        || finalAuthority.identityBindingHash !== authority.identityBindingHash
+        || !finalAuthority.projectIds.includes(command.projectId)
+        || finalAuthority.authorizationHashes[command.projectId] !== authorizationContextHash) {
+        return checkpointFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
+      }
+      const finalObservation = await readFreshCheckpointObservation(command, getObservation);
+      if (finalObservation.status !== "ready") {
+        return checkpointFailureAfterRollback(previousRaw, candidateRaw, finalObservation.status, current);
+      }
+      if (finalObservation.observation.observationFingerprint !== freshObservation.observation.observationFingerprint) {
+        return checkpointFailureAfterRollback(previousRaw, candidateRaw, "dependency-stale", current);
+      }
+
+      let ownedRaw: string | null;
+      try {
+        ownedRaw = window.localStorage.getItem(projectVisitCheckpointsStorageKey);
+      } catch {
+        return checkpointFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
+      }
+      if (ownedRaw !== candidateRaw) return { status: "write-failure", envelope: null };
+      const committed = checkpointStateFromRaw(ownedRaw, finalAuthority);
+      if (committed.status !== "ready" || committed.envelope.storeVersion !== candidate.storeVersion
+        || committed.envelope.fingerprint !== candidate.fingerprint) {
+        return checkpointFailureAfterRollback(previousRaw, candidateRaw, "read-failure", current);
+      }
+      return { status: "recorded", envelope: committed.envelope };
     });
   } catch {
     return { status: "lock-unavailable", envelope: null };
