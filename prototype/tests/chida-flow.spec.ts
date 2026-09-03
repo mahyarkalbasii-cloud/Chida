@@ -7916,6 +7916,251 @@ async function openLiveBriefFromHome(page: Page) {
   await expect(page.getByTestId("brief-panel")).toBeVisible();
 }
 
+async function importProjectBriefAuthorities(page: Page) {
+  return page.evaluate(async () =>
+    Object.keys(await import("/src/projectBriefAuthorities.ts")));
+}
+
+test("T9-B2 derives standalone documents and composer intakes once and orders the Brief deterministically", async ({ page }) => {
+  await enterBuilderHome(page);
+  const exports = await importProjectBriefAuthorities(page);
+  expect(exports).toContain("deriveProjectInputTargets");
+  const result = await page.evaluate(async () => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const fnv1a = (value: unknown) => {
+      const stableValue = (item: any): any => Array.isArray(item)
+        ? item.map(stableValue)
+        : item && typeof item === "object"
+          ? Object.fromEntries(Object.entries(item).sort(([first], [second]) => first.localeCompare(second)).map(([key, nested]) => [key, stableValue(nested)]))
+          : item;
+      const serialized = JSON.stringify(stableValue(value));
+      let hash = 2166136261;
+      for (let index = 0; index < serialized.length; index += 1) {
+        hash ^= serialized.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+    };
+    const source = ({ id, intakeId, projectId, sourceType, textContent, assetRef, contentHash, capturedAt, visibility = "visible" }: any) => {
+      const record = {
+        schemaVersion: 1,
+        id,
+        intakeId,
+        ownerPrincipalId: "local-builder-account",
+        accountSide: "builder",
+        scopeType: "project_private",
+        scopeId: projectId,
+        projectId,
+        sourceType,
+        assetRef,
+        textContent,
+        version: 1,
+        provenance: "direct_user_composer",
+        capturedAt,
+        sourceDate: sourceType === "composer-text" ? capturedAt : null,
+        locatorCapability: sourceType === "composer-text" ? "record" : "asset",
+        excerptCapability: sourceType === "composer-text" ? "full-text" : "none",
+        contentHash,
+        readStatus: "available",
+        sensitivity: "project-private",
+        visibility,
+        manualSearchability: false,
+        automaticRetrievalEligibility: false,
+        modelEligibility: false,
+        shareability: false,
+        useInContextPreference: false,
+      };
+      return { ...record, fingerprint: fnv1a(record) };
+    };
+    const intake = ({ id, projectId, sourceIds, createdAt }: any) => {
+      const record = { id, projectId, sourceIds, version: 1, createdAt };
+      return { ...record, fingerprint: fnv1a(record) };
+    };
+    const file = ({ id, displayName, originalName, mimeType, size, storageMode, createdAt }: any) => ({
+      id,
+      projectId: "project-a",
+      displayName,
+      originalName,
+      mimeType,
+      size,
+      category: "قرارداد",
+      source: "انتخاب مستقیم از دستگاه",
+      status: "ثبت محلی",
+      version: 1,
+      projectStage: "اسکلت بندی",
+      visibility: "خصوصی پروژه",
+      storageMode,
+      sourceModifiedAt: null,
+      createdAt,
+    });
+    const standalone = file({
+      id: "doc-standalone",
+      displayName: "قرارداد",
+      originalName: "contract.pdf",
+      mimeType: "application/pdf",
+      size: 10,
+      storageMode: "metadata-only",
+      createdAt: "2026-09-03T08:00:00.000Z",
+    });
+    const equalTimeStandalone = file({
+      id: "doc-equal",
+      displayName: "قرارداد هم‌زمان",
+      originalName: "equal.pdf",
+      mimeType: "application/pdf",
+      size: 11,
+      storageMode: "metadata-only",
+      createdAt: "2026-09-03T09:00:00.000Z",
+    });
+    const composerFile = file({
+      id: "doc-composer",
+      displayName: "پیوست قرارداد",
+      originalName: "composer.pdf",
+      mimeType: "application/pdf",
+      size: 12,
+      storageMode: "browser-file",
+      createdAt: "2026-09-03T09:00:00.000Z",
+    });
+    const composerIntake = intake({
+      id: "intake-composer",
+      projectId: "project-a",
+      sourceIds: ["source-text", "source-asset"],
+      createdAt: "2026-09-03T09:00:00.000Z",
+    });
+    const textSource = source({
+      id: "source-text",
+      intakeId: composerIntake.id,
+      projectId: "project-a",
+      sourceType: "composer-text",
+      textContent: "متن ثبت‌شدهٔ بریف",
+      assetRef: null,
+      contentHash: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      capturedAt: composerIntake.createdAt,
+    });
+    const assetSource = source({
+      id: "source-asset",
+      intakeId: composerIntake.id,
+      projectId: "project-a",
+      sourceType: "composer-file",
+      textContent: null,
+      assetRef: { kind: "project-file", fileId: composerFile.id, fileVersion: 1 },
+      contentHash: "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      capturedAt: composerIntake.createdAt,
+    });
+    const dependencies = {
+      status: "ready",
+      projectId: "project-a",
+      files: [standalone, equalTimeStandalone, composerFile],
+      sourceEnvelope: {
+        schemaVersion: 1,
+        envelopeVersion: 1,
+        records: [textSource, assetSource],
+        intakes: [composerIntake],
+        updatedAt: composerIntake.createdAt,
+      },
+      reason: "",
+    };
+    const standaloneOnly = domain.deriveProjectInputTargets({
+      ...dependencies,
+      files: [standalone],
+      sourceEnvelope: { schemaVersion: 1, envelopeVersion: 0, records: [], intakes: [], updatedAt: null },
+    });
+    const initial = domain.deriveProjectInputTargets(dependencies);
+    const composerFingerprint = (candidate: any) => {
+      const next = domain.deriveProjectInputTargets(candidate);
+      const target = next.targets.find((item: any) => item.kind === "composer-intake");
+      return { status: next.status, fingerprint: target?.fingerprint ?? null };
+    };
+    const mutations = [
+      {
+        field: "intake.sourceIds",
+        mutate: (candidate: any) => {
+          candidate.sourceEnvelope.records[0] = source({ ...candidate.sourceEnvelope.records[0], id: "source-text-alt" });
+          candidate.sourceEnvelope.intakes[0] = intake({ ...candidate.sourceEnvelope.intakes[0], sourceIds: ["source-text-alt", "source-asset"] });
+        },
+      },
+      {
+        field: "Source.textContent",
+        mutate: (candidate: any) => {
+          candidate.sourceEnvelope.records[0] = source({ ...candidate.sourceEnvelope.records[0], textContent: "متن تغییرکردهٔ بریف" });
+        },
+      },
+      {
+        field: "Source.assetRef",
+        mutate: (candidate: any) => {
+          const alternate = file({ id: "doc-composer-alt", displayName: "پیوست جایگزین", originalName: "alternate.pdf", mimeType: "application/pdf", size: 13, storageMode: "browser-file", createdAt: composerIntake.createdAt });
+          candidate.files.push(alternate);
+          candidate.sourceEnvelope.records[1] = source({ ...candidate.sourceEnvelope.records[1], assetRef: { kind: "project-file", fileId: alternate.id, fileVersion: 1 } });
+        },
+      },
+      {
+        field: "Source.contentHash",
+        mutate: (candidate: any) => {
+          candidate.sourceEnvelope.records[1] = source({ ...candidate.sourceEnvelope.records[1], contentHash: "sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" });
+        },
+      },
+      {
+        field: "Source.visibility",
+        mutate: (candidate: any) => {
+          candidate.sourceEnvelope.records[0] = source({ ...candidate.sourceEnvelope.records[0], visibility: "hidden" });
+        },
+      },
+      {
+        field: "File.displayName",
+        mutate: (candidate: any) => {
+          candidate.files[2] = { ...candidate.files[2], displayName: "پیوست قرارداد تغییرکرده" };
+        },
+      },
+      {
+        field: "File.mimeType",
+        mutate: (candidate: any) => {
+          candidate.files[2] = { ...candidate.files[2], mimeType: "application/x-pdf" };
+        },
+      },
+      {
+        field: "File.size",
+        mutate: (candidate: any) => {
+          candidate.files[2] = { ...candidate.files[2], size: 120 };
+        },
+      },
+      {
+        field: "File.storageMode",
+        mutate: (candidate: any) => {
+          candidate.files[2] = { ...candidate.files[2], storageMode: "metadata-only" };
+        },
+      },
+    ].map(({ field, mutate }) => {
+      const candidate = structuredClone(dependencies);
+      mutate(candidate);
+      return { field, ...composerFingerprint(candidate) };
+    });
+    return {
+      projectHash: domain.projectBriefHash({ b: 2, a: "تست" }),
+      standaloneOnly,
+      initial,
+      mutations,
+    };
+  });
+  expect(result.standaloneOnly.status).toBe("ready");
+  expect(result.standaloneOnly.targets).toHaveLength(1);
+  expect(result.standaloneOnly.targets[0].kind).toBe("project-document");
+  expect(result.standaloneOnly.targets[0].fingerprint).toMatch(/^sha256-[0-9a-f]{64}$/);
+  expect(result.projectHash).toBe(`sha256-${createHash("sha256").update(JSON.stringify(stableTestValue({ b: 2, a: "تست" }))).digest("hex")}`);
+  expect(result.initial.status).toBe("ready");
+  expect(result.initial.targets.map((target: { id: string }) => target.id)).toEqual([
+    "intake-composer",
+    "doc-equal",
+    "doc-standalone",
+  ]);
+  expect(result.initial.targets.filter((target: { kind: string }) => target.kind === "composer-intake")).toHaveLength(1);
+  const initialComposerFingerprint = result.initial.targets.find((target: { kind: string }) => target.kind === "composer-intake")?.fingerprint;
+  expect(result.mutations).toHaveLength(9);
+  for (const mutation of result.mutations) {
+    expect(mutation.status, mutation.field).toBe("ready");
+    expect(mutation.fingerprint, mutation.field).toMatch(/^sha256-[0-9a-f]{64}$/);
+    expect(mutation.fingerprint, mutation.field).not.toBe(initialComposerFingerprint);
+  }
+});
+
 test("T9-B1 live Brief projects real work decisions and procurement without fixture copy or storage writes", async ({ page }) => {
   const consoleFailures: string[] = [];
   page.on("console", (message) => {
