@@ -7897,6 +7897,113 @@ test("Brief stays open and preserves the previous schedule when local persistenc
   expect(await page.evaluate(() => window.localStorage.getItem("chida-prototype-brief"))).toBe(savedSchedule);
 });
 
+async function createManualTaskForLiveBrief(page: Page, title: string) {
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-tasks-entry").click();
+  await page.getByTestId("project-task-add").click();
+  await page.getByTestId("project-task-title-input").fill(title);
+  await page.getByTestId("project-task-step-input").fill("هماهنگی اقدام بعدی پروژه");
+  await page.getByTestId("project-task-due-input").fill("۱۴۰۵/۰۶/۲۰");
+  await page.getByTestId("project-task-save").click();
+  await expect(page.getByTestId("project-task-card")).toContainText(title);
+  await page.getByTestId("project-tasks-back").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+}
+
+async function openLiveBriefFromHome(page: Page) {
+  await page.getByTestId("menu-button").click();
+  await page.getByTestId("drawer-brief-entry").click();
+  await expect(page.getByTestId("brief-panel")).toBeVisible();
+}
+
+test("T9-B1 live Brief projects real work decisions and procurement without fixture copy or storage writes", async ({ page }) => {
+  const consoleFailures: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") consoleFailures.push(`${message.type()}: ${message.text()}`);
+  });
+  page.on("pageerror", (error) => consoleFailures.push(`pageerror: ${error.message}`));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskDueAt: "2026-09-01T09:30" });
+  await page.getByTestId("project-backbone-back").click();
+  await page.getByTestId("project-tasks-back").click();
+  await createManualTaskForLiveBrief(page, "پیگیری نقشه برای بریف زنده");
+
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.getByTestId("purchase-request-raw-input").fill("دو تن سیمان برای بریف پروژه لازم است");
+  await page.getByTestId("purchase-request-item-input").fill("سیمان تیپ دو");
+  await page.getByTestId("purchase-request-quantity-input").fill("۲");
+  await chooseProjectOption(page, "purchase-request-unit-select", "تن");
+  await page.getByTestId("purchase-request-save").click();
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
+  await page.getByTestId("purchase-request-request-approval").click();
+  await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
+  await page.getByTestId("project-approval-detail-back").click();
+  await expect(page.getByTestId("project-tasks-view")).toBeVisible();
+  await page.getByTestId("project-tasks-back").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+
+  const storageBefore = await allLocalStorageBytes(page);
+
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-project-name")).toHaveText("برج نیلوفر");
+  await expect(page.getByTestId("brief-decisions-section")).toContainText("سیمان تیپ دو");
+  await expect(page.getByTestId("brief-tasks-section")).toContainText("پیگیری نقشه برای بریف زنده");
+  await expect(page.getByTestId("brief-tasks-section")).toContainText(initialProjectBackboneDraft.taskTitle);
+  await expect(page.getByTestId("brief-tasks-section")).toContainText("عقب‌افتاده");
+  await expect(page.getByTestId("brief-procurement-section")).toContainText("سیمان تیپ دو");
+  await expect(page.getByTestId("brief-preview")).not.toContainText("تغییرات مهم از آخرین بازدید");
+  expect(await allLocalStorageBytes(page)).toEqual(storageBefore);
+  expect(await page.getByTestId("brief-panel").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+  await page.getByTestId("brief-decisions-action").click();
+  await expect(page.getByTestId("project-tasks-view")).toBeVisible();
+  await expect(page.getByTestId("project-task-filter-approval")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("project-approval-card")).toContainText("سیمان تیپ دو");
+  await page.getByTestId("project-tasks-back").click();
+  await openLiveBriefFromHome(page);
+  await page.getByTestId("brief-procurement-action").click();
+  await expect(page.getByTestId("project-purchase-requests-view")).toBeVisible();
+  expect(consoleFailures).toEqual([]);
+});
+
+test("T9-B1 live Brief stays isolated to the active project", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createManualTaskForLiveBrief(page, "کار محرمانهٔ پروژهٔ اول");
+  await addAndActivateProject(page, "پروژهٔ دوم بریف");
+
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-project-name")).toHaveText("پروژهٔ دوم بریف");
+  await expect(page.getByTestId("brief-tasks-section")).toContainText("کار بازی در این پروژه نیست");
+  await expect(page.getByTestId("brief-tasks-section")).not.toContainText("کار محرمانهٔ پروژهٔ اول");
+  await expect(page.getByTestId("brief-decisions-section")).toContainText("تصمیمی منتظر شما نیست");
+  await expect(page.getByTestId("brief-procurement-section")).toContainText("درخواست بازی در این پروژه نیست");
+  await page.getByTestId("brief-tasks-action").click();
+  await expect(page.getByTestId("project-tasks-view")).toBeVisible();
+  await expect(page.getByTestId("project-task-filter-active")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("T9-B1 live Brief keeps healthy work visible when procurement is unreadable", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createManualTaskForLiveBrief(page, "کار سالم در بریف جزئی");
+  await page.addInitScript(() => {
+    const nativeGetItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === "chida-prototype-project-purchase-requests:v1") throw new DOMException("Purchase storage read failed", "SecurityError");
+      return nativeGetItem.call(this, key);
+    };
+  });
+  await reloadIntoBuilderHome(page);
+
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-tasks-section")).toContainText("کار سالم در بریف جزئی");
+  await expect(page.getByTestId("brief-procurement-section")).toContainText("اطلاعات این بخش در دسترس نیست");
+  await expect(page.getByTestId("brief-decisions-section")).toContainText("اطلاعات این بخش در دسترس نیست");
+  await expect(page.getByTestId("brief-tasks-section")).not.toContainText("در دسترس نیست");
+});
+
 test("builder keeps project tasks out of chat with persistent status history", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);

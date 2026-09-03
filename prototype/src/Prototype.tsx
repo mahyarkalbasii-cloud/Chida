@@ -296,6 +296,15 @@ type BuiltArtifactInvalidationIntentReadResult = { envelope: BuiltArtifactInvali
 type BuiltArtifactMutationResult = "created" | "updated" | "unchanged" | "removed" | "invalid" | "read-failure" | "dependency-stale" | "scope-mismatch" | "version-conflict" | "approval-stale" | "unsupported-transition" | "write-failure" | "lock-unavailable";
 type BriefFrequency = "daily" | "weekly";
 type BriefSchedule = { frequency: BriefFrequency; weekday: string; time: string };
+type LiveBriefSectionStatus = "loading" | "ready" | "unavailable";
+type LiveBriefItem = { id: string; title: string; meta: string };
+type LiveBriefSection = { status: LiveBriefSectionStatus; items: LiveBriefItem[]; emptyMessage: string };
+type LiveBriefSnapshot = {
+  projectName: string;
+  decisions: LiveBriefSection;
+  tasks: LiveBriefSection;
+  procurement: LiveBriefSection;
+};
 type BuilderProject = {
   id: string;
   name: string;
@@ -2493,6 +2502,88 @@ function projectApprovalEventLabel(type: ProjectApprovalEventType) {
   if (type === "approved") return "اطلاعات درخواست تأیید شد";
   if (type === "changes-requested") return "نیاز به اصلاح ثبت شد";
   return "برای تأیید ثبت شد";
+}
+
+function buildLiveBriefSnapshot({
+  projectName,
+  tasks,
+  backbone,
+  requests,
+  approvals,
+  dispatchPlanApprovals,
+  dispatchDrafts,
+  tasksStatus,
+  decisionsStatus,
+  procurementStatus,
+  getDispatchPlanApprovalEffectiveStatus,
+}: {
+  projectName: string;
+  tasks: ProjectTaskRecord[];
+  backbone: ProjectBackboneGraph | null;
+  requests: ProjectPurchaseRequestRecord[];
+  approvals: ProjectApprovalRecord[];
+  dispatchPlanApprovals: DispatchPlanApprovalRecord[];
+  dispatchDrafts: DispatchDraftRecord[];
+  tasksStatus: LiveBriefSectionStatus;
+  decisionsStatus: LiveBriefSectionStatus;
+  procurementStatus: LiveBriefSectionStatus;
+  getDispatchPlanApprovalEffectiveStatus: (record: DispatchPlanApprovalRecord, draft: DispatchDraftRecord | null) => DispatchPlanApprovalEffectiveStatus;
+}): LiveBriefSnapshot {
+  const manualTasks = tasks
+    .filter((task) => task.status === "in-progress")
+    .map((task) => ({
+      id: task.id,
+      title: task.title,
+      meta: [task.currentStep, task.dueDate ? `موعد ثبت‌شده: ${task.dueDate}` : null].filter(Boolean).join(" · "),
+      sortAt: task.updatedAt,
+    }));
+  const backboneTask = backbone ? projectBackboneCurrentSnapshot(backbone.task) as ProjectBackboneTaskSnapshot : null;
+  const backboneItems = backboneTask?.status === "in-progress"
+    ? [{
+        id: backbone!.task.id,
+        title: backboneTask.title,
+        meta: backboneTask.dueAt
+          ? `${new Date(backboneTask.dueAt).getTime() <= Date.now() ? "عقب‌افتاده" : "موعد آینده"}: ${formatTehranDateTime(backboneTask.dueAt)} · ${backboneTask.nextStep}`
+          : `بدون موعد · ${backboneTask.nextStep}`,
+        sortAt: backbone!.task.updatedAt,
+      }]
+    : [];
+  const taskItems = [...manualTasks, ...backboneItems]
+    .sort((first, second) => new Date(second.sortAt).getTime() - new Date(first.sortAt).getTime())
+    .map(({ sortAt: _sortAt, ...item }) => item);
+
+  const contentDecisions = approvals
+    .filter((approval) => approval.status === "pending")
+    .map((approval) => ({ id: approval.id, title: purchaseRequestSnapshotTitle(approval.snapshot), meta: "تأیید اطلاعات درخواست", sortAt: approval.updatedAt }));
+  const dispatchDecisions = dispatchPlanApprovals.flatMap((approval) => {
+    const draft = dispatchDrafts.find((item) => item.id === approval.target.dispatchDraftId) ?? null;
+    if (getDispatchPlanApprovalEffectiveStatus(approval, draft) !== "pending") return [];
+    const request = requests.find((item) => item.id === approval.target.requestId);
+    return [{ id: approval.id, title: request ? purchaseRequestDisplayTitle(request) : "درخواست خرید", meta: "تأیید نهایی برنامهٔ محلی", sortAt: approval.updatedAt }];
+  });
+  const decisionItems = [...contentDecisions, ...dispatchDecisions]
+    .sort((first, second) => new Date(second.sortAt).getTime() - new Date(first.sortAt).getTime())
+    .map(({ sortAt: _sortAt, ...item }) => item);
+
+  const procurementItems = [...requests]
+    .sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime())
+    .map((request) => {
+      const missingCount = purchaseRequestMissingFields(request).length;
+      return {
+        id: request.id,
+        title: purchaseRequestDisplayTitle(request),
+        meta: missingCount > 0
+          ? `${purchaseRequestStatusLabel(request.status)} · ${missingCount.toLocaleString("fa-IR")} ورودی لازم باقی مانده`
+          : purchaseRequestStatusLabel(request.status),
+      };
+    });
+
+  return {
+    projectName,
+    decisions: { status: decisionsStatus, items: decisionsStatus === "ready" ? decisionItems : [], emptyMessage: "تصمیمی منتظر شما نیست" },
+    tasks: { status: tasksStatus, items: tasksStatus === "ready" ? taskItems : [], emptyMessage: "کار بازی در این پروژه نیست" },
+    procurement: { status: procurementStatus, items: procurementStatus === "ready" ? procurementItems : [], emptyMessage: "درخواست بازی در این پروژه نیست" },
+  };
 }
 
 function purchaseRequestApprovalDedupeKey(projectId: string, requestId: string, requestVersion: number) {
@@ -15060,6 +15151,25 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       ? canonicalDispatchPlanApprovalEffectiveStatus(record, draft, dependencies, contactsEnvelope)
       : "invalidated";
   };
+  const liveBriefTasksStatus: LiveBriefSectionStatus = projectTaskState.status === "loading"
+    ? "loading"
+    : projectTasksReadError || projectBackboneReadError ? "unavailable" : "ready";
+  const liveBriefDecisionsLoading = projectApprovalsLoading || projectSupplierContactsLoading || projectDispatchDraftsLoading || projectDispatchPlanApprovalsLoading;
+  const liveBriefDecisionsUnavailable = projectPurchaseRequestsReadError || projectApprovalsReadError || projectSupplierContactsReadError || projectDispatchDraftsReadError || projectDispatchPlanApprovalsReadError;
+  const liveBriefDecisionsStatus: LiveBriefSectionStatus = liveBriefDecisionsLoading ? "loading" : liveBriefDecisionsUnavailable ? "unavailable" : "ready";
+  const liveBriefSnapshot = buildLiveBriefSnapshot({
+    projectName: activeProject.name,
+    tasks: activeProjectTasks,
+    backbone: activeProjectBackbone,
+    requests: activeProjectPurchaseRequests,
+    approvals: activeProjectApprovals,
+    dispatchPlanApprovals: activeProjectDispatchPlanApprovals,
+    dispatchDrafts: activeProjectDispatchDrafts,
+    tasksStatus: liveBriefTasksStatus,
+    decisionsStatus: liveBriefDecisionsStatus,
+    procurementStatus: projectPurchaseRequestsReadError ? "unavailable" : "ready",
+    getDispatchPlanApprovalEffectiveStatus: dispatchPlanApprovalStatus,
+  });
   const activeBuilderRecordedProposals = useMemo(
     () => builderRecordedProposals.filter((proposal) => proposal.projectId === activeProject.id),
     [activeProject.id, builderRecordedProposals],
@@ -15732,7 +15842,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     setView("source-demo");
   };
 
-  const openProjectTasks = (returnView: ProjectTasksReturnView = "chat") => {
+  const openProjectTasks = (returnView: ProjectTasksReturnView = "chat", filter: ProjectTaskFilter = "active") => {
     keyboard.hide();
     onOpenSheet(null);
     setDrawerOpen(false);
@@ -15740,7 +15850,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       const projectScroll = document.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
       if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
     }
-    setProjectTasksLaunch({ filter: "active", approvalId: null, dispatchPlanApprovalId: null, returnToPurchaseRequestId: null, returnView });
+    setProjectTasksLaunch({ filter, approvalId: null, dispatchPlanApprovalId: null, returnToPurchaseRequestId: null, returnView });
     setView("tasks");
   };
 
@@ -18521,7 +18631,15 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         onOpenTasks={() => openProjectTasks("chat")}
         onClose={closeBuild}
       />
-      <BriefSheet sheet={sheet} schedule={briefSchedule} onClose={() => { queueBuilderFocus('[data-testid="menu-button"]'); onOpenSheet(null); }} onSave={saveBrief} />
+      <BriefSheet
+        sheet={sheet}
+        schedule={briefSchedule}
+        snapshot={liveBriefSnapshot}
+        onClose={() => { queueBuilderFocus('[data-testid="menu-button"]'); onOpenSheet(null); }}
+        onSave={saveBrief}
+        onOpenTasks={(filter) => openProjectTasks("chat", filter)}
+        onOpenPurchaseRequests={() => openProjectPurchaseRequests("chat")}
+      />
       <ProjectsSheet sheet={sheet} projects={projects} activeProjectId={activeProject.id} onClose={() => { queueBuilderFocus(`[data-testid="${projectsReturnFocus.current}"]`); onOpenSheet(null); }} onSelect={openProjectSpace} onCreate={openNewProject} />
       <ProjectCreateSheet sheet={sheet} onClose={() => { queueBuilderFocus(`[data-testid="${projectsReturnFocus.current}"]`); onOpenSheet(null); }} onSave={onProjectCreate} />
       <SettingsSheet
@@ -24355,7 +24473,27 @@ function BuildSheet({ sheet, activeProject, backbone, tasks, artifacts, selected
   );
 }
 
-function BriefSheet({ sheet, schedule, onClose, onSave }: { sheet: SheetName; schedule: BriefSchedule | null; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean }) {
+function BriefLiveSection({ testId, title, section, icon, actionLabel, actionTestId, onAction }: { testId: string; title: string; section: LiveBriefSection; icon: ReactNode; actionLabel: string; actionTestId: string; onAction: () => void }) {
+  const visibleItems = section.items.slice(0, 3);
+  return (
+    <section className="brief-live-section" data-testid={testId} data-status={section.status}>
+      <header>
+        <span aria-hidden="true">{icon}</span>
+        <div><strong>{title}</strong><small>{section.status === "ready" ? `${section.items.length.toLocaleString("fa-IR")} مورد` : section.status === "loading" ? "در حال آماده‌سازی" : "خواندن ناموفق"}</small></div>
+      </header>
+      {section.status === "loading" ? <p className="brief-section-state" role="status">در حال آماده‌سازی داده‌های این بخش…</p> : null}
+      {section.status === "unavailable" ? <p className="brief-section-state is-unavailable" role="alert">اطلاعات این بخش در دسترس نیست؛ در مقصد اصلی می‌توانی وضعیت بازیابی را ببینی.</p> : null}
+      {section.status === "ready" && visibleItems.length === 0 ? <p className="brief-section-state is-empty">{section.emptyMessage}</p> : null}
+      {section.status === "ready" && visibleItems.length > 0 ? (
+        <ul>{visibleItems.map((item) => <li key={item.id}><strong>{item.title}</strong><small>{item.meta}</small></li>)}</ul>
+      ) : null}
+      {section.status === "ready" && section.items.length > visibleItems.length ? <p className="brief-section-more">و {Number(section.items.length - visibleItems.length).toLocaleString("fa-IR")} مورد دیگر</p> : null}
+      {section.status !== "loading" ? <button type="button" data-testid={actionTestId} onClick={onAction}>{actionLabel}<ArrowRight size={15} aria-hidden="true" /></button> : null}
+    </section>
+  );
+}
+
+function BriefSheet({ sheet, schedule, snapshot, onClose, onSave, onOpenTasks, onOpenPurchaseRequests }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void }) {
   const keyboard = useKeyboard();
   const [frequency, setFrequency] = useState<BriefFrequency>(schedule?.frequency ?? "daily");
   const [weekday, setWeekday] = useState(schedule?.weekday ?? "شنبه");
@@ -24384,12 +24522,17 @@ function BriefSheet({ sheet, schedule, onClose, onSave }: { sheet: SheetName; sc
   };
 
   return (
-    <BottomSheet open={sheet === "brief"} onOpenChange={(open) => !open && onClose()} title="بریف پروژه" description="برنامهٔ محلیِ نمایش بریف در همین مرورگر." snap={0.84}>
+    <BottomSheet open={sheet === "brief"} onOpenChange={(open) => !open && onClose()} title="بریف پروژه" description="خلاصهٔ زنده و برنامهٔ محلیِ همین پروژه." snap={0.9}>
       <div className="brief-panel" dir="rtl" data-testid="brief-panel">
-        <p className="brief-local-boundary" role="status" data-testid="brief-local-boundary"><ShieldCheck size={17} aria-hidden="true" /> این زمان‌بندی فقط محلی شبیه‌سازی می‌شود؛ اجرای پس‌زمینه یا ارسال خودکار ندارد.</p>
-        <div className="brief-preview">
-          <div className="brief-preview-head"><span><CalendarDays size={20} /></span><div><small>بریف {activeBriefLabel(frequency)}</small><strong>امروزِ پروژه در یک نگاه</strong></div></div>
-          <ul><li>تصمیم‌هایی که امروز لازم‌اند</li><li>کارهای عقب‌افتاده و نزدیک</li><li>خریدها و درخواست‌های باز</li><li>اسناد و ورودی‌های بلاتکلیف</li><li>تغییرات مهم از آخرین بازدید</li></ul>
+        <p className="brief-local-boundary" role="status" data-testid="brief-local-boundary"><ShieldCheck size={17} aria-hidden="true" /> این خلاصه فقط داده‌های محلی واقعی پروژه را می‌خواند. زمان‌بندی در همین مرورگر شبیه‌سازی می‌شود و اجرای پس‌زمینه یا ارسال خودکار ندارد.</p>
+        <div className="brief-preview" data-testid="brief-preview">
+          <div className="brief-preview-head"><span><CalendarDays size={20} /></span><div><small>بریف {activeBriefLabel(frequency)} · فقط خواندنی</small><strong>امروز پروژه</strong><em data-testid="brief-project-name">{snapshot.projectName}</em></div></div>
+          <div className="brief-live-sections">
+            <BriefLiveSection testId="brief-decisions-section" title="تصمیم‌های منتظر شما" section={snapshot.decisions} icon={<ClipboardCheck size={18} />} actionLabel="باز کردن تأییدها در کارها" actionTestId="brief-decisions-action" onAction={() => onOpenTasks("approval")} />
+            <BriefLiveSection testId="brief-tasks-section" title="کارهای باز و موعدها" section={snapshot.tasks} icon={<CheckCircle2 size={18} />} actionLabel="باز کردن کارها" actionTestId="brief-tasks-action" onAction={() => onOpenTasks("active")} />
+            <BriefLiveSection testId="brief-procurement-section" title="درخواست‌های خرید باز" section={snapshot.procurement} icon={<ShoppingCart size={18} />} actionLabel="باز کردن درخواست‌ها" actionTestId="brief-procurement-action" onAction={onOpenPurchaseRequests} />
+          </div>
+          <p className="brief-deferred-note">تغییرات از آخرین بازدید و وضعیت اسناد، تا وقتی منبع قابل‌اثبات خودشان ساخته نشود، محاسبه نمی‌شوند.</p>
         </div>
 
         <div className="brief-frequency" role="radiogroup" aria-label="بازهٔ بریف" data-testid="brief-frequency-group">

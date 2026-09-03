@@ -4849,15 +4849,62 @@ html[data-chida-theme="dark"] .home-indicator-svg rect { fill: #f5f1eb; }
   font-size: 11px;
 }
 
-.brief-preview ul {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0 18px 0 0;
-  color: var(--text-soft);
+.brief-preview-head em {
+  overflow: hidden;
+  color: var(--copper-strong);
   font-size: 10px;
-  line-height: 1.65;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.brief-live-sections { display: grid; gap: 8px; min-width: 0; }
+
+.brief-live-section {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+
+.brief-live-section > header {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+}
+
+.brief-live-section > header > span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--copper-strong);
+  background: var(--copper-soft);
+}
+
+.brief-live-section > header > div { display: flex; gap: 8px; align-items: center; justify-content: space-between; min-width: 0; }
+.brief-live-section > header strong { overflow-wrap: anywhere; color: var(--text); font-size: 11px; }
+.brief-live-section > header small { flex: 0 0 auto; color: var(--text-soft); font-size: 9px; }
+
+.brief-live-section ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.brief-live-section li { display: grid; gap: 2px; min-width: 0; padding-top: 7px; border-top: 1px solid var(--line); }
+.brief-live-section li strong { overflow-wrap: anywhere; color: var(--text); font-size: 10px; line-height: 1.65; }
+.brief-live-section li small { overflow-wrap: anywhere; color: var(--text-soft); font-size: 9px; line-height: 1.65; }
+
+.brief-section-state,
+.brief-section-more,
+.brief-deferred-note { margin: 0; overflow-wrap: anywhere; color: var(--text-soft); font-size: 9px; line-height: 1.75; }
+.brief-section-state.is-unavailable { color: color-mix(in srgb, var(--danger) 72%, white); }
+.brief-section-state.is-empty { color: var(--text-soft); }
+.brief-live-section > button { display: flex; gap: 6px; align-items: center; justify-content: space-between; min-height: 42px; padding: 0 10px; border: 1px solid var(--line); border-radius: 11px; color: var(--text); background: var(--surface); font-size: 10px; font-weight: 650; text-align: right; }
+.brief-live-section > button svg { flex: 0 0 auto; color: var(--copper-strong); }
+.brief-deferred-note { padding-top: 2px; }
 
 .brief-frequency {
   display: grid;
