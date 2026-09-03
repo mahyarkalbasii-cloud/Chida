@@ -81,17 +81,25 @@ import {
   buildProjectBriefObservation,
   deriveProjectInputTargets,
   executeProjectInputDispositionCommand,
+  executeProjectVisitCheckpointCommand,
   projectInputDispositionsStorageKey,
   projectInputObservedHeads,
+  projectVisitCheckpointsStorageKey,
+  projectVisitDeltaForObservation,
   readProjectInputDispositionState,
+  readProjectVisitCheckpointState,
   type ProjectBriefAuthority,
-  type ProjectBriefObservationAdapter,
-  type ProjectBriefObservationResult,
+  type ProjectBriefHeadAdapterState,
+  type ProjectBriefObservationState,
   type ProjectInputDependencies,
   type ProjectInputDispositionProjectionItem,
   type ProjectInputDispositionState,
   type ProjectInputEffectiveStatus,
   type ProjectInputTarget,
+  type ProjectVisitCheckpointCommand,
+  type ProjectVisitCheckpointState,
+  type ProjectVisitDeltaGroup,
+  type ProjectVisitDeltaState,
 } from "./projectBriefAuthorities";
 import {
   createProcurementDispatchDependencies,
@@ -328,6 +336,7 @@ type ProjectInputDisplayItem = {
   ready: boolean;
 };
 type LiveBriefInputsSection = { status: LiveBriefSectionStatus; items: ProjectInputDisplayItem[] };
+type ProjectVisitCheckpointSnapshot = { projectId: string; state: ProjectVisitCheckpointState };
 type LiveBriefSnapshot = {
   projectName: string;
   decisions: LiveBriefSection;
@@ -4800,12 +4809,12 @@ export type ProjectBriefLiveObservationSources = {
   projectInputsTerminalReason: string;
 };
 
-export function assembleProjectBriefLiveObservation(sources: ProjectBriefLiveObservationSources): ProjectBriefObservationResult {
+export function assembleProjectBriefLiveObservation(sources: ProjectBriefLiveObservationSources): ProjectBriefObservationState {
   const unavailableAdapter = (
-    kind: ProjectBriefObservationAdapter["kind"],
+    kind: ProjectBriefHeadAdapterState["kind"],
     status: "loading" | "unavailable",
     reason: string,
-  ): ProjectBriefObservationAdapter => ({ status, kind, projectId: sources.projectId, reason });
+  ): ProjectBriefHeadAdapterState => ({ status, kind, projectId: sources.projectId, reason });
 
   if (sources.projectInputsTerminallyUnavailable) {
     return { status: "unavailable", observation: null, reason: sources.projectInputsTerminalReason || "project-input-unavailable" };
@@ -4820,7 +4829,7 @@ export function assembleProjectBriefLiveObservation(sources: ProjectBriefLiveObs
     return { status: "unavailable", observation: null, reason: sources.projectInputDispositionSnapshot.state.reason || "project-input-unavailable" };
   }
 
-  const adapters: ProjectBriefObservationAdapter[] = [];
+  const adapters: ProjectBriefHeadAdapterState[] = [];
   if (sources.projectTaskState.status !== "ready" || !sources.projectTaskState.envelope) {
     adapters.push(unavailableAdapter("manual-task", sources.projectTaskState.status === "loading" ? "loading" : "unavailable", sources.projectTaskState.reason || "manual-task-unavailable"));
   } else {
@@ -5001,6 +5010,40 @@ export function assembleProjectBriefLiveObservation(sources: ProjectBriefLiveObs
   return buildProjectBriefObservation(sources.projectId, adapters, projectInputHeads === null ? null : {
     projectId: sources.projectInputDispositionSnapshot.projectId,
     heads: projectInputHeads,
+  });
+}
+
+async function readFreshProjectBriefLiveObservation(projectId: string): Promise<ProjectBriefObservationState> {
+  const taskAuthority = projectTaskAuthoritySnapshot();
+  const briefAuthority = projectBriefAuthoritySnapshot();
+  if (!taskAuthority || !briefAuthority || !taskAuthority.projectIds.includes(projectId)) {
+    return { status: "unavailable", observation: null, reason: "foundation-unavailable" };
+  }
+  const projectTaskState = readProjectTaskState(taskAuthority);
+  const backboneRead = readStoredProjectBackbone();
+  const requestRead = readStoredProjectPurchaseRequests();
+  const approvalState = readProjectApprovalState(requestRead, taskAuthority);
+  const dispatchDependencies = procurementDispatchDependenciesSnapshot();
+  const dispatchState = readProcurementDispatchState(dispatchDependencies, taskAuthority);
+  const inputDependencies = await readProjectInputDependencies(projectId);
+  const inputState = readProjectInputDispositionState(briefAuthority, inputDependencies);
+  return assembleProjectBriefLiveObservation({
+    projectId,
+    projectTaskState,
+    projectBackboneReadError: backboneRead.readError,
+    activeProjectBackbone: projectBackboneGraphForProject(backboneRead.envelope, projectId),
+    activeProjectPurchaseRequests: requestRead.records.filter((record) => record.projectId === projectId),
+    projectPurchaseRequestsReadError: requestRead.readError,
+    activeProjectApprovals: approvalState.envelope?.records.filter((record) => record.projectId === projectId) ?? [],
+    projectApprovalsLoading: approvalState.status === "loading",
+    projectApprovalsReadError: approvalState.status === "read-error",
+    procurementDispatchState: dispatchState,
+    procurementDispatchDependencies: dispatchDependencies,
+    projectInputDispositionSnapshot: { projectId, state: inputState },
+    projectInputReadPending: false,
+    projectInputsDependenciesPending: false,
+    projectInputsTerminallyUnavailable: inputDependencies.status !== "ready",
+    projectInputsTerminalReason: inputDependencies.reason || "project-input-unavailable",
   });
 }
 
@@ -14877,6 +14920,13 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const [projectInputMutationError, setProjectInputMutationError] = useState<{ key: string; message: string } | null>(null);
   const projectInputMutationAttemptsRef = useRef(new Map<string, string>());
   const projectInputRefreshVersionRef = useRef(0);
+  const [projectVisitCheckpointSnapshot, setProjectVisitCheckpointSnapshot] = useState<ProjectVisitCheckpointSnapshot>(() => ({
+    projectId: activeProject.id,
+    state: readProjectVisitCheckpointState(projectBriefAuthoritySnapshot()),
+  }));
+  const [projectVisitCheckpointMutationPending, setProjectVisitCheckpointMutationPending] = useState(false);
+  const [projectVisitCheckpointMutationError, setProjectVisitCheckpointMutationError] = useState("");
+  const projectVisitCheckpointMutationAttemptsRef = useRef(new Map<string, string>());
   const activeProjectIdRef = useRef(activeProject.id);
   const [projectMemoriesReadError, setProjectMemoriesReadError] = useState(initialProjectMemories.readError);
   const [projectMemoriesLoading, setProjectMemoriesLoading] = useState(true);
@@ -15290,6 +15340,9 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     briefInputReturnKeyRef.current = null;
     briefFileReturnKeyRef.current = null;
     setProjectInputMutationError(null);
+    setProjectVisitCheckpointMutationPending(false);
+    setProjectVisitCheckpointMutationError("");
+    projectVisitCheckpointMutationAttemptsRef.current.clear();
     setComposerError("");
     setComposerActionStatus("");
   }, [activeProject.id]);
@@ -15417,6 +15470,58 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [activeProject.id, projectFileContentReconciliationPending, projectFiles, projectSources, sourceAssetValidationPending, sourceRecoveryBlocked, sourceRecoveryPending]);
+
+  useEffect(() => {
+    const refresh = (projectId = activeProjectIdRef.current) => {
+      const state = readProjectVisitCheckpointState(projectBriefAuthoritySnapshot());
+      if (activeProjectIdRef.current === projectId) setProjectVisitCheckpointSnapshot({ projectId, state });
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea && event.storageArea !== window.localStorage) return;
+      if (event.key !== null
+        && event.key !== projectVisitCheckpointsStorageKey
+        && event.key !== projectTasksStorageKey
+        && event.key !== legacyProjectTasksStorageKey
+        && event.key !== projectTasksCutoverMarkerKey
+        && event.key !== projectBackboneStorageKey
+        && event.key !== projectPurchaseRequestsStorageKey
+        && event.key !== projectPurchaseRequestsRecoveryIntentKey
+        && event.key !== projectApprovalsStorageKey
+        && event.key !== legacyProjectApprovalsStorageKey
+        && event.key !== projectApprovalsCutoverMarkerKey
+        && event.key !== projectApprovalConfirmationIntentKey
+        && event.key !== procurementDispatchPreconditionIntentKey
+        && event.key !== projectSupplierContactsStorageKey
+        && event.key !== legacyProjectSupplierContactsStorageKey
+        && event.key !== projectSupplierContactsCutoverMarkerKey
+        && event.key !== projectDispatchDraftsStorageKey
+        && event.key !== legacyProjectDispatchDraftsStorageKey
+        && event.key !== projectDispatchDraftsCutoverMarkerKey
+        && event.key !== projectDispatchPlanApprovalsStorageKey
+        && event.key !== legacyProjectDispatchPlanApprovalsStorageKey
+        && event.key !== projectDispatchPlanApprovalsCutoverMarkerKey
+        && event.key !== procurementDispatchQueueIntentKey
+        && event.key !== projectInputDispositionsStorageKey
+        && event.key !== projectFilesStorageKey
+        && event.key !== projectSourcesStorageKey
+        && event.key !== projectSourceIntakeIntentKey
+        && event.key !== projectsStorageKey
+        && event.key !== projectFoundationCutoverMarkerKey
+        && event.key !== projectFoundationIdentityFixtureKey) return;
+      refresh();
+    };
+    const handleFocus = () => { refresh(); };
+    const handleVisibility = () => { if (document.visibilityState === "visible") refresh(); };
+    refresh(activeProject.id);
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [activeProject.id, sheet]);
 
   useLayoutEffect(() => {
     if (view !== "chat") return;
@@ -15685,7 +15790,69 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       ? "project-file-unavailable"
       : projectSourcesReadError ? "project-source-unavailable" : sourceRecoveryBlocked ? "source-recovery-blocked" : "project-input-unavailable",
   });
-  void liveProjectBriefObservation;
+  const projectVisitCheckpointState = projectVisitCheckpointSnapshot.projectId === activeProject.id
+    ? projectVisitCheckpointSnapshot.state
+    : null;
+  const activeProjectVisitCheckpoint = projectVisitCheckpointState?.status === "ready"
+    ? projectVisitCheckpointState.envelope.records.find((record) => record.projectId === activeProject.id) ?? null
+    : null;
+  const liveProjectVisitDelta: ProjectVisitDeltaState = projectVisitCheckpointState === null
+    ? { status: "loading", groups: [], reason: "project-switch-loading" }
+    : projectVisitDeltaForObservation(projectVisitCheckpointState, liveProjectBriefObservation, activeProject.id);
+  const mutateProjectVisitCheckpoint = async () => {
+    if (projectVisitCheckpointMutationPending || !projectVisitCheckpointState || projectVisitCheckpointState.status !== "ready"
+      || liveProjectBriefObservation.status !== "ready" || liveProjectVisitDelta.status === "loading" || liveProjectVisitDelta.status === "unavailable") return;
+    const projectId = activeProject.id;
+    const action = activeProjectVisitCheckpoint ? "mark-all-seen" as const : "record-baseline" as const;
+    const expectedStoreVersion = projectVisitCheckpointState.envelope.storeVersion;
+    const expectedCheckpointVersion = activeProjectVisitCheckpoint?.version ?? null;
+    const expectedObservationFingerprint = liveProjectBriefObservation.observation.observationFingerprint;
+    const signature = `${action}:${projectId}:${expectedStoreVersion}:${expectedCheckpointVersion ?? "null"}:${expectedObservationFingerprint}`;
+    const idempotencyKey = projectVisitCheckpointMutationAttemptsRef.current.get(signature) ?? `project-visit-ui:${window.crypto.randomUUID()}`;
+    projectVisitCheckpointMutationAttemptsRef.current.set(signature, idempotencyKey);
+    const command = {
+      inputSchemaVersion: 1,
+      action,
+      projectId,
+      expectedStoreVersion,
+      expectedCheckpointVersion,
+      expectedObservationFingerprint,
+      idempotencyKey,
+    } satisfies ProjectVisitCheckpointCommand;
+    setProjectVisitCheckpointMutationPending(true);
+    setProjectVisitCheckpointMutationError("");
+    const result = await executeProjectVisitCheckpointCommand(command, projectBriefAuthoritySnapshot, readFreshProjectBriefLiveObservation);
+    if (activeProjectIdRef.current !== projectId) return;
+    if (result.status === "recorded") {
+      projectVisitCheckpointMutationAttemptsRef.current.delete(signature);
+      setProjectVisitCheckpointSnapshot({ projectId, state: readProjectVisitCheckpointState(projectBriefAuthoritySnapshot()) });
+      setProjectVisitCheckpointMutationError("");
+    } else {
+      if (["read-failure", "dependency-read-failure", "dependency-stale", "scope-mismatch", "version-conflict", "idempotency-payload-mismatch"].includes(result.status)) {
+        projectVisitCheckpointMutationAttemptsRef.current.delete(signature);
+      }
+      setProjectVisitCheckpointSnapshot({ projectId, state: readProjectVisitCheckpointState(projectBriefAuthoritySnapshot()) });
+      setProjectVisitCheckpointMutationError("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
+    }
+    setProjectVisitCheckpointMutationPending(false);
+  };
+  const openProjectVisitDeltaGroup = (group: ProjectVisitDeltaGroup["kind"]) => {
+    if (group === "tasks") {
+      openProjectTasks("chat", "active");
+      return;
+    }
+    if (group === "decisions") {
+      openProjectTasks("chat", "approval");
+      return;
+    }
+    if (group === "procurement") {
+      openProjectPurchaseRequests("chat");
+      return;
+    }
+    const heading = document.querySelector<HTMLElement>('[data-testid="brief-inputs-heading"]');
+    heading?.scrollIntoView({ block: "center" });
+    heading?.focus();
+  };
   const dispatchPlanApprovalStatus = (record: DispatchPlanApprovalRecord, draft: DispatchDraftRecord | null): DispatchPlanApprovalEffectiveStatus => {
     const dependencies = procurementDispatchDependenciesSnapshot();
     const contactsEnvelope = procurementDispatchState.contacts.envelope;
@@ -19236,6 +19403,13 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         onOpenPurchaseRequests={() => openProjectPurchaseRequests("chat")}
         mutationKey={projectInputMutationKey}
         mutationError={projectInputMutationError}
+        visitProjectId={activeProject.id}
+        visitDelta={liveProjectVisitDelta}
+        visitCheckpointVersion={activeProjectVisitCheckpoint?.version ?? null}
+        visitMutationPending={projectVisitCheckpointMutationPending}
+        visitMutationError={projectVisitCheckpointMutationError}
+        onVisitMutation={mutateProjectVisitCheckpoint}
+        onOpenVisitGroup={openProjectVisitDeltaGroup}
         onDisposition={mutateProjectInputDisposition}
         onOpenInput={(item) => {
           setProjectInputMutationError(null);
@@ -25177,7 +25351,68 @@ function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, 
   );
 }
 
-function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: { key: string; message: string } | null; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+const projectVisitDeltaGroupLabels: Record<ProjectVisitDeltaGroup["kind"], string> = {
+  tasks: "کارها",
+  decisions: "تصمیم‌ها",
+  procurement: "درخواست‌های خرید",
+  inputs: "اسناد و ورودی‌ها",
+};
+
+function BriefChangesSection({ projectId, checkpointVersion, delta, mutationPending, mutationError, onMutate, onOpenGroup }: {
+  projectId: string;
+  checkpointVersion: number | null;
+  delta: ProjectVisitDeltaState;
+  mutationPending: boolean;
+  mutationError: string;
+  onMutate: () => Promise<void>;
+  onOpenGroup: (group: ProjectVisitDeltaGroup["kind"]) => void;
+}) {
+  const totalChanges = delta.status === "ready"
+    ? delta.groups.reduce((total, group) => total + group.added + group.updated, 0)
+    : 0;
+  const unavailable = delta.status === "unavailable";
+  return (
+    <section
+      className="brief-live-section brief-changes-section"
+      data-testid="brief-changes-section"
+      data-status={delta.status}
+      data-project-id={projectId}
+      data-checkpoint-version={checkpointVersion ?? ""}
+    >
+      <header>
+        <span aria-hidden="true"><RotateCcw size={18} /></span>
+        <div><strong>تغییرات از آخرین مراجعه</strong><small>{delta.status === "ready" ? `${totalChanges.toLocaleString("fa-IR")} تغییر` : delta.status === "uninitialized" ? "بدون مبنا" : delta.status === "loading" ? "در حال محاسبه" : "محاسبه ناموفق"}</small></div>
+      </header>
+      {delta.status === "loading" ? <p className="brief-section-state" role="status">در حال خواندن وضعیت فعلی پروژه…</p> : null}
+      {delta.status === "uninitialized" ? <p className="brief-section-state is-empty">هنوز مبنای قبلی ثبت نشده</p> : null}
+      {unavailable || mutationError ? <p className="brief-section-state is-unavailable" role="alert" data-testid="brief-changes-error">تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.</p> : null}
+      {delta.status === "ready" ? (
+        <div className="brief-change-groups">
+          {delta.groups.map((group) => (
+            <button
+              type="button"
+              key={group.kind}
+              className="brief-change-group"
+              data-testid={`brief-changes-group-${group.kind}`}
+              data-added={group.added}
+              data-updated={group.updated}
+              onClick={() => onOpenGroup(group.kind)}
+            >
+              <span>{projectVisitDeltaGroupLabels[group.kind]}</span>
+              <small>افزوده {group.added.toLocaleString("fa-IR")} · به‌روزشده {group.updated.toLocaleString("fa-IR")}</small>
+              <ArrowRight size={15} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {delta.status === "ready" && totalChanges === 0 ? <p className="brief-section-state is-empty">تغییر تازه‌ای از مبنای قبلی دیده نمی‌شود</p> : null}
+      {delta.status === "uninitialized" ? <button className="brief-changes-action" type="button" data-testid="brief-changes-baseline-button" disabled={mutationPending} aria-busy={mutationPending} onClick={() => { void onMutate(); }}>{mutationPending ? "در حال ثبت…" : "ثبت وضعیت فعلی به‌عنوان مبنا"}</button> : null}
+      {delta.status === "ready" ? <button className="brief-changes-action" type="button" data-testid="brief-changes-mark-seen-button" disabled={mutationPending} aria-busy={mutationPending} onClick={() => { void onMutate(); }}>{mutationPending ? "در حال ثبت…" : "همه را دیدم"}</button> : null}
+    </section>
+  );
+}
+
+function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, visitProjectId, visitCheckpointVersion, visitDelta, visitMutationPending, visitMutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition, onVisitMutation, onOpenVisitGroup }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: { key: string; message: string } | null; visitProjectId: string; visitCheckpointVersion: number | null; visitDelta: ProjectVisitDeltaState; visitMutationPending: boolean; visitMutationError: string; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void>; onVisitMutation: () => Promise<void>; onOpenVisitGroup: (group: ProjectVisitDeltaGroup["kind"]) => void }) {
   const keyboard = useKeyboard();
   const [frequency, setFrequency] = useState<BriefFrequency>(schedule?.frequency ?? "daily");
   const [weekday, setWeekday] = useState(schedule?.weekday ?? "شنبه");
@@ -25210,14 +25445,14 @@ function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, onC
       <div className="brief-panel" dir="rtl" data-testid="brief-panel">
         <p className="brief-local-boundary" role="status" data-testid="brief-local-boundary"><ShieldCheck size={17} aria-hidden="true" /> این خلاصه فقط داده‌های محلی واقعی پروژه را می‌خواند. زمان‌بندی در همین مرورگر شبیه‌سازی می‌شود و اجرای پس‌زمینه یا ارسال خودکار ندارد.</p>
         <div className="brief-preview" data-testid="brief-preview">
-          <div className="brief-preview-head"><span><CalendarDays size={20} /></span><div><small>بریف {activeBriefLabel(frequency)} · فقط خواندنی</small><strong>امروز پروژه</strong><em data-testid="brief-project-name">{snapshot.projectName}</em></div></div>
+          <div className="brief-preview-head"><span><CalendarDays size={20} /></span><div><small>بریف {activeBriefLabel(frequency)} · خلاصهٔ زندهٔ محلی</small><strong>امروز پروژه</strong><em data-testid="brief-project-name">{snapshot.projectName}</em></div></div>
           <div className="brief-live-sections">
             <BriefLiveSection testId="brief-decisions-section" title="تصمیم‌های منتظر شما" section={snapshot.decisions} icon={<ClipboardCheck size={18} />} actionLabel="باز کردن تأییدها در کارها" actionTestId="brief-decisions-action" onAction={() => onOpenTasks("approval")} />
             <BriefLiveSection testId="brief-tasks-section" title="کارهای باز و موعدها" section={snapshot.tasks} icon={<CheckCircle2 size={18} />} actionLabel="باز کردن کارها" actionTestId="brief-tasks-action" onAction={() => onOpenTasks("active")} />
             <BriefLiveSection testId="brief-procurement-section" title="درخواست‌های خرید باز" section={snapshot.procurement} icon={<ShoppingCart size={18} />} actionLabel="باز کردن درخواست‌ها" actionTestId="brief-procurement-action" onAction={onOpenPurchaseRequests} />
             <BriefInputsSection section={snapshot.inputs} mutationKey={mutationKey} mutationError={mutationError} onOpenInput={onOpenInput} onDisposition={onDisposition} />
+            <BriefChangesSection projectId={visitProjectId} checkpointVersion={visitCheckpointVersion} delta={visitDelta} mutationPending={visitMutationPending} mutationError={visitMutationError} onMutate={onVisitMutation} onOpenGroup={onOpenVisitGroup} />
           </div>
-          <p className="brief-deferred-note">تغییرات از آخرین بازدید، تا وقتی منبع قابل‌اثبات خودش ساخته نشود، محاسبه نمی‌شود.</p>
         </div>
 
         <div className="brief-frequency" role="radiogroup" aria-label="بازهٔ بریف" data-testid="brief-frequency-group">

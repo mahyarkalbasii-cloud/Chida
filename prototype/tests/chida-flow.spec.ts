@@ -7905,7 +7905,7 @@ async function createManualTaskForLiveBrief(page: Page, title: string) {
   await page.getByTestId("project-task-step-input").fill("هماهنگی اقدام بعدی پروژه");
   await page.getByTestId("project-task-due-input").fill("۱۴۰۵/۰۶/۲۰");
   await page.getByTestId("project-task-save").click();
-  await expect(page.getByTestId("project-task-card")).toContainText(title);
+  await expect(page.getByTestId("project-task-card").filter({ hasText: title })).toBeVisible();
   await page.getByTestId("project-tasks-back").click();
   await expect(page.getByTestId("builder-home")).toBeVisible();
 }
@@ -11401,6 +11401,325 @@ test("T9-B3 serializes concurrent mark-all-seen visits from two pages without a 
   } finally {
     await secondPage.close();
   }
+});
+
+const projectVisitCheckpointsTestStorageKey = "chida-prototype-project-visit-checkpoints:v1";
+
+async function waitForLiveBriefObservation(page: Page) {
+  await expect(page.getByTestId("builder-home")).toHaveAttribute("data-project-brief-observation-status", "ready", { timeout: 20_000 });
+}
+
+async function readProjectVisitCheckpointEnvelope(page: Page) {
+  return page.evaluate((key) => JSON.parse(window.localStorage.getItem(key) ?? "null"), projectVisitCheckpointsTestStorageKey);
+}
+
+function projectVisitObservedAtByProject(envelope: any) {
+  return Object.fromEntries(envelope.records.map((record: any) => [
+    record.projectId,
+    record.revisions.at(-1).snapshot.observedAt,
+  ]));
+}
+
+async function expectBriefChangeGroup(page: Page, group: "tasks" | "decisions" | "procurement" | "inputs", added: number, updated: number) {
+  const row = page.getByTestId(`brief-changes-group-${group}`);
+  await expect(row).toHaveAttribute("data-added", String(added));
+  await expect(row).toHaveAttribute("data-updated", String(updated));
+}
+
+test("T9-B3 open Brief stays byte-read-only and records the first baseline only on explicit action", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await waitForLiveBriefObservation(page);
+  const before = await allLocalStorageBytes(page);
+
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-section")).toContainText("هنوز مبنای قبلی ثبت نشده");
+  expect(await allLocalStorageBytes(page)).toEqual(before);
+
+  await page.getByTestId("brief-changes-baseline-button").click();
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeVisible();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).not.toBeNull();
+});
+
+test("T9-B3 shows added and updated groups after an explicit baseline and clears them only after mark-seen commit", async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await createManualTaskForLiveBrief(page, "کار پایهٔ تغییرات بریف");
+
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.getByTestId("purchase-request-raw-input").fill("دو تن سیمان برای مبنای تغییرات لازم است");
+  await page.getByTestId("purchase-request-item-input").fill("سیمان مبنا");
+  await page.getByTestId("purchase-request-quantity-input").fill("۲");
+  await chooseProjectOption(page, "purchase-request-unit-select", "تن");
+  await page.getByTestId("purchase-request-save").click();
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
+  await page.getByTestId("purchase-request-detail-back").click();
+  await page.getByTestId("purchase-requests-back").click();
+  await registerProjectDocumentForBrief(page, "ورودی پایه بریف.pdf", "%PDF T9-B3 baseline input");
+  await waitForLiveBriefObservation(page);
+
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-section")).toBeVisible();
+  await page.getByTestId("brief-changes-baseline-button").click();
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeVisible();
+  const baseline = await readProjectVisitCheckpointEnvelope(page);
+  const baselineRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey);
+  expect(baseline).toMatchObject({ storeVersion: 1, records: [{ version: 1 }] });
+  await page.getByTestId("brief-back-button").click();
+
+  await createManualTaskForLiveBrief(page, "کار افزودهٔ تغییرات بریف");
+  await page.getByTestId("quick-action-tasks").click();
+  await page.getByTestId("project-task-card").filter({ hasText: "کار پایهٔ تغییرات بریف" }).click();
+  await page.getByTestId("project-task-status-toggle").click();
+  await page.getByTestId("project-task-detail-back").click();
+  await page.getByTestId("project-tasks-back").click();
+
+  await page.getByTestId("quick-action-purchase-request").click();
+  if (await page.getByTestId("purchase-request-editor-sheet").isVisible()) await page.keyboard.press("Escape");
+  await page.getByTestId("purchase-request-card").filter({ hasText: "سیمان مبنا" }).click();
+  await page.getByTestId("purchase-request-return-draft").click();
+  await page.getByTestId("purchase-request-edit").click();
+  await page.getByTestId("purchase-request-extra-note").fill("نسخهٔ به‌روزشده برای محاسبهٔ تغییر");
+  await page.getByTestId("purchase-request-save").click();
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
+  await page.getByTestId("purchase-request-request-approval").click();
+  await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
+  await page.getByTestId("project-approval-detail-back").click();
+  await page.getByTestId("project-tasks-back").click();
+
+  await registerProjectDocumentForBrief(page, "ورودی افزوده بریف.pdf", "%PDF T9-B3 added input");
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  const baselineInput = page.getByTestId("brief-input-item").filter({ hasText: "ورودی پایه بریف" });
+  await baselineInput.locator("xpath=..").getByTestId("brief-input-disposition-action").click();
+  await expect(baselineInput).toHaveCount(0);
+
+  await expectBriefChangeGroup(page, "tasks", 1, 1);
+  await expectBriefChangeGroup(page, "decisions", 1, 0);
+  await expectBriefChangeGroup(page, "procurement", 0, 1);
+  await expectBriefChangeGroup(page, "inputs", 1, 1);
+  await page.getByTestId("brief-changes-group-inputs").click();
+  await expect(page.getByTestId("brief-inputs-heading")).toBeFocused();
+  await page.getByTestId("brief-changes-group-decisions").click();
+  await expect(page.getByTestId("project-task-filter-approval")).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("project-tasks-back").click();
+  await openLiveBriefFromHome(page);
+  await page.getByTestId("brief-changes-group-procurement").click();
+  await expect(page.getByTestId("project-purchase-requests-view")).toBeVisible();
+  await page.getByTestId("purchase-requests-back").click();
+  await openLiveBriefFromHome(page);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(baselineRaw);
+
+  await page.getByTestId("brief-changes-mark-seen-button").click();
+  await expectBriefChangeGroup(page, "tasks", 0, 0);
+  await expectBriefChangeGroup(page, "decisions", 0, 0);
+  await expectBriefChangeGroup(page, "procurement", 0, 0);
+  await expectBriefChangeGroup(page, "inputs", 0, 0);
+  const marked = await readProjectVisitCheckpointEnvelope(page);
+  expect(marked).toMatchObject({ storeVersion: 2, records: [{ version: 2 }] });
+});
+
+test("T9-B3 leaves baseline unchanged on stale dependency unreadable dependency and checkpoint write failure", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await createManualTaskForLiveBrief(page, "کار پایهٔ شکست بریف");
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-section")).toBeVisible();
+  await page.getByTestId("brief-changes-baseline-button").click();
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeVisible();
+  const baselineRaw = await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey);
+  const baselineEnvelope = JSON.parse(baselineRaw!);
+  const baselineObservedAt = baselineEnvelope.records[0].revisions.at(-1).snapshot.observedAt;
+  const authority = await readProjectBriefTestAuthority(page);
+  const task = (await readProjectTasksEnvelope(page)).records.find((record: any) => record.title === "کار پایهٔ شکست بریف");
+
+  const hiddenMutation = await page.evaluate(async ({ currentAuthority, currentTask }) => {
+    const domain = await import("/src/projectTasks.ts");
+    return domain.executeProjectTaskCommand({
+      inputSchemaVersion: 1,
+      action: "complete-task",
+      projectId: currentTask.projectId,
+      taskId: currentTask.id,
+      expectedTaskVersion: currentTask.version,
+      idempotencyKey: "t9-b3-hidden-task-update",
+    }, () => currentAuthority);
+  }, { currentAuthority: authority, currentTask: task });
+  expect(hiddenMutation.status).toBe("updated");
+  await page.getByTestId("brief-changes-mark-seen-button").click();
+  await expect(page.getByTestId("brief-changes-error")).toContainText("مبنای قبلی دست‌نخورده ماند");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(baselineRaw);
+
+  await dispatchBuilderStorageEvent(page, projectTasksTestStorageKey);
+  await expectBriefChangeGroup(page, "tasks", 0, 1);
+  await page.evaluate((checkpointKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__t9B3NativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === checkpointKey) throw new DOMException("Checkpoint write failed", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  }, projectVisitCheckpointsTestStorageKey);
+  await page.getByTestId("brief-changes-mark-seen-button").click();
+  await expect(page.getByTestId("brief-changes-error")).toContainText("مبنای قبلی دست‌نخورده ماند");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(baselineRaw);
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __t9B3NativeSetItem: typeof Storage.prototype.setItem }).__t9B3NativeSetItem;
+    delete (window as Window & { __t9B3NativeSetItem?: typeof Storage.prototype.setItem }).__t9B3NativeSetItem;
+  });
+
+  await page.evaluate((key) => window.localStorage.setItem(key, "{unreadable-project-tasks"), projectTasksTestStorageKey);
+  await dispatchBuilderStorageEvent(page, projectTasksTestStorageKey);
+  await expect(page.getByTestId("brief-changes-section")).toContainText("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(baselineRaw);
+  expect((await readProjectVisitCheckpointEnvelope(page)).records[0].revisions.at(-1).snapshot.observedAt).toBe(baselineObservedAt);
+});
+
+test("T9-B3 stays isolated across project switch reload storage event and focus", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  const firstProjectId = await readActiveProjectId(page);
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-section")).toBeVisible();
+  await page.getByTestId("brief-changes-baseline-button").click();
+  await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-project-id", firstProjectId!);
+  await page.getByTestId("brief-back-button").click();
+
+  const secondProjectId = await addAndActivateProject(page, "پروژهٔ دوم مبنای مراجعه");
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-project-id", secondProjectId!);
+  await expect(page.getByTestId("brief-changes-section")).toContainText("هنوز مبنای قبلی ثبت نشده");
+  await page.getByTestId("brief-changes-baseline-button").click();
+  const checkpointBeforeReadTriggers = await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey);
+  const observedBeforeReadTriggers = projectVisitObservedAtByProject(JSON.parse(checkpointBeforeReadTriggers!));
+
+  await page.getByTestId("brief-frequency-weekly").click();
+  await page.getByTestId("brief-time-input").fill("10:15");
+  await page.getByTestId("brief-save-button").click();
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
+  await openLiveBriefFromHome(page);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
+  await page.getByTestId("brief-back-button").click();
+
+  await reloadIntoBuilderHome(page);
+  await waitForLiveBriefObservation(page);
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
+  expect(projectVisitObservedAtByProject(await readProjectVisitCheckpointEnvelope(page))).toEqual(observedBeforeReadTriggers);
+  await dispatchBuilderStorageEvent(page, projectVisitCheckpointsTestStorageKey);
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
+  expect(projectVisitObservedAtByProject(await readProjectVisitCheckpointEnvelope(page))).toEqual(observedBeforeReadTriggers);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
+  expect(projectVisitObservedAtByProject(await readProjectVisitCheckpointEnvelope(page))).toEqual(observedBeforeReadTriggers);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
+  expect(projectVisitObservedAtByProject(await readProjectVisitCheckpointEnvelope(page))).toEqual(observedBeforeReadTriggers);
+
+  await activateExistingProjectFromHome(page, /برج نیلوفر/);
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-project-id", firstProjectId!);
+  await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-checkpoint-version", "1");
+  await page.getByTestId("brief-back-button").click();
+  await activateExistingProjectFromHome(page, /پروژهٔ دوم مبنای مراجعه/);
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-project-id", secondProjectId!);
+  await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-checkpoint-version", "1");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(checkpointBeforeReadTriggers);
+});
+
+test("T9-B3 keeps healthy T9-B1 and T9-B2 sections visible when checkpoint is unreadable", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await createManualTaskForLiveBrief(page, "کار سالم کنار checkpoint خراب");
+  await registerProjectDocumentForBrief(page, "ورودی سالم کنار checkpoint.pdf", "%PDF T9-B3 healthy input");
+  await waitForLiveBriefObservation(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = await readActiveProjectId(page);
+  const missingHeadLedger = makeProjectVisitCheckpointLedger(authority, [{
+    projectId: projectId!,
+    observedAt: "2026-09-03T12:00:00.000Z",
+    idempotencyKey: "t9-b3-missing-head-baseline",
+    heads: [{
+      kind: "manual-task",
+      id: "manual-task-no-longer-present",
+      version: 1,
+      state: "in-progress",
+      fingerprint: `sha256-${"a".repeat(64)}`,
+    }],
+  }]);
+  await page.evaluate(({ key, raw }) => {
+    window.localStorage.setItem(key, raw);
+    window.dispatchEvent(new StorageEvent("storage", { key }));
+  }, { key: projectVisitCheckpointsTestStorageKey, raw: JSON.stringify(missingHeadLedger) });
+
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-changes-section")).toContainText("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
+  await expect(page.getByTestId("brief-changes-section")).not.toContainText("حذف");
+  await expect(page.getByTestId("brief-tasks-section")).toContainText("کار سالم کنار checkpoint خراب");
+  await expect(page.getByTestId("brief-inputs-section")).toContainText("ورودی سالم کنار checkpoint");
+
+  const corruptRaw = "{unreadable-project-visit-checkpoint";
+  await page.evaluate(({ key, raw }) => {
+    window.localStorage.setItem(key, raw);
+    window.dispatchEvent(new StorageEvent("storage", { key }));
+  }, { key: projectVisitCheckpointsTestStorageKey, raw: corruptRaw });
+  await expect(page.getByTestId("brief-changes-section")).toContainText("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
+  await expect(page.getByTestId("brief-tasks-section")).toContainText("کار سالم کنار checkpoint خراب");
+  await expect(page.getByTestId("brief-inputs-section")).toContainText("ورودی سالم کنار checkpoint");
+  expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(corruptRaw);
+});
+
+test("T9-B3 remains RTL console-clean and overflow-free at 390x844", async ({ page }) => {
+  test.setTimeout(180_000);
+  const consoleFailures: string[] = [];
+  const externalRequests: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") consoleFailures.push(`${message.type()}: ${message.text()}`);
+  });
+  page.on("pageerror", (error) => consoleFailures.push(`pageerror: ${error.message}`));
+  page.on("request", (request) => {
+    if (!new URL(request.url()).hostname.match(/^(?:127\.0\.0\.1|localhost)$/u)) externalRequests.push(request.url());
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-preview")).toContainText("خلاصهٔ زندهٔ محلی");
+  await page.getByTestId("brief-changes-baseline-button").click();
+  await page.getByTestId("brief-back-button").click();
+
+  await createManualTaskForLiveBrief(page, "کار افزوده برای ناوبری تغییرات");
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expectBriefChangeGroup(page, "tasks", 1, 0);
+  await page.getByTestId("brief-changes-group-tasks").click();
+  await expect(page.getByTestId("project-tasks-view")).toBeVisible();
+  await expect(page.getByTestId("project-task-filter-active")).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("project-tasks-back").click();
+  await openLiveBriefFromHome(page);
+  await page.getByTestId("brief-changes-mark-seen-button").click();
+  await expectBriefChangeGroup(page, "tasks", 0, 0);
+  await page.getByTestId("brief-back-button").scrollIntoViewIfNeeded();
+
+  await expect(page.getByTestId("brief-panel")).toHaveCSS("direction", "rtl");
+  expect(await page.getByTestId("brief-panel").evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  expect(await page.getByTestId("brief-back-button").evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return bounds.top >= 0 && bounds.bottom <= window.innerHeight;
+  })).toBe(true);
+  expect(consoleFailures).toEqual([]);
+  expect(externalRequests).toEqual([]);
 });
 
 test("T9-B1 live Brief projects real work decisions and procurement without fixture copy or storage writes", async ({ page }) => {
