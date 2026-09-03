@@ -9861,7 +9861,7 @@ test("T9-B2 keeps the first three Brief sections healthy when disposition is unr
   await dispatchBuilderStorageEvent(page, "chida-prototype-project-input-dispositions:v1", null, "{malformed");
   await openLiveBriefFromHome(page);
 
-  await expect(page.getByTestId("brief-inputs-section")).toContainText("اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.");
+  await expect(page.getByTestId("brief-inputs-section")).toContainText("اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ تا خواندن موفق دوباره، تعیین‌تکلیف جدید بسته است.");
   await expect(page.getByTestId("brief-tasks-section")).toContainText("کار سالم کنار خطای اسناد");
   await expect(page.getByTestId("brief-tasks-section")).not.toContainText("در دسترس نیست");
   await expect(page.getByTestId("brief-decisions-section")).toContainText("تصمیمی منتظر شما نیست");
@@ -9953,7 +9953,7 @@ test("T9-B2 shows the scoped unavailable section for terminal File Source and re
     await openLiveBriefFromHome(page);
     const section = page.getByTestId("brief-inputs-section");
     await expect(section, fixture.name).toHaveAttribute("data-status", "unavailable", { timeout: 20_000 });
-    await expect(section, fixture.name).toContainText("اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.");
+    await expect(section, fixture.name).toContainText("اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ تا خواندن موفق دوباره، تعیین‌تکلیف جدید بسته است.");
     await expect(section, fixture.name).not.toContainText("در حال بررسی فایل‌ها و ورودی‌های ثبت‌شده");
     await expect(page.getByTestId("builder-home"), `${fixture.name} observation`).toHaveAttribute("data-project-brief-observation-status", "unavailable");
     await expect(page.getByTestId("builder-home"), `${fixture.name} observation heads`).toHaveAttribute("data-project-brief-observation-heads", "");
@@ -9994,7 +9994,7 @@ test("T9-B2 File and Source details do not synthesize pending when disposition b
   await page.getByTestId("project-files-entry").click();
   const unreadableFileRow = page.getByTestId("project-file-row").filter({ hasText: "قرارداد resolved" });
   await unreadableFileRow.getByTestId("project-file-edit").click();
-  await expect(page.getByTestId("project-file-disposition-status")).toHaveText("اطلاعات تعیین‌تکلیف در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.", { timeout: 20_000 });
+  await expect(page.getByTestId("project-file-disposition-status")).toHaveText("اطلاعات تعیین‌تکلیف در دسترس نیست؛ تا خواندن موفق دوباره، اقدام جدید بسته است.", { timeout: 20_000 });
   await expect(page.getByTestId("project-file-detail-sheet")).not.toContainText("نیازمند تعیین‌تکلیف");
   await expect(page.getByTestId("project-file-disposition-action")).toBeDisabled();
   await page.keyboard.press("Escape");
@@ -10002,7 +10002,7 @@ test("T9-B2 File and Source details do not synthesize pending when disposition b
   await page.getByTestId("project-space-back").click();
 
   await page.getByTestId("composer-source-open").click();
-  await expect(page.getByTestId("project-source-disposition-status")).toHaveText("اطلاعات تعیین‌تکلیف در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.", { timeout: 20_000 });
+  await expect(page.getByTestId("project-source-disposition-status")).toHaveText("اطلاعات تعیین‌تکلیف در دسترس نیست؛ تا خواندن موفق دوباره، اقدام جدید بسته است.", { timeout: 20_000 });
   await expect(page.getByTestId("composer-source-detail")).not.toContainText("نیازمند تعیین‌تکلیف");
   await expect(page.getByTestId("project-source-disposition-action")).toBeDisabled();
   expect(await page.evaluate(() => localStorage.getItem("chida-prototype-project-input-dispositions:v1"))).toBe("{malformed");
@@ -10041,25 +10041,29 @@ test("T9-B2 distinguishes a verified disposition rollback from an unverified wri
 
   await page.evaluate((key) => {
     const nativeSetItem = Storage.prototype.setItem;
-    const nativeRemoveItem = Storage.prototype.removeItem;
+    const nativeGetItem = Storage.prototype.getItem;
     let candidateWritten = false;
+    let competitorInjected = false;
+    const competingRaw = "{unreadable-disposition-competitor";
     (window as any).__restoreUnverifiedDispositionWrite = () => {
       Storage.prototype.setItem = nativeSetItem;
-      Storage.prototype.removeItem = nativeRemoveItem;
+      Storage.prototype.getItem = nativeGetItem;
     };
     Storage.prototype.setItem = function writeCandidateThenThrow(storageKey: string, value: string) {
       const written = nativeSetItem.call(this, storageKey, value);
       if (this === localStorage && storageKey === key && !candidateWritten) {
         candidateWritten = true;
+        (window as any).__validUnverifiedDispositionCandidateRaw = value;
         throw new DOMException("candidate write then throw", "QuotaExceededError");
       }
       return written;
     };
-    Storage.prototype.removeItem = function blockRollback(storageKey: string) {
-      if (this === localStorage && storageKey === key && candidateWritten) {
-        throw new DOMException("rollback unavailable", "QuotaExceededError");
+    Storage.prototype.getItem = function injectUnreadableCompetitor(storageKey: string) {
+      if (this === localStorage && storageKey === key && candidateWritten && !competitorInjected) {
+        competitorInjected = true;
+        nativeSetItem.call(localStorage, key, competingRaw);
       }
-      return nativeRemoveItem.call(this, storageKey);
+      return nativeGetItem.call(this, storageKey);
     };
   }, dispositionStorageKey);
   await action.click();
@@ -10067,7 +10071,12 @@ test("T9-B2 distinguishes a verified disposition rollback from an unverified wri
   await expect(row.getByTestId("project-file-disposition-status")).toHaveText("اطلاعات تعیین‌تکلیف در دسترس نیست.");
   await expect(action).toBeDisabled();
   await expect(row).not.toContainText("دست‌نخورده ماند");
-  expect(await page.evaluate((key) => localStorage.getItem(key), dispositionStorageKey)).not.toBeNull();
+  const incident = await page.evaluate((key) => ({
+    competingRaw: localStorage.getItem(key),
+    validRaw: (window as any).__validUnverifiedDispositionCandidateRaw as string,
+  }), dispositionStorageKey);
+  expect(incident.competingRaw).toBe("{unreadable-disposition-competitor");
+  expect(incident.validRaw).toEqual(expect.any(String));
   await page.evaluate(() => (window as any).__restoreUnverifiedDispositionWrite());
 
   await page.getByTestId("project-files-back").click();
@@ -10077,10 +10086,34 @@ test("T9-B2 distinguishes a verified disposition rollback from an unverified wri
   await expect(page.getByTestId("brief-inputs-error")).toHaveText("نتیجهٔ ثبت تعیین‌تکلیف قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند.");
   await expect(page.getByTestId("brief-inputs-section")).not.toContainText("دست‌نخورده ماند");
 
+  await reloadIntoBuilderHome(page);
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-files-entry").click();
+  const reloadedRow = page.getByTestId("project-file-row").filter({ hasText: "قرارداد نتیجهٔ نامعلوم" });
+  await expect(reloadedRow.getByTestId("project-file-disposition-status")).toHaveText("اطلاعات تعیین‌تکلیف در دسترس نیست؛ تا خواندن موفق دوباره، اقدام جدید بسته است.");
+  await expect(reloadedRow.getByTestId("project-file-disposition-action")).toBeDisabled();
+  await expect(reloadedRow).not.toContainText("دست‌نخورده ماند");
+  await page.getByTestId("project-files-back").click();
+  await page.getByTestId("project-space-back").click();
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-inputs-section")).toHaveAttribute("data-status", "unavailable");
+  await expect(page.getByTestId("brief-inputs-error")).toHaveText("اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ تا خواندن موفق دوباره، تعیین‌تکلیف جدید بسته است.");
+  await expect(page.getByTestId("brief-inputs-section")).not.toContainText("دست‌نخورده ماند");
+
+  await page.evaluate(({ key, raw }) => localStorage.setItem(key, raw), { key: dispositionStorageKey, raw: incident.validRaw });
+  await dispatchBuilderStorageEvent(page, dispositionStorageKey, incident.competingRaw, incident.validRaw);
   await page.evaluate(() => { window.dispatchEvent(new Event("blur")); window.dispatchEvent(new Event("focus")); });
   await expect(page.getByTestId("brief-inputs-section")).toHaveAttribute("data-status", "ready");
   await expect(page.getByTestId("brief-inputs-error")).toHaveCount(0);
   await expect(page.getByTestId("brief-inputs-section")).toContainText("سند یا ورودی تعیین‌تکلیف‌نشده‌ای نیست");
+  await page.getByTestId("brief-back-button").click();
+  await page.getByTestId("open-project-space").click();
+  await page.getByTestId("project-files-entry").click();
+  const recoveredRow = page.getByTestId("project-file-row").filter({ hasText: "قرارداد نتیجهٔ نامعلوم" });
+  await expect(recoveredRow.getByTestId("project-file-disposition-status")).toHaveText("تعیین‌تکلیف شده");
+  await expect(recoveredRow.getByTestId("project-file-disposition-action")).toBeEnabled();
+  await recoveredRow.getByTestId("project-file-disposition-action").click();
+  await expect(recoveredRow.getByTestId("project-file-disposition-status")).toHaveText("نیازمند تعیین‌تکلیف");
 });
 
 test("T9-B2 moves Brief focus to a surviving item after direct resolution removes the focused row", async ({ page }) => {

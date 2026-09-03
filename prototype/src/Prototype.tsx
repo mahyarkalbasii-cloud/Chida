@@ -24622,7 +24622,7 @@ function ProjectGalleryDetailSheet({ file, imageUrl, project, onClose }: { file:
 
 function projectInputStatusLabel(status: ProjectInputEffectiveStatus | null, presentationState: ProjectInputPresentationState = "ready") {
   if (presentationState === "loading") return "در حال آماده‌سازی وضعیت…";
-  if (presentationState === "unavailable") return "اطلاعات تعیین‌تکلیف در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.";
+  if (presentationState === "unavailable") return "اطلاعات تعیین‌تکلیف در دسترس نیست؛ تا خواندن موفق دوباره، اقدام جدید بسته است.";
   if (status === null) return "در حال آماده‌سازی وضعیت…";
   if (status === "resolved") return "تعیین‌تکلیف شده";
   if (status === "pending-stale") return "بعد از بررسی تغییر کرده";
@@ -25445,7 +25445,7 @@ function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, 
         <div><strong ref={headingRef} tabIndex={-1} data-testid="brief-inputs-heading">اسناد و ورودی‌های تعیین‌تکلیف‌نشده</strong><small>{section.status === "ready" ? `${section.items.length.toLocaleString("fa-IR")} مورد` : section.status === "loading" ? "در حال آماده‌سازی" : "خواندن ناموفق"}</small></div>
       </header>
       {section.status === "loading" ? <p className="brief-section-state" role="status">در حال بررسی فایل‌ها و ورودی‌های ثبت‌شده…</p> : null}
-      {section.status === "unavailable" ? <p className="brief-section-state is-unavailable" role="alert" data-testid="brief-inputs-error">{mutationError?.outcomeUnknown ? mutationError.message : "اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند."}</p> : null}
+      {section.status === "unavailable" ? <p className="brief-section-state is-unavailable" role="alert" data-testid="brief-inputs-error">{mutationError?.outcomeUnknown ? mutationError.message : "اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ تا خواندن موفق دوباره، تعیین‌تکلیف جدید بسته است."}</p> : null}
       {section.status === "ready" && visibleItems.length === 0 ? <p className="brief-section-state is-empty">سند یا ورودی تعیین‌تکلیف‌نشده‌ای نیست</p> : null}
       {section.status === "ready" && visibleItems.length > 0 ? (
         <ul>
