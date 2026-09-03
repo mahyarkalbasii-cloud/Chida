@@ -9744,8 +9744,10 @@ test("T9-B2 Brief items open the exact File or Composer Source detail and isolat
   await page.getByTestId("project-source-disposition-action").click();
   await expect(page.getByTestId("project-source-disposition-status")).toHaveText("تعیین‌تکلیف شده", { timeout: 20_000 });
   await expect(page.getByTestId("project-source-disposition-action")).toHaveText("بازکردن دوباره");
+  await expect(page.getByTestId("project-source-disposition-action")).toBeFocused();
   await page.getByTestId("project-source-disposition-action").click();
   await expect(page.getByTestId("project-source-disposition-status")).toHaveText("نیازمند تعیین‌تکلیف", { timeout: 20_000 });
+  await expect(page.getByTestId("project-source-disposition-action")).toBeFocused();
   await page.getByTestId("composer-source-close").click();
   await expect(page.getByTestId("brief-panel")).toBeVisible();
   await expect(page.getByTestId("brief-input-item").filter({ hasText: "ورودی Composer" })).toBeFocused();
@@ -10036,6 +10038,7 @@ test("T9-B2 distinguishes a verified disposition rollback from an unverified wri
   await expect(row.getByRole("alert")).toHaveText("وضعیت تعیین‌تکلیف ذخیره نشد؛ دادهٔ قبلی دست‌نخورده ماند.");
   await expect(row.getByTestId("project-file-disposition-status")).toHaveText("نیازمند تعیین‌تکلیف");
   await expect(action).toBeEnabled();
+  await expect(action).toBeFocused();
   expect(await page.evaluate((key) => localStorage.getItem(key), dispositionStorageKey)).toBeNull();
   await page.evaluate(() => (window as any).__restoreVerifiedDispositionWrite());
 
@@ -10070,6 +10073,7 @@ test("T9-B2 distinguishes a verified disposition rollback from an unverified wri
   await expect(row.getByRole("alert")).toHaveText("نتیجهٔ ثبت تعیین‌تکلیف قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند.");
   await expect(row.getByTestId("project-file-disposition-status")).toHaveText("اطلاعات تعیین‌تکلیف در دسترس نیست.");
   await expect(action).toBeDisabled();
+  await expect(row.getByRole("alert")).toBeFocused();
   await expect(row).not.toContainText("دست‌نخورده ماند");
   const incident = await page.evaluate((key) => ({
     competingRaw: localStorage.getItem(key),
@@ -10126,9 +10130,98 @@ test("T9-B2 moves Brief focus to a surviving item after direct resolution remove
   await expect(page.getByTestId("brief-input-item")).toHaveCount(2);
   const resolvedItem = page.getByTestId("brief-input-item").filter({ hasText: "تمرکز دوم" });
   await resolvedItem.locator("xpath=..").getByTestId("brief-input-disposition-action").focus();
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & { __t9B2NativeRequestAnimationFrame?: typeof window.requestAnimationFrame };
+    testWindow.__t9B2NativeRequestAnimationFrame = window.requestAnimationFrame;
+    window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+      callback(performance.now());
+      return 1;
+    };
+  });
   await resolvedItem.locator("xpath=..").getByTestId("brief-input-disposition-action").click();
   await expect(resolvedItem).toHaveCount(0, { timeout: 20_000 });
-  await expect(page.getByTestId("brief-input-item").filter({ hasText: "تمرکز اول" })).toBeFocused();
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & { __t9B2NativeRequestAnimationFrame?: typeof window.requestAnimationFrame };
+    if (testWindow.__t9B2NativeRequestAnimationFrame) window.requestAnimationFrame = testWindow.__t9B2NativeRequestAnimationFrame;
+    delete testWindow.__t9B2NativeRequestAnimationFrame;
+  });
+  const survivingItem = page.getByTestId("brief-input-item").filter({ hasText: "تمرکز اول" });
+  await expect(survivingItem).toBeFocused();
+  await survivingItem.locator("xpath=..").getByTestId("brief-input-disposition-action").click();
+  await expect(page.getByTestId("brief-input-item")).toHaveCount(0, { timeout: 20_000 });
+  await expect(page.getByTestId("brief-inputs-heading")).toBeFocused();
+});
+
+test("T9-B2 discards a successful focus intent when the same-project input target fingerprint drifts", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await registerProjectDocumentForBrief(page, "تمرکز پیش از تغییر.pdf", "%PDF target drift focus");
+  await openLiveBriefFromHome(page);
+  const item = page.getByTestId("brief-input-item").filter({ hasText: "تمرکز پیش از تغییر" });
+  const action = item.locator("xpath=..").getByTestId("brief-input-disposition-action");
+  const keys = {
+    dispositions: "chida-prototype-project-input-dispositions:v1",
+    files: "chida-prototype-project-files:v1",
+  } as const;
+
+  await page.evaluate(({ dispositions, files }) => {
+    const nativeGetItem = Storage.prototype.getItem;
+    const nativeSetItem = Storage.prototype.setItem;
+    let candidateWritten = false;
+    let fileReadsAfterCandidate = 0;
+    Object.defineProperty(window, "__t9B2TargetDriftNativeGetItem", { value: nativeGetItem, configurable: true });
+    Object.defineProperty(window, "__t9B2TargetDriftNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      const result = nativeSetItem.call(this, key, value);
+      if (this === window.localStorage && key === dispositions) candidateWritten = true;
+      return result;
+    };
+    Storage.prototype.getItem = function getItem(key: string) {
+      if (this === window.localStorage && key === files && candidateWritten && ++fileReadsAfterCandidate === 2) {
+        const previousRaw = nativeGetItem.call(this, key);
+        if (!previousRaw) throw new Error("target-drift file fixture is missing");
+        const records = JSON.parse(previousRaw);
+        records[0].displayName = "تمرکز پس از تغییر.pdf";
+        const nextRaw = JSON.stringify(records);
+        nativeSetItem.call(this, key, nextRaw);
+        Object.defineProperty(window, "__t9B2TargetDriftBytes", { value: { previousRaw, nextRaw }, configurable: true });
+        return nextRaw;
+      }
+      return nativeGetItem.call(this, key);
+    };
+  }, keys);
+
+  await action.click();
+  await expect.poll(() => page.evaluate(() => Boolean((window as any).__t9B2TargetDriftBytes))).toBe(true);
+  const driftBytes = await page.evaluate(() => {
+    Storage.prototype.getItem = (window as Window & { __t9B2TargetDriftNativeGetItem: typeof Storage.prototype.getItem }).__t9B2TargetDriftNativeGetItem;
+    Storage.prototype.setItem = (window as Window & { __t9B2TargetDriftNativeSetItem: typeof Storage.prototype.setItem }).__t9B2TargetDriftNativeSetItem;
+    delete (window as Window & { __t9B2TargetDriftNativeGetItem?: typeof Storage.prototype.getItem }).__t9B2TargetDriftNativeGetItem;
+    delete (window as Window & { __t9B2TargetDriftNativeSetItem?: typeof Storage.prototype.setItem }).__t9B2TargetDriftNativeSetItem;
+    return (window as any).__t9B2TargetDriftBytes as { previousRaw: string; nextRaw: string };
+  });
+  await dispatchBuilderStorageEvent(page, keys.files, driftBytes.previousRaw, driftBytes.nextRaw);
+  const driftedItem = page.getByTestId("brief-input-item").filter({ hasText: "تمرکز پس از تغییر" });
+  await expect(driftedItem).toContainText("بعد از بررسی تغییر کرده", { timeout: 20_000 });
+
+  const frequencyButton = page.getByTestId("brief-frequency-daily");
+  await frequencyButton.click();
+  await expect(frequencyButton).toBeFocused();
+  const secondPage = await page.context().newPage();
+  try {
+    await secondPage.goto("/");
+    await enterBuilderHome(secondPage);
+    await openLiveBriefFromHome(secondPage);
+    const competingItem = secondPage.getByTestId("brief-input-item").filter({ hasText: "تمرکز پس از تغییر" });
+    await expect(competingItem).toContainText("بعد از بررسی تغییر کرده");
+    await competingItem.locator("xpath=..").getByTestId("brief-input-disposition-action").click();
+    await expect(competingItem).toHaveCount(0, { timeout: 20_000 });
+    await expect(driftedItem).toHaveCount(0, { timeout: 20_000 });
+    await expect(frequencyButton).toBeFocused();
+  } finally {
+    await secondPage.close();
+  }
 });
 
 test("T9-B3 digest adapters change independent SHA heads for every in-scope field across all six kinds", async ({ page }) => {
@@ -11822,23 +11915,83 @@ test("T9-B3 open Brief stays byte-read-only and records the first baseline only 
 
   await page.evaluate((checkpointKey) => {
     const nativeGetItem = Storage.prototype.getItem;
+    const nativeRequestAnimationFrame = window.requestAnimationFrame;
     let checkpointReads = 0;
+    let forcedFocusFrames = 0;
     Object.defineProperty(window, "__t9B3NativeGetItem", { value: nativeGetItem, configurable: true });
+    Object.defineProperty(window, "__t9B3NativeRequestAnimationFrame", { value: nativeRequestAnimationFrame, configurable: true });
     Storage.prototype.getItem = function getItem(key: string) {
       if (this === window.localStorage && key === checkpointKey && ++checkpointReads >= 4) {
         throw new DOMException("Post-commit reread failed", "InvalidStateError");
       }
       return nativeGetItem.call(this, key);
     };
+    window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+      if (checkpointReads === 3 && forcedFocusFrames < 2) {
+        forcedFocusFrames += 1;
+        callback(performance.now());
+        return 2_000_000_000 + forcedFocusFrames;
+      }
+      return nativeRequestAnimationFrame.call(window, callback);
+    };
   }, projectVisitCheckpointsTestStorageKey);
   await page.getByTestId("brief-changes-baseline-button").click();
   await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeVisible();
+  await page.evaluate(() => {
+    window.requestAnimationFrame = (window as Window & { __t9B3NativeRequestAnimationFrame: typeof window.requestAnimationFrame }).__t9B3NativeRequestAnimationFrame;
+    delete (window as Window & { __t9B3NativeRequestAnimationFrame?: typeof window.requestAnimationFrame }).__t9B3NativeRequestAnimationFrame;
+  });
   await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeFocused();
   await page.evaluate(() => {
     Storage.prototype.getItem = (window as Window & { __t9B3NativeGetItem: typeof Storage.prototype.getItem }).__t9B3NativeGetItem;
     delete (window as Window & { __t9B3NativeGetItem?: typeof Storage.prototype.getItem }).__t9B3NativeGetItem;
   });
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).not.toBeNull();
+});
+
+test("T9-B3 failed checkpoint intent does not steal focus after another tab advances the version", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await page.getByTestId("brief-changes-baseline-button").click();
+  await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-checkpoint-version", "1");
+
+  await page.evaluate((checkpointKey) => {
+    const nativeSetItem = Storage.prototype.setItem;
+    Object.defineProperty(window, "__t9B3StaleFocusNativeSetItem", { value: nativeSetItem, configurable: true });
+    Storage.prototype.setItem = function setItem(key: string, value: string) {
+      if (this === window.localStorage && key === checkpointKey) throw new DOMException("Forced checkpoint failure", "QuotaExceededError");
+      return nativeSetItem.call(this, key, value);
+    };
+  }, projectVisitCheckpointsTestStorageKey);
+  await page.getByTestId("brief-changes-mark-seen-button").click();
+  await expect(page.getByTestId("brief-changes-error")).toBeVisible();
+
+  await page.evaluate(() => {
+    Storage.prototype.setItem = (window as Window & { __t9B3StaleFocusNativeSetItem: typeof Storage.prototype.setItem }).__t9B3StaleFocusNativeSetItem;
+    delete (window as Window & { __t9B3StaleFocusNativeSetItem?: typeof Storage.prototype.setItem }).__t9B3StaleFocusNativeSetItem;
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeEnabled();
+  await expect(page.getByTestId("brief-changes-error")).toHaveCount(0);
+  const frequencyButton = page.getByTestId("brief-frequency-daily");
+  await frequencyButton.click();
+  await expect(frequencyButton).toBeFocused();
+
+  const secondPage = await page.context().newPage();
+  try {
+    await secondPage.setViewportSize({ width: 390, height: 844 });
+    await enterBuilderHome(secondPage);
+    await waitForLiveBriefObservation(secondPage);
+    await openLiveBriefFromHome(secondPage);
+    await secondPage.getByTestId("brief-changes-mark-seen-button").click();
+    await expect(secondPage.getByTestId("brief-changes-section")).toHaveAttribute("data-checkpoint-version", "2");
+    await expect(page.getByTestId("brief-changes-section")).toHaveAttribute("data-checkpoint-version", "2");
+    await expect(frequencyButton).toBeFocused();
+  } finally {
+    await secondPage.close();
+  }
 });
 
 test("T9-B3 shows added and updated groups after an explicit baseline and clears them only after mark-seen commit", async ({ page }) => {
@@ -12255,7 +12408,8 @@ test("T9-B3 keeps healthy T9-B1 and T9-B2 sections visible when checkpoint is un
     window.localStorage.setItem(key, raw);
     window.dispatchEvent(new StorageEvent("storage", { key }));
   }, { key: projectVisitCheckpointsTestStorageKey, raw: corruptRaw });
-  await expect(page.getByTestId("brief-changes-section")).toContainText("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
+  await expect(page.getByTestId("brief-changes-section")).toContainText("تغییرات فعلاً قابل‌محاسبه نیست؛ وضعیت مبنای قبلی قابل‌تأیید نیست.");
+  await expect(page.getByTestId("brief-changes-section")).not.toContainText("مبنای قبلی دست‌نخورده ماند");
   expect(await captureHealthySections()).toEqual(healthySections);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(corruptRaw);
 });

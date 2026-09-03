@@ -338,6 +338,7 @@ type ProjectInputDisplayItem = {
   metadataOnly: boolean;
   ready: boolean;
 };
+type ProjectInputDispositionHandler = (item: ProjectInputDisplayItem) => Promise<boolean>;
 type LiveBriefInputsSection = { status: LiveBriefSectionStatus; items: ProjectInputDisplayItem[] };
 type BoundProjectVisitCheckpointState = { projectId: string; state: ProjectVisitCheckpointState };
 type LiveBriefSnapshot = {
@@ -15676,7 +15677,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   const projectInputByIntakeId = useMemo(() => new Map(activeProjectInputItems.filter((item) => item.target.kind === "composer-intake").map((item) => [item.target.id, item])), [activeProjectInputItems]);
   const selectedSourceInput = selectedSource ? projectInputByIntakeId.get(selectedSource.intakeId) ?? null : null;
   const mutateProjectInputDisposition = async (item: ProjectInputDisplayItem) => {
-    if (!item.ready || item.presentationState !== "ready" || item.effectiveStatus === null || projectInputMutationKey !== null || projectInputDispositionState.status !== "ready") return;
+    if (!item.ready || item.presentationState !== "ready" || item.effectiveStatus === null || projectInputMutationKey !== null || projectInputDispositionState.status !== "ready") return false;
     const projectId = activeProject.id;
     const action = item.effectiveStatus === "resolved" ? "reopen-input" as const : "resolve-input" as const;
     const expectedStoreVersion = projectInputDispositionState.envelope.storeVersion;
@@ -15696,9 +15697,10 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     }, projectBriefAuthoritySnapshot, readProjectInputDependencies);
     if (activeProjectIdRef.current !== projectId) {
       setProjectInputMutationKey((current) => current === item.key ? null : current);
-      return;
+      return false;
     }
-    if (["resolved", "reopened", "unchanged"].includes(result.status)) {
+    const succeeded = ["resolved", "reopened", "unchanged"].includes(result.status);
+    if (succeeded) {
       projectInputMutationAttemptsRef.current.delete(signature);
       await refreshProjectInputDisposition(projectId);
       setProjectInputMutationError(null);
@@ -15729,6 +15731,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       }
     }
     setProjectInputMutationKey(null);
+    return succeeded;
   };
   const closeSourceDetail = () => {
     const returnSheet = sourceDetailReturnSheetRef.current;
@@ -15834,7 +15837,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     : projectVisitDeltaForObservation(projectVisitCheckpointState, liveProjectBriefObservation, activeProject.id);
   const mutateProjectVisitCheckpoint = async () => {
     if (projectVisitCheckpointMutationPending || projectVisitCheckpointMutationBlocked || !projectVisitCheckpointState || projectVisitCheckpointState.status !== "ready"
-      || liveProjectBriefObservation.status !== "ready" || liveProjectVisitDelta.status === "loading" || liveProjectVisitDelta.status === "unavailable") return;
+      || liveProjectBriefObservation.status !== "ready" || liveProjectVisitDelta.status === "loading" || liveProjectVisitDelta.status === "unavailable") return null;
     const projectId = activeProject.id;
     const action = activeProjectVisitCheckpoint ? "mark-all-seen" as const : "record-baseline" as const;
     const expectedStoreVersion = projectVisitCheckpointState.envelope.storeVersion;
@@ -15855,7 +15858,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     setProjectVisitCheckpointMutationPending(true);
     setProjectVisitCheckpointMutationError("");
     const result = await executeProjectVisitCheckpointCommand(command, projectBriefAuthoritySnapshot, readFreshProjectBriefLiveObservation);
-    if (activeProjectIdRef.current !== projectId) return;
+    if (activeProjectIdRef.current !== projectId) return null;
     if (result.envelope) {
       setProjectVisitCheckpointSnapshot({ projectId, state: { status: "ready", envelope: result.envelope, reason: "" } });
     }
@@ -15874,11 +15877,9 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         : "تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
     }
     setProjectVisitCheckpointMutationPending(false);
-    if (result.status === "recorded" && result.envelope) {
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('[data-testid="brief-changes-mark-seen-button"]')?.focus());
-      });
-    }
+    return result.status === "recorded" && result.envelope
+      ? result.envelope.records.find((record) => record.projectId === projectId)?.version ?? null
+      : null;
   };
   const openProjectVisitDeltaGroup = (group: ProjectVisitDeltaGroup["kind"]) => {
     if (group === "tasks") {
@@ -19490,6 +19491,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
         visitProjectId={activeProject.id}
         visitDelta={liveProjectVisitDelta}
         visitCheckpointVersion={activeProjectVisitCheckpoint?.version ?? null}
+        visitCheckpointReadable={projectVisitCheckpointState?.status === "ready"}
         visitMutationPending={projectVisitCheckpointMutationPending}
         visitMutationBlocked={projectVisitCheckpointMutationBlocked}
         visitMutationError={projectVisitCheckpointMutationError}
@@ -24630,24 +24632,66 @@ function projectInputStatusLabel(status: ProjectInputEffectiveStatus | null, pre
   return "نیازمند تعیین‌تکلیف";
 }
 
-function ProjectInputDispositionControl({ item, testIdPrefix, mutationKey, mutationError, onDisposition }: { item: ProjectInputDisplayItem; testIdPrefix: "project-file" | "project-source"; mutationKey: string | null; mutationError: ProjectInputMutationError | null; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+function ProjectInputDispositionControl({ item, testIdPrefix, mutationKey, mutationError, onDisposition }: { item: ProjectInputDisplayItem; testIdPrefix: "project-file" | "project-source"; mutationKey: string | null; mutationError: ProjectInputMutationError | null; onDisposition: ProjectInputDispositionHandler }) {
+  const actionRef = useRef<HTMLButtonElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const binding = `${item.target.projectId}:${item.key}:${item.target.version}:${item.target.fingerprint}`;
+  const currentBindingRef = useRef(binding);
+  const focusAfterMutationRef = useRef<{ binding: string; succeeded: boolean; expectedStatus: ProjectInputEffectiveStatus } | null>(null);
+  const [focusRequestSequence, setFocusRequestSequence] = useState(0);
+  currentBindingRef.current = binding;
   const pending = mutationKey !== null;
   const hasUnknownMutationOutcome = item.presentationState === "unavailable" && mutationError?.key === item.key && mutationError.outcomeUnknown;
+  const actionLabel = mutationKey === item.key
+    ? "در حال ثبت…"
+    : item.presentationState === "unavailable" ? "فعلاً در دسترس نیست"
+      : item.presentationState === "loading" || item.effectiveStatus === null ? "در حال آماده‌سازی"
+        : item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد";
+  useLayoutEffect(() => {
+    if (focusAfterMutationRef.current?.binding !== binding) focusAfterMutationRef.current = null;
+  }, [binding]);
+  useLayoutEffect(() => {
+    const intent = focusAfterMutationRef.current;
+    if (!intent || intent.binding !== binding || pending) return;
+    if (!intent.succeeded) {
+      const action = actionRef.current;
+      const target = action && !action.disabled ? action : mutationError?.key === item.key ? errorRef.current : null;
+      if (!target) return;
+      target.focus();
+      if (document.activeElement === target) focusAfterMutationRef.current = null;
+      return;
+    }
+    const action = actionRef.current;
+    if (item.presentationState !== "ready" || !item.ready || item.effectiveStatus !== intent.expectedStatus || !action || action.disabled) return;
+    action.focus();
+    if (document.activeElement === action) focusAfterMutationRef.current = null;
+  }, [binding, focusRequestSequence, item.effectiveStatus, item.presentationState, item.ready, item.key, mutationError, pending]);
+  const mutateAndRestoreFocus = async () => {
+    const mutationBinding = binding;
+    const expectedStatus = item.effectiveStatus === "resolved" ? "pending" : "resolved";
+    const succeeded = await onDisposition(item);
+    if (currentBindingRef.current !== mutationBinding) {
+      focusAfterMutationRef.current = null;
+      return;
+    }
+    focusAfterMutationRef.current = { binding: mutationBinding, succeeded, expectedStatus };
+    setFocusRequestSequence((current) => current + 1);
+  };
   return (
     <div className="project-input-disposition" data-status={item.presentationState === "ready" ? item.effectiveStatus ?? "unavailable" : item.presentationState}>
       <div className="project-input-disposition-copy">
         <span data-testid={`${testIdPrefix}-disposition-status`}>{hasUnknownMutationOutcome ? "اطلاعات تعیین‌تکلیف در دسترس نیست." : projectInputStatusLabel(item.effectiveStatus, item.presentationState)}</span>
         {item.metadataOnly ? <small>فقط شناسنامهٔ فایل در دسترس است؛ محتوا یا اصالت فایل تأیید نشده است.</small> : null}
       </div>
-      <button type="button" data-testid={`${testIdPrefix}-disposition-action`} disabled={item.presentationState !== "ready" || !item.ready || pending} onClick={() => { void onDisposition(item); }}>
-        {mutationKey === item.key ? "در حال ثبت…" : item.presentationState === "unavailable" ? "فعلاً در دسترس نیست" : item.presentationState === "loading" || item.effectiveStatus === null ? "در حال آماده‌سازی" : item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد"}
+      <button ref={actionRef} type="button" data-testid={`${testIdPrefix}-disposition-action`} disabled={item.presentationState !== "ready" || !item.ready || pending} aria-label={`${actionLabel}: ${item.title}`} onClick={() => { void mutateAndRestoreFocus(); }}>
+        {actionLabel}
       </button>
-      {mutationError?.key === item.key ? <p role="alert" className="project-input-disposition-error">{mutationError.message}</p> : null}
+      {mutationError?.key === item.key ? <p ref={errorRef} role="alert" tabIndex={-1} className="project-input-disposition-error">{mutationError.message}</p> : null}
     </div>
   );
 }
 
-function ProjectFilesView({ project, files, storageLocked, inputByFileId, mutationKey, mutationError, initialSelectedId = null, backLabel, onBack, onRegister, onRestoreContent, onRename, onDisposition }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; inputByFileId: Map<string, ProjectInputDisplayItem>; mutationKey: string | null; mutationError: ProjectInputMutationError | null; initialSelectedId?: string | null; backLabel: string; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+function ProjectFilesView({ project, files, storageLocked, inputByFileId, mutationKey, mutationError, initialSelectedId = null, backLabel, onBack, onRegister, onRestoreContent, onRename, onDisposition }: { project: BuilderProject; files: ProjectFileRecord[]; storageLocked: boolean; inputByFileId: Map<string, ProjectInputDisplayItem>; mutationKey: string | null; mutationError: ProjectInputMutationError | null; initialSelectedId?: string | null; backLabel: string; onBack: () => void; onRegister: (file: PendingProjectFile) => Promise<boolean>; onRestoreContent: (fileId: string, file: File) => Promise<boolean>; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: ProjectInputDispositionHandler }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<PendingProjectFile | null>(null);
@@ -24861,7 +24905,7 @@ function ProjectFileRegisterSheet({ file, project, error, busy, categoryLocked =
   );
 }
 
-function ProjectFileDetailSheet({ file, project, disposition, mutationKey, mutationError, storageLocked, onClose, onRename, onDisposition }: { file: ProjectFileRecord | null; project: BuilderProject; disposition: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: ProjectInputMutationError | null; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+function ProjectFileDetailSheet({ file, project, disposition, mutationKey, mutationError, storageLocked, onClose, onRename, onDisposition }: { file: ProjectFileRecord | null; project: BuilderProject; disposition: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: ProjectInputMutationError | null; storageLocked: boolean; onClose: () => void; onRename: (fileId: string, displayName: string) => Promise<boolean>; onDisposition: ProjectInputDispositionHandler }) {
   const keyboard = useKeyboard();
   const [displayName, setDisplayName] = useState("");
   const [nameError, setNameError] = useState("");
@@ -24950,7 +24994,7 @@ function AttachSheet({ sheet, disabled, onClose, onChoose }: { sheet: SheetName;
   );
 }
 
-function ProjectSourceDetailSheet({ source, file, project, input, mutationKey, mutationError, assetReadLocked, onClose, onDisposition }: { source: ProjectSourceRecord | null; file: ProjectFileRecord | null; project: BuilderProject; input: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: ProjectInputMutationError | null; assetReadLocked: boolean; onClose: () => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+function ProjectSourceDetailSheet({ source, file, project, input, mutationKey, mutationError, assetReadLocked, onClose, onDisposition }: { source: ProjectSourceRecord | null; file: ProjectFileRecord | null; project: BuilderProject; input: ProjectInputDisplayItem | null; mutationKey: string | null; mutationError: ProjectInputMutationError | null; assetReadLocked: boolean; onClose: () => void; onDisposition: ProjectInputDispositionHandler }) {
   const [assetStatus, setAssetStatus] = useState<"idle" | "loading" | "available" | "missing" | "invalid" | "unreadable">("idle");
   const [assetUrl, setAssetUrl] = useState("");
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -25425,19 +25469,52 @@ function BriefLiveSection({ testId, title, section, icon, actionLabel, actionTes
   );
 }
 
-function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, onDisposition }: { section: LiveBriefInputsSection; mutationKey: string | null; mutationError: ProjectInputMutationError | null; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void> }) {
+function BriefInputsSection({ projectId, section, mutationKey, mutationError, onOpenInput, onDisposition }: { projectId: string; section: LiveBriefInputsSection; mutationKey: string | null; mutationError: ProjectInputMutationError | null; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: ProjectInputDispositionHandler }) {
   const sectionRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const currentProjectIdRef = useRef(projectId);
+  const focusAfterMutationRef = useRef<{ projectId: string; itemKey: string; targetFingerprint: string; preferredKey: string | null; succeeded: boolean } | null>(null);
+  const [focusRequestSequence, setFocusRequestSequence] = useState(0);
+  currentProjectIdRef.current = projectId;
   const visibleItems = section.items.slice(0, 3);
+  useLayoutEffect(() => {
+    if (focusAfterMutationRef.current?.projectId !== projectId) focusAfterMutationRef.current = null;
+  }, [projectId]);
+  useLayoutEffect(() => {
+    const intent = focusAfterMutationRef.current;
+    if (!intent || intent.projectId !== projectId || mutationKey !== null) return;
+    const itemButtons = [...(sectionRef.current?.querySelectorAll<HTMLElement>('[data-testid="brief-input-item"]') ?? [])];
+    const currentItem = section.items.find((item) => item.key === intent.itemKey);
+    if (currentItem && currentItem.target.fingerprint !== intent.targetFingerprint) {
+      focusAfterMutationRef.current = null;
+      return;
+    }
+    if (!intent.succeeded) {
+      if (section.status === "loading") return;
+      const actionButtons = [...(sectionRef.current?.querySelectorAll<HTMLButtonElement>('[data-testid="brief-input-disposition-action"]') ?? [])];
+      const originalAction = actionButtons.find((button) => button.dataset.inputKey === intent.itemKey && !button.disabled);
+      const target = originalAction ?? (section.status === "unavailable" ? errorRef.current : null) ?? headingRef.current;
+      target?.focus();
+      if (target && document.activeElement === target) focusAfterMutationRef.current = null;
+      return;
+    }
+    if (section.status !== "ready" || itemButtons.some((button) => button.dataset.inputKey === intent.itemKey)) return;
+    const preferred = intent.preferredKey ? itemButtons.find((button) => button.dataset.inputKey === intent.preferredKey) : null;
+    const target = preferred ?? itemButtons[0] ?? headingRef.current;
+    target?.focus();
+    if (target && document.activeElement === target) focusAfterMutationRef.current = null;
+  }, [focusRequestSequence, mutationKey, projectId, section.items, section.status]);
   const resolveAndRestoreFocus = async (item: ProjectInputDisplayItem, index: number) => {
     const preferredKey = visibleItems[index + 1]?.key ?? visibleItems[index - 1]?.key ?? null;
-    await onDisposition(item);
-    window.requestAnimationFrame(() => {
-      const itemButtons = [...(sectionRef.current?.querySelectorAll<HTMLElement>('[data-testid="brief-input-item"]') ?? [])];
-      if (itemButtons.some((button) => button.dataset.inputKey === item.key)) return;
-      const preferred = preferredKey ? itemButtons.find((button) => button.dataset.inputKey === preferredKey) : null;
-      (preferred ?? itemButtons[0] ?? headingRef.current)?.focus();
-    });
+    const mutationProjectId = projectId;
+    const succeeded = await onDisposition(item);
+    if (currentProjectIdRef.current !== mutationProjectId) {
+      focusAfterMutationRef.current = null;
+      return;
+    }
+    focusAfterMutationRef.current = { projectId: mutationProjectId, itemKey: item.key, targetFingerprint: item.target.fingerprint, preferredKey, succeeded };
+    setFocusRequestSequence((current) => current + 1);
   };
   return (
     <section ref={sectionRef} className="brief-live-section brief-inputs-section" data-testid="brief-inputs-section" data-status={section.status}>
@@ -25446,7 +25523,7 @@ function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, 
         <div><strong ref={headingRef} tabIndex={-1} data-testid="brief-inputs-heading">اسناد و ورودی‌های تعیین‌تکلیف‌نشده</strong><small>{section.status === "ready" ? `${section.items.length.toLocaleString("fa-IR")} مورد` : section.status === "loading" ? "در حال آماده‌سازی" : "خواندن ناموفق"}</small></div>
       </header>
       {section.status === "loading" ? <p className="brief-section-state" role="status">در حال بررسی فایل‌ها و ورودی‌های ثبت‌شده…</p> : null}
-      {section.status === "unavailable" ? <p className="brief-section-state is-unavailable" role="alert" data-testid="brief-inputs-error">{mutationError?.outcomeUnknown ? mutationError.message : "اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ تا خواندن موفق دوباره، تعیین‌تکلیف جدید بسته است."}</p> : null}
+      {section.status === "unavailable" ? <p ref={errorRef} className="brief-section-state is-unavailable" role="alert" tabIndex={-1} data-testid="brief-inputs-error">{mutationError?.outcomeUnknown ? mutationError.message : "اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ تا خواندن موفق دوباره، تعیین‌تکلیف جدید بسته است."}</p> : null}
       {section.status === "ready" && visibleItems.length === 0 ? <p className="brief-section-state is-empty">سند یا ورودی تعیین‌تکلیف‌نشده‌ای نیست</p> : null}
       {section.status === "ready" && visibleItems.length > 0 ? (
         <ul>
@@ -25458,7 +25535,7 @@ function BriefInputsSection({ section, mutationKey, mutationError, onOpenInput, 
                 {item.metadataOnly ? <small className="brief-input-metadata-note">فقط شناسنامهٔ فایل در دسترس است؛ محتوا یا اصالت فایل تأیید نشده است.</small> : null}
                 <span>{projectInputStatusLabel(item.effectiveStatus, item.presentationState)}</span>
               </button>
-              <button type="button" className="brief-input-disposition-action" data-testid="brief-input-disposition-action" disabled={!item.ready || mutationKey !== null} onClick={() => { void resolveAndRestoreFocus(item, index); }}>{mutationKey === item.key ? "در حال ثبت…" : item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد"}</button>
+              <button type="button" className="brief-input-disposition-action" data-testid="brief-input-disposition-action" data-input-key={item.key} disabled={!item.ready || mutationKey !== null} aria-label={`${item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد"}: ${item.title}`} onClick={() => { void resolveAndRestoreFocus(item, index); }}>{mutationKey === item.key ? "در حال ثبت…" : item.effectiveStatus === "resolved" ? "بازکردن دوباره" : "تعیین‌تکلیف شد"}</button>
               {mutationError?.key === item.key ? <p role="alert" className="project-input-disposition-error">{mutationError.message}</p> : null}
             </li>
           ))}
@@ -25476,21 +25553,52 @@ const projectVisitDeltaGroupLabels: Record<ProjectVisitDeltaGroup["kind"], strin
   inputs: "اسناد و ورودی‌ها",
 };
 
-function BriefChangesSection({ projectId, checkpointVersion, delta, mutationPending, mutationBlocked, mutationError, onMutate, onOpenGroup }: {
+function BriefChangesSection({ projectId, checkpointVersion, checkpointReadable, delta, mutationPending, mutationBlocked, mutationError, onMutate, onOpenGroup }: {
   projectId: string;
   checkpointVersion: number | null;
+  checkpointReadable: boolean;
   delta: ProjectVisitDeltaState;
   mutationPending: boolean;
   mutationBlocked: boolean;
   mutationError: string;
-  onMutate: () => Promise<void>;
+  onMutate: () => Promise<number | null>;
   onOpenGroup: (group: ProjectVisitDeltaGroup["kind"]) => void;
 }) {
+  const actionRef = useRef<HTMLButtonElement>(null);
+  const currentProjectIdRef = useRef(projectId);
+  const focusAfterMutationRef = useRef<{ projectId: string; checkpointVersion: number } | null>(null);
+  const [focusRequestSequence, setFocusRequestSequence] = useState(0);
+  currentProjectIdRef.current = projectId;
   const totalChanges = delta.status === "ready"
     ? delta.groups.reduce((total, group) => total + group.added + group.updated, 0)
     : 0;
   const unavailable = delta.status === "unavailable";
-  const visibleError = mutationError || (unavailable ? "تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند." : "");
+  const visibleError = mutationError || (unavailable
+    ? checkpointReadable
+      ? "تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند."
+      : "تغییرات فعلاً قابل‌محاسبه نیست؛ وضعیت مبنای قبلی قابل‌تأیید نیست."
+    : "");
+  useLayoutEffect(() => {
+    if (focusAfterMutationRef.current?.projectId !== projectId) focusAfterMutationRef.current = null;
+  }, [projectId]);
+  useLayoutEffect(() => {
+    const intent = focusAfterMutationRef.current;
+    if (!intent || intent.projectId !== projectId || mutationPending || delta.status !== "ready" || checkpointVersion !== intent.checkpointVersion) return;
+    const action = actionRef.current;
+    if (!action || action.disabled) return;
+    action.focus();
+    if (document.activeElement === action) focusAfterMutationRef.current = null;
+  }, [checkpointVersion, delta.status, focusRequestSequence, mutationPending, projectId]);
+  const mutateAndRestoreFocus = async () => {
+    const mutationProjectId = projectId;
+    const committedVersion = await onMutate();
+    if (committedVersion === null || currentProjectIdRef.current !== mutationProjectId) {
+      focusAfterMutationRef.current = null;
+      return;
+    }
+    focusAfterMutationRef.current = { projectId: mutationProjectId, checkpointVersion: committedVersion };
+    setFocusRequestSequence((current) => current + 1);
+  };
   return (
     <section
       className="brief-live-section brief-changes-section"
@@ -25527,13 +25635,13 @@ function BriefChangesSection({ projectId, checkpointVersion, delta, mutationPend
       ) : null}
       {delta.status === "ready" && totalChanges === 0 ? <p className="brief-section-state is-empty">تغییر تازه‌ای از مبنای قبلی دیده نمی‌شود</p> : null}
       {delta.status === "uninitialized" || delta.status === "ready" ? (
-        <button className="brief-changes-action" type="button" data-testid={delta.status === "uninitialized" ? "brief-changes-baseline-button" : "brief-changes-mark-seen-button"} disabled={mutationPending || mutationBlocked} aria-busy={mutationPending} onClick={() => { void onMutate(); }}>{mutationPending ? "در حال ثبت…" : delta.status === "uninitialized" ? "ثبت وضعیت فعلی به‌عنوان مبنا" : "همه را دیدم"}</button>
+        <button ref={actionRef} className="brief-changes-action" type="button" data-testid={delta.status === "uninitialized" ? "brief-changes-baseline-button" : "brief-changes-mark-seen-button"} disabled={mutationPending || mutationBlocked} aria-busy={mutationPending} onClick={() => { void mutateAndRestoreFocus(); }}>{mutationPending ? "در حال ثبت…" : delta.status === "uninitialized" ? "ثبت وضعیت فعلی به‌عنوان مبنا" : "همه را دیدم"}</button>
       ) : null}
     </section>
   );
 }
 
-function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, visitProjectId, visitCheckpointVersion, visitDelta, visitMutationPending, visitMutationBlocked, visitMutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition, onVisitMutation, onOpenVisitGroup }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: ProjectInputMutationError | null; visitProjectId: string; visitCheckpointVersion: number | null; visitDelta: ProjectVisitDeltaState; visitMutationPending: boolean; visitMutationBlocked: boolean; visitMutationError: string; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: (item: ProjectInputDisplayItem) => Promise<void>; onVisitMutation: () => Promise<void>; onOpenVisitGroup: (group: ProjectVisitDeltaGroup["kind"]) => void }) {
+function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, visitProjectId, visitCheckpointVersion, visitCheckpointReadable, visitDelta, visitMutationPending, visitMutationBlocked, visitMutationError, onClose, onSave, onOpenTasks, onOpenPurchaseRequests, onOpenInput, onDisposition, onVisitMutation, onOpenVisitGroup }: { sheet: SheetName; schedule: BriefSchedule | null; snapshot: LiveBriefSnapshot; mutationKey: string | null; mutationError: ProjectInputMutationError | null; visitProjectId: string; visitCheckpointVersion: number | null; visitCheckpointReadable: boolean; visitDelta: ProjectVisitDeltaState; visitMutationPending: boolean; visitMutationBlocked: boolean; visitMutationError: string; onClose: () => void; onSave: (schedule: BriefSchedule) => boolean; onOpenTasks: (filter: ProjectTaskFilter) => void; onOpenPurchaseRequests: () => void; onOpenInput: (item: ProjectInputDisplayItem) => void; onDisposition: ProjectInputDispositionHandler; onVisitMutation: () => Promise<number | null>; onOpenVisitGroup: (group: ProjectVisitDeltaGroup["kind"]) => void }) {
   const keyboard = useKeyboard();
   const [frequency, setFrequency] = useState<BriefFrequency>(schedule?.frequency ?? "daily");
   const [weekday, setWeekday] = useState(schedule?.weekday ?? "شنبه");
@@ -25571,8 +25679,8 @@ function BriefSheet({ sheet, schedule, snapshot, mutationKey, mutationError, vis
             <BriefLiveSection testId="brief-decisions-section" title="تصمیم‌های منتظر شما" section={snapshot.decisions} icon={<ClipboardCheck size={18} />} actionLabel="باز کردن تأییدها در کارها" actionTestId="brief-decisions-action" onAction={() => onOpenTasks("approval")} />
             <BriefLiveSection testId="brief-tasks-section" title="کارهای باز و موعدها" section={snapshot.tasks} icon={<CheckCircle2 size={18} />} actionLabel="باز کردن کارها" actionTestId="brief-tasks-action" onAction={() => onOpenTasks("active")} />
             <BriefLiveSection testId="brief-procurement-section" title="درخواست‌های خرید باز" section={snapshot.procurement} icon={<ShoppingCart size={18} />} actionLabel="باز کردن درخواست‌ها" actionTestId="brief-procurement-action" onAction={onOpenPurchaseRequests} />
-            <BriefInputsSection section={snapshot.inputs} mutationKey={mutationKey} mutationError={mutationError} onOpenInput={onOpenInput} onDisposition={onDisposition} />
-            <BriefChangesSection projectId={visitProjectId} checkpointVersion={visitCheckpointVersion} delta={visitDelta} mutationPending={visitMutationPending} mutationBlocked={visitMutationBlocked} mutationError={visitMutationError} onMutate={onVisitMutation} onOpenGroup={onOpenVisitGroup} />
+            <BriefInputsSection projectId={visitProjectId} section={snapshot.inputs} mutationKey={mutationKey} mutationError={mutationError} onOpenInput={onOpenInput} onDisposition={onDisposition} />
+            <BriefChangesSection projectId={visitProjectId} checkpointVersion={visitCheckpointVersion} checkpointReadable={visitCheckpointReadable} delta={visitDelta} mutationPending={visitMutationPending} mutationBlocked={visitMutationBlocked} mutationError={visitMutationError} onMutate={onVisitMutation} onOpenGroup={onOpenVisitGroup} />
           </div>
         </div>
 
