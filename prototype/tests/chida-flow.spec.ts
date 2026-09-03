@@ -7941,7 +7941,7 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
       }
       return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
     };
-    const source = ({ id, intakeId, projectId, sourceType, textContent, assetRef, contentHash, capturedAt, visibility = "visible" }: any) => {
+    const source = ({ id, intakeId, projectId, sourceType, textContent, assetRef, contentHash, capturedAt, visibility = "visible", manualSearchability = false, automaticRetrievalEligibility = false, modelEligibility = false, shareability = false, useInContextPreference = false }: any) => {
       const record = {
         schemaVersion: 1,
         id,
@@ -7964,11 +7964,11 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
         readStatus: "available",
         sensitivity: "project-private",
         visibility,
-        manualSearchability: false,
-        automaticRetrievalEligibility: false,
-        modelEligibility: false,
-        shareability: false,
-        useInContextPreference: false,
+        manualSearchability,
+        automaticRetrievalEligibility,
+        modelEligibility,
+        shareability,
+        useInContextPreference,
       };
       return { ...record, fingerprint: fnv1a(record) };
     };
@@ -8033,7 +8033,7 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
       sourceType: "composer-text",
       textContent: "متن ثبت‌شدهٔ بریف",
       assetRef: null,
-      contentHash: "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      contentHash: "sha256-4e7859c06999158235fa6dcfc89ffa776cae9c5938d7bc295b82e25bd8e88fae",
       capturedAt: composerIntake.createdAt,
     });
     const assetSource = source({
@@ -8080,12 +8080,14 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
       },
       {
         field: "Source.textContent",
+        expectedStatus: "ready",
         mutate: (candidate: any) => {
-          candidate.sourceEnvelope.records[0] = source({ ...candidate.sourceEnvelope.records[0], textContent: "متن تغییرکردهٔ بریف" });
+          candidate.sourceEnvelope.records[0] = source({ ...candidate.sourceEnvelope.records[0], textContent: "متن تغییرکردهٔ بریف", contentHash: "sha256-518f9f56f3ee0c8112efebb05dc7e295d0ec76cb44faa19605078a1fb698ba33" });
         },
       },
       {
         field: "Source.assetRef",
+        expectedStatus: "ready",
         mutate: (candidate: any) => {
           const alternate = file({ id: "doc-composer-alt", displayName: "پیوست جایگزین", originalName: "alternate.pdf", mimeType: "application/pdf", size: 13, storageMode: "browser-file", createdAt: composerIntake.createdAt });
           candidate.files.push(alternate);
@@ -8094,50 +8096,108 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
       },
       {
         field: "Source.contentHash",
+        expectedStatus: "ready",
         mutate: (candidate: any) => {
           candidate.sourceEnvelope.records[1] = source({ ...candidate.sourceEnvelope.records[1], contentHash: "sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" });
         },
       },
       {
         field: "Source.visibility",
+        expectedStatus: "unavailable",
         mutate: (candidate: any) => {
           candidate.sourceEnvelope.records[0] = source({ ...candidate.sourceEnvelope.records[0], visibility: "hidden" });
         },
       },
       {
         field: "File.displayName",
+        expectedStatus: "ready",
         mutate: (candidate: any) => {
           candidate.files[2] = { ...candidate.files[2], displayName: "پیوست قرارداد تغییرکرده" };
         },
       },
       {
         field: "File.mimeType",
+        expectedStatus: "unavailable",
         mutate: (candidate: any) => {
           candidate.files[2] = { ...candidate.files[2], mimeType: "application/x-pdf" };
         },
       },
       {
         field: "File.size",
+        expectedStatus: "ready",
         mutate: (candidate: any) => {
           candidate.files[2] = { ...candidate.files[2], size: 120 };
         },
       },
       {
         field: "File.storageMode",
+        expectedStatus: "unavailable",
         mutate: (candidate: any) => {
           candidate.files[2] = { ...candidate.files[2], storageMode: "metadata-only" };
         },
       },
-    ].map(({ field, mutate }) => {
+    ].map(({ field, expectedStatus = "ready", mutate }) => {
       const candidate = structuredClone(dependencies);
       mutate(candidate);
-      return { field, ...composerFingerprint(candidate) };
+      return { field, expectedStatus, ...composerFingerprint(candidate) };
+    });
+    const invalidCases = [
+      {
+        name: "text content hash",
+        mutate: (candidate: any) => {
+          candidate.sourceEnvelope.records[0] = source({ ...candidate.sourceEnvelope.records[0], textContent: "متن با هش نادرست" });
+        },
+      },
+      ...["manualSearchability", "automaticRetrievalEligibility", "modelEligibility", "shareability", "useInContextPreference"].map((flag) => ({
+        name: `eligibility flag ${flag}`,
+        mutate: (candidate: any) => {
+          candidate.sourceEnvelope.records[0] = source({ ...candidate.sourceEnvelope.records[0], [flag]: true });
+        },
+      })),
+      {
+        name: "three intake sources",
+        mutate: (candidate: any) => {
+          const extraFile = file({ id: "doc-extra", displayName: "پیوست سوم", originalName: "extra.pdf", mimeType: "application/pdf", size: 14, storageMode: "browser-file", createdAt: composerIntake.createdAt });
+          candidate.files.push(extraFile);
+          candidate.sourceEnvelope.records.push(source({ id: "source-extra", intakeId: composerIntake.id, projectId: "project-a", sourceType: "composer-file", textContent: null, assetRef: { kind: "project-file", fileId: extraFile.id, fileVersion: 1 }, contentHash: "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", capturedAt: composerIntake.createdAt }));
+          candidate.sourceEnvelope.intakes[0] = intake({ ...candidate.sourceEnvelope.intakes[0], sourceIds: ["source-text", "source-asset", "source-extra"] });
+        },
+      },
+      {
+        name: "source chronology",
+        mutate: (candidate: any) => {
+          candidate.sourceEnvelope.records[1] = source({ ...candidate.sourceEnvelope.records[1], capturedAt: "2026-09-03T09:01:00.000Z" });
+        },
+      },
+      {
+        name: "composer file storage mode",
+        mutate: (candidate: any) => {
+          candidate.files[2] = { ...candidate.files[2], storageMode: "metadata-only" };
+        },
+      },
+      {
+        name: "composer file image linkage",
+        mutate: (candidate: any) => {
+          candidate.files[2] = { ...candidate.files[2], originalName: "composer.png", mimeType: "image/png" };
+        },
+      },
+    ].map(({ name, mutate }) => {
+      const candidate = structuredClone(dependencies);
+      mutate(candidate);
+      return { name, status: domain.deriveProjectInputTargets(candidate).status };
+    });
+    const galleryOctetStream = domain.deriveProjectInputTargets({
+      ...dependencies,
+      files: [file({ id: "gallery-octet", displayName: "عکس کارگاه", originalName: "gallery.png", mimeType: "application/octet-stream", size: 15, storageMode: "browser-image", createdAt: "2026-09-03T10:00:00.000Z" })],
+      sourceEnvelope: { schemaVersion: 1, envelopeVersion: 0, records: [], intakes: [], updatedAt: null },
     });
     return {
       projectHash: domain.projectBriefHash({ b: 2, a: "تست" }),
       standaloneOnly,
       initial,
       mutations,
+      invalidCases,
+      galleryOctetStream,
     };
   });
   expect(result.standaloneOnly.status).toBe("ready");
@@ -8155,10 +8215,15 @@ test("T9-B2 derives standalone documents and composer intakes once and orders th
   const initialComposerFingerprint = result.initial.targets.find((target: { kind: string }) => target.kind === "composer-intake")?.fingerprint;
   expect(result.mutations).toHaveLength(9);
   for (const mutation of result.mutations) {
-    expect(mutation.status, mutation.field).toBe("ready");
-    expect(mutation.fingerprint, mutation.field).toMatch(/^sha256-[0-9a-f]{64}$/);
-    expect(mutation.fingerprint, mutation.field).not.toBe(initialComposerFingerprint);
+    expect(mutation.status, mutation.field).toBe(mutation.expectedStatus);
+    if (mutation.expectedStatus === "ready") {
+      expect(mutation.fingerprint, mutation.field).toMatch(/^sha256-[0-9a-f]{64}$/);
+      expect(mutation.fingerprint, mutation.field).not.toBe(initialComposerFingerprint);
+    } else expect(mutation.fingerprint, mutation.field).toBeNull();
   }
+  for (const invalidCase of result.invalidCases) expect(invalidCase.status, invalidCase.name).toBe("unavailable");
+  expect(result.galleryOctetStream.status).toBe("ready");
+  expect(result.galleryOctetStream.targets).toEqual([]);
 });
 
 test("T9-B1 live Brief projects real work decisions and procurement without fixture copy or storage writes", async ({ page }) => {

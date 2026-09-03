@@ -46,7 +46,7 @@ export type ProjectInputSourceSnapshot = {
   contentHash: Sha256Fingerprint;
   readStatus: "available";
   sensitivity: "project-private";
-  visibility: "visible" | "hidden";
+  visibility: "visible";
   manualSearchability: boolean;
   automaticRetrievalEligibility: boolean;
   modelEligibility: boolean;
@@ -223,10 +223,26 @@ function isImageFile(file: ProjectInputFileSnapshot) {
   const extension = file.originalName.toLocaleLowerCase("en").match(/\.(png|jpe?g|webp|heic|heif)$/)?.[1];
   if (!extension) return false;
   const mimeType = file.mimeType.toLocaleLowerCase("en");
+  if (!mimeType || mimeType === "application/octet-stream") return true;
   if (extension === "png") return mimeType === "image/png";
   if (extension === "jpg" || extension === "jpeg") return mimeType === "image/jpeg" || mimeType === "image/jpg";
   if (extension === "webp") return mimeType === "image/webp";
   return mimeType === "image/heic" || mimeType === "image/heif" || mimeType === "image/jpeg";
+}
+
+function isCompatibleDocumentFile(file: ProjectInputFileSnapshot) {
+  const acceptedMimeTypes = {
+    pdf: ["application/pdf"],
+    xls: ["application/vnd.ms-excel"],
+    xlsx: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    csv: ["text/csv", "application/csv", "application/vnd.ms-excel"],
+    doc: ["application/msword"],
+    docx: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  } as const;
+  const extension = file.originalName.toLocaleLowerCase("en").match(/\.(pdf|xls|xlsx|csv|doc|docx)$/)?.[1] as keyof typeof acceptedMimeTypes | undefined;
+  if (!extension) return false;
+  const mimeType = file.mimeType.split(";", 1)[0]?.trim().toLocaleLowerCase("en") ?? "";
+  return !mimeType || mimeType === "application/octet-stream" || acceptedMimeTypes[extension].includes(mimeType as never);
 }
 
 function validFile(value: unknown, projectId: string): value is ProjectInputFileSnapshot {
@@ -238,7 +254,10 @@ function validFile(value: unknown, projectId: string): value is ProjectInputFile
     && ["انتخاب مستقیم از دستگاه", "دوربین دستگاه"].includes(file.source) && file.status === "ثبت محلی" && file.version === 1
     && typeof file.projectStage === "string" && file.visibility === "خصوصی پروژه"
     && ["metadata-only", "browser-image", "browser-file"].includes(file.storageMode)
-    && (file.sourceModifiedAt === null || isExactTimestamp(file.sourceModifiedAt)) && isExactTimestamp(file.createdAt);
+    && (file.sourceModifiedAt === null || isExactTimestamp(file.sourceModifiedAt)) && isExactTimestamp(file.createdAt)
+    && (isImageFile(file) || isCompatibleDocumentFile(file))
+    && (file.storageMode === "metadata-only" || file.storageMode === "browser-image" && isImageFile(file)
+      || file.storageMode === "browser-file" && !isImageFile(file) && isCompatibleDocumentFile(file));
 }
 
 function validSource(value: unknown, projectId: string): value is ProjectInputSourceSnapshot {
@@ -247,7 +266,9 @@ function validSource(value: unknown, projectId: string): value is ProjectInputSo
   const hasAsset = source.assetRef !== null && hasExactKeys(source.assetRef, ["kind", "fileId", "fileVersion"])
     && ["project-file", "project-photo"].includes(source.assetRef.kind) && isExactString(source.assetRef.fileId) && source.assetRef.fileVersion === 1;
   const sourceShape = source.sourceType === "composer-text"
-    ? source.assetRef === null && typeof source.textContent === "string" && source.sourceDate === source.capturedAt
+    ? source.assetRef === null && typeof source.textContent === "string" && source.textContent.length <= 4000
+      && source.textContent.replace(/[\s\u200b\u200c\u200d\u2060\ufeff]/gu, "").length > 0
+      && source.contentHash === `sha256-${sha256(source.textContent)}` && source.sourceDate === source.capturedAt
       && source.locatorCapability === "record" && source.excerptCapability === "full-text"
     : hasAsset && source.textContent === null && source.sourceDate === null && source.locatorCapability === "asset"
       && source.excerptCapability === "none" && source.assetRef!.kind === (source.sourceType === "composer-file" ? "project-file" : "project-photo");
@@ -257,9 +278,9 @@ function validSource(value: unknown, projectId: string): value is ProjectInputSo
     && sourceShape && source.version === 1 && source.provenance === "direct_user_composer" && isExactTimestamp(source.capturedAt)
     && (source.sourceDate === null || isExactTimestamp(source.sourceDate)) && ["record", "asset"].includes(source.locatorCapability)
     && ["full-text", "none"].includes(source.excerptCapability) && isExactSha256(source.contentHash) && source.readStatus === "available"
-    && source.sensitivity === "project-private" && ["visible", "hidden"].includes(source.visibility)
-    && typeof source.manualSearchability === "boolean" && typeof source.automaticRetrievalEligibility === "boolean"
-    && typeof source.modelEligibility === "boolean" && typeof source.shareability === "boolean" && typeof source.useInContextPreference === "boolean"
+    && source.sensitivity === "project-private" && source.visibility === "visible"
+    && source.manualSearchability === false && source.automaticRetrievalEligibility === false
+    && source.modelEligibility === false && source.shareability === false && source.useInContextPreference === false
     && isExactFnv1a(source.fingerprint) && source.fingerprint === legacyFnvHash(withoutFingerprint(source));
 }
 
@@ -267,7 +288,7 @@ function validIntake(value: unknown, projectId: string): value is ProjectInputIn
   if (!hasExactKeys(value, ["id", "projectId", "sourceIds", "version", "createdAt", "fingerprint"])) return false;
   const intake = value as ProjectInputIntakeSnapshot;
   return isExactString(intake.id) && intake.projectId === projectId && Array.isArray(intake.sourceIds)
-    && intake.sourceIds.length > 0 && intake.sourceIds.every(isExactString) && new Set(intake.sourceIds).size === intake.sourceIds.length
+    && intake.sourceIds.length > 0 && intake.sourceIds.length <= 2 && intake.sourceIds.every(isExactString) && new Set(intake.sourceIds).size === intake.sourceIds.length
     && intake.version === 1 && isExactTimestamp(intake.createdAt) && isExactFnv1a(intake.fingerprint)
     && intake.fingerprint === legacyFnvHash(withoutFingerprint(intake));
 }
@@ -304,18 +325,28 @@ export function deriveProjectInputTargets(dependencies: ProjectInputDependencies
       : envelope.updatedAt !== envelope.intakes[envelope.intakes.length - 1].createdAt)) return unavailable("linkage-missing");
   const linkedFileIds = new Set<string>();
   const derived: ProjectInputDerivedItem[] = [];
-  for (const intake of envelope.intakes) {
+  for (let intakeIndex = 0; intakeIndex < envelope.intakes.length; intakeIndex += 1) {
+    const intake = envelope.intakes[intakeIndex];
+    if (intakeIndex > 0 && Date.parse(intake.createdAt) < Date.parse(envelope.intakes[intakeIndex - 1].createdAt)) return unavailable("chronology-invalid");
     const sources = intake.sourceIds.map((sourceId) => sourcesById.get(sourceId));
     if (sources.some((source) => !source) || sources.some((source) => source!.intakeId !== intake.id || source!.projectId !== intake.projectId || source!.scopeId !== intake.projectId)) return unavailable("source-missing");
+    const exactSources = sources as ProjectInputSourceSnapshot[];
+    const textSources = exactSources.filter((source) => source.sourceType === "composer-text");
+    const assetSources = exactSources.filter((source) => source.sourceType !== "composer-text");
+    if (exactSources.some((source) => source.capturedAt !== intake.createdAt) || textSources.length > 1 || assetSources.length > 1
+      || textSources.length + assetSources.length !== exactSources.length || textSources.length === 1 && exactSources[0]?.sourceType !== "composer-text") return unavailable("linkage-missing");
     const linkedAssets = sources.flatMap((source) => {
       if (!source!.assetRef) return [];
       const file = filesById.get(source!.assetRef.fileId);
-      if (!file || file.projectId !== intake.projectId || file.version !== source!.assetRef.fileVersion) return [null];
+      const isPhoto = source!.sourceType === "composer-photo";
+      const assetMatchesFile = isPhoto
+        ? source!.assetRef.kind === "project-photo" && file?.storageMode === "browser-image" && file !== undefined && isImageFile(file)
+        : source!.sourceType === "composer-file" && source!.assetRef.kind === "project-file" && file?.storageMode === "browser-file" && file !== undefined && !isImageFile(file) && isCompatibleDocumentFile(file);
+      if (!file || file.projectId !== intake.projectId || file.version !== source!.assetRef.fileVersion || !assetMatchesFile) return [null];
       linkedFileIds.add(file.id);
       return [{ sourceId: source!.id, file }];
     });
     if (linkedAssets.some((asset) => asset === null)) return unavailable("asset-missing");
-    const exactSources = sources as ProjectInputSourceSnapshot[];
     const exactAssets = linkedAssets as { sourceId: string; file: ProjectInputFileSnapshot }[];
     const destination = exactSources.find((source) => source.assetRef !== null)?.id ?? exactSources[0]?.id;
     if (!destination) return unavailable("source-missing");
