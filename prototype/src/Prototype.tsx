@@ -78,11 +78,15 @@ import {
   type ProjectTaskStatus,
 } from "./projectTasks";
 import {
+  buildProjectBriefObservation,
   deriveProjectInputTargets,
   executeProjectInputDispositionCommand,
   projectInputDispositionsStorageKey,
+  projectInputObservedHeads,
   readProjectInputDispositionState,
   type ProjectBriefAuthority,
+  type ProjectBriefObservationAdapter,
+  type ProjectBriefObservationResult,
   type ProjectInputDependencies,
   type ProjectInputDispositionProjectionItem,
   type ProjectInputDispositionState,
@@ -15429,6 +15433,191 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     () => projectDispatchPlanApprovals.filter((approval) => approval.projectId === activeProject.id),
     [activeProject.id, projectDispatchPlanApprovals],
   );
+  const projectBriefObservationAdapters = useMemo<ProjectBriefObservationAdapter[]>(() => {
+    const adapters: ProjectBriefObservationAdapter[] = [];
+    const unavailableAdapter = (
+      kind: ProjectBriefObservationAdapter["kind"],
+      status: "loading" | "unavailable",
+      reason: string,
+    ): ProjectBriefObservationAdapter => ({ status, kind, projectId: activeProject.id, reason });
+
+    if (projectTaskState.status !== "ready" || !projectTaskState.envelope) {
+      adapters.push(unavailableAdapter("manual-task", projectTaskState.status === "loading" ? "loading" : "unavailable", projectTaskState.reason || "manual-task-unavailable"));
+    } else {
+      for (const record of projectTaskState.envelope.records.filter((candidate) => candidate.projectId === activeProject.id)) {
+        const currentRevision = record.revisions.at(-1);
+        if (!currentRevision || currentRevision.id !== record.currentRevisionId || currentRevision.version !== record.version) {
+          adapters.push(unavailableAdapter("manual-task", "unavailable", "manual-task-current-revision-missing"));
+          break;
+        }
+        adapters.push({
+          status: "ready",
+          kind: "manual-task",
+          id: record.id,
+          projectId: record.projectId,
+          version: record.version,
+          state: record.status,
+          semanticPreimage: { record, currentRevision },
+          dependencyCapsule: null,
+          reason: "",
+        });
+      }
+    }
+
+    if (projectBackboneReadError) {
+      adapters.push(unavailableAdapter("backbone-task", "unavailable", "backbone-task-unavailable"));
+    } else if (activeProjectBackbone) {
+      const record = activeProjectBackbone.task;
+      const currentRevision = record.revisions.at(-1);
+      if (!currentRevision || currentRevision.id !== record.currentRevisionId || currentRevision.version !== record.version) {
+        adapters.push(unavailableAdapter("backbone-task", "unavailable", "backbone-task-current-revision-missing"));
+      } else {
+        adapters.push({
+          status: "ready",
+          kind: "backbone-task",
+          id: record.id,
+          projectId: record.projectId,
+          version: record.version,
+          state: currentRevision.snapshot.status,
+          semanticPreimage: { record, currentRevision },
+          dependencyCapsule: null,
+          reason: "",
+        });
+      }
+    }
+
+    if (projectApprovalsLoading) {
+      adapters.push(unavailableAdapter("content-approval", "loading", "content-approval-loading"));
+    } else if (projectApprovalsReadError || projectPurchaseRequestsReadError) {
+      adapters.push(unavailableAdapter("content-approval", "unavailable", "content-approval-unavailable"));
+    } else {
+      for (const record of activeProjectApprovals) {
+        const currentRevision = record.revisions.at(-1);
+        const request = activeProjectPurchaseRequests.find((candidate) => candidate.id === record.target.id && candidate.projectId === record.projectId);
+        const reviewRevision = request?.reviewRevisions.find((candidate) => candidate.id === record.target.revisionId
+          && candidate.requestVersion === record.target.version
+          && candidate.fingerprint === record.target.revisionFingerprint);
+        if (!currentRevision || currentRevision.id !== record.currentRevisionId || currentRevision.version !== record.version || !request || !reviewRevision) {
+          adapters.push(unavailableAdapter("content-approval", "unavailable", "content-approval-dependency-missing"));
+          break;
+        }
+        adapters.push({
+          status: "ready",
+          kind: "content-approval",
+          id: record.id,
+          projectId: record.projectId,
+          version: record.version,
+          state: record.status,
+          semanticPreimage: { record, currentRevision },
+          dependencyCapsule: { request, reviewRevision },
+          reason: "",
+        });
+      }
+    }
+
+    const dispatchLoading = procurementDispatchState.plans.status === "loading"
+      || procurementDispatchState.drafts.status === "loading"
+      || procurementDispatchState.contacts.status === "loading"
+      || projectApprovalsLoading;
+    const dispatchUnavailable = procurementDispatchState.plans.status !== "ready"
+      || procurementDispatchState.drafts.status !== "ready"
+      || procurementDispatchState.contacts.status !== "ready"
+      || !procurementDispatchState.plans.envelope
+      || !procurementDispatchState.drafts.envelope
+      || !procurementDispatchState.contacts.envelope
+      || projectPurchaseRequestsReadError
+      || projectApprovalsReadError;
+    if (dispatchLoading) {
+      adapters.push(unavailableAdapter("dispatch-plan-approval", "loading", "dispatch-plan-dependencies-loading"));
+    } else if (dispatchUnavailable) {
+      adapters.push(unavailableAdapter("dispatch-plan-approval", "unavailable", "dispatch-plan-dependencies-unavailable"));
+    } else {
+      const dependencies = procurementDispatchDependenciesSnapshot();
+      const draftsEnvelope = procurementDispatchState.drafts.envelope!;
+      const contactsEnvelope = procurementDispatchState.contacts.envelope!;
+      if (!dependencies) {
+        adapters.push(unavailableAdapter("dispatch-plan-approval", "unavailable", "dispatch-plan-dependencies-unavailable"));
+      } else {
+        for (const record of procurementDispatchState.plans.envelope!.records.filter((candidate) => candidate.projectId === activeProject.id)) {
+          const currentRevision = record.revisions.at(-1);
+          const draft = draftsEnvelope.records.find((candidate) => candidate.id === record.target.dispatchDraftId && candidate.projectId === record.projectId);
+          const draftRevision = draft?.revisions.find((candidate) => candidate.id === record.target.dispatchRevisionId
+            && candidate.version === record.target.dispatchDraftVersion
+            && candidate.fingerprint === record.target.dispatchRevisionFingerprint);
+          const requestDependency = dependencies.requestRevisions.find((candidate) => candidate.projectId === record.projectId
+            && candidate.requestId === record.target.requestId
+            && candidate.requestVersion === record.target.requestVersion
+            && candidate.revisionId === record.target.requestRevisionId
+            && candidate.revisionFingerprint === record.target.requestRevisionFingerprint);
+          const contentApprovalDependency = dependencies.contentApprovals.find((candidate) => candidate.projectId === record.projectId
+            && candidate.approvalId === record.target.contentApprovalId
+            && candidate.approvalVersion === record.target.contentApprovalVersion
+            && candidate.approvalRevisionId === record.target.contentApprovalRevisionId
+            && candidate.approvalFingerprint === record.target.contentApprovalFingerprint
+            && candidate.requestId === record.target.requestId
+            && candidate.requestVersion === record.target.requestVersion
+            && candidate.requestRevisionId === record.target.requestRevisionId
+            && candidate.requestRevisionFingerprint === record.target.requestRevisionFingerprint);
+          const contacts = record.snapshot.recipients.map((recipient) => {
+            const contact = contactsEnvelope.records.find((candidate) => candidate.id === recipient.supplierContactId && candidate.projectId === record.projectId);
+            const pinnedRevision = contact?.revisions.find((candidate) => candidate.id === recipient.supplierContactRevisionId
+              && candidate.version === recipient.supplierContactVersion
+              && candidate.fingerprint === recipient.supplierContactRevisionFingerprint);
+            const currentContactRevision = contact?.revisions.at(-1);
+            return contact && pinnedRevision && currentContactRevision
+              && currentContactRevision.id === contact.currentRevisionId && currentContactRevision.version === contact.version
+              ? { contact, pinnedRevision, currentRevision: currentContactRevision }
+              : null;
+          });
+          if (!currentRevision || currentRevision.id !== record.currentRevisionId || currentRevision.version !== record.version
+            || !draft || !draftRevision || !requestDependency || !contentApprovalDependency || contacts.some((candidate) => candidate === null)) {
+            adapters.push(unavailableAdapter("dispatch-plan-approval", "unavailable", "dispatch-plan-dependency-missing"));
+            break;
+          }
+          const effectiveState = canonicalDispatchPlanApprovalEffectiveStatus(record, draft, dependencies, contactsEnvelope);
+          adapters.push({
+            status: "ready",
+            kind: "dispatch-plan-approval",
+            id: record.id,
+            projectId: record.projectId,
+            version: record.version,
+            state: effectiveState,
+            semanticPreimage: { record, currentRevision },
+            dependencyCapsule: { draft, draftRevision, requestDependency, contentApprovalDependency, contacts },
+            reason: "",
+          });
+        }
+      }
+    }
+
+    if (projectPurchaseRequestsReadError) {
+      adapters.push(unavailableAdapter("purchase-request", "unavailable", "purchase-request-unavailable"));
+    } else {
+      for (const record of activeProjectPurchaseRequests) {
+        const { item: _compatibilityItem, ...authoritativeRecord } = record;
+        adapters.push({
+          status: "ready",
+          kind: "purchase-request",
+          id: record.id,
+          projectId: record.projectId,
+          version: record.version,
+          state: record.status,
+          semanticPreimage: authoritativeRecord,
+          dependencyCapsule: null,
+          reason: "",
+        });
+      }
+    }
+    return adapters;
+  }, [activeProject.id, activeProjectApprovals, activeProjectBackbone, activeProjectPurchaseRequests, procurementDispatchState, projectApprovalsLoading, projectApprovalsReadError, projectBackboneReadError, projectPurchaseRequestsReadError, projectTaskState]);
+  const liveProjectBriefObservation: ProjectBriefObservationResult = projectInputReadPending || projectInputsDependenciesPending
+    ? { status: "loading", observation: null, reason: "project-input-loading" }
+    : buildProjectBriefObservation(
+        activeProject.id,
+        projectBriefObservationAdapters,
+        projectInputDispositionState.status === "ready" ? projectInputObservedHeads(projectInputDispositionState) : null,
+      );
+  void liveProjectBriefObservation;
   const dispatchPlanApprovalStatus = (record: DispatchPlanApprovalRecord, draft: DispatchDraftRecord | null): DispatchPlanApprovalEffectiveStatus => {
     const dependencies = procurementDispatchDependenciesSnapshot();
     const contactsEnvelope = procurementDispatchState.contacts.envelope;

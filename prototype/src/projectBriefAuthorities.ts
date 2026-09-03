@@ -472,6 +472,86 @@ export type ProjectInputObservedHead = {
   fingerprint: Sha256Fingerprint;
 };
 
+export type ProjectBriefObservedKind =
+  | "manual-task"
+  | "backbone-task"
+  | "content-approval"
+  | "dispatch-plan-approval"
+  | "purchase-request"
+  | "project-input";
+
+export type ProjectBriefObservedHead =
+  | { kind: "manual-task" | "backbone-task"; id: string; version: number; state: "in-progress" | "completed"; fingerprint: Sha256Fingerprint }
+  | { kind: "content-approval"; id: string; version: number; state: "pending" | "approved" | "changes-requested"; fingerprint: Sha256Fingerprint }
+  | { kind: "dispatch-plan-approval"; id: string; version: number; state: "pending" | "approved" | "withdrawn" | "invalidated"; fingerprint: Sha256Fingerprint }
+  | { kind: "purchase-request"; id: string; version: number; state: "draft" | "ready-for-review"; fingerprint: Sha256Fingerprint }
+  | ProjectInputObservedHead;
+
+type ProjectBriefUpstreamObservedKind = Exclude<ProjectBriefObservedKind, "project-input">;
+
+export type ProjectBriefObservationAdapter =
+  | {
+      status: "ready";
+      kind: ProjectBriefUpstreamObservedKind;
+      id: string;
+      projectId: string;
+      version: number;
+      state: ProjectBriefObservedHead["state"];
+      semanticPreimage: unknown;
+      dependencyCapsule: unknown | null;
+      reason: "";
+    }
+  | {
+      status: "loading" | "unavailable";
+      kind: ProjectBriefUpstreamObservedKind;
+      projectId: string;
+      reason: string;
+    };
+
+export type ProjectBriefObservation = {
+  observationSchemaVersion: 1;
+  heads: ProjectBriefObservedHead[];
+  observationFingerprint: Sha256Fingerprint;
+};
+
+export type ProjectBriefObservationResult =
+  | { status: "ready"; observation: ProjectBriefObservation; reason: "" }
+  | { status: "loading" | "unavailable"; observation: null; reason: string };
+
+export type ProjectVisitCheckpointSnapshot = ProjectBriefObservation & {
+  observedAt: string;
+};
+
+export type ProjectVisitDeltaGroup = {
+  id: "tasks" | "decisions" | "purchases" | "inputs";
+  label: "کارها" | "تصمیم‌ها" | "خریدها" | "اسناد و ورودی‌ها";
+  added: number;
+  updated: number;
+};
+
+export type ProjectVisitDeltaChange = ProjectBriefObservedHead & {
+  change: "added" | "updated";
+};
+
+export type ProjectVisitDeltaResult =
+  | {
+      status: "ready";
+      added: ProjectBriefObservedHead[];
+      updated: ProjectBriefObservedHead[];
+      changes: ProjectVisitDeltaChange[];
+      groups: ProjectVisitDeltaGroup[];
+      reason: "";
+    }
+  | {
+      status: "no-baseline";
+      added: [];
+      updated: [];
+      changes: [];
+      groups: ProjectVisitDeltaGroup[];
+      reason: "baseline-not-recorded";
+    }
+  | { status: "unavailable"; reason: string };
+
 export type ProjectInputDispositionState =
   | { status: "unavailable" | "read-error"; envelope: null; items: []; observedHeads: null; reason: string }
   | {
@@ -736,6 +816,210 @@ export function readProjectInputDispositionState(
 
 export function projectInputObservedHeads(state: ProjectInputDispositionState): ProjectInputObservedHead[] | null {
   return state.observedHeads;
+}
+
+const projectBriefStatesByKind = {
+  "manual-task": ["in-progress", "completed"],
+  "backbone-task": ["in-progress", "completed"],
+  "content-approval": ["pending", "approved", "changes-requested"],
+  "dispatch-plan-approval": ["pending", "approved", "withdrawn", "invalidated"],
+  "purchase-request": ["draft", "ready-for-review"],
+  "project-input": ["pending", "pending-stale", "resolved"],
+} as const satisfies Record<ProjectBriefObservedKind, readonly ProjectBriefObservedHead["state"][]>;
+
+function compareObservedHeads(first: Pick<ProjectBriefObservedHead, "kind" | "id">, second: Pick<ProjectBriefObservedHead, "kind" | "id">) {
+  return compareCodePoints(first.kind, second.kind) || compareCodePoints(first.id, second.id);
+}
+
+function isStoredFingerprintEvidenceKey(key: string) {
+  const lower = key.toLocaleLowerCase("en");
+  return lower !== "contenthash" && (lower === "fingerprint" || lower.endsWith("fingerprint")
+    || lower.endsWith("fingerprints") || lower.endsWith("hash") || lower.endsWith("hashes"));
+}
+
+const invalidSemanticValue = Symbol("invalid-project-brief-semantic-value");
+
+function semanticValueWithoutStoredFingerprints(value: unknown, ancestors = new Set<object>()): unknown | typeof invalidSemanticValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : invalidSemanticValue;
+  if (typeof value !== "object") return invalidSemanticValue;
+  if (ancestors.has(value)) return invalidSemanticValue;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) return invalidSemanticValue;
+  const nextAncestors = new Set(ancestors).add(value);
+  if (Array.isArray(value)) {
+    const items: unknown[] = [];
+    for (const item of value) {
+      const semanticItem = semanticValueWithoutStoredFingerprints(item, nextAncestors);
+      if (semanticItem === invalidSemanticValue) return invalidSemanticValue;
+      items.push(semanticItem);
+    }
+    return items;
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (isStoredFingerprintEvidenceKey(key)) continue;
+    const semanticItem = semanticValueWithoutStoredFingerprints(item, nextAncestors);
+    if (semanticItem === invalidSemanticValue) return invalidSemanticValue;
+    result[key] = semanticItem;
+  }
+  return result;
+}
+
+function semanticPreimageHasRawAuthority(value: unknown) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0;
+}
+
+function observedAdapterStateIsValid(kind: ProjectBriefUpstreamObservedKind, state: ProjectBriefObservedHead["state"]) {
+  return (projectBriefStatesByKind[kind] as readonly string[]).includes(state);
+}
+
+function projectInputObservedHeadIsValid(head: unknown): head is ProjectInputObservedHead {
+  if (!hasExactKeys(head, ["kind", "id", "version", "state", "fingerprint"])) return false;
+  const candidate = head as ProjectInputObservedHead;
+  return candidate.kind === "project-input" && isExactString(candidate.id)
+    && Number.isSafeInteger(candidate.version) && candidate.version >= 1
+    && projectBriefStatesByKind["project-input"].includes(candidate.state)
+    && isExactSha256(candidate.fingerprint);
+}
+
+function projectBriefObservedHeadIsValid(head: unknown): head is ProjectBriefObservedHead {
+  if (!hasExactKeys(head, ["kind", "id", "version", "state", "fingerprint"])) return false;
+  const candidate = head as ProjectBriefObservedHead;
+  return Object.hasOwn(projectBriefStatesByKind, candidate.kind) && isExactString(candidate.id)
+    && Number.isSafeInteger(candidate.version) && candidate.version >= 1
+    && (projectBriefStatesByKind[candidate.kind] as readonly string[]).includes(candidate.state)
+    && isExactSha256(candidate.fingerprint);
+}
+
+function observedHeadsAreValid(heads: unknown): heads is ProjectBriefObservedHead[] {
+  if (!Array.isArray(heads) || heads.some((head) => !projectBriefObservedHeadIsValid(head))) return false;
+  const keys = heads.map((head) => `${head.kind}\u0000${head.id}`);
+  return new Set(keys).size === keys.length;
+}
+
+export function buildProjectBriefObservation(
+  projectId: string,
+  adapters: ProjectBriefObservationAdapter[],
+  projectInputHeads: ProjectInputObservedHead[] | null,
+): ProjectBriefObservationResult {
+  if (!isExactString(projectId) || !Array.isArray(adapters)) return { status: "unavailable", observation: null, reason: "observation-input-invalid" };
+  const heads: ProjectBriefObservedHead[] = [];
+  for (const adapter of adapters) {
+    if (!adapter || typeof adapter !== "object" || Array.isArray(adapter)
+      || !["loading", "ready", "unavailable"].includes(adapter.status)
+      || !Object.hasOwn(projectBriefStatesByKind, adapter.kind) || (adapter as { kind: string }).kind === "project-input"
+      || !isExactString(adapter.projectId) || typeof adapter.reason !== "string") return { status: "unavailable", observation: null, reason: "adapter-invalid" };
+    if (adapter.projectId !== projectId) return { status: "unavailable", observation: null, reason: "scope-mismatch" };
+    if (adapter.status !== "ready") {
+      if (!hasExactKeys(adapter, ["status", "kind", "projectId", "reason"])) return { status: "unavailable", observation: null, reason: "adapter-invalid" };
+      return adapter.status === "loading"
+        ? { status: "loading", observation: null, reason: adapter.reason || "dependency-loading" }
+        : { status: "unavailable", observation: null, reason: adapter.reason || "dependency-unavailable" };
+    }
+    if (!hasExactKeys(adapter, ["status", "kind", "id", "projectId", "version", "state", "semanticPreimage", "dependencyCapsule", "reason"])
+      || !isExactString(adapter.id) || !Number.isSafeInteger(adapter.version) || adapter.version < 1 || adapter.reason !== "") return { status: "unavailable", observation: null, reason: "adapter-invalid" };
+    if (!observedAdapterStateIsValid(adapter.kind, adapter.state)) return { status: "unavailable", observation: null, reason: "adapter-state-invalid" };
+    if (adapter.semanticPreimage === null || adapter.semanticPreimage === undefined) return { status: "unavailable", observation: null, reason: "semantic-preimage-missing" };
+    const semanticPreimage = semanticValueWithoutStoredFingerprints(adapter.semanticPreimage);
+    const dependencyCapsule = semanticValueWithoutStoredFingerprints(adapter.dependencyCapsule);
+    if (semanticPreimage === invalidSemanticValue || dependencyCapsule === invalidSemanticValue) return { status: "unavailable", observation: null, reason: "semantic-preimage-invalid" };
+    if (!semanticPreimageHasRawAuthority(semanticPreimage)) return { status: "unavailable", observation: null, reason: "semantic-preimage-missing" };
+    const head = {
+      kind: adapter.kind,
+      id: adapter.id,
+      version: adapter.version,
+      state: adapter.state,
+      fingerprint: projectBriefHash({
+        kind: adapter.kind,
+        id: adapter.id,
+        projectId,
+        version: adapter.version,
+        state: adapter.state,
+        semanticPreimage,
+        dependencyCapsule,
+      }),
+    } as ProjectBriefObservedHead;
+    heads.push(head);
+  }
+  if (projectInputHeads === null) return { status: "unavailable", observation: null, reason: "project-input-unavailable" };
+  if (!Array.isArray(projectInputHeads) || projectInputHeads.some((head) => !projectInputObservedHeadIsValid(head))) return { status: "unavailable", observation: null, reason: "project-input-head-invalid" };
+  heads.push(...projectInputHeads);
+  heads.sort(compareObservedHeads);
+  const keys = heads.map((head) => `${head.kind}\u0000${head.id}`);
+  if (new Set(keys).size !== keys.length) return { status: "unavailable", observation: null, reason: "duplicate-head" };
+  const observationPayload = { projectId, observationSchemaVersion: 1 as const, heads };
+  return {
+    status: "ready",
+    observation: {
+      observationSchemaVersion: 1,
+      heads,
+      observationFingerprint: projectBriefHash(observationPayload),
+    },
+    reason: "",
+  };
+}
+
+const projectVisitDeltaGroups = [
+  { id: "tasks", label: "کارها", kinds: ["manual-task", "backbone-task"] },
+  { id: "decisions", label: "تصمیم‌ها", kinds: ["content-approval", "dispatch-plan-approval"] },
+  { id: "purchases", label: "خریدها", kinds: ["purchase-request"] },
+  { id: "inputs", label: "اسناد و ورودی‌ها", kinds: ["project-input"] },
+] as const;
+
+function emptyProjectVisitDeltaGroups(): ProjectVisitDeltaGroup[] {
+  return projectVisitDeltaGroups.map(({ id, label }) => ({ id, label, added: 0, updated: 0 }));
+}
+
+function observedHeadsAreEqual(first: ProjectBriefObservedHead, second: ProjectBriefObservedHead) {
+  return first.kind === second.kind && first.id === second.id && first.version === second.version
+    && first.state === second.state && first.fingerprint === second.fingerprint;
+}
+
+export function projectVisitDeltaForObservation(
+  baseline: ProjectVisitCheckpointSnapshot | null,
+  current: ProjectBriefObservation,
+): ProjectVisitDeltaResult {
+  if (baseline === null) return {
+    status: "no-baseline",
+    added: [],
+    updated: [],
+    changes: [],
+    groups: emptyProjectVisitDeltaGroups(),
+    reason: "baseline-not-recorded",
+  };
+  if (!hasExactKeys(baseline, ["observedAt", "observationSchemaVersion", "heads", "observationFingerprint"])
+    || baseline.observationSchemaVersion !== 1 || !isExactTimestamp(baseline.observedAt)
+    || !isExactSha256(baseline.observationFingerprint) || !observedHeadsAreValid(baseline.heads)
+    || !hasExactKeys(current, ["observationSchemaVersion", "heads", "observationFingerprint"])
+    || current.observationSchemaVersion !== 1 || !isExactSha256(current.observationFingerprint)
+    || !observedHeadsAreValid(current.heads)) return { status: "unavailable", reason: "observation-invalid" };
+
+  const baselineByKey = new Map(baseline.heads.map((head) => [`${head.kind}\u0000${head.id}`, head]));
+  const currentHeads = [...current.heads].sort(compareObservedHeads);
+  const currentByKey = new Map(currentHeads.map((head) => [`${head.kind}\u0000${head.id}`, head]));
+  for (const baselineKey of baselineByKey.keys()) {
+    if (!currentByKey.has(baselineKey)) return { status: "unavailable", reason: "baseline-head-missing" };
+  }
+
+  const added: ProjectBriefObservedHead[] = [];
+  const updated: ProjectBriefObservedHead[] = [];
+  for (const currentHead of currentHeads) {
+    const baselineHead = baselineByKey.get(`${currentHead.kind}\u0000${currentHead.id}`);
+    if (!baselineHead) added.push(currentHead);
+    else if (!observedHeadsAreEqual(baselineHead, currentHead)) updated.push(currentHead);
+  }
+  const changes: ProjectVisitDeltaChange[] = [
+    ...added.map((head) => ({ ...head, change: "added" as const })),
+    ...updated.map((head) => ({ ...head, change: "updated" as const })),
+  ].sort(compareObservedHeads);
+  const groups = emptyProjectVisitDeltaGroups();
+  for (const change of changes) {
+    const groupIndex = projectVisitDeltaGroups.findIndex((group) => (group.kinds as readonly string[]).includes(change.kind));
+    if (groupIndex < 0) return { status: "unavailable", reason: "observation-invalid" };
+    groups[groupIndex][change.change] += 1;
+  }
+  return { status: "ready", added, updated, changes, groups, reason: "" };
 }
 
 export type ProjectInputDispositionCommand = {
