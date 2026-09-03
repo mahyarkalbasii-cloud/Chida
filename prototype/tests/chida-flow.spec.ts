@@ -9399,6 +9399,16 @@ test("T9-B2 refreshes disposition on storage focus reload and project switch wit
   await activateExistingProjectFromHome(page, /پروژهٔ دوم ورودی‌ها/);
   await openLiveBriefFromHome(page);
   await expect(page.getByTestId("brief-input-item")).toContainText("ورودی پروژهٔ دوم");
+  await expect(page.getByTestId("builder-home")).toHaveAttribute("data-project-brief-observation-status", "ready");
+  const observedProjectInputHeads = await page.getByTestId("builder-home").getAttribute("data-project-brief-observation-heads");
+  const projectInputFileIds = await page.evaluate(() => JSON.parse(localStorage.getItem("chida-prototype-project-files:v1") ?? "[]")
+    .map((record: { id: string; displayName: string }) => ({ id: record.id, displayName: record.displayName })));
+  const firstProjectInputId = projectInputFileIds.find((record: { displayName: string }) => record.displayName === "ورودی پروژهٔ اول.pdf")?.id;
+  const secondProjectInputId = projectInputFileIds.find((record: { displayName: string }) => record.displayName === "ورودی پروژهٔ دوم.pdf")?.id;
+  expect(firstProjectInputId).toEqual(expect.any(String));
+  expect(secondProjectInputId).toEqual(expect.any(String));
+  expect(observedProjectInputHeads).toContain(`project-input:project-document:${secondProjectInputId}`);
+  expect(observedProjectInputHeads).not.toContain(`project-input:project-document:${firstProjectInputId}`);
   expect(await page.evaluate(() => ({
     files: localStorage.getItem("chida-prototype-project-files:v1"),
     sources: localStorage.getItem("chida-prototype-project-sources:v1"),
@@ -9438,6 +9448,8 @@ test("T9-B2 shows the scoped unavailable section for terminal File Source and re
     await expect(section, fixture.name).toHaveAttribute("data-status", "unavailable", { timeout: 20_000 });
     await expect(section, fixture.name).toContainText("اطلاعات اسناد و ورودی‌ها در دسترس نیست؛ وضعیت قبلی دست‌نخورده ماند.");
     await expect(section, fixture.name).not.toContainText("در حال بررسی فایل‌ها و ورودی‌های ثبت‌شده");
+    await expect(page.getByTestId("builder-home"), `${fixture.name} observation`).toHaveAttribute("data-project-brief-observation-status", "unavailable");
+    await expect(page.getByTestId("builder-home"), `${fixture.name} observation heads`).toHaveAttribute("data-project-brief-observation-heads", "");
     await expect(page.getByTestId("brief-decisions-section"), fixture.name).toContainText("تصمیمی منتظر شما نیست");
     await expect(page.getByTestId("brief-tasks-section"), fixture.name).toContainText("کار بازی در این پروژه نیست");
     await expect(page.getByTestId("brief-procurement-section"), fixture.name).toContainText("درخواست بازی در این پروژه نیست");
@@ -9520,7 +9532,7 @@ test("T9-B3 digest adapters change independent SHA heads for every in-scope fiel
         dependencyCapsule: null,
         reason: "",
       },
-    ], []);
+    ], { projectId: "project-a", heads: [] });
     const cases = [
       { kind: "manual-task", state: "in-progress", before: { title: "الف", fingerprint: "fnv1a-deadbeef" }, after: { title: "ب", fingerprint: "fnv1a-deadbeef" } },
       { kind: "backbone-task", state: "in-progress", before: { nextStep: "الف", fingerprint: "fnv1a-deadbeef" }, after: { nextStep: "ب", fingerprint: "fnv1a-deadbeef" } },
@@ -9533,12 +9545,12 @@ test("T9-B3 digest adapters change independent SHA heads for every in-scope fiel
         status: "ready", kind: item.kind, id: `${item.kind}-a`,
         projectId: "project-a", version: 1, state: item.state,
         semanticPreimage: item.before, dependencyCapsule: null, reason: "",
-      }], []);
+      }], { projectId: "project-a", heads: [] });
       const second = domain.buildProjectBriefObservation("project-a", [{
         status: "ready", kind: item.kind, id: `${item.kind}-a`,
         projectId: "project-a", version: 1, state: item.state,
         semanticPreimage: item.after, dependencyCapsule: null, reason: "",
-      }], []);
+      }], { projectId: "project-a", heads: [] });
       if (first.status !== "ready" || second.status !== "ready")
         throw new Error("digest fixture must be ready");
       return {
@@ -9563,9 +9575,9 @@ test("T9-B3 digest adapters change independent SHA heads for every in-scope fiel
         authorizationHashes: { "project-a": `sha256-${"1".repeat(64)}` },
         revision: { value: "ثابت", fingerprint: `sha256-${"1".repeat(64)}` },
       },
-      dependencyCapsule: { planFingerprint: "fnv1a-22222222", fingerprint: `sha256-${"2".repeat(64)}` },
+      dependencyCapsule: { dependency: { id: "stable-dependency" }, planFingerprint: "fnv1a-22222222", fingerprint: `sha256-${"2".repeat(64)}` },
       reason: "",
-    }], []);
+    }], { projectId: "project-a", heads: [] });
     const evidenceSecond = domain.buildProjectBriefObservation("project-a", [{
       status: "ready",
       kind: "manual-task",
@@ -9580,9 +9592,9 @@ test("T9-B3 digest adapters change independent SHA heads for every in-scope fiel
         authorizationHashes: { "project-a": `sha256-${"a".repeat(64)}` },
         revision: { value: "ثابت", fingerprint: `sha256-${"a".repeat(64)}` },
       },
-      dependencyCapsule: { planFingerprint: "fnv1a-bbbbbbbb", fingerprint: `sha256-${"b".repeat(64)}` },
+      dependencyCapsule: { dependency: { id: "stable-dependency" }, planFingerprint: "fnv1a-bbbbbbbb", fingerprint: `sha256-${"b".repeat(64)}` },
       reason: "",
-    }], []);
+    }], { projectId: "project-a", heads: [] });
     const contentFirst = domain.buildProjectBriefObservation("project-a", [{
       status: "ready",
       kind: "manual-task",
@@ -9593,7 +9605,7 @@ test("T9-B3 digest adapters change independent SHA heads for every in-scope fiel
       semanticPreimage: { contentHash: `sha256-${"3".repeat(64)}` },
       dependencyCapsule: null,
       reason: "",
-    }], []);
+    }], { projectId: "project-a", heads: [] });
     const contentSecond = domain.buildProjectBriefObservation("project-a", [{
       status: "ready",
       kind: "manual-task",
@@ -9604,7 +9616,7 @@ test("T9-B3 digest adapters change independent SHA heads for every in-scope fiel
       semanticPreimage: { contentHash: `sha256-${"4".repeat(64)}` },
       dependencyCapsule: null,
       reason: "",
-    }], []);
+    }], { projectId: "project-a", heads: [] });
     const missingPreimage = domain.buildProjectBriefObservation("project-a", [{
       status: "ready",
       kind: "manual-task",
@@ -9615,7 +9627,7 @@ test("T9-B3 digest adapters change independent SHA heads for every in-scope fiel
       semanticPreimage: null,
       dependencyCapsule: null,
       reason: "",
-    }], []);
+    }], { projectId: "project-a", heads: [] });
     const fingerprintOnlyPreimage = domain.buildProjectBriefObservation("project-a", [{
       status: "ready",
       kind: "manual-task",
@@ -9626,7 +9638,7 @@ test("T9-B3 digest adapters change independent SHA heads for every in-scope fiel
       semanticPreimage: { fingerprint: "fnv1a-deadbeef" },
       dependencyCapsule: null,
       reason: "",
-    }], []);
+    }], { projectId: "project-a", heads: [] });
     return { initial, mutations, inputBefore, inputAfter, evidenceFirst, evidenceSecond, contentFirst, contentSecond, missingPreimage, fingerprintOnlyPreimage };
   });
   expect(result.initial.status).toBe("ready");
@@ -9639,6 +9651,287 @@ test("T9-B3 digest adapters change independent SHA heads for every in-scope fiel
   expect(result.contentFirst.observation?.observationFingerprint).not.toBe(result.contentSecond.observation?.observationFingerprint);
   expect(result.missingPreimage).toEqual({ status: "unavailable", observation: null, reason: "semantic-preimage-missing" });
   expect(result.fingerprintOnlyPreimage).toEqual({ status: "unavailable", observation: null, reason: "semantic-preimage-missing" });
+});
+
+test("T9-B3 rejects nested evidence-only semantic trees and capsules without erasing meaningful empty data", async ({ page }) => {
+  await enterBuilderHome(page);
+  const result = await page.evaluate(async () => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const observe = (semanticPreimage: unknown, dependencyCapsule: unknown = null) => domain.buildProjectBriefObservation("project-a", [{
+      status: "ready" as const,
+      kind: "manual-task" as const,
+      id: "manual-nested-evidence",
+      projectId: "project-a",
+      version: 1,
+      state: "in-progress" as const,
+      semanticPreimage,
+      dependencyCapsule,
+      reason: "" as const,
+    }], { projectId: "project-a", heads: [] });
+    return {
+      nestedObject: observe({ revision: { fingerprint: `sha256-${"1".repeat(64)}` } }),
+      nestedArray: observe({ revisions: [{ payloadHash: `sha256-${"2".repeat(64)}` }] }),
+      mixedEvidence: observe({ revision: { fingerprint: `sha256-${"3".repeat(64)}` }, history: [{ commandPayloadHash: `sha256-${"4".repeat(64)}` }] }),
+      evidenceCapsule: observe({ record: { title: "معنادار" } }, { dependencies: [{ snapshotHash: `sha256-${"5".repeat(64)}` }] }),
+      meaningfulEmptyContainers: observe({ record: { items: [], metadata: {} }, revision: { fingerprint: `sha256-${"6".repeat(64)}` } }),
+      contentHash: observe({ record: { contentHash: `sha256-${"7".repeat(64)}` } }),
+      semanticBaseline: observe({ record: { title: "معنادار" } }),
+      evidencePrunedObject: observe({ record: { title: "معنادار", revision: { fingerprint: `sha256-${"8".repeat(64)}` } } }),
+      evidencePrunedArray: observe({ record: { title: "معنادار", revisions: [{ payloadHash: `sha256-${"9".repeat(64)}` }] } }),
+    };
+  });
+  for (const outcome of [result.nestedObject, result.nestedArray, result.mixedEvidence]) {
+    expect(outcome).toEqual({ status: "unavailable", observation: null, reason: "semantic-preimage-missing" });
+  }
+  expect(result.evidenceCapsule).toEqual({ status: "unavailable", observation: null, reason: "dependency-capsule-missing" });
+  expect(result.meaningfulEmptyContainers.status).toBe("ready");
+  expect(result.contentHash.status).toBe("ready");
+  expect(result.evidencePrunedObject.observation?.observationFingerprint).toBe(result.semanticBaseline.observation?.observationFingerprint);
+  expect(result.evidencePrunedArray.observation?.observationFingerprint).toBe(result.semanticBaseline.observation?.observationFingerprint);
+});
+
+test("T9-B3 live observation rejects old-project input heads before the switch effect and terminal input failures win", async ({ page }) => {
+  await enterBuilderHome(page);
+  const projectA = await readActiveProjectId(page);
+  const authorityA = await readProjectBriefTestAuthority(page);
+  const dependenciesA = makeReadyProjectInputDependencies(projectA);
+  const stateA = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    localStorage.removeItem(domain.projectInputDispositionsStorageKey);
+    const target = domain.deriveProjectInputTargets(currentDependencies).targets[0];
+    if (!target) throw new Error("project-switch input fixture is missing");
+    await domain.executeProjectInputDispositionCommand({
+      inputSchemaVersion: 1,
+      action: "resolve-input",
+      projectId: currentDependencies.projectId,
+      target,
+      expectedStoreVersion: 0,
+      expectedDispositionVersion: null,
+      idempotencyKey: "t9-b3-switch-input",
+    }, () => currentAuthority, async () => currentDependencies);
+    return domain.readProjectInputDispositionState(currentAuthority, currentDependencies);
+  }, { currentAuthority: authorityA, currentDependencies: dependenciesA });
+  expect(stateA.status).toBe("ready");
+  const projectB = await addAndActivateProject(page, "پروژه دوم مشاهده");
+
+  const result = await page.evaluate(async ({ oldProjectId, activeProjectId, cachedState }) => {
+    const prototype = await import("/src/Prototype.tsx");
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const emptySources = {
+      projectId: activeProjectId,
+      projectTaskState: { status: "ready" as const, envelope: { records: [] }, reason: "" },
+      projectBackboneReadError: false,
+      activeProjectBackbone: null,
+      activeProjectPurchaseRequests: [],
+      projectPurchaseRequestsReadError: false,
+      activeProjectApprovals: [],
+      projectApprovalsLoading: false,
+      projectApprovalsReadError: false,
+      procurementDispatchState: {
+        contacts: { status: "ready" as const, envelope: { records: [] }, reason: "" },
+        drafts: { status: "ready" as const, envelope: { records: [] }, reason: "" },
+        plans: { status: "ready" as const, envelope: { records: [] }, reason: "" },
+      },
+      procurementDispatchDependencies: {},
+      projectInputDispositionSnapshot: { projectId: oldProjectId, state: cachedState },
+      projectInputReadPending: false,
+      projectInputsDependenciesPending: false,
+      projectInputsTerminallyUnavailable: false,
+    };
+    const switchedBeforeEffect = prototype.assembleProjectBriefLiveObservation(emptySources as any);
+    const terminalCases = ["malformed-file", "malformed-source", "recovery-blocked"].map((reason) => ({
+      reason,
+      observation: prototype.assembleProjectBriefLiveObservation({
+        ...emptySources,
+        projectId: oldProjectId,
+        projectInputsTerminallyUnavailable: true,
+        projectInputsTerminalReason: reason,
+      } as any),
+    }));
+    const heads = domain.projectInputObservedHeads(cachedState);
+    const crossProjectBuilder = domain.buildProjectBriefObservation(activeProjectId, [], { projectId: oldProjectId, heads });
+    const invalidSha = domain.buildProjectBriefObservation(activeProjectId, [], {
+      projectId: activeProjectId,
+      heads: [{ kind: "project-input", id: "project-document:bad", version: 1, state: "pending", fingerprint: "sha256-short" }],
+    });
+    const duplicateHead = { kind: "project-input" as const, id: "project-document:duplicate", version: 1, state: "pending" as const, fingerprint: `sha256-${"8".repeat(64)}` };
+    const duplicate = domain.buildProjectBriefObservation(activeProjectId, [], { projectId: activeProjectId, heads: [duplicateHead, duplicateHead] });
+    return { switchedBeforeEffect, terminalCases, crossProjectBuilder, invalidSha, duplicate, oldHeads: heads };
+  }, { oldProjectId: projectA, activeProjectId: projectB, cachedState: stateA });
+
+  expect(result.oldHeads).toHaveLength(1);
+  expect(result.switchedBeforeEffect).toEqual({ status: "loading", observation: null, reason: "project-input-project-mismatch" });
+  for (const terminalCase of result.terminalCases) {
+    expect(terminalCase.observation, terminalCase.reason).toEqual({ status: "unavailable", observation: null, reason: terminalCase.reason });
+  }
+  expect(result.crossProjectBuilder).toEqual({ status: "unavailable", observation: null, reason: "scope-mismatch" });
+  expect(result.invalidSha).toEqual({ status: "unavailable", observation: null, reason: "project-input-head-invalid" });
+  expect(result.duplicate).toEqual({ status: "unavailable", observation: null, reason: "duplicate-head" });
+});
+
+test("T9-B3 live seam hashes complete parser-shaped records and materializes current dispatch dependencies", async ({ page }) => {
+  await enterBuilderHome(page);
+  await createProjectBackbone(page, { ...initialProjectBackboneDraft, taskNextStep: "گام کامل مشاهده" });
+  await page.getByTestId("project-backbone-back").click();
+  await page.getByTestId("project-tasks-back").click();
+  await createManualTaskForLiveBrief(page, "کار کامل مشاهده");
+  await createCurrentProductDispatchDraft(page, ["تأمین‌کننده کامل مشاهده"]);
+  await page.getByTestId("dispatch-plan-review").click();
+  await page.getByTestId("dispatch-plan-acknowledgement").check();
+  await page.getByTestId("dispatch-plan-approval-create").click();
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
+
+  const projectId = await readActiveProjectId(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const inputDependencies = makeReadyProjectInputDependencies(projectId, []);
+  const result = await page.evaluate(async ({ activeProjectId, currentAuthority, currentInputDependencies, keys }) => {
+    const prototype = await import("/src/Prototype.tsx");
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const dispatchDomain = await import("/src/procurementDispatch.ts");
+    const parse = (key: string) => JSON.parse(window.localStorage.getItem(key) ?? "null");
+    const taskEnvelope = parse(keys.tasks);
+    const backboneEnvelope = parse(keys.backbone);
+    const requests = parse(keys.requests);
+    const approvalsEnvelope = parse(keys.approvals);
+    const contactsEnvelope = parse(keys.contacts);
+    const draftsEnvelope = parse(keys.drafts);
+    const plansEnvelope = parse(keys.plans);
+    const dependencies = prototype.procurementDispatchDependenciesSnapshot();
+    if (!taskEnvelope || !backboneEnvelope || !Array.isArray(requests) || !approvalsEnvelope
+      || !contactsEnvelope || !draftsEnvelope || !plansEnvelope || !dependencies) throw new Error("complete live observation fixture was not parser-ready");
+    const inputState = domain.readProjectInputDispositionState(currentAuthority, currentInputDependencies);
+    if (inputState.status !== "ready") throw new Error("project input fixture was not ready");
+    const graph = {
+      milestone: backboneEnvelope.milestones.find((record: any) => record.projectId === activeProjectId),
+      decision: backboneEnvelope.decisions.find((record: any) => record.projectId === activeProjectId),
+      task: backboneEnvelope.tasks.find((record: any) => record.projectId === activeProjectId),
+    };
+    if (!graph.milestone || !graph.decision || !graph.task) throw new Error("backbone graph fixture is incomplete");
+    const base = {
+      projectId: activeProjectId,
+      projectTaskState: { status: "ready" as const, envelope: taskEnvelope, reason: "" },
+      projectBackboneReadError: false,
+      activeProjectBackbone: graph,
+      activeProjectPurchaseRequests: requests.filter((record: any) => record.projectId === activeProjectId),
+      projectPurchaseRequestsReadError: false,
+      activeProjectApprovals: approvalsEnvelope.records.filter((record: any) => record.projectId === activeProjectId),
+      projectApprovalsLoading: false,
+      projectApprovalsReadError: false,
+      procurementDispatchState: {
+        contacts: { status: "ready" as const, envelope: contactsEnvelope, reason: "" },
+        drafts: { status: "ready" as const, envelope: draftsEnvelope, reason: "" },
+        plans: { status: "ready" as const, envelope: plansEnvelope, reason: "" },
+      },
+      procurementDispatchDependencies: dependencies,
+      projectInputDispositionSnapshot: { projectId: activeProjectId, state: inputState },
+      projectInputReadPending: false,
+      projectInputsDependenciesPending: false,
+      projectInputsTerminallyUnavailable: false,
+      projectInputsTerminalReason: "",
+    };
+    const observe = (mutate?: (copy: any) => void) => {
+      const copy = structuredClone(base);
+      mutate?.(copy);
+      return prototype.assembleProjectBriefLiveObservation(copy);
+    };
+    const initial = observe();
+    if (initial.status !== "ready") throw new Error(`initial live observation failed: ${initial.reason}`);
+    const headFingerprint = (observation: any, kind: string) => {
+      if (observation.status !== "ready") throw new Error(`${kind} mutation made observation unavailable: ${observation.reason}`);
+      const head = observation.observation.heads.find((candidate: any) => candidate.kind === kind);
+      if (!head) throw new Error(`${kind} head is missing`);
+      return head.fingerprint;
+    };
+    const mutations = {
+      manual: observe((copy) => {
+        const record = copy.projectTaskState.envelope.records.find((candidate: any) => candidate.projectId === activeProjectId);
+        record.title = "کار کامل مشاهده ویرایش‌شده";
+        record.revisions.at(-1).snapshot.title = record.title;
+      }),
+      backbone: observe((copy) => { copy.activeProjectBackbone.task.revisions.at(-1).snapshot.nextStep = "گام کامل مشاهده ویرایش‌شده"; }),
+      content: observe((copy) => {
+        const approval = copy.activeProjectApprovals[0];
+        const request = copy.activeProjectPurchaseRequests.find((candidate: any) => candidate.id === approval.target.id);
+        approval.snapshot.rawNeed = `${approval.snapshot.rawNeed} ویرایش‌شده`;
+        request.reviewRevisions.find((candidate: any) => candidate.id === approval.target.revisionId).snapshot.rawNeed = approval.snapshot.rawNeed;
+      }),
+      purchase: observe((copy) => { copy.activeProjectPurchaseRequests[0].rawNeed.text += " ویرایش‌شده"; }),
+      dispatch: observe((copy) => {
+        const stripFingerprint = ({ fingerprint: _fingerprint, ...value }: any) => value;
+        const requestDependencies = copy.procurementDispatchDependencies.requestRevisions.map(stripFingerprint);
+        requestDependencies[0].payload.items[0].specification = "وابستگی خام ویرایش‌شده";
+        copy.procurementDispatchDependencies = dispatchDomain.createProcurementDispatchDependencies(
+          copy.procurementDispatchDependencies.authority,
+          requestDependencies,
+          copy.procurementDispatchDependencies.contentApprovals.map(stripFingerprint),
+          copy.procurementDispatchDependencies.preconditionCheckpoints,
+        );
+      }),
+    };
+    const initialByKind = Object.fromEntries(initial.observation.heads.map((head: any) => [head.kind, head.fingerprint]));
+    const stripFingerprint = ({ fingerprint: _fingerprint, ...value }: any) => value;
+    const staleDependencies = dispatchDomain.createProcurementDispatchDependencies(
+      dependencies.authority,
+      dependencies.requestRevisions.map((value: any) => ({ ...stripFingerprint(value), isCurrentReadyForReview: false })),
+      dependencies.contentApprovals.map(stripFingerprint),
+      dependencies.preconditionCheckpoints,
+    );
+    const staleCurrent = observe((copy) => { copy.procurementDispatchDependencies = staleDependencies; });
+    const missingDependency = observe((copy) => {
+      copy.procurementDispatchDependencies = dispatchDomain.createProcurementDispatchDependencies(
+        dependencies.authority,
+        [],
+        dependencies.contentApprovals.map(stripFingerprint),
+        dependencies.preconditionCheckpoints,
+      );
+    });
+    const pinnedMismatch = observe((copy) => {
+      copy.procurementDispatchState.plans.envelope.records[0].target.dispatchRevisionFingerprint = `sha256-${"9".repeat(64)}`;
+    });
+    const projectMismatch = observe((copy) => { copy.activeProjectApprovals[0].projectId = "other-project"; });
+    return {
+      initial,
+      mutationFingerprints: {
+        "manual-task": headFingerprint(mutations.manual, "manual-task"),
+        "backbone-task": headFingerprint(mutations.backbone, "backbone-task"),
+        "content-approval": headFingerprint(mutations.content, "content-approval"),
+        "purchase-request": headFingerprint(mutations.purchase, "purchase-request"),
+        "dispatch-plan-approval": headFingerprint(mutations.dispatch, "dispatch-plan-approval"),
+      },
+      initialByKind,
+      staleCurrent,
+      missingDependency,
+      pinnedMismatch,
+      projectMismatch,
+    };
+  }, {
+    activeProjectId: projectId,
+    currentAuthority: authority,
+    currentInputDependencies: inputDependencies,
+    keys: {
+      tasks: projectTasksTestStorageKey,
+      backbone: projectBackboneStorageKey,
+      requests: purchaseRequestRecoverySourceKey,
+      approvals: bgF4ApprovalCanonicalStorageKey,
+      contacts: bgF5SupplierContactsCanonicalStorageKey,
+      drafts: bgF5DispatchDraftsCanonicalStorageKey,
+      plans: bgF5DispatchPlanApprovalsCanonicalStorageKey,
+    },
+  });
+
+  expect(result.initial.status).toBe("ready");
+  expect(result.initial.observation?.heads.map((head: { kind: string }) => head.kind)).toEqual([
+    "backbone-task", "content-approval", "dispatch-plan-approval", "manual-task", "project-input", "purchase-request",
+  ]);
+  for (const [kind, fingerprint] of Object.entries(result.mutationFingerprints)) {
+    expect(fingerprint, kind).toMatch(/^sha256-[0-9a-f]{64}$/);
+    expect(fingerprint, kind).not.toBe(result.initialByKind[kind]);
+  }
+  expect(result.staleCurrent.status).toBe("ready");
+  expect(result.staleCurrent.observation?.heads.find((head: { kind: string }) => head.kind === "dispatch-plan-approval")?.state).toBe("invalidated");
+  expect(result.missingDependency).toEqual({ status: "unavailable", observation: null, reason: "dispatch-plan-dependency-missing" });
+  expect(result.pinnedMismatch).toEqual({ status: "unavailable", observation: null, reason: "dispatch-plan-dependency-missing" });
+  expect(result.projectMismatch).toEqual({ status: "unavailable", observation: null, reason: "content-approval-scope-mismatch" });
 });
 
 test("T9-B3 delta sorts heads groups only added and updated and fails closed on an absent baseline head", async ({ page }) => {
@@ -9698,6 +9991,7 @@ test("T9-B3 keeps resolved project-input heads outside the visible pending proje
   const dependencies = makeReadyProjectInputDependencies(authority.projectIds[0]);
   const result = await page.evaluate(async ({ currentAuthority, currentDependencies }) => {
     const domain = await import("/src/projectBriefAuthorities.ts");
+    const prototype = await import("/src/Prototype.tsx");
     localStorage.removeItem(domain.projectInputDispositionsStorageKey);
     const target = domain.deriveProjectInputTargets(currentDependencies).targets[0];
     if (!target) throw new Error("resolved input fixture is missing");
@@ -9712,7 +10006,28 @@ test("T9-B3 keeps resolved project-input heads outside the visible pending proje
     }, () => currentAuthority, async () => currentDependencies);
     const state = domain.readProjectInputDispositionState(currentAuthority, currentDependencies);
     const heads = domain.projectInputObservedHeads(state);
-    const observation = domain.buildProjectBriefObservation(currentDependencies.projectId, [], heads);
+    const observation = prototype.assembleProjectBriefLiveObservation({
+      projectId: currentDependencies.projectId,
+      projectTaskState: { status: "ready", envelope: { records: [] }, reason: "" },
+      projectBackboneReadError: false,
+      activeProjectBackbone: null,
+      activeProjectPurchaseRequests: [],
+      projectPurchaseRequestsReadError: false,
+      activeProjectApprovals: [],
+      projectApprovalsLoading: false,
+      projectApprovalsReadError: false,
+      procurementDispatchState: {
+        contacts: { status: "ready", envelope: { records: [] }, reason: "" },
+        drafts: { status: "ready", envelope: { records: [] }, reason: "" },
+        plans: { status: "ready", envelope: { records: [] }, reason: "" },
+      },
+      procurementDispatchDependencies: {} as any,
+      projectInputDispositionSnapshot: { projectId: currentDependencies.projectId, state },
+      projectInputReadPending: false,
+      projectInputsDependenciesPending: false,
+      projectInputsTerminallyUnavailable: false,
+      projectInputsTerminalReason: "",
+    } as any);
     if (observation.status !== "ready") throw new Error(`resolved observation failed: ${observation.reason}`);
     const delta = domain.projectVisitDeltaForObservation({
       observedAt: "2026-09-03T08:05:00.000Z",

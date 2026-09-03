@@ -518,6 +518,11 @@ export type ProjectBriefObservationResult =
   | { status: "ready"; observation: ProjectBriefObservation; reason: "" }
   | { status: "loading" | "unavailable"; observation: null; reason: string };
 
+export type ProjectBriefProjectInputHeads = {
+  projectId: string;
+  heads: ProjectInputObservedHead[];
+};
+
 export type ProjectVisitCheckpointSnapshot = ProjectBriefObservation & {
   observedAt: string;
 };
@@ -839,9 +844,14 @@ function isStoredFingerprintEvidenceKey(key: string) {
 
 const invalidSemanticValue = Symbol("invalid-project-brief-semantic-value");
 
-function semanticValueWithoutStoredFingerprints(value: unknown, ancestors = new Set<object>()): unknown | typeof invalidSemanticValue {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
-  if (typeof value === "number") return Number.isFinite(value) ? value : invalidSemanticValue;
+type SanitizedSemanticValue = {
+  value: unknown;
+  hasSemanticContent: boolean;
+};
+
+function semanticValueWithoutStoredFingerprints(value: unknown, ancestors = new Set<object>()): SanitizedSemanticValue | typeof invalidSemanticValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return { value, hasSemanticContent: true };
+  if (typeof value === "number") return Number.isFinite(value) ? { value, hasSemanticContent: true } : invalidSemanticValue;
   if (typeof value !== "object") return invalidSemanticValue;
   if (ancestors.has(value)) return invalidSemanticValue;
   const prototype = Object.getPrototypeOf(value);
@@ -849,25 +859,35 @@ function semanticValueWithoutStoredFingerprints(value: unknown, ancestors = new 
   const nextAncestors = new Set(ancestors).add(value);
   if (Array.isArray(value)) {
     const items: unknown[] = [];
+    let hasSemanticContent = value.length === 0;
     for (const item of value) {
       const semanticItem = semanticValueWithoutStoredFingerprints(item, nextAncestors);
       if (semanticItem === invalidSemanticValue) return invalidSemanticValue;
-      items.push(semanticItem);
+      if (semanticItem.hasSemanticContent) {
+        items.push(semanticItem.value);
+        hasSemanticContent = true;
+      }
     }
-    return items;
+    return { value: items, hasSemanticContent };
   }
   const result: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+  const entries = Object.entries(value as Record<string, unknown>);
+  let hasSemanticContent = entries.length === 0;
+  for (const [key, item] of entries) {
     if (isStoredFingerprintEvidenceKey(key)) continue;
     const semanticItem = semanticValueWithoutStoredFingerprints(item, nextAncestors);
     if (semanticItem === invalidSemanticValue) return invalidSemanticValue;
-    result[key] = semanticItem;
+    if (semanticItem.hasSemanticContent) {
+      result[key] = semanticItem.value;
+      hasSemanticContent = true;
+    }
   }
-  return result;
+  return { value: result, hasSemanticContent };
 }
 
-function semanticPreimageHasRawAuthority(value: unknown) {
-  return value !== null && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0;
+function semanticPreimageHasRawAuthority(original: unknown, sanitized: SanitizedSemanticValue) {
+  return original !== null && typeof original === "object" && !Array.isArray(original)
+    && Object.keys(original).length > 0 && sanitized.hasSemanticContent;
 }
 
 function observedAdapterStateIsValid(kind: ProjectBriefUpstreamObservedKind, state: ProjectBriefObservedHead["state"]) {
@@ -901,7 +921,7 @@ function observedHeadsAreValid(heads: unknown): heads is ProjectBriefObservedHea
 export function buildProjectBriefObservation(
   projectId: string,
   adapters: ProjectBriefObservationAdapter[],
-  projectInputHeads: ProjectInputObservedHead[] | null,
+  projectInput: ProjectBriefProjectInputHeads | null,
 ): ProjectBriefObservationResult {
   if (!isExactString(projectId) || !Array.isArray(adapters)) return { status: "unavailable", observation: null, reason: "observation-input-invalid" };
   const heads: ProjectBriefObservedHead[] = [];
@@ -924,7 +944,8 @@ export function buildProjectBriefObservation(
     const semanticPreimage = semanticValueWithoutStoredFingerprints(adapter.semanticPreimage);
     const dependencyCapsule = semanticValueWithoutStoredFingerprints(adapter.dependencyCapsule);
     if (semanticPreimage === invalidSemanticValue || dependencyCapsule === invalidSemanticValue) return { status: "unavailable", observation: null, reason: "semantic-preimage-invalid" };
-    if (!semanticPreimageHasRawAuthority(semanticPreimage)) return { status: "unavailable", observation: null, reason: "semantic-preimage-missing" };
+    if (!semanticPreimageHasRawAuthority(adapter.semanticPreimage, semanticPreimage)) return { status: "unavailable", observation: null, reason: "semantic-preimage-missing" };
+    if (adapter.dependencyCapsule !== null && !dependencyCapsule.hasSemanticContent) return { status: "unavailable", observation: null, reason: "dependency-capsule-missing" };
     const head = {
       kind: adapter.kind,
       id: adapter.id,
@@ -936,15 +957,17 @@ export function buildProjectBriefObservation(
         projectId,
         version: adapter.version,
         state: adapter.state,
-        semanticPreimage,
-        dependencyCapsule,
+        semanticPreimage: semanticPreimage.value,
+        dependencyCapsule: dependencyCapsule.value,
       }),
     } as ProjectBriefObservedHead;
     heads.push(head);
   }
-  if (projectInputHeads === null) return { status: "unavailable", observation: null, reason: "project-input-unavailable" };
-  if (!Array.isArray(projectInputHeads) || projectInputHeads.some((head) => !projectInputObservedHeadIsValid(head))) return { status: "unavailable", observation: null, reason: "project-input-head-invalid" };
-  heads.push(...projectInputHeads);
+  if (projectInput === null) return { status: "unavailable", observation: null, reason: "project-input-unavailable" };
+  if (!hasExactKeys(projectInput, ["projectId", "heads"]) || !isExactString(projectInput.projectId)) return { status: "unavailable", observation: null, reason: "project-input-head-invalid" };
+  if (projectInput.projectId !== projectId) return { status: "unavailable", observation: null, reason: "scope-mismatch" };
+  if (!Array.isArray(projectInput.heads) || projectInput.heads.some((head) => !projectInputObservedHeadIsValid(head))) return { status: "unavailable", observation: null, reason: "project-input-head-invalid" };
+  heads.push(...projectInput.heads);
   heads.sort(compareObservedHeads);
   const keys = heads.map((head) => `${head.kind}\u0000${head.id}`);
   if (new Set(keys).size !== keys.length) return { status: "unavailable", observation: null, reason: "duplicate-head" };
