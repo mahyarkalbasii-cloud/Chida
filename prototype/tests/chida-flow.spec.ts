@@ -11545,7 +11545,13 @@ test("T9-B3 shows added and updated groups after an explicit baseline and clears
   await page.getByTestId("brief-changes-group-decisions").click();
   await expect(page.getByTestId("project-task-filter-all-decisions")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("project-task-filter-all-decisions")).toBeFocused();
-  await expect(page.getByTestId("project-approval-card").filter({ hasText: "سیمان مبنا" })).toContainText("نیاز به اصلاح");
+  const decidedApprovalCard = page.getByTestId("project-approval-card").filter({ hasText: "سیمان مبنا" });
+  await expect(decidedApprovalCard).toContainText("نیاز به اصلاح");
+  await decidedApprovalCard.click();
+  await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
+  await page.getByTestId("project-approval-detail-back").click();
+  await expect(page.getByTestId("project-task-filter-all-decisions")).toHaveAttribute("aria-pressed", "true");
+  await expect(decidedApprovalCard).toBeFocused();
   await page.getByTestId("project-tasks-back").click();
   await expect(page.getByTestId("brief-changes-group-decisions")).toBeFocused();
 
@@ -11564,6 +11570,63 @@ test("T9-B3 shows added and updated groups after an explicit baseline and clears
   await expectBriefChangeGroup(page, "inputs", 0, 0);
   const marked = await readProjectVisitCheckpointEnvelope(page);
   expect(marked).toMatchObject({ storeVersion: 2, records: [{ version: 2 }] });
+});
+
+test("T9-B3 clears the Brief decision return after editing a purchase request before ordinary Tasks navigation", async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await page.getByTestId("brief-changes-baseline-button").click();
+  await page.getByTestId("brief-back-button").click();
+
+  await createCurrentProductDispatchDraft(page, ["تأمین‌کننده مسیر بازگشت"]);
+  await page.getByTestId("dispatch-plan-review").click();
+  await page.getByTestId("dispatch-plan-acknowledgement").check();
+  await page.getByTestId("dispatch-plan-approval-create").click();
+  await expect(page.getByTestId("dispatch-plan-approval-status")).toContainText("در انتظار تأیید");
+  await returnFromDispatchToHome(page);
+
+  await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expectBriefChangeGroup(page, "decisions", 2, 0);
+  await page.getByTestId("brief-changes-group-decisions").click();
+  await expect(page.getByTestId("project-task-filter-all-decisions")).toHaveAttribute("aria-pressed", "true");
+  const dispatchPlanCard = page.getByTestId("project-dispatch-plan-approval-card");
+  await dispatchPlanCard.click();
+  await expect(page.getByTestId("project-dispatch-plan-approval-detail-view")).toBeVisible();
+  await page.getByTestId("project-dispatch-plan-approval-back").click();
+  await expect(page.getByTestId("project-task-filter-all-decisions")).toHaveAttribute("aria-pressed", "true");
+  await dispatchPlanCard.click();
+  await expect(page.getByTestId("project-dispatch-plan-approval-detail-view")).toBeVisible();
+  await page.getByTestId("project-dispatch-plan-edit").click();
+  await expect(page.getByTestId("project-purchase-request-detail-view")).toBeVisible();
+  await page.getByTestId("purchase-request-detail-back").click();
+  await page.getByTestId("purchase-requests-back").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+
+  await page.getByTestId("quick-action-tasks").click();
+  await expect(page.getByTestId("project-task-filter-active")).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("project-tasks-back").click();
+  await expect(page.getByTestId("builder-home")).toBeVisible();
+  await expect(page.getByTestId("brief-panel")).toHaveCount(0);
+});
+
+test("T9-B3 describes an all-decisions Backbone read failure as a decision failure", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enterBuilderHome(page);
+  await page.getByTestId("quick-action-tasks").click();
+  await page.getByTestId("project-task-filter-all-decisions").click();
+  await expect(page.getByTestId("project-task-filter-all-decisions")).toHaveAttribute("aria-pressed", "true");
+
+  await page.evaluate((key) => {
+    window.localStorage.setItem(key, "{unreadable-project-backbone");
+    window.dispatchEvent(new StorageEvent("storage", { key }));
+  }, projectBackboneStorageKey);
+
+  await expect(page.getByTestId("project-backbone-task-read-error")).toContainText("تصمیم برنامه کامل خوانده نشد");
+  await expect(page.getByTestId("project-backbone-task-read-error")).not.toContainText("کار متصل");
 });
 
 test("T9-B3 leaves baseline unchanged on stale dependency unreadable dependency and checkpoint write failure", async ({ page }) => {
@@ -11595,8 +11658,8 @@ test("T9-B3 leaves baseline unchanged on stale dependency unreadable dependency 
   }, { currentAuthority: authority, currentTask: task });
   expect(hiddenMutation.status).toBe("updated");
   await page.getByTestId("brief-changes-mark-seen-button").click();
-  await expect(page.getByTestId("brief-changes-error")).toHaveText("نتیجهٔ ثبت قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند.");
-  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeDisabled();
+  await expect(page.getByTestId("brief-changes-error")).toHaveText("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
+  await expect(page.getByTestId("brief-changes-mark-seen-button")).toBeEnabled();
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(baselineRaw);
 
   await dispatchBuilderStorageEvent(page, projectTasksTestStorageKey);
@@ -11751,8 +11814,36 @@ test("T9-B3 keeps healthy T9-B1 and T9-B2 sections visible when checkpoint is un
   await page.setViewportSize({ width: 390, height: 844 });
   await enterBuilderHome(page);
   await createManualTaskForLiveBrief(page, "کار سالم کنار checkpoint خراب");
+
+  await page.getByTestId("quick-action-purchase-request").click();
+  await page.getByTestId("purchase-request-raw-input").fill("یک تن سیمان برای آزمون شکست جزئی بریف لازم است");
+  await page.getByTestId("purchase-request-item-input").fill("سیمان سالم کنار checkpoint خراب");
+  await page.getByTestId("purchase-request-quantity-input").fill("۱");
+  await chooseProjectOption(page, "purchase-request-unit-select", "تن");
+  await page.getByTestId("purchase-request-save").click();
+  await page.getByTestId("purchase-request-more-actions").locator("summary").click();
+  await page.getByTestId("purchase-request-mark-ready-legacy").click();
+  await page.getByTestId("purchase-request-request-approval").click();
+  await expect(page.getByTestId("project-approval-detail-view")).toBeVisible();
+  await page.getByTestId("project-approval-detail-back").click();
+  await page.getByTestId("project-tasks-back").click();
+
   await registerProjectDocumentForBrief(page, "ورودی سالم کنار checkpoint.pdf", "%PDF T9-B3 healthy input");
   await waitForLiveBriefObservation(page);
+  await openLiveBriefFromHome(page);
+  await expect(page.getByTestId("brief-tasks-section")).toContainText("کار سالم کنار checkpoint خراب");
+  await expect(page.getByTestId("brief-decisions-section")).toContainText("سیمان سالم کنار checkpoint خراب");
+  await expect(page.getByTestId("brief-procurement-section")).toContainText("سیمان سالم کنار checkpoint خراب");
+  await expect(page.getByTestId("brief-inputs-section")).toContainText("ورودی سالم کنار checkpoint");
+  const sectionTestIds = ["brief-tasks-section", "brief-decisions-section", "brief-procurement-section", "brief-inputs-section"] as const;
+  const captureHealthySections = async () => Object.fromEntries(await Promise.all(sectionTestIds.map(async (testId) => {
+    const section = page.getByTestId(testId);
+    return [testId, { status: await section.getAttribute("data-status"), text: await section.innerText() }];
+  })));
+  const healthySections = await captureHealthySections();
+  expect(Object.values(healthySections).every((section) => section.status === "ready")).toBe(true);
+  await page.getByTestId("brief-back-button").click();
+
   const authority = await readProjectBriefTestAuthority(page);
   const projectId = await readActiveProjectId(page);
   const missingHeadLedger = makeProjectVisitCheckpointLedger(authority, [{
@@ -11775,12 +11866,7 @@ test("T9-B3 keeps healthy T9-B1 and T9-B2 sections visible when checkpoint is un
   await openLiveBriefFromHome(page);
   await expect(page.getByTestId("brief-changes-section")).toContainText("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
   await expect(page.getByTestId("brief-changes-section")).not.toContainText("حذف");
-  await expect(page.getByTestId("brief-tasks-section")).toContainText("کار سالم کنار checkpoint خراب");
-  await expect(page.getByTestId("brief-inputs-section")).toContainText("ورودی سالم کنار checkpoint");
-  await expect(page.getByTestId("brief-decisions-section")).toHaveAttribute("data-status", "ready");
-  await expect(page.getByTestId("brief-decisions-section")).toContainText("تصمیمی منتظر شما نیست");
-  await expect(page.getByTestId("brief-procurement-section")).toHaveAttribute("data-status", "ready");
-  await expect(page.getByTestId("brief-procurement-section")).toContainText("درخواست بازی در این پروژه نیست");
+  expect(await captureHealthySections()).toEqual(healthySections);
 
   const corruptRaw = "{unreadable-project-visit-checkpoint";
   await page.evaluate(({ key, raw }) => {
@@ -11788,12 +11874,7 @@ test("T9-B3 keeps healthy T9-B1 and T9-B2 sections visible when checkpoint is un
     window.dispatchEvent(new StorageEvent("storage", { key }));
   }, { key: projectVisitCheckpointsTestStorageKey, raw: corruptRaw });
   await expect(page.getByTestId("brief-changes-section")).toContainText("تغییرات فعلاً قابل‌محاسبه نیست؛ مبنای قبلی دست‌نخورده ماند.");
-  await expect(page.getByTestId("brief-tasks-section")).toContainText("کار سالم کنار checkpoint خراب");
-  await expect(page.getByTestId("brief-inputs-section")).toContainText("ورودی سالم کنار checkpoint");
-  await expect(page.getByTestId("brief-decisions-section")).toHaveAttribute("data-status", "ready");
-  await expect(page.getByTestId("brief-decisions-section")).toContainText("تصمیمی منتظر شما نیست");
-  await expect(page.getByTestId("brief-procurement-section")).toHaveAttribute("data-status", "ready");
-  await expect(page.getByTestId("brief-procurement-section")).toContainText("درخواست بازی در این پروژه نیست");
+  expect(await captureHealthySections()).toEqual(healthySections);
   expect(await page.evaluate((key) => window.localStorage.getItem(key), projectVisitCheckpointsTestStorageKey)).toBe(corruptRaw);
 });
 
@@ -11837,9 +11918,8 @@ test("T9-B3 remains RTL console-clean and overflow-free at 390x844", async ({ pa
   const sheetScroller = page.getByTestId("bottom-sheet").locator(".sheet-content");
   await sheetScroller.evaluate((element) => { element.scrollTop = 0; });
   await sheetScroller.hover();
-  await page.mouse.wheel(0, 560);
-  await expect.poll(() => sheetScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-  await page.getByTestId("brief-back-button").scrollIntoViewIfNeeded();
+  for (let index = 0; index < 8; index += 1) await page.mouse.wheel(0, 560);
+  await expect.poll(() => sheetScroller.evaluate((element) => Math.ceil(element.scrollTop + element.clientHeight) >= element.scrollHeight)).toBe(true);
 
   await expect(page.getByTestId("brief-panel")).toHaveCSS("direction", "rtl");
   expect(await sheetScroller.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);

@@ -15847,7 +15847,7 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
       if (["read-failure", "dependency-read-failure", "dependency-stale", "scope-mismatch", "version-conflict", "idempotency-payload-mismatch"].includes(result.status)) {
         projectVisitCheckpointMutationAttemptsRef.current.delete(signature);
       }
-      const outcomeUnverified = result.envelope === null;
+      const outcomeUnverified = result.status === "write-failure" && result.envelope === null;
       setProjectVisitCheckpointMutationBlocked(outcomeUnverified);
       setProjectVisitCheckpointMutationError(outcomeUnverified
         ? "نتیجهٔ ثبت قابل‌تأیید نیست؛ برای جلوگیری از بازنویسی، این اقدام تا بارگذاری امن دوباره بسته ماند."
@@ -15862,21 +15862,18 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
   };
   const openProjectVisitDeltaGroup = (group: ProjectVisitDeltaGroup["kind"]) => {
     if (group === "tasks") {
-      projectVisitGroupReturnRef.current = group;
       queueBuilderFocus('[data-testid="project-task-filter-all-tasks"]', null, "tasks");
-      openProjectTasks("chat", "all-tasks");
+      openProjectTasks("chat", "all-tasks", group);
       return;
     }
     if (group === "decisions") {
-      projectVisitGroupReturnRef.current = group;
       queueBuilderFocus('[data-testid="project-task-filter-all-decisions"]', null, "tasks");
-      openProjectTasks("chat", "all-decisions");
+      openProjectTasks("chat", "all-decisions", group);
       return;
     }
     if (group === "procurement") {
-      projectVisitGroupReturnRef.current = group;
       queueBuilderFocus('[data-testid="purchase-requests-back"]', null, "purchase-requests");
-      openProjectPurchaseRequests("chat");
+      openProjectPurchaseRequests("chat", false, group);
       return;
     }
     const heading = document.querySelector<HTMLElement>('[data-testid="brief-inputs-heading"]');
@@ -16600,10 +16597,15 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     setView("source-demo");
   };
 
-  const openProjectTasks = (returnView: ProjectTasksReturnView = "chat", filter: ProjectTaskFilter = "active") => {
+  const openProjectTasks = (
+    returnView: ProjectTasksReturnView = "chat",
+    filter: ProjectTaskFilter = "active",
+    visitReturnGroup: Extract<ProjectVisitDeltaGroup["kind"], "tasks" | "decisions"> | null = null,
+  ) => {
     keyboard.hide();
     onOpenSheet(null);
     setDrawerOpen(false);
+    projectVisitGroupReturnRef.current = visitReturnGroup;
     if (returnView === "project") {
       const projectScroll = document.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
       if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
@@ -16641,9 +16643,14 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
     setView("tasks");
   };
 
-  const openProjectPurchaseRequests = (returnView: PurchaseRequestsReturnView, startWithEditor = false) => {
+  const openProjectPurchaseRequests = (
+    returnView: PurchaseRequestsReturnView,
+    startWithEditor = false,
+    visitReturnGroup: Extract<ProjectVisitDeltaGroup["kind"], "procurement"> | null = null,
+  ) => {
     keyboard.hide();
     onOpenSheet(null);
+    projectVisitGroupReturnRef.current = visitReturnGroup;
     if (returnView === "project") {
       const projectScroll = document.querySelector<HTMLElement>(".project-workspace-scroll .mobile-scroll");
       if (projectScroll) projectWorkspaceScrollPositions.current.set(activeProject.id, projectScroll.scrollTop);
@@ -16687,6 +16694,9 @@ function BuilderHome({ activeProject, activeProjectProfile, projects, modelMode,
 
   const returnToProjectPurchaseRequest = (requestId: string) => {
     keyboard.hide();
+    if (projectVisitGroupReturnRef.current === "tasks" || projectVisitGroupReturnRef.current === "decisions") {
+      projectVisitGroupReturnRef.current = null;
+    }
     setStartPurchaseRequestEditor(false);
     setInitialPurchaseRequestId(requestId);
     setView("purchase-requests");
@@ -23280,7 +23290,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
   const returnDispatchPlanToList = () => {
     keyboard.hide();
     setStorageError("");
-    setFilter(selectedDispatchEffectiveStatus === "pending" ? "approval" : "completed");
+    setFilter(filter === "all-decisions" ? "all-decisions" : selectedDispatchEffectiveStatus === "pending" ? "approval" : "completed");
     setSelectedDispatchPlanApprovalId(null);
   };
 
@@ -23299,7 +23309,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
       onReturnToPurchaseRequest(returnToPurchaseRequestId);
       return;
     }
-    const nextFilter = selectedApproval.status === "pending" ? "approval" : "completed";
+    const nextFilter = filter === "all-decisions" ? "all-decisions" : selectedApproval.status === "pending" ? "approval" : "completed";
     keyboard.hide();
     setStorageError("");
     pendingApprovalCardFocus.current = selectedApproval.id;
@@ -23583,7 +23593,7 @@ function ProjectTasksView({ project, tasks, backbone, monitors, monitorRuns, app
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-task-read-error"><ShieldCheck size={17} /><span><strong>کارهای محلی کامل خوانده نشد.</strong> برای جلوگیری از بازنویسی داده‌های قبلی، ثبت و تغییر وضعیت تا بارگذاری موفق بعدی غیرفعال است.</span></p>
           ) : null}
           {backboneStorageLocked && (filter === "all-tasks" || filter === "all-decisions" || filter === "active" || filter === "completed") ? (
-            <p className="project-storage-recovery-alert" role="alert" data-testid="project-backbone-task-read-error"><ShieldCheck size={17} /><span><strong>کار متصل به برنامه کامل خوانده نشد.</strong> این وضعیت خالی نیست؛ برنامه و تغییرهای وابسته تا بازیابی موفق قفل‌اند.</span></p>
+            <p className="project-storage-recovery-alert" role="alert" data-testid="project-backbone-task-read-error"><ShieldCheck size={17} /><span><strong>{filter === "all-decisions" ? "تصمیم برنامه کامل خوانده نشد." : "کار متصل به برنامه کامل خوانده نشد."}</strong> این وضعیت خالی نیست؛ برنامه و تغییرهای وابسته تا بازیابی موفق قفل‌اند.</span></p>
           ) : null}
           {(approvalsStorageLocked || dispatchPlanApprovalsStorageLocked) && (filter === "all-decisions" || filter === "approval" || filter === "completed") ? (
             <p className="project-storage-recovery-alert" role="alert" data-testid="project-approval-read-error"><ShieldCheck size={17} /><span><strong>تأییدهای محلی کامل خوانده نشد.</strong> برای جلوگیری از تصمیم روی نسخهٔ نامطمئن، ایجاد و ثبت تصمیم تا بارگذاری موفق بعدی غیرفعال است.</span></p>
