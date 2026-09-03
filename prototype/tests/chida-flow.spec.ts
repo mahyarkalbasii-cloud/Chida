@@ -8341,6 +8341,39 @@ function rehashProjectVisitCheckpointLedger(candidate: any) {
   return candidate;
 }
 
+function rehashProjectVisitCheckpointFingerprints(candidate: any) {
+  for (const record of candidate.records) {
+    for (const revision of record.revisions) {
+      revision.fingerprint = projectBriefTestHash(withoutTestFingerprint(revision));
+    }
+    for (const event of record.history) {
+      event.fingerprint = projectBriefTestHash(withoutTestFingerprint(event));
+    }
+    record.fingerprint = projectBriefTestHash(withoutTestFingerprint(record));
+  }
+  for (const receipt of candidate.idempotencyReceipts) {
+    receipt.fingerprint = projectBriefTestHash(withoutTestFingerprint(receipt));
+  }
+  candidate.fingerprint = projectBriefTestHash(withoutTestFingerprint(candidate));
+  return candidate;
+}
+
+function expectProjectVisitCheckpointFingerprintsCoherent(candidate: any) {
+  for (const record of candidate.records) {
+    for (const revision of record.revisions) {
+      expect(revision.fingerprint).toBe(projectBriefTestHash(withoutTestFingerprint(revision)));
+    }
+    for (const event of record.history) {
+      expect(event.fingerprint).toBe(projectBriefTestHash(withoutTestFingerprint(event)));
+    }
+    expect(record.fingerprint).toBe(projectBriefTestHash(withoutTestFingerprint(record)));
+  }
+  for (const receipt of candidate.idempotencyReceipts) {
+    expect(receipt.fingerprint).toBe(projectBriefTestHash(withoutTestFingerprint(receipt)));
+  }
+  expect(candidate.fingerprint).toBe(projectBriefTestHash(withoutTestFingerprint(candidate)));
+}
+
 test("T9-B2 reads null as byte-stable empty and rejects malformed cross-project policy-drifted ledgers", async ({ page }) => {
   await enterBuilderHome(page);
   const authority = await readProjectBriefTestAuthority(page);
@@ -10509,6 +10542,142 @@ test("T9-B3 authority rejects coherently rehashed writer-impossible checkpoint h
   }
 });
 
+test("T9-B3 authority reaches nested checkpoint validators through coherent enclosing fingerprints", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const heads: ProjectVisitHeadFixture[] = [
+    { kind: "manual-task", id: "deep-manual", version: 1, state: "in-progress", fingerprint: `sha256-${"1".repeat(64)}` },
+    { kind: "purchase-request", id: "deep-request", version: 1, state: "draft", fingerprint: `sha256-${"2".repeat(64)}` },
+  ];
+  const valid = makeProjectVisitCheckpointLedger(authority, [{
+    projectId,
+    observedAt: "2026-09-03T08:00:00.000Z",
+    idempotencyKey: "deep-baseline",
+    heads,
+  }]);
+  const twoVisits = makeProjectVisitCheckpointLedger(authority, [
+    { projectId, observedAt: "2026-09-03T08:00:00.000Z", idempotencyKey: "deep-baseline", heads },
+    { projectId, observedAt: "2026-09-03T08:00:01.000Z", idempotencyKey: "deep-seen", heads },
+  ]);
+  const mutateDeep = (source: any, change: (candidate: any) => void) => {
+    const candidate = structuredClone(source);
+    change(candidate);
+    return rehashProjectVisitCheckpointFingerprints(candidate);
+  };
+  const invalidateNestedFingerprint = (target: "revision" | "event" | "receipt" | "record") => {
+    const candidate = structuredClone(valid);
+    if (target === "revision") candidate.records[0].revisions[0].fingerprint = "sha256-short";
+    if (target === "event") candidate.records[0].history[0].fingerprint = "sha256-short";
+    if (target === "receipt") candidate.idempotencyReceipts[0].fingerprint = "sha256-short";
+    if (target === "record") candidate.records[0].fingerprint = "sha256-short";
+    if (target === "revision" || target === "event") {
+      candidate.records[0].fingerprint = projectBriefTestHash(withoutTestFingerprint(candidate.records[0]));
+    }
+    candidate.fingerprint = projectBriefTestHash(withoutTestFingerprint(candidate));
+    return candidate;
+  };
+  const deepCases = [
+    { name: "extra record key", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].extra = true; }) },
+    { name: "extra snapshot key", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].revisions[0].snapshot.extra = true; }) },
+    { name: "missing revision key", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { delete candidate.records[0].revisions[0].createdAt; }) },
+    { name: "extra event key", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].history[0].extra = true; }) },
+    { name: "missing receipt key", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { delete candidate.idempotencyReceipts[0].eventId; }) },
+    { name: "extra observed-head key", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].revisions[0].snapshot.heads[0].extra = true; }) },
+    { name: "noncanonical head order", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].revisions[0].snapshot.heads.reverse(); }) },
+    { name: "invalid full head SHA", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].revisions[0].snapshot.heads[0].fingerprint = `sha256-${"a".repeat(63)}`; }) },
+    { name: "wrong observation SHA", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].revisions[0].snapshot.observationFingerprint = `sha256-${"b".repeat(64)}`; }) },
+    { name: "invalid revision fingerprint with coherent record and envelope", reason: "envelope-shape-invalid", candidate: invalidateNestedFingerprint("revision") },
+    { name: "invalid event fingerprint with coherent record and envelope", reason: "envelope-shape-invalid", candidate: invalidateNestedFingerprint("event") },
+    { name: "invalid receipt fingerprint with coherent envelope", reason: "envelope-shape-invalid", candidate: invalidateNestedFingerprint("receipt") },
+    { name: "invalid record fingerprint with coherent envelope", reason: "envelope-shape-invalid", candidate: invalidateNestedFingerprint("record") },
+    { name: "wrong deterministic revision id", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].revisions[0].id = "project-visit-checkpoint-revision:wrong"; }) },
+    { name: "wrong deterministic event id", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].history[0].id = "project-visit-checkpoint-event:wrong"; }) },
+    { name: "broken event revision linkage", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].history[0].revisionId = "project-visit-checkpoint-revision:wrong"; }) },
+    { name: "revision authorization drift", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].revisions[0].authorizationContextHash = `sha256-${"c".repeat(64)}`; }) },
+    { name: "event authorization drift", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].history[0].authorizationContextHash = `sha256-${"c".repeat(64)}`; }) },
+    { name: "record authorization drift", reason: "authorization-mismatch", candidate: mutateDeep(valid, (candidate) => { candidate.records[0].authorizationContextHash = `sha256-${"d".repeat(64)}`; }) },
+    { name: "receipt authorization drift", reason: "authorization-mismatch", candidate: mutateDeep(valid, (candidate) => { candidate.idempotencyReceipts[0].authorizationContextHash = `sha256-${"e".repeat(64)}`; }) },
+    { name: "forged command payload hash", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => {
+      const forged = `sha256-${"f".repeat(64)}`;
+      candidate.idempotencyReceipts[0].payloadHash = forged;
+      candidate.records[0].history[0].commandPayloadHash = forged;
+    }) },
+    { name: "broken receipt revision linkage", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.idempotencyReceipts[0].revisionId = "project-visit-checkpoint-revision:wrong"; }) },
+    { name: "broken receipt event linkage", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.idempotencyReceipts[0].eventId = "project-visit-checkpoint-event:wrong"; }) },
+    { name: "forged receipt observation binding", reason: "envelope-shape-invalid", candidate: mutateDeep(valid, (candidate) => { candidate.idempotencyReceipts[0].expectedObservationFingerprint = `sha256-${"9".repeat(64)}`; }) },
+    { name: "non-increasing linked chronology", reason: "chronology-invalid", candidate: mutateDeep(twoVisits, (candidate) => {
+      const timestamp = "2026-09-03T08:00:00.000Z";
+      candidate.records[0].revisions[1].createdAt = timestamp;
+      candidate.records[0].revisions[1].snapshot.observedAt = timestamp;
+      candidate.records[0].history[1].at = timestamp;
+      candidate.records[0].updatedAt = timestamp;
+      candidate.idempotencyReceipts[1].recordedAt = timestamp;
+      candidate.updatedAt = timestamp;
+    }) },
+  ];
+  for (const { name, candidate } of deepCases) {
+    if (!name.startsWith("invalid ") || name === "invalid full head SHA") {
+      expectProjectVisitCheckpointFingerprintsCoherent(candidate);
+    } else {
+      expect(candidate.fingerprint).toBe(projectBriefTestHash(withoutTestFingerprint(candidate)));
+      if (name.includes("revision fingerprint") || name.includes("event fingerprint")) {
+        expect(candidate.records[0].fingerprint).toBe(projectBriefTestHash(withoutTestFingerprint(candidate.records[0])));
+      }
+    }
+  }
+
+  const results = await page.evaluate(async ({ currentAuthority, cases }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    return cases.map(({ name, candidate }) => {
+      const raw = JSON.stringify(candidate);
+      localStorage.setItem(domain.projectVisitCheckpointsStorageKey, raw);
+      const state = domain.readProjectVisitCheckpointState(currentAuthority);
+      return { name, state, before: raw, after: localStorage.getItem(domain.projectVisitCheckpointsStorageKey) };
+    });
+  }, { currentAuthority: authority, cases: deepCases });
+  for (let index = 0; index < deepCases.length; index += 1) {
+    expect(results[index].state, deepCases[index].name).toMatchObject({ status: "read-error", reason: deepCases[index].reason });
+    expect(results[index].after, `${deepCases[index].name} must stay byte-stable`).toBe(results[index].before);
+  }
+});
+
+test("T9-B3 authority rejects a coherently rehashed disappearing checkpoint head", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const heads: ProjectVisitHeadFixture[] = [{
+    kind: "manual-task",
+    id: "missing-after-baseline",
+    version: 1,
+    state: "in-progress",
+    fingerprint: `sha256-${"3".repeat(64)}`,
+  }];
+  const candidate = makeProjectVisitCheckpointLedger(authority, [
+    { projectId, observedAt: "2026-09-03T08:00:00.000Z", idempotencyKey: "missing-head-baseline", heads },
+    { projectId, observedAt: "2026-09-03T08:00:01.000Z", idempotencyKey: "missing-head-seen", heads },
+  ]);
+  const secondSnapshot = candidate.records[0].revisions[1].snapshot;
+  secondSnapshot.heads = [];
+  secondSnapshot.observationFingerprint = projectBriefTestHash({ projectId, observationSchemaVersion: 1, heads: [] });
+  candidate.idempotencyReceipts[1].expectedObservationFingerprint = secondSnapshot.observationFingerprint;
+  rehashProjectVisitCheckpointLedger(candidate);
+  expectProjectVisitCheckpointFingerprintsCoherent(candidate);
+
+  const result = await page.evaluate(async ({ currentAuthority, ledger }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const raw = JSON.stringify(ledger);
+    localStorage.setItem(domain.projectVisitCheckpointsStorageKey, raw);
+    return {
+      state: domain.readProjectVisitCheckpointState(currentAuthority),
+      before: raw,
+      after: localStorage.getItem(domain.projectVisitCheckpointsStorageKey),
+    };
+  }, { currentAuthority: authority, ledger: candidate });
+  expect(result.state).toMatchObject({ status: "read-error", reason: "baseline-head-missing" });
+  expect(result.after).toBe(result.before);
+});
+
 test("T9-B3 checkpoint command records the first baseline and a distinct equal-head visit with one monotonic timestamp", async ({ page }) => {
   await enterBuilderHome(page);
   await page.clock.setFixedTime(new Date("2026-09-03T09:00:00.000Z"));
@@ -10582,6 +10751,57 @@ test("T9-B3 checkpoint command records the first baseline and a distinct equal-h
     expect(envelope.idempotencyReceipts[index].recordedAt).toBe(timestamp);
   }
   expect(envelope.updatedAt).toBe("2026-09-03T09:00:00.001Z");
+});
+
+test("T9-B3 checkpoint command refuses to erase a prior head without a tombstone", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const baselineObservation = makeProjectVisitObservationState(projectId, [{
+    kind: "backbone-task",
+    id: "head-that-disappears",
+    version: 1,
+    state: "in-progress",
+    fingerprint: `sha256-${"4".repeat(64)}`,
+  }]);
+  const missingHeadObservation = makeProjectVisitObservationState(projectId, []);
+  const baselineCommand = makeProjectVisitCheckpointCommand(projectId, baselineObservation.observation.observationFingerprint, {
+    action: "record-baseline",
+    expectedStoreVersion: 0,
+    expectedCheckpointVersion: null,
+    idempotencyKey: "missing-head-writer-baseline",
+  });
+  const markSeenCommand = makeProjectVisitCheckpointCommand(projectId, missingHeadObservation.observation.observationFingerprint, {
+    action: "mark-all-seen",
+    expectedStoreVersion: 1,
+    expectedCheckpointVersion: 1,
+    idempotencyKey: "missing-head-writer-seen",
+  });
+  const result = await page.evaluate(async ({ currentAuthority, firstObservation, secondObservation, firstCommand, secondCommand }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    localStorage.removeItem(domain.projectVisitCheckpointsStorageKey);
+    const baseline = await domain.executeProjectVisitCheckpointCommand(firstCommand, () => currentAuthority, () => firstObservation);
+    const before = localStorage.getItem(domain.projectVisitCheckpointsStorageKey);
+    const missingHead = await domain.executeProjectVisitCheckpointCommand(secondCommand, () => currentAuthority, () => secondObservation);
+    return {
+      baseline,
+      missingHead,
+      before,
+      after: localStorage.getItem(domain.projectVisitCheckpointsStorageKey),
+      state: domain.readProjectVisitCheckpointState(currentAuthority),
+    };
+  }, {
+    currentAuthority: authority,
+    firstObservation: baselineObservation,
+    secondObservation: missingHeadObservation,
+    firstCommand: baselineCommand,
+    secondCommand: markSeenCommand,
+  });
+  expect(result.baseline.status).toBe("recorded");
+  expect(result.missingHead.status).toBe("dependency-read-failure");
+  expect(result.missingHead.envelope).toMatchObject({ storeVersion: 1 });
+  expect(result.after).toBe(result.before);
+  expect(result.state).toMatchObject({ status: "ready", envelope: { storeVersion: 1, records: [{ version: 1 }] } });
 });
 
 test("T9-B3 checkpoint command replays one exact receipt after later visits and rejects every changed retry binding", async ({ page }) => {
@@ -10853,6 +11073,83 @@ test("T9-B3 checkpoint command preserves prior or competing bytes across set wri
   expect(result.afterCompetingFailure).toBe(result.competingRaw);
 });
 
+test("T9-B3 checkpoint command returns no stale envelope when write-then-throw rollback is unverified", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const observation = makeProjectVisitObservationState(projectId);
+  const baseline = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
+    action: "record-baseline", expectedStoreVersion: 0, expectedCheckpointVersion: null, idempotencyKey: "throw-rollback-seed",
+  });
+  const result = await page.evaluate(async ({ currentAuthority, currentObservation, baselineCommand }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const key = domain.projectVisitCheckpointsStorageKey;
+    localStorage.removeItem(key);
+    await domain.executeProjectVisitCheckpointCommand(baselineCommand, () => currentAuthority, () => currentObservation);
+    const knownGoodRaw = localStorage.getItem(key)!;
+    const mark = (idempotencyKey: string) => domain.executeProjectVisitCheckpointCommand({
+      ...baselineCommand,
+      action: "mark-all-seen" as const,
+      expectedStoreVersion: 1,
+      expectedCheckpointVersion: 1,
+      idempotencyKey,
+    }, () => currentAuthority, () => currentObservation);
+    const nativeSetItem = Storage.prototype.setItem;
+    const nativeGetItem = Storage.prototype.getItem;
+
+    let candidateThrew = false;
+    Storage.prototype.setItem = function writeThenRejectRollback(storageKey: string, value: string) {
+      if (this === localStorage && storageKey === key && !candidateThrew && value !== knownGoodRaw) {
+        candidateThrew = true;
+        nativeSetItem.call(this, storageKey, value);
+        throw new DOMException("injected candidate write then throw", "QuotaExceededError");
+      }
+      if (this === localStorage && storageKey === key && candidateThrew && value === knownGoodRaw)
+        throw new DOMException("injected rollback write failure", "QuotaExceededError");
+      return nativeSetItem.call(this, storageKey, value);
+    };
+    const rollbackFailure = await mark("throw-rollback-failure");
+    Storage.prototype.setItem = nativeSetItem;
+    const afterRollbackFailure = nativeGetItem.call(localStorage, key);
+
+    nativeSetItem.call(localStorage, key, knownGoodRaw);
+    candidateThrew = false;
+    let competitorInjected = false;
+    const competingRaw = JSON.stringify({ competitor: "must-survive" });
+    Storage.prototype.setItem = function writeThenThrowBeforeCompetitor(storageKey: string, value: string) {
+      if (this === localStorage && storageKey === key && !candidateThrew && value !== knownGoodRaw) {
+        candidateThrew = true;
+        nativeSetItem.call(this, storageKey, value);
+        throw new DOMException("injected candidate write then throw", "QuotaExceededError");
+      }
+      return nativeSetItem.call(this, storageKey, value);
+    };
+    Storage.prototype.getItem = function replaceCandidateBeforeRollback(storageKey: string) {
+      if (this === localStorage && storageKey === key && candidateThrew && !competitorInjected) {
+        competitorInjected = true;
+        nativeSetItem.call(localStorage, key, competingRaw);
+      }
+      return nativeGetItem.call(this, storageKey);
+    };
+    const competingFailure = await mark("throw-competing-failure");
+    Storage.prototype.getItem = nativeGetItem;
+    Storage.prototype.setItem = nativeSetItem;
+    return {
+      knownGoodRaw,
+      rollbackFailure,
+      afterRollbackFailure,
+      competingFailure,
+      competingRaw,
+      afterCompetingFailure: localStorage.getItem(key),
+    };
+  }, { currentAuthority: authority, currentObservation: observation, baselineCommand: baseline });
+  expect(result.rollbackFailure).toEqual({ status: "write-failure", envelope: null });
+  expect(result.afterRollbackFailure).not.toBe(result.knownGoodRaw);
+  expect(result.afterRollbackFailure).toMatch(/^\{"schemaVersion":1,"fingerprintVersion":"project-visit-checkpoint-v1"/);
+  expect(result.competingFailure).toEqual({ status: "write-failure", envelope: null });
+  expect(result.afterCompetingFailure).toBe(result.competingRaw);
+});
+
 test("T9-B3 checkpoint command rechecks fresh authority observation and candidate ownership after writing", async ({ page }) => {
   await enterBuilderHome(page);
   const authority = await readProjectBriefTestAuthority(page);
@@ -10917,6 +11214,38 @@ test("T9-B3 checkpoint command rechecks fresh authority observation and candidat
   expect(result.afterObservationDrift).toBe(result.knownGoodRaw);
 });
 
+test("T9-B3 checkpoint command treats missing or rejected Web Locks as byte-stable lock unavailability", async ({ page }) => {
+  await enterBuilderHome(page);
+  const authority = await readProjectBriefTestAuthority(page);
+  const projectId = authority.projectIds[0];
+  const observation = makeProjectVisitObservationState(projectId);
+  const command = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
+    action: "record-baseline", expectedStoreVersion: 0, expectedCheckpointVersion: null, idempotencyKey: "lock-unavailable-command",
+  });
+  const result = await page.evaluate(async ({ currentAuthority, currentObservation, currentCommand }) => {
+    const domain = await import("/src/projectBriefAuthorities.ts");
+    const key = domain.projectVisitCheckpointsStorageKey;
+    const sentinelRaw = JSON.stringify({ sentinel: "must-remain-byte-identical" });
+    localStorage.setItem(key, sentinelRaw);
+
+    Object.defineProperty(navigator, "locks", { value: undefined, configurable: true });
+    const missing = await domain.executeProjectVisitCheckpointCommand(currentCommand, () => currentAuthority, () => currentObservation);
+    const afterMissing = localStorage.getItem(key);
+    delete (navigator as any).locks;
+
+    const lockPrototype = Object.getPrototypeOf(navigator.locks) as { request: (...args: any[]) => Promise<any> };
+    const nativeRequest = lockPrototype.request;
+    lockPrototype.request = () => Promise.reject(new DOMException("injected lock rejection", "AbortError"));
+    const rejected = await domain.executeProjectVisitCheckpointCommand(currentCommand, () => currentAuthority, () => currentObservation);
+    lockPrototype.request = nativeRequest;
+    return { missing, rejected, sentinelRaw, afterMissing, afterRejected: localStorage.getItem(key) };
+  }, { currentAuthority: authority, currentObservation: observation, currentCommand: command });
+  expect(result.missing).toEqual({ status: "lock-unavailable", envelope: null });
+  expect(result.rejected).toEqual({ status: "lock-unavailable", envelope: null });
+  expect(result.afterMissing).toBe(result.sentinelRaw);
+  expect(result.afterRejected).toBe(result.sentinelRaw);
+});
+
 test("T9-B3 serializes concurrent first baselines from two pages without a lost update", async ({ page }) => {
   await enterBuilderHome(page);
   const authority = await readProjectBriefTestAuthority(page);
@@ -10941,6 +11270,10 @@ test("T9-B3 serializes concurrent first baselines from two pages without a lost 
       });
     }, lockName);
     await expect.poll(() => page.evaluate(() => sessionStorage.getItem("checkpoint-race-lock"))).toBe("held");
+    await expect.poll(() => page.evaluate(async (name) => {
+      const locks = await navigator.locks.query();
+      return locks.held?.filter((lock) => lock.name === name).length ?? 0;
+    }, lockName)).toBe(1);
     for (const [candidatePage, key] of [[page, "baseline-race-a"], [secondPage, "baseline-race-b"]] as const) {
       const command = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
         action: "record-baseline", expectedStoreVersion: 0, expectedCheckpointVersion: null, idempotencyKey: key,
@@ -10954,6 +11287,10 @@ test("T9-B3 serializes concurrent first baselines from two pages without a lost 
         );
       }, { currentAuthority: authority, currentObservation: observation, currentCommand: command });
     }
+    await expect.poll(() => page.evaluate(async (name) => {
+      const locks = await navigator.locks.query();
+      return locks.pending?.filter((lock) => lock.name === name).length ?? 0;
+    }, lockName)).toBe(2);
     await page.evaluate(() => (globalThis as any).__releaseCheckpointRaceLock());
     const [firstResult, secondResult] = await Promise.all([
       page.evaluate(() => (globalThis as any).__checkpointRaceResult),
@@ -11015,6 +11352,10 @@ test("T9-B3 serializes concurrent mark-all-seen visits from two pages without a 
       });
     }, lockName);
     await expect.poll(() => page.evaluate(() => sessionStorage.getItem("checkpoint-mark-race-lock"))).toBe("held");
+    await expect.poll(() => page.evaluate(async (name) => {
+      const locks = await navigator.locks.query();
+      return locks.held?.filter((lock) => lock.name === name).length ?? 0;
+    }, lockName)).toBe(1);
     for (const [candidatePage, key] of [[page, "mark-race-a"], [secondPage, "mark-race-b"]] as const) {
       const command = makeProjectVisitCheckpointCommand(projectId, observation.observation.observationFingerprint, {
         action: "mark-all-seen", expectedStoreVersion: 1, expectedCheckpointVersion: 1, idempotencyKey: key,
@@ -11028,6 +11369,10 @@ test("T9-B3 serializes concurrent mark-all-seen visits from two pages without a 
         );
       }, { currentAuthority: authority, currentObservation: observation, currentCommand: command });
     }
+    await expect.poll(() => page.evaluate(async (name) => {
+      const locks = await navigator.locks.query();
+      return locks.pending?.filter((lock) => lock.name === name).length ?? 0;
+    }, lockName)).toBe(2);
     await page.evaluate(() => (globalThis as any).__releaseCheckpointMarkRaceLock());
     const [firstResult, secondResult] = await Promise.all([
       page.evaluate(() => (globalThis as any).__checkpointMarkRaceResult),

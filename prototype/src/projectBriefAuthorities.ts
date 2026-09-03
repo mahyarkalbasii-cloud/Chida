@@ -1043,6 +1043,18 @@ function observationFingerprintFor(projectId: string, heads: readonly ProjectBri
   return projectBriefHash({ projectId, observationSchemaVersion: 1, heads });
 }
 
+function observedHeadKey(head: ProjectBriefObservedHead) {
+  return `${head.kind}\u0000${head.id}`;
+}
+
+function observationRetainsPriorHeadKeys(
+  priorHeads: readonly ProjectBriefObservedHead[],
+  currentHeads: readonly ProjectBriefObservedHead[],
+) {
+  const currentKeys = new Set(currentHeads.map(observedHeadKey));
+  return priorHeads.every((head) => currentKeys.has(observedHeadKey(head)));
+}
+
 function observedHeadsAreCanonical(heads: unknown): heads is ProjectBriefObservedHead[] {
   return observedHeadsAreValid(heads) && heads.every((head, index) =>
     index === 0 || compareObservedHeads(heads[index - 1], head) < 0);
@@ -1168,6 +1180,9 @@ function parseCheckpointEnvelope(value: unknown, authority: ProjectBriefAuthorit
         || !isExactTimestamp(event.at) || event.at !== revision.createdAt || event.revisionId !== revision.id
         || event.authorizationContextHash !== record.authorizationContextHash || !isExactString(event.idempotencyKey)
         || !isExactSha256(event.commandPayloadHash) || !isExactSha256(event.fingerprint) || !fingerprintMatches(event)) return { envelope: null, reason: "envelope-shape-invalid" };
+      if (index > 0 && !observationRetainsPriorHeadKeys(record.revisions[index - 1].snapshot.heads, revision.snapshot.heads)) {
+        return { envelope: null, reason: "baseline-head-missing" };
+      }
       if (index > 0 && Date.parse(revision.createdAt) <= Date.parse(record.revisions[index - 1].createdAt)) return { envelope: null, reason: "chronology-invalid" };
       const receipt = receiptsByRevision.get(revision.id);
       const expectedAction = version === 1 ? "record-baseline" : "mark-all-seen";
@@ -1327,10 +1342,7 @@ function detailedProjectVisitDelta(
 
   const baselineByKey = new Map(baseline.heads.map((head) => [`${head.kind}\u0000${head.id}`, head]));
   const currentHeads = [...current.heads].sort(compareObservedHeads);
-  const currentByKey = new Map(currentHeads.map((head) => [`${head.kind}\u0000${head.id}`, head]));
-  for (const baselineKey of baselineByKey.keys()) {
-    if (!currentByKey.has(baselineKey)) return { status: "unavailable", reason: "baseline-head-missing" };
-  }
+  if (!observationRetainsPriorHeadKeys(baseline.heads, currentHeads)) return { status: "unavailable", reason: "baseline-head-missing" };
 
   const added: ProjectBriefObservedHead[] = [];
   const updated: ProjectBriefObservedHead[] = [];
@@ -1913,6 +1925,10 @@ export async function executeProjectVisitCheckpointCommand(
         || (existingRecord?.version ?? null) !== command.expectedCheckpointVersion) return { status: "version-conflict", envelope: current };
       if (!existingRecord && command.action !== "record-baseline"
         || existingRecord && command.action !== "mark-all-seen") return { status: "dependency-stale", envelope: current };
+      const priorSnapshot = existingRecord?.revisions.at(-1)?.snapshot ?? null;
+      if (priorSnapshot && !observationRetainsPriorHeadKeys(priorSnapshot.heads, freshObservation.observation.heads)) {
+        return { status: "dependency-read-failure", envelope: current };
+      }
 
       const authorizationContextHash = authority.authorizationHashes[command.projectId];
       const candidate = buildCheckpointCandidate(current, command, freshObservation.observation, authorizationContextHash);
@@ -1920,8 +1936,8 @@ export async function executeProjectVisitCheckpointCommand(
       try {
         window.localStorage.setItem(projectVisitCheckpointsStorageKey, candidateRaw);
       } catch {
-        await rollbackOwnedCheckpointCandidate(previousRaw, candidateRaw);
-        return { status: "write-failure", envelope: current };
+        const restored = await rollbackOwnedCheckpointCandidate(previousRaw, candidateRaw);
+        return { status: "write-failure", envelope: restored ? current : null };
       }
       let readbackRaw: string | null;
       try {
